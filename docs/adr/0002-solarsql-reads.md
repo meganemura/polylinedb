@@ -1,6 +1,6 @@
 # Generate and execute read queries with solarsql
 
-The CLI and Worker use solarsql 0.7.0 for `show`, `list`, and `search`.
+The CLI and Worker use solarsql 0.7.1 for `show`, `list`, and `search`.
 The SQL catalog is `src/issue-queries.json`.
 The Node and D1 adapters execute its generated queries through the same operation handler.
 
@@ -26,9 +26,9 @@ List and search share named parameters and fixed optional predicates.
 Absent optional filters bind NULL; ordering and cursors use the stored numeric sort key.
 An absent cursor binds the empty string, which precedes every valid sort key.
 Catalog variants use direct tool, project, and status predicates for each available prefix of the scope index.
-Label filtering joins the candidate issue by primary key before expanding its JSON labels.
-Version 0.7.0 rejects a table-valued function argument that directly references the outer issue during analysis.
-The explicit join keeps that argument within its own query scope and limits label work to candidate issues.
+Label filtering expands the candidate issue's JSON labels in a correlated EXISTS query.
+Version 0.7.1 can analyze this reference to the outer issue.
+This removes the additional primary-key join required by the 0.7.0 analyzer.
 
 Mutation batches retain their existing implementation.
 Creation allocates a number and records its retry key in one transaction.

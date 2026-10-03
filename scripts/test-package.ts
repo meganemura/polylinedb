@@ -33,13 +33,13 @@ try {
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
-  run('npm', ['install', '--prefix', join(root, 'dependency-cache'), '--ignore-scripts', '--omit=dev', '--package-lock=false', 'solarsql@0.7.0'], root);
+  run('npm', ['install', '--prefix', join(root, 'dependency-cache'), '--ignore-scripts', '--omit=dev', '--package-lock=false', 'solarsql@0.7.1'], root);
   run('npm', ['install', '--global', '--prefix', prefix, '--ignore-scripts', '--omit=dev', '--offline', tarball], root);
   const installed = join(prefix, 'lib', 'node_modules', 'polylinedb');
   const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
   assert.equal(manifest.license, 'MIT');
   assert.equal(manifest.private, undefined);
-  assert.deepEqual(manifest.dependencies, { solarsql: '0.7.0' });
+  assert.deepEqual(manifest.dependencies, { solarsql: '0.7.1' });
   assert.equal(manifest.engines.node, '^24.20.0 || >=26.7.0');
   assert.equal(manifest.bin.pd, 'dist/cli.js');
   const command = join(prefix, 'bin', 'pd');
