@@ -43,6 +43,7 @@
     "dist/schema.js",
     "dist/sqlite.js",
     "docs/",
+    "skills/polylinedb/",
     "dist/issue-queries.js",
     "dist/solarsql.generated.js"
   ],

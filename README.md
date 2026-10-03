@@ -77,9 +77,19 @@ Search matches literal, case-sensitive text in bodies and comments.
 `--body-file -` reads standard input.
 See the [operation contract](docs/operations.md) for fields, defaults, pagination, and errors.
 
+## Use the agent skill
+
+The package includes [the polylinedb skill](skills/polylinedb/SKILL.md) for agents that manage issues through the local CLI.
+Copy or symlink the complete `skills/polylinedb` directory into your host's skill directory.
+Common user directories are `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`.
+Choose one installed source for each host and reload skill discovery as required by that host.
+Keep `pd` available on the agent's PATH.
+The skill starts with `pd context` and uses explicit project filters for shared stores.
+It does not initialize a database during ordinary issue work.
+
 ## Use cloud agents
 
-The npm package distributes the local CLI and documentation.
+The npm package distributes the local CLI, documentation, and agent skill.
 Worker deployment requires access to the source repository and a separate Cloudflare setup.
 Deploy the Worker behind Cloudflare Access with Managed OAuth.
 Connect an agent host to its `/mcp` endpoint through the host's protected connector storage.

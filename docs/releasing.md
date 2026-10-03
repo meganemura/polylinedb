@@ -1,6 +1,6 @@
 # Release the npm CLI
 
-The npm package contains the compiled CLI, its local store modules, the license, and documentation.
+The npm package contains the compiled CLI, its local store modules, the license, documentation, and the polylinedb agent skill.
 The Worker requires a source checkout and separate deployment.
 The GitHub repository can remain private while the npm package is public.
 
