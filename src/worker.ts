@@ -145,7 +145,7 @@ async function mcp(request: Request, env: Environment, actor: string): Promise<R
         || typeof params.clientInfo.name !== 'string' || typeof params.clientInfo.version !== 'string') {
         return rpcError(id, -32602, 'Initialize requires protocolVersion, capabilities, and clientInfo.');
       }
-      return result({ protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'polylinedb', version: '0.0.1' },
+      return result({ protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'polylinedb', version: '0.1.0' },
         instructions: 'Read field versions before updates. Conflicts require a new read and a deliberate edit. Never put credentials in tool arguments.' });
     case 'ping': return result({});
     case 'tools/list':

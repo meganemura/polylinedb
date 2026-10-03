@@ -104,6 +104,8 @@ try {
     protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'local-integration', version: '1' },
   });
   assert.equal(initialized.protocolVersion, '2025-11-25');
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(record(initialized.serverInfo).version, manifest.version);
   const notified = await post('/mcp', { jsonrpc: '2.0', method: 'notifications/initialized' });
   assert.equal(notified.status, 202);
   assert.equal(await notified.text(), '');

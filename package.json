@@ -1,8 +1,8 @@
 {
   "name": "polylinedb",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Polyline database: a personal issue store for local tools and cloud agents",
+  "description": "Polyline database: project memory and task tracking for local tools and cloud agents",
   "engines": {
     "node": "^24.20.0 || >=26.7.0"
   },

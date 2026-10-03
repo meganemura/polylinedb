@@ -77,10 +77,12 @@ Keep the target file and source snapshot unchanged across retries. A changed sou
 
 The command uses `cf d1 query DATABASE_UUID --profile PROFILE --batch @FILE`. Each request contains one bound statement. Temporary files have mode 0600 inside private temporary directories and are removed after success or failure. The child process receives a fixed `CLOUDFLARE_ACCOUNT_ID`. Ambient API-token variables are removed so the named profile owns authentication. Child stderr is not copied into operator output.
 
-An isolated live D1 probe passed with cf 1.0.0-beta.12 on October 4, 2026.
-It exercised the selected profile, fixed account, bound batch parameters, and response parser against an empty destination.
+An isolated live D1 transfer passed with cf 1.0.0-beta.12 on October 4, 2026.
+It used an installed CLI package to export issues and memories, restore them into D1, and import the verified snapshot into fresh SQLite.
+The canonical contents matched, including versions, attribution, deleted-memory receipts, and counters.
+The run also verified recovery after a committed write lost its response, repeated restore, concurrent memory conflicts, and D1 REST batch rollback.
 The importer checks supported output envelopes and every statement success value.
-This SELECT probe proves transport behavior; a full restore and readback remain separate acceptance checks.
+These checks used the operator's D1 REST access. Deployed Worker bindings and OAuth require separate acceptance checks.
 Workerd tests use the real D1 binding directly and do not prove production authentication.
 
 D1 permits 100 bound parameters and 100,000 SQL bytes per statement. The whole API batch has a 30-second deadline. Bound values keep large UTF-8 bodies outside SQL text. The operator limits encoded rows to 1,900,000 bytes and reads one row per page. This favors bounded requests over transfer speed. See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
