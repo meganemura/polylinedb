@@ -1,6 +1,8 @@
 // Owns issue operations and atomic SQL; transports and connection lifetimes stay outside.
 import { parseIssueId, issueSortKey, parsePrefix, parseRequestId } from './issue-id.ts';
 import { fields, issueTypes, statuses } from './schema.ts';
+import type { Database } from 'solarsql';
+import { issueQueries } from './issue-queries.ts';
 
 export type Status = typeof statuses[number];
 export type IssueType = typeof issueTypes[number];
@@ -27,7 +29,10 @@ export type Comment = { id: string; issue_id: string; body: string; created_at: 
 export type OperationResult = { issue: Issue } | { issue: Issue; comments: Comment[] }
   | { issues: Issue[]; next_cursor: string | null } | { comment: Comment } | { actor: string };
 export type SqlStatement = { sql: string; params: readonly (string | number | null)[] };
-export type SqlExecutor = { batch(statements: readonly SqlStatement[]): Promise<readonly { rows: readonly Record<string, unknown>[] }[]> };
+export type SqlExecutor = {
+  reads: Pick<Database, 'all'>;
+  batch(statements: readonly SqlStatement[]): Promise<readonly { rows: readonly Record<string, unknown>[] }[]>;
+};
 
 export class PolylinedbError extends Error {
   code: string;
@@ -277,10 +282,13 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
       throw new PolylinedbError('invalid_input', 'The parent must be an epic', 400);
     }
     case 'show': {
-      const result = await db.batch([observation(operation.id), { sql: 'SELECT * FROM comments WHERE issue_id = ? ORDER BY created_at, id', params: [operation.id] }]);
-      const row = rowsAt(result, 0)[0];
+      const rows = await db.reads.all(issueQueries.show, { id: operation.id });
+      const [row] = rows;
       if (!row) return notFound(operation.id);
-      return { issue: issueRow(row), comments: rowsAt(result, 1).map(commentRow) };
+      return { issue: issueRow(row), comments: rows.filter(row => row.comment_id !== null).map(row => commentRow({
+        id: row.comment_id, issue_id: row.id, body: row.comment_body,
+        created_at: row.comment_created_at, created_by: row.comment_created_by,
+      })) };
     }
     case 'comment': {
       const result = await db.batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by)
@@ -293,17 +301,18 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
     case 'close': case 'reopen': return update(db, operation.id, [{ field: 'status', value: operation.op === 'close' ? 'closed' : 'open', expected: operation.expected }], actor);
     case 'update': return update(db, operation.id, operation.changes, actor);
     case 'list': case 'search': {
-      const conditions: string[] = [];
-      const params: (string | number | null)[] = [];
-      for (const field of ['tool', 'project', 'status', 'type', 'priority'] as const) {
-        if (operation[field] !== undefined) { conditions.push(`${field} = ?`); params.push(operation[field]); }
-      }
-      if (operation.label !== undefined) { conditions.push('EXISTS(SELECT 1 FROM json_each(issues.labels_json) WHERE value = ?)'); params.push(operation.label); }
-      if (operation.after !== undefined) { conditions.push('issues.sort_key > ?'); params.push(issueSortKey(operation.after)); }
-      if (operation.op === 'search') { conditions.push('(instr(issues.body, ?) > 0 OR EXISTS(SELECT 1 FROM comments WHERE issue_id = issues.id AND instr(body, ?) > 0))'); params.push(operation.query, operation.query); }
-      params.push(operation.limit + 1);
-      const result = await db.batch([{ sql: `SELECT issues.* FROM issues ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY issues.sort_key LIMIT ?`, params }]);
-      const all = rowsAt(result, 0).map(issueRow);
+      const query = operation.tool === undefined ? issueQueries.list
+        : operation.project === undefined ? issueQueries.listByTool
+        : operation.status === undefined ? issueQueries.listByScope
+        : issueQueries.listByStatus;
+      const rows = await db.reads.all(query, {
+        tool: operation.tool ?? null, project: operation.project ?? null,
+        status: operation.status ?? null, type: operation.type ?? null,
+        priority: operation.priority ?? null, label: operation.label ?? null,
+        after: operation.after === undefined ? '' : issueSortKey(operation.after),
+        query: operation.op === 'search' ? operation.query : null, limit: operation.limit + 1,
+      });
+      const all = rows.map(issueRow);
       const issues = all.slice(0, operation.limit);
       return { issues, next_cursor: all.length > operation.limit ? issues[issues.length - 1]?.id ?? null : null };
     }

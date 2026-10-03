@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Polyline database: a personal issue store for local tools and cloud agents",
   "engines": {
-    "node": ">=24.0.0"
+    "node": "^24.20.0 || >=26.7.0"
   },
   "bin": {
     "pd": "dist/cli.js"
@@ -12,15 +12,17 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "start": "node src/cli.ts",
-    "build:worker": "cf build",
+    "build:worker": "npm run check:sql && cf build",
     "dev:worker": "cf dev --local",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm run check:sql && tsc --noEmit",
     "test:d1": "node test/d1.integration.ts",
     "schema": "node scripts/schema.ts",
     "test:worker": "npm run build:worker && node test/worker.integration.ts",
-    "build:cli": "tsc -p tsconfig.cli.json",
+    "build:cli": "npm run check:sql && tsc -p tsconfig.cli.json",
     "prepack": "npm run build:cli",
-    "test:package": "node scripts/test-package.ts"
+    "test:package": "node scripts/test-package.ts",
+    "generate:sql": "node scripts/solarsql.ts",
+    "check:sql": "node scripts/solarsql.ts --check"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.60.2",
@@ -40,7 +42,9 @@
     "dist/snapshot.js",
     "dist/schema.js",
     "dist/sqlite.js",
-    "docs/"
+    "docs/",
+    "dist/issue-queries.js",
+    "dist/solarsql.generated.js"
   ],
   "publishConfig": {
     "access": "public",
@@ -49,5 +53,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/meganemura/polylinedb.git"
+  },
+  "dependencies": {
+    "solarsql": "0.7.0"
   }
 }

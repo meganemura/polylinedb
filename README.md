@@ -8,7 +8,7 @@ These are independent stores; polylinedb does not synchronize them.
 
 ## Start locally
 
-Use Node.js 24 or later.
+Use Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later.
 Install the CLI from npm:
 
 ```sh
@@ -109,7 +109,9 @@ The build uses the installed `cf` CLI and produces `.cloudflare/output/v0/`.
 It does not deploy the Worker.
 The Vite plugin supports `cloudflare.config.ts` through its experimental configuration interface.
 The `undici` override selects a security-fixed version for Cloudflare's development tools.
-See [development dependencies](docs/dependencies.md) for the selection record.
+See [dependencies](docs/dependencies.md) for the selection record.
+Read queries use solarsql on SQLite and D1; see the [SQL adoption decision](docs/adr/0002-solarsql-reads.md).
+After a schema or query edit, run `npm run generate:sql` and commit the generated file.
 
 Read the [architecture](docs/architecture.md) and [field version decision](docs/adr/0001-field-versions.md).
 

@@ -34,6 +34,49 @@ function errorCode(code: string) {
   return (error: unknown) => error instanceof PolylinedbError && error.code === code;
 }
 
+test('generated label reads preserve exact matching and combined filters', async (t) => {
+  const { first } = fixture(t);
+  await create(first, { labels: ['a', 'a'], priority: 0, body: 'first' });
+  await create(first, { labels: ['aa', 'quote"slash\\'], body: 'second' });
+  await create(first, { labels: [], body: 'third' });
+  await create(first, { labels: ['a'], status: 'deferred', project: 'other', body: 'fourth' });
+  await execute(first, { op: 'comment', id: 'pd-1', body: 'needle\n"quoted"' });
+  const list = async (filters: Record<string, unknown>) => {
+    const result = await execute(first, { op: 'list', ...filters });
+    assert('issues' in result);
+    return result.issues.map(issue => issue.id);
+  };
+  assert.deepEqual(await list({}), ['pd-1', 'pd-2', 'pd-3', 'pd-4']);
+  assert.deepEqual(await list({ label: 'a' }), ['pd-1', 'pd-4']);
+  assert.deepEqual(await list({ label: 'aa' }), ['pd-2']);
+  assert.deepEqual(await list({ label: 'quote"slash\\' }), ['pd-2']);
+  assert.deepEqual(await list({ label: 'absent' }), []);
+  assert.deepEqual(await list({ label: 'a', tool: 'compiler', project: 'parser', status: 'open', type: 'task', priority: 0 }), ['pd-1']);
+  assert.deepEqual(await list({ label: 'a', after: 'pd-1', limit: 1 }), ['pd-4']);
+  const search = await execute(first, { op: 'search', query: 'needle\n"quoted"', label: 'a', priority: 0 });
+  assert('issues' in search);
+  assert.deepEqual(search.issues.map(issue => issue.id), ['pd-1']);
+});
+
+test('generated show preserves empty comments and timestamp/ID ordering without coercing corrupt values', async (t) => {
+  const { first } = fixture(t);
+  await create(first);
+  const empty = await execute(first, { op: 'show', id: 'pd-1' });
+  assert('comments' in empty);
+  assert.deepEqual(empty.comments, []);
+  const earlier = '2026-01-01T00:00:00.000Z';
+  const later = '2026-01-02T00:00:00.000Z';
+  for (const [suffix, date, body] of [['3', later, 'last'], ['2', earlier, 'second'], ['1', earlier, 'first\n"quoted"']]) {
+    await first.batch([{ sql: 'INSERT INTO comments VALUES (?, ?, ?, ?, ?)',
+      params: [`00000000-0000-4000-8000-00000000000${suffix}`, 'pd-1', body, date, 'tester'] }]);
+  }
+  const shown = await execute(first, { op: 'show', id: 'pd-1' });
+  assert('comments' in shown);
+  assert.deepEqual(shown.comments.map(comment => comment.body), ['first\n"quoted"', 'second', 'last']);
+  await first.batch([{ sql: "UPDATE comments SET body = X'6162' WHERE body = 'last'", params: [] }]);
+  await assert.rejects(execute(first, { op: 'show', id: 'pd-1' }), errorCode('invalid_store'));
+});
+
 test('same-field stale writes fail while independent fields preserve both edits', async (t) => {
   const { first, second } = fixture(t);
   const issue = await create(first);

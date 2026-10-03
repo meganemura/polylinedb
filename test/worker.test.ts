@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { storageOf } from 'solarsql/node';
 import { createAccessVerifier } from '../src/access.ts';
 import { handleRequest } from '../src/worker.ts';
 import { SCHEMA_SQL } from '../src/schema.ts';
@@ -23,10 +24,12 @@ async function assertion(): Promise<string> {
 function fixture() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(SCHEMA_SQL);
+  const storage = storageOf(sqlite);
   const prepare = (sql: string) => {
     const make = (params: (string | number | null)[]) => ({
       sql, params,
       bind: (...values: (string | number | null)[]) => make(values),
+      all: async () => ({ success: true, results: storage.sql.exec(sql, ...params).toArray() }),
     });
     return make([]);
   };
@@ -35,7 +38,7 @@ function fixture() {
     async batch(statements: ReturnType<typeof prepare>[]) {
       sqlite.exec('BEGIN IMMEDIATE');
       try {
-        const results = statements.map(({ sql, params }) => ({ success: true, results: sqlite.prepare(sql).all(...params) }));
+        const results = statements.map(({ sql, params }) => ({ success: true, results: storage.sql.exec(sql, ...params).toArray() }));
         sqlite.exec('COMMIT');
         return results;
       } catch (error) { sqlite.exec('ROLLBACK'); throw error; }

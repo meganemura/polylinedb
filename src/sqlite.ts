@@ -1,5 +1,6 @@
 // Owns local database paths and transactions; issue policy remains in issues.ts.
 import { DatabaseSync } from 'node:sqlite';
+import { node } from 'solarsql/node';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -105,6 +106,7 @@ export function openStore(location: StoreLocation): LocalStore {
   verifyExisting(database_path, false);
   const database = connect(database_path);
   const db: SqlExecutor = {
+    reads: node(database),
     async batch(statements: readonly SqlStatement[]) {
       database.exec('BEGIN IMMEDIATE');
       try {

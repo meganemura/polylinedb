@@ -25,15 +25,17 @@ npm run test:package -- /absolute/path/polylinedb-0.0.1.tgz
 ```
 
 The package check runs `npm pack`, including its `prepack` build.
-It verifies the file allowlist, then installs the tarball into a temporary prefix without development dependencies or install scripts.
+It verifies the file allowlist and fetches solarsql into a temporary npm cache.
+It then installs the tarball offline into a temporary prefix without development dependencies or install scripts.
 It invokes the installed `pd` command for initialization, reads, mutations, comments, search, and stale-version rejection.
 It also checks that the working directory remains empty.
 The optional path receives the tested tarball.
-Run the check on Node 24 and the current development runtime before release.
+Run the check on supported Node 24 and the current development runtime before release.
 
 The build emits JavaScript because Node does not strip TypeScript inside installed packages.
 See [Node TypeScript support](https://nodejs.org/api/typescript.html#type-stripping-in-dependencies).
-Consumers need Node.js 24 or later and do not need a compiler.
+Consumers need Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later.
+They do not need a compiler.
 Package inclusion follows npm's [files and bin settings](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/).
 
 ## Publish the tested artifact

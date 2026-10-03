@@ -54,6 +54,16 @@ try {
   const comments = await run({ op: 'show', id });
   assert('comments' in comments);
   assert.deepEqual(comments.comments.map((comment) => comment.body).sort(), ['alpha', 'beta']);
+  const largeBody = 'x'.repeat(64000);
+  for (let i = 0; i < 34; i++) await run({ op: 'comment', id, body: largeBody });
+  const largeThread = await run({ op: 'show', id });
+  assert('comments' in largeThread);
+  assert.equal(largeThread.comments.length, 36);
+  assert.equal(largeThread.comments.filter(comment => comment.body === largeBody).length, 34);
+  await run({ op: 'update', id, changes: [{ field: 'labels', value: ['exact', 'quote"slash\\'], expected: 1 }] });
+  const filtered = await run({ op: 'search', query: 'alpha', label: 'quote"slash\\', priority: 0 });
+  assert('issues' in filtered);
+  assert.deepEqual(filtered.issues.map(issue => issue.id), [id]);
   const request = { op: 'create', prefix: 'seq', request_id: crypto.randomUUID(), tool: 't', project: 'p', body: 'retry', type: 'epic' };
   const duplicates = await Promise.all([run(request), run(request), run(request)]);
   assert.deepEqual(duplicates[0], duplicates[1]); assert.deepEqual(duplicates[1], duplicates[2]);
