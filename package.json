@@ -35,6 +35,7 @@
   "files": [
     "dist/cli.js",
     "dist/issues.js",
+    "dist/issue-id.js",
     "dist/local-config.js",
     "dist/snapshot.js",
     "dist/schema.js",

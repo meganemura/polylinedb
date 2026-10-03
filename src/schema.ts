@@ -2,7 +2,7 @@
 export const statuses = ['open', 'in_progress', 'deferred', 'closed'] as const;
 export const issueTypes = ['bug', 'task', 'epic', 'feature', 'chore'] as const;
 export const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'] as const;
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const versionColumns = fields.map((field) => `${field}_v INTEGER NOT NULL DEFAULT 1
   CHECK(typeof(${field}_v) = 'integer' AND ${field}_v BETWEEN 1 AND 9007199254740991)`).join(',\n');
@@ -14,6 +14,7 @@ INSERT INTO schema_version(version) VALUES (${SCHEMA_VERSION});
 CREATE TABLE issues (
   id TEXT PRIMARY KEY NOT NULL,
   parent_id TEXT REFERENCES issues(id),
+  sort_key TEXT NOT NULL UNIQUE,
   tool TEXT NOT NULL CHECK(length(tool) > 0),
   project TEXT NOT NULL CHECK(length(project) > 0),
   body TEXT NOT NULL CHECK(length(body) > 0),
@@ -26,6 +27,16 @@ CREATE TABLE issues (
   created_by TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   updated_by TEXT NOT NULL
+);
+CREATE TABLE counters (
+  scope TEXT PRIMARY KEY NOT NULL,
+  last_number INTEGER NOT NULL CONSTRAINT counter_not_exhausted CHECK(typeof(last_number) = 'integer' AND last_number BETWEEN 1 AND 9007199254740991)
+);
+CREATE TABLE requests (
+  request_id TEXT PRIMARY KEY NOT NULL,
+  actor TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  issue_id TEXT NOT NULL REFERENCES issues(id)
 );
 CREATE INDEX issues_scope ON issues(tool, project, status, id);
 CREATE INDEX issues_parent ON issues(parent_id, id);

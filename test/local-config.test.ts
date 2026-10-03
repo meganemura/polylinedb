@@ -17,7 +17,7 @@ function fixture(context: test.TestContext) {
   mkdirSync(repo);
   mkdirSync(data, { mode: 0o700 });
   execFileSync('git', ['init', '--quiet', '--initial-branch=main', repo]);
-  const defaults: RepositoryDefaults = { version: 1, data_dir: realpathSync(data), tool: 'demo', project: 'demo', actor: 'local:owner' };
+  const defaults: RepositoryDefaults = { version: 2, data_dir: realpathSync(data), tool: 'demo', project: 'demo', actor: 'local:owner', prefix: 'pd' };
   context.after(() => rmSync(root, { recursive: true, force: true }));
   return { root, repo, data, defaults, path: join(realpathSync(repo), '.git', 'polylinedb.json') };
 }
@@ -127,8 +127,9 @@ test('Git environment path overrides cannot redirect configuration to another re
 test('read rejects malformed or unknown configuration without rewriting it', context => {
   const { repo, defaults, path } = fixture(context);
   const variants = [
-    'broken JSON', JSON.stringify({ ...defaults, unknown: true }), JSON.stringify({ ...defaults, version: 2 }),
-    JSON.stringify({ version: 1, data_dir: defaults.data_dir }), JSON.stringify({ ...defaults, actor: '' }),
+    'broken JSON', JSON.stringify({ ...defaults, unknown: true }), JSON.stringify({ ...defaults, version: 3 }),
+    JSON.stringify({ version: 2, data_dir: defaults.data_dir }), JSON.stringify({ ...defaults, actor: '' }),
+    JSON.stringify({ ...defaults, prefix: 'UpperCase' }), JSON.stringify({ ...defaults, prefix: 'with-dash' }),
     JSON.stringify({ ...defaults, project: 'line\nbreak' }), JSON.stringify({ ...defaults, tool: 'x'.repeat(257) }),
     JSON.stringify({ ...defaults, data_dir: 'relative' }),
     JSON.stringify({ ...defaults, data_dir: join(repo, 'data') }), ' '.repeat(16385),
@@ -141,6 +142,16 @@ test('read rejects malformed or unknown configuration without rewriting it', con
     rejected(() => writeRepositoryDefaults(defaults, repo));
     assert.equal(readFileSync(path, 'utf8'), content);
   }
+});
+
+test('old repository config explicitly requires recreation and is never silently upgraded', context => {
+  const { repo, defaults, path } = fixture(context);
+  const { prefix: _prefix, ...previous } = defaults;
+  writeFileSync(path, JSON.stringify({ ...previous, version: 1 }), { mode: 0o600 });
+  assert.throws(() => readRepositoryDefaults(repo), error => error instanceof PolylinedbError
+    && error.code === 'invalid_repository_config' && /version 1.*recreate/.test(error.message));
+  rejected(() => writeRepositoryDefaults(defaults, repo));
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 1);
 });
 
 test('configuration links, directories and public file permissions fail closed', context => {

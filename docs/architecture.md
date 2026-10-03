@@ -34,15 +34,33 @@ The Worker verifies the Access assertion before it touches D1.
 
 ## Containment and queries
 
-A root ID is a UUID.
-A child ID appends a dot and another UUID to an epic ID.
+A root ID combines a prefix and a positive integer, such as `pd-42`.
+A child ID appends a dot and a positive integer to an epic ID, such as `pd-42.1`.
+Each prefix has a root counter, and each parent has a separate child counter.
+Prefixes identify numbering namespaces within a store; they do not restrict the mutable project field.
+The same ID in two independent stores identifies different records.
 The database records the parent for atomic containment checks.
 A parent with children must remain an epic.
 Closing a parent does not close its children.
 
 Search matches literal, case-sensitive substrings in issue bodies and comments.
-List and search use ID-ordered pagination.
+List and search order prefixes lexically and each numeric segment numerically.
 Pagination does not promise a snapshot across separate requests.
+
+## Number allocation and request replay
+
+An atomic SQL batch increments a persistent counter, inserts the issue, and records the creation request.
+SQLite and D1 execute the same statements in one transaction.
+The request record holds a caller-supplied UUID, the authenticated actor, the normalized payload, and the issued ID.
+An identical request reuses the issue and returns its current state without allocating another number.
+Reuse with a different actor or payload fails with a conflict.
+Comment IDs remain UUIDs; issue IDs use the numbering scheme above.
+
+Persistent counters retain issued numbers independently of issue rows.
+This supports gaps and prevents number reuse after snapshot restoration.
+Computing a maximum before insertion would race; deriving it from surviving rows would lose the issued maximum after deletions.
+Counters and request records therefore belong in snapshots alongside issues and comments.
+There is no merge between independently writable stores, so issue IDs do not need decentralized generation.
 
 ## Verification boundary
 

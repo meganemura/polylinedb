@@ -24,7 +24,7 @@ test('init is idempotent and runtime leaves only one persistent database file', 
   assert.equal(initialized.database_path, realpathSync(join(location.directory, 'polylinedb.sqlite')));
   const store = openStore(location);
   try {
-    await executeOperation(store.db, parseOperation({ op: 'create', tool: 'x', project: 'y', body: 'persistent' }), 'alice');
+    await executeOperation(store.db, parseOperation({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'x', project: 'y', body: 'persistent' }), 'alice');
   } finally { store.close(); }
   initializeStore(location);
   const reopened = openStore(location);
@@ -92,7 +92,7 @@ test('a failed batch rolls back its earlier successful statement', async (t) => 
   initializeStore(location);
   const store = openStore(location);
   try {
-    const created = await executeOperation(store.db, parseOperation({ op: 'create', tool: 'x', project: 'y', body: 'original' }), 'alice');
+    const created = await executeOperation(store.db, parseOperation({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'x', project: 'y', body: 'original' }), 'alice');
     assert.ok('issue' in created);
     await assert.rejects(store.db.batch([
       { sql: 'UPDATE issues SET body = ? WHERE id = ?', params: ['partial', created.issue.id] },
@@ -108,7 +108,7 @@ test('newer schema is rejected without rewriting its database', (t) => {
   const location = fixture(t);
   const { database_path } = initializeStore(location);
   const database = new DatabaseSync(database_path);
-  database.exec('UPDATE schema_version SET version = 2');
+  database.exec('UPDATE schema_version SET version = 999');
   database.close();
   const before = readFileSync(database_path);
   for (const operation of [initializeStore, openStore]) {

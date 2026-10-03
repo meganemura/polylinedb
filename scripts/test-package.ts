@@ -27,7 +27,7 @@ try {
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
   const expectedFiles = ['LICENSE', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
-    'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'docs/operations.md', 'docs/architecture.md',
+    'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'dist/issue-id.js', 'docs/operations.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/adr/0001-field-versions.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
@@ -48,8 +48,13 @@ try {
   assert.match(pd(['--help']), /Usage: pd /);
   assert.match(pd(['--help']), /polyline database/);
   assert.equal(JSON.parse(pd(['init'])).database_path, join(realpathSync(directory), 'polylinedb.sqlite'));
-  const { issue } = JSON.parse(pd(['create', '--tool', 'package-test', '--project', 'release', '--body', 'Installed CLI']));
+  const requestId = '5a64d5b0-b93a-4d9b-8b55-287edaf68390';
+  const creation = ['create', '--tool', 'package-test', '--project', 'release', '--body', 'Installed CLI', '--request-id', requestId];
+  const { issue } = JSON.parse(pd(creation));
   assert.equal(issue.body, 'Installed CLI');
+  assert.equal(issue.id, 'pd-1');
+  assert.equal(JSON.parse(pd(creation)).issue.id, issue.id);
+  assert.equal(JSON.parse(pd(['show', '1'])).issue.id, issue.id);
   assert.equal(JSON.parse(pd(['show', issue.id])).issue.created_by, 'test:package');
   assert.equal(JSON.parse(pd(['update', issue.id, '--status', 'in_progress', '--expect', 'status=1'])).issue.versions.status, 2);
   pd(['close', issue.id, '--expected', '1'], 4);

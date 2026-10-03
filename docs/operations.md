@@ -10,7 +10,7 @@ The local `init` command creates storage; cloud schema installation is an operat
 
 | Field | Meaning and constraints | Create default |
 | --- | --- | --- |
-| `id` | Generated UUID; a child appends a dot and UUID, up to eight segments | Generated |
+| `id` | Prefix plus positive integer; children append numeric suffixes, up to eight numeric segments | Generated |
 | `tool` | Tool name, nonempty, at most 256 UTF-8 bytes | Required |
 | `project` | Project name, nonempty, at most 256 UTF-8 bytes | Required |
 | `body` | Issue content, nonempty, at most 65536 UTF-8 bytes | Required |
@@ -29,7 +29,7 @@ Timestamps use UTC ISO strings.
 
 | Operation | Arguments besides `op` | Result |
 | --- | --- | --- |
-| `create` | Required `tool`, `project`, `body`; optional mutable fields and `parent` | `{ "issue": ... }` |
+| `create` | Required `tool`, `project`, `body`, `prefix`, `request_id`; optional mutable fields and `parent` | `{ "issue": ... }` |
 | `show` | `id` | `{ "issue": ..., "comments": [...] }` |
 | `list` | Optional filters | `{ "issues": [...], "next_cursor": ... }` |
 | `search` | `query`, optional filters | Same as list |
@@ -44,11 +44,28 @@ The cloud actor comes from authentication, so requests cannot supply an actor.
 `parent` must name an existing epic.
 The parent relationship is immutable; an epic with children cannot change to another type.
 
+`prefix` has 1 through 16 lowercase ASCII letters or digits and starts with a letter.
+Each store maintains a separate root counter per prefix and a child counter per parent ID.
+Children must use their parent's prefix.
+Numeric segments range from 1 through JavaScript's maximum safe integer.
+Allocation at that limit fails with `counter_exhausted` and changes nothing.
+Numbers are not padded or reused; `pd-99` is followed by `pd-100`.
+The prefix is independent of the mutable project field.
+
+`request_id` is a lowercase UUID required by HTTP and MCP create requests.
+The CLI accepts `--request-id` and generates one when omitted.
+To retry across CLI invocations, specify the same request ID explicitly.
+The same request ID, normalized creation arguments, and actor return the current state of the original issue.
+A different payload or actor produces `request_conflict` with status 409.
+Replay does not increment counters, update the issue, or reset later edits.
+Request IDs are scoped to the store and retained with its data.
+
 Filters are `tool`, `project`, `status`, `type`, `priority`, and one `label`.
 All supplied filters must match.
 `limit` defaults to 50 and accepts 1 through 100.
 Pass `next_cursor` as `after` to read another page; `null` means the page ends the current results.
-Results are ordered by ID, and pagination does not preserve a snapshot across requests.
+Results are ordered by prefix, then by the numeric segments of each ID; a parent precedes its children.
+Pagination does not preserve a snapshot across requests.
 Search matches literal, case-sensitive substrings in bodies or comments.
 `show` returns all comments, ordered by timestamp and ID.
 
@@ -60,7 +77,7 @@ Supply the observed version for each changed field:
 ```json
 {
   "op": "update",
-  "id": "8bc5ba70-78a5-4d27-b937-ef4d8e84186c",
+  "id": "pd-42",
   "changes": [
     { "field": "status", "value": "in_progress", "expected": 1 },
     { "field": "labels", "value": ["reproduced"], "expected": 1 }
@@ -80,8 +97,8 @@ If another writer changed a requested field, the whole update fails with HTTP 40
 An edit to an unrelated field does not invalidate the supplied versions.
 
 Comments append independently and leave issue versions and update metadata unchanged.
-Create and comment requests have no idempotency key.
-After an uncertain transport result, inspect the store before deciding whether to repeat a mutation.
+Comment requests have no idempotency key.
+After an uncertain comment result, inspect the store before deciding whether to repeat it.
 
 ## Transport errors
 
@@ -100,7 +117,7 @@ Exit codes are 0 for success, 2 for invalid input, 3 for missing issues, 4 for c
 
 ## Local repository defaults
 
-Run `pd init --stealth --tool NAME --project NAME --actor IDENTITY` inside a Git working tree.
+Run `pd init --stealth --prefix NAME --tool NAME --project NAME --actor IDENTITY` inside a Git working tree.
 The command creates a dedicated external store and saves defaults in the Git common directory as `polylinedb.json`.
 Use `--data-dir ABSOLUTE_PATH` to select an external store explicitly.
 The configuration has mode 0600 and is shared by linked worktrees.
@@ -110,25 +127,32 @@ It does not change tracked files or Git ignore rules.
 Explicit flags override environment variables, which override repository defaults.
 `POLYLINEDB_DATA_DIR` and `POLYLINEDB_ACTOR` are the supported environment variables.
 Repository defaults supply `tool` and `project` for create, but do not filter list or search.
+They also supply the prefix, which defaults to `pd` when unconfigured.
+`--prefix` overrides that default for an invocation.
+Numeric issue arguments, `--parent`, and `--after` use the selected prefix: `42.1` means `pd-42.1` with prefix `pd`.
+HTTP and MCP require complete issue IDs.
 Run `pd context` to inspect the selected paths and defaults.
 Keep each repository in a dedicated store when list should show only that repository's issues.
 
 ## Local snapshots
 
-`pd export --file snapshot.json` exports all issues, comments, field versions, and audit metadata.
+`pd export --file snapshot.json` exports issues, comments, field versions, audit metadata, counters, and creation requests.
 The output file has mode 0600; an existing file causes an error.
 Omit `--file` or use `--file -` to write JSON to standard output.
 
 Initialize the destination, then run `pd --actor IDENTITY import --file snapshot.json` to restore a snapshot.
 Import accepts at most 16 MiB of UTF-8 JSON and validates the complete snapshot before a write.
-The snapshot has format `polylinedb.snapshot`, version `1`, and arrays named `issues` and `comments`.
+The snapshot has format `polylinedb.snapshot`, version `2`, and arrays named `issues`, `comments`, `counters`, and `requests`.
 Every child must include its epic parent, and every comment must name an included issue.
 Import preserves IDs, versions, timestamps, and actors in the snapshot.
 The command actor does not replace historical actors.
 
 Import into an empty store runs in one transaction and checks the restored records before commit.
 Repeating an identical snapshot returns `already_present` without changing records.
-A different snapshot causes a conflict when the destination already contains issues or comments.
+A different snapshot causes a conflict when the destination contains issue, comment, counter, or request records.
 Export uses one read transaction for a consistent snapshot.
 These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
+
+Schema, snapshot, and repository configuration versions are now 2.
+Version 1 UUID stores and configurations require an explicit rebuild; opening them does not silently migrate or overwrite data.

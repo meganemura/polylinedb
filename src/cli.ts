@@ -9,9 +9,10 @@ import { PolylinedbError, executeOperation, parseOperation } from './issues.ts';
 import { initializeStore, openStore } from './sqlite.ts';
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults } from './local-config.ts';
 import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
+import { parsePrefix, parseIssueId, parseRequestId } from './issue-id.ts';
 
 const help = `polylinedb (polyline database) stores personal issues in one local SQLite database.
-Usage: pd [--data-dir ABSOLUTE_PATH] [--actor IDENTITY] COMMAND [OPTIONS]
+Usage: pd [--data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--prefix PREFIX] COMMAND [OPTIONS]
 All commands return JSON. --json is accepted anywhere. Help returns text.
 Use -- before a positional query that starts with a dash.
 An option consumes its value, so --body --help stores the text --help.
@@ -21,7 +22,7 @@ Storage must be outside the working directory and its Git repository.
 
 Commands:
   init
-  init --stealth --tool NAME --project NAME --actor IDENTITY
+  init --stealth --tool NAME --project NAME --actor IDENTITY [--prefix PREFIX]
                                 Store defaults in Git metadata; data stays outside the repository.
   context                       Show the selected store and local defaults.
   export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
@@ -29,7 +30,7 @@ Commands:
   actor                         Show the explicit actor, or local:reader.
   create --tool NAME --project NAME --body TEXT [--parent ID]
          [--type bug|task|epic|feature|chore] [--status STATUS]
-         [--priority 0..4] [--label NAME ...]
+         [--priority 0..4] [--label NAME ...] [--request-id UUID]
   show ID
   list [FILTERS]
   search QUERY [FILTERS]
@@ -45,6 +46,10 @@ FILTERS: --tool, --project, --status, --type, --priority, --label, --after, --li
 create, comment and update accept --body-file PATH instead of --body.
 Use --body-file - to read standard input. Mutations require an explicit actor.
 Each update field requires its own expected version from show. Conflicts require rereading.
+The prefix defaults to repository settings, otherwise pd. It matches [a-z][a-z0-9]{0,15}.
+Issue numbers expand with the selected prefix: show 42 reads pd-42, and show 42.1 reads pd-42.1.
+Create retries require the same --request-id and identical input. Omission generates a new UUID.
+Automatically generated request IDs are not reused by a later CLI invocation.
 
 Examples:
   pd --actor local:agent create --tool codex --project demo --body 'Fix parser'
@@ -53,10 +58,10 @@ Examples:
   pd --actor local:agent close ISSUE_ID --expected 1
 `;
 const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'];
-const globals = ['data-dir', 'actor'];
+const globals = ['data-dir', 'actor', 'prefix'];
 const commandFlags: Record<string, readonly string[]> = {
   init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
-  create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent'],
+  create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
   comment: ['body', 'body-file'],
   update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect'],
   close: ['expected'], reopen: ['expected'],
@@ -64,6 +69,10 @@ const commandFlags: Record<string, readonly string[]> = {
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
 function invalid(message: string): never { throw new PolylinedbError('invalid_input', message, 400); }
+function parseArgument<T>(parser: (value: unknown) => T, value: unknown): T {
+  try { return parser(value); }
+  catch (error) { return invalid(error instanceof Error ? error.message : 'Invalid argument'); }
+}
 function integer(value: string): number {
   if (!/^(0|[1-9][0-9]*)$/.test(value)) invalid('Expected an unsigned integer');
   const number = Number(value);
@@ -117,6 +126,7 @@ async function main(): Promise<void> {
   if (operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   const defaults = readRepositoryDefaults();
+  const prefix = parseArgument(parsePrefix, one('prefix') ?? defaults?.prefix ?? 'pd');
   const actor = one('actor') ?? process.env.POLYLINEDB_ACTOR ?? defaults?.actor ?? 'local:reader';
   if (!actor.trim() || /\p{Cc}/u.test(actor) || Buffer.byteLength(actor) > 256) invalid('Invalid actor identity');
   if (['create', 'comment', 'update', 'close', 'reopen', 'import'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
@@ -130,7 +140,7 @@ async function main(): Promise<void> {
   const project = one('project') ?? defaults?.project;
   if (command === 'context') {
     process.stdout.write(JSON.stringify({ data_dir: directory, database_path: join(directory, 'polylinedb.sqlite'),
-      actor, tool, project, config_path: repositoryConfigPath() ?? null }) + '\n');
+      actor, tool, project, prefix, config_path: repositoryConfigPath() ?? null }) + '\n');
     return;
   }
   if (command === 'init') {
@@ -139,15 +149,15 @@ async function main(): Promise<void> {
       if (!repositoryConfigPath()) invalid('Stealth initialization requires a Git working tree');
       if (!tool || !project) invalid('Stealth initialization requires --tool and --project');
       if (one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('Stealth initialization requires an actor');
-      parseOperation({ op: 'create', tool, project, body: 'Validate repository defaults' });
-      directory = validateRepositoryDefaults({ version: 1, data_dir: directory, tool, project, actor }).data_dir;
-      if (defaults && (defaults.data_dir !== directory || defaults.tool !== tool || defaults.project !== project || defaults.actor !== actor)) {
+      parseOperation({ op: 'create', tool, project, body: 'Validate repository defaults', prefix, request_id: randomUUID() });
+      directory = validateRepositoryDefaults({ version: 2, data_dir: directory, tool, project, actor, prefix }).data_dir;
+      if (defaults && (defaults.data_dir !== directory || defaults.tool !== tool || defaults.project !== project || defaults.actor !== actor || defaults.prefix !== prefix)) {
         throw new PolylinedbError('local_defaults_conflict', 'Repository defaults already select a different context', 409);
       }
     }
     const initialized = initializeStore({ directory });
     const config_path = stealth && tool && project
-      ? writeRepositoryDefaults({ version: 1, data_dir: dirname(initialized.database_path), tool, project, actor })
+      ? writeRepositoryDefaults({ version: 2, data_dir: dirname(initialized.database_path), tool, project, actor, prefix })
       : undefined;
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
@@ -180,15 +190,22 @@ async function main(): Promise<void> {
     return;
   }
   const raw: Record<string, unknown> = { op: command };
-  if (needsOperand) raw[command === 'search' ? 'query' : 'id'] = operands[0];
+  const expandedId = (value: string) => parseArgument(parseIssueId, /^[0-9]+(?:\.[0-9]+)*$/.test(value) ? `${prefix}-${value}` : value);
+  if (needsOperand) raw[command === 'search' ? 'query' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');
   const bodyFile = one('body-file');
   let body = one('body');
   if (bodyFile !== undefined) {
     body = await readInput(bodyFile, 65536);
   }
-  for (const name of ['tool', 'project', 'status', 'type', 'parent', 'after']) if (one(name) !== undefined) raw[name] = one(name);
+  for (const name of ['tool', 'project', 'status', 'type']) if (one(name) !== undefined) raw[name] = one(name);
+  for (const name of ['parent', 'after']) {
+    const value = one(name);
+    if (value !== undefined) raw[name] = expandedId(value);
+  }
   if (command === 'create') {
+    raw.prefix = prefix;
+    raw.request_id = parseArgument(parseRequestId, one('request-id') ?? randomUUID());
     if (raw.tool === undefined && tool !== undefined) raw.tool = tool;
     if (raw.project === undefined && project !== undefined) raw.project = project;
   }

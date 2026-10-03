@@ -4,13 +4,15 @@ import { constants, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, openSy
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { PolylinedbError } from './issues.ts';
+import { parsePrefix } from './issue-id.ts';
 
 export type RepositoryDefaults = {
-  version: 1;
+  version: 2;
   data_dir: string;
   tool: string;
   project: string;
   actor: string;
+  prefix: string;
 };
 
 type Repository = { root: string; common: string };
@@ -65,9 +67,13 @@ function plannedDirectory(path: string): string {
 function parseDefaults(value: unknown, found: Repository, allowMissing = false): RepositoryDefaults {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalid('Repository defaults must be an object');
   const input = value as Record<string, unknown>;
-  const allowed = ['version', 'data_dir', 'tool', 'project', 'actor'];
+  if (input.version === 1) return invalid('Repository defaults version 1 is unsupported; recreate the local configuration with a prefix');
+  const allowed = ['version', 'data_dir', 'tool', 'project', 'actor', 'prefix'];
   if (Object.keys(input).length !== allowed.length || allowed.some(key => !Object.hasOwn(input, key))
-    || Object.keys(input).some(key => !allowed.includes(key)) || input.version !== 1) return invalid('Repository defaults have an unsupported shape or version');
+    || Object.keys(input).some(key => !allowed.includes(key)) || input.version !== 2) return invalid('Repository defaults have an unsupported shape or version');
+  let prefix: string;
+  try { prefix = parsePrefix(input.prefix); }
+  catch { return invalid('Repository default prefix must match [a-z][a-z0-9]{0,15}'); }
   const name = (value: unknown, field: string): string => {
     if (typeof value !== 'string' || value.trim().length === 0 || /\p{Cc}/u.test(value)
       || Buffer.byteLength(value) > 256) return invalid(`Repository default ${field} is invalid`);
@@ -88,7 +94,7 @@ function parseDefaults(value: unknown, found: Repository, allowMissing = false):
     catch (error) { if (!missing(error)) throw error; }
     if (dirname(current) === current) break;
   }
-  return { version: 1, data_dir: directory, tool: name(input.tool, 'tool'), project: name(input.project, 'project'), actor: name(input.actor, 'actor') };
+  return { version: 2, data_dir: directory, tool: name(input.tool, 'tool'), project: name(input.project, 'project'), actor: name(input.actor, 'actor'), prefix };
 }
 
 function readDefaults(path: string, found: Repository): RepositoryDefaults | undefined {

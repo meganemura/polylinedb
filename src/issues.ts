@@ -1,4 +1,5 @@
 // Owns issue operations and atomic SQL; transports and connection lifetimes stay outside.
+import { parseIssueId, issueSortKey, parsePrefix, parseRequestId } from './issue-id.ts';
 import { fields, issueTypes, statuses } from './schema.ts';
 
 export type Status = typeof statuses[number];
@@ -12,7 +13,7 @@ export type Change = { [K in Field]: { field: K; value: Values[K]; expected: num
 type Filters = { tool?: string; project?: string; status?: Status; type?: IssueType;
   priority?: number; label?: string; after?: string; limit: number };
 export type Operation =
-  | ({ op: 'create'; parent?: string } & Values)
+  | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
   | { op: 'show'; id: string }
   | ({ op: 'list' } & Filters)
   | ({ op: 'search'; query: string } & Filters)
@@ -74,14 +75,10 @@ function enumeration<T extends string>(value: unknown, label: string, allowed: r
   if (match === undefined) return invalid(`${label} must be one of ${allowed.join(', ')}`);
   return match;
 }
-function id(value: unknown, label = 'id'): string {
-  const result = text(value, label, 300);
-  const parts = result.split('.');
-  if (parts.length > 8 || parts.some((part) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(part))) {
-    return invalid(`${label} must contain one through eight UUID segments`);
-  }
-  return result;
+function validated(parser: (value: unknown) => string, value: unknown): string {
+  try { return parser(value); } catch (error) { return invalid(error instanceof Error ? error.message : 'Invalid identifier'); }
 }
+function id(value: unknown, _label = 'id'): string { return validated(parseIssueId, value); }
 function labels(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > 64) return invalid('labels must be an array of at most 64 names');
   return [...new Set(value.map((label) => name(label, 'label')))].sort();
@@ -90,7 +87,7 @@ function labels(value: unknown): string[] {
 const nameSchema = { type: 'string', minLength: 1, maxLength: 256, description: 'At most 256 UTF-8 bytes, without control characters.' };
 const bodySchema = { type: 'string', minLength: 1, maxLength: 65536, description: 'At most 65536 UTF-8 bytes.' };
 const versionSchema = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
-const idSchema = { type: 'string', pattern: '^[0-9a-f-]+(\\.[0-9a-f-]+){0,7}$' };
+const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const fieldRegistry = {
   tool: { column: 'tool', parse: (value: unknown) => name(value, 'tool'), schema: nameSchema },
   project: { column: 'project', parse: (value: unknown) => name(value, 'project'), schema: nameSchema },
@@ -106,7 +103,7 @@ const filterSchemas = { tool: nameSchema, project: nameSchema, status: fieldRegi
   type: fieldRegistry.type.schema, priority: fieldRegistry.priority.schema, label: nameSchema,
   after: idSchema, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } };
 export const operationSchemas = {
-  create: objectSchema({ ...valueSchemas, parent: idSchema }, ['tool', 'project', 'body']),
+  create: objectSchema({ ...valueSchemas, parent: idSchema, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
   show: objectSchema({ id: idSchema }, ['id']),
   list: objectSchema(filterSchemas),
   search: objectSchema({ ...filterSchemas, query: bodySchema }, ['query']),
@@ -161,8 +158,11 @@ export function parseOperation(value: unknown): Operation {
     case 'close': case 'reopen': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER) };
     case 'create': {
       const parent = input.parent === undefined ? undefined : id(input.parent, 'parent');
-      if (parent?.split('.').length === 8) invalid('An issue cannot have more than eight UUID segments');
-      return { op, ...(parent === undefined ? {} : { parent }), tool: name(input.tool, 'tool'), project: name(input.project, 'project'),
+      if (parent?.split('.').length === 8) invalid('An issue cannot have more than eight number segments');
+      const prefix = validated(parsePrefix, input.prefix);
+      const request_id = validated(parseRequestId, input.request_id);
+      if (parent && !parent.startsWith(`${prefix}-`)) invalid('Parent and child must have the same prefix');
+      return { op, prefix, request_id, ...(parent === undefined ? {} : { parent }), tool: name(input.tool, 'tool'), project: name(input.project, 'project'),
         body: text(input.body, 'body'), status: input.status === undefined ? 'open' : fieldRegistry.status.parse(input.status),
         type: input.type === undefined ? 'task' : fieldRegistry.type.parse(input.type),
         priority: input.priority === undefined ? 2 : fieldRegistry.priority.parse(input.priority),
@@ -193,7 +193,7 @@ export function issueRow(row: Record<string, unknown>): Issue {
   }
 }
 export function commentRow(row: Record<string, unknown>): Comment {
-  try { return { id: id(row.id), issue_id: id(row.issue_id), body: text(row.body, 'body'),
+  try { return { id: validated(parseRequestId, row.id), issue_id: id(row.issue_id), body: text(row.body, 'body'),
     created_at: text(row.created_at, 'created_at'), created_by: name(row.created_by, 'created_by') }; }
   catch { throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500); }
 }
@@ -245,18 +245,35 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
   if (!['show', 'list', 'search'].includes(operation.op)) name(actor, 'actor');
   switch (operation.op) {
     case 'create': {
-      const issueId = (operation.parent ? `${operation.parent}.` : '') + crypto.randomUUID();
+      const scope = operation.parent ?? operation.prefix;
+      const base = operation.parent ? `${operation.parent}.` : `${operation.prefix}-`;
+      const sortBase = operation.parent ? `${issueSortKey(operation.parent)}.` : `${operation.prefix}-`;
+      const payload = JSON.stringify(parseOperation(operation));
       const now = new Date().toISOString();
-      const values = [issueId, operation.parent ?? null, operation.tool, operation.project, operation.body, operation.status, operation.type,
-        operation.priority, JSON.stringify(operation.labels), now, actor, now, actor];
-      const source = operation.parent ? 'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM issues WHERE id = ? AND type = \'epic\'' : 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      const statements: SqlStatement[] = [{ sql: `INSERT INTO issues(id, parent_id, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by) ${source} RETURNING *`,
-        params: operation.parent ? [...values, operation.parent] : values }];
-      if (operation.parent) statements.push(observation(operation.parent));
-      const result = await db.batch(statements);
-      const row = rowsAt(result, 0)[0];
+      const eligible = `NOT EXISTS(SELECT 1 FROM requests WHERE request_id = ?)${operation.parent ? " AND EXISTS(SELECT 1 FROM issues WHERE id = ? AND type = 'epic')" : ''}`;
+      const gate = operation.parent ? [operation.request_id, operation.parent] : [operation.request_id];
+      const result = await db.batch([
+        { sql: `INSERT INTO counters(scope, last_number) SELECT ?, 1 WHERE ${eligible}
+          ON CONFLICT(scope) DO UPDATE SET last_number = last_number + 1`, params: [scope, ...gate] },
+        { sql: `INSERT INTO issues(id, parent_id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+          SELECT ? || last_number, ?, ? || printf('%016d', last_number), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          FROM counters WHERE scope = ? AND ${eligible}`,
+          params: [base, operation.parent ?? null, sortBase, operation.tool, operation.project, operation.body, operation.status, operation.type, operation.priority, JSON.stringify(operation.labels), now, actor, now, actor, scope, ...gate] },
+        { sql: `INSERT INTO requests(request_id, actor, payload, issue_id)
+          SELECT ?, ?, ?, ? || last_number FROM counters WHERE scope = ? AND ${eligible}`,
+          params: [operation.request_id, actor, payload, base, scope, ...gate] },
+        { sql: 'SELECT * FROM requests WHERE request_id = ?', params: [operation.request_id] },
+        { sql: 'SELECT issues.* FROM issues JOIN requests ON requests.issue_id = issues.id WHERE requests.request_id = ?', params: [operation.request_id] },
+        ...(operation.parent ? [observation(operation.parent)] : []),
+      ]).catch((error: unknown) => {
+        if (error instanceof Error && error.message.includes('counter_not_exhausted')) throw new PolylinedbError('counter_exhausted', 'The issue counter has reached its limit', 409);
+        throw error;
+      });
+      const request = rowsAt(result, 3)[0];
+      if (request && (request.actor !== actor || request.payload !== payload)) throw new PolylinedbError('request_conflict', 'The request ID belongs to a different actor or payload', 409);
+      const row = rowsAt(result, 4)[0];
       if (row) return { issue: issueRow(row) };
-      if (operation.parent && !rowsAt(result, 1)[0]) return notFound(operation.parent);
+      if (operation.parent && !rowsAt(result, 5)[0]) return notFound(operation.parent);
       throw new PolylinedbError('invalid_input', 'The parent must be an epic', 400);
     }
     case 'show': {
@@ -282,10 +299,10 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
         if (operation[field] !== undefined) { conditions.push(`${field} = ?`); params.push(operation[field]); }
       }
       if (operation.label !== undefined) { conditions.push('EXISTS(SELECT 1 FROM json_each(issues.labels_json) WHERE value = ?)'); params.push(operation.label); }
-      if (operation.after !== undefined) { conditions.push('issues.id > ?'); params.push(operation.after); }
+      if (operation.after !== undefined) { conditions.push('issues.sort_key > ?'); params.push(issueSortKey(operation.after)); }
       if (operation.op === 'search') { conditions.push('(instr(issues.body, ?) > 0 OR EXISTS(SELECT 1 FROM comments WHERE issue_id = issues.id AND instr(body, ?) > 0))'); params.push(operation.query, operation.query); }
       params.push(operation.limit + 1);
-      const result = await db.batch([{ sql: `SELECT issues.* FROM issues ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY issues.id LIMIT ?`, params }]);
+      const result = await db.batch([{ sql: `SELECT issues.* FROM issues ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY issues.sort_key LIMIT ?`, params }]);
       const all = rowsAt(result, 0).map(issueRow);
       const issues = all.slice(0, operation.limit);
       return { issues, next_cursor: all.length > operation.limit ? issues[issues.length - 1]?.id ?? null : null };

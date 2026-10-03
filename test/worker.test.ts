@@ -54,7 +54,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       'cf-access-jwt-assertion': token, ...extra }, body: JSON.stringify(body),
   }), env, authenticate);
   try {
-    const create = await request('/v1/operations', { op: 'create', tool: 'compiler', project: 'parser', body: 'empty input' });
+    const create = await request('/v1/operations', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'empty input' });
     assert.equal(create.status, 200);
     const { issue } = await create.json();
     assert.equal(issue.created_by, 'access:owner');
@@ -81,7 +81,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const shown = await show.json();
     assert.equal(shown.comments[0].body, 'confirmed');
     assert.equal(shown.issue.versions.status, 2);
-    const spoof = await request('/v1/operations', { op: 'create', tool: 'x', project: 'x', body: 'x', actor: 'admin' });
+    const spoof = await request('/v1/operations', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'x', project: 'x', body: 'x', actor: 'admin' });
     assert.equal(spoof.status, 400);
   } finally { sqlite.close(); }
 });

@@ -21,7 +21,7 @@ function fixture(t: test.TestContext) {
 }
 const execute = (db: SqlExecutor, operation: unknown, actor = 'tester') => executeOperation(db, parseOperation(operation), actor);
 async function create(db: SqlExecutor, extra: Record<string, unknown> = {}): Promise<Issue> {
-  const result = await execute(db, { op: 'create', tool: 'compiler', project: 'parser', body: 'Empty input fails', ...extra });
+  const result = await execute(db, { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'Empty input fails', ...extra });
   assert.ok('issue' in result);
   return result.issue;
 }
@@ -148,9 +148,9 @@ test('invalid input rejects unknown fields, invalid versions and duplicate edits
   const issue = await create(first);
   for (const operation of [
     { op: 'show', id: issue.id, surprise: true },
-    { op: 'create', tool: 'x', project: 'y', body: 'z', id: issue.id },
-    { op: 'create', tool: 'x\ny', project: 'y', body: 'z' },
-    { op: 'create', tool: 'x', project: 'y', body: 'あ'.repeat(22000) },
+    { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'x', project: 'y', body: 'z', id: issue.id },
+    { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'x\ny', project: 'y', body: 'z' },
+    { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'x', project: 'y', body: 'あ'.repeat(22000) },
     { op: 'update', id: issue.id, changes: [] },
     { op: 'update', id: issue.id, changes: [{ field: 'title', value: 'x', expected: 1 }] },
     { op: 'update', id: issue.id, changes: [{ field: 'body', value: 'x', expected: 0 }] },
@@ -159,7 +159,7 @@ test('invalid input rejects unknown fields, invalid versions and duplicate edits
     { op: 'show', id: 'not-an-id' },
   ]) assert.throws(() => parseOperation(operation), errorCode('invalid_input'));
   await assert.rejects(execute(first, { op: 'comment', id: issue.id, body: 'valid' }, 'bad\nactor'), errorCode('invalid_input'));
-  await assert.rejects(execute(first, { op: 'show', id: crypto.randomUUID() }), errorCode('not_found'));
+  await assert.rejects(execute(first, { op: 'show', id: 'pd-999' }), errorCode('not_found'));
   assert.deepEqual(await execute(first, { op: 'actor' }, 'local:alice'), { actor: 'local:alice' });
 });
 
@@ -229,7 +229,7 @@ test('parallel child creation and epic demotion preserve containment', async (t)
   const { first, directory, cwd } = fixture(t);
   const epic = await create(first, { type: 'epic' });
   const results = await parallel(directory, cwd, [
-    { op: 'create', parent: epic.id, tool: 'compiler', project: 'parser', body: 'child' },
+    { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), parent: epic.id, tool: 'compiler', project: 'parser', body: 'child' },
     { op: 'update', id: epic.id, changes: [{ field: 'type', value: 'task', expected: 1 }] },
   ]);
   assert.equal(results.filter((result) => result.result).length, 1);
@@ -245,4 +245,60 @@ test('parallel child creation and epic demotion preserve containment', async (t)
     assert.equal(children.length, 0);
     assert.equal(results[0]?.error, 'invalid_input');
   }
+});
+
+test('create replay returns current issue and rejects changed payload or actor without allocating', async t => {
+  const { first } = fixture(t);
+  const request = { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'original', labels: ['b', 'a', 'b'] };
+  const created = await execute(first, request);
+  assert.ok('issue' in created); assert.equal(created.issue.id, 'pd-1');
+  await execute(first, { op: 'update', id: 'pd-1', changes: [{ field: 'project', value: 'moved', expected: 1 }] });
+  const replay = await execute(first, { ...request, labels: ['a', 'b'] });
+  assert.ok('issue' in replay); assert.equal(replay.issue.project, 'moved');
+  assert.equal(replay.issue.versions.project, 2);
+  await assert.rejects(execute(first, { ...request, body: 'different' }), { code: 'request_conflict', status: 409 });
+  await assert.rejects(execute(first, request, 'other'), { code: 'request_conflict', status: 409 });
+  assert.equal((await create(first)).id, 'pd-2');
+});
+
+test('parallel creates allocate distinct numbers and concurrent duplicate requests share one issue', async t => {
+  const { first, directory, cwd } = fixture(t);
+  const request = { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 't', project: 'p', body: 'same' };
+  const duplicate = await parallel(directory, cwd, [request, request, request]);
+  for (const outcome of duplicate) assert.deepEqual(outcome.result, duplicate[0]?.result);
+  assert.equal(duplicate.filter(outcome => outcome.error).length, 0);
+  const distinct = await parallel(directory, cwd, Array.from({ length: 4 }, () => ({ ...request, request_id: crypto.randomUUID() })));
+  assert.equal(distinct.filter(outcome => outcome.error).length, 0);
+  const listed = await execute(first, { op: 'list' });
+  assert.ok('issues' in listed); assert.deepEqual(listed.issues.map(issue => issue.id), ['pd-1', 'pd-2', 'pd-3', 'pd-4', 'pd-5']);
+  const conflicting = await parallel(directory, cwd, [{ ...request, request_id: crypto.randomUUID(), body: 'one' }].flatMap(item => [item, { ...item, body: 'two' }]));
+  assert.equal(conflicting.filter(outcome => outcome.result).length, 1);
+  assert.deepEqual(conflicting.filter(outcome => outcome.error).map(outcome => outcome.error), ['request_conflict']);
+});
+
+test('root and child counters cross 99 and natural pagination visits every issue once', async t => {
+  const { first } = fixture(t);
+  const parent = await create(first, { type: 'epic' });
+  for (let number = 1; number <= 101; number++) assert.equal((await create(first, { parent: parent.id })).id, `pd-1.${number}`);
+  for (let number = 2; number <= 101; number++) assert.equal((await create(first)).id, `pd-${number}`);
+  const all: string[] = []; let after: string | undefined;
+  do {
+    const page = await execute(first, { op: 'list', limit: 7, ...(after ? { after } : {}) });
+    assert.ok('issues' in page); all.push(...page.issues.map(issue => issue.id)); after = page.next_cursor ?? undefined;
+  } while (after);
+  assert.deepEqual(all, ['pd-1', ...Array.from({ length: 101 }, (_, i) => `pd-1.${i + 1}`), ...Array.from({ length: 100 }, (_, i) => `pd-${i + 2}`)]);
+  assert.equal((await create(first, { prefix: 'other' })).id, 'other-1');
+  await assert.rejects(create(first, { parent: parent.id, prefix: 'other' }), { code: 'invalid_input' });
+});
+
+test('counter exhaustion and failed create leave counters, requests and issues unchanged', async t => {
+  const { first } = fixture(t);
+  await first.batch([{ sql: 'INSERT INTO counters(scope,last_number) VALUES (?,?)', params: ['pd', Number.MAX_SAFE_INTEGER] }]);
+  await assert.rejects(create(first), { code: 'counter_exhausted', status: 409 });
+  const rows = await first.batch([{ sql: 'SELECT * FROM requests', params: [] }, { sql: 'SELECT last_number FROM counters WHERE scope = ?', params: ['pd'] }]);
+  assert.deepEqual(rows[0]?.rows, []); assert.equal(rows[1]?.rows[0]?.last_number, Number.MAX_SAFE_INTEGER);
+  await first.batch([{ sql: "CREATE TRIGGER refuse_issue BEFORE INSERT ON issues BEGIN SELECT RAISE(ABORT, 'test refusal'); END", params: [] }]);
+  await assert.rejects(create(first, { prefix: 'fresh' }), /test refusal/);
+  const after = await first.batch([{ sql: 'SELECT * FROM counters WHERE scope = ?', params: ['fresh'] }]);
+  assert.deepEqual(after[0]?.rows, []);
 });

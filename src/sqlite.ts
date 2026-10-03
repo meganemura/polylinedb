@@ -8,6 +8,7 @@ import type { SqlExecutor, SqlStatement } from './issues.ts';
 import { fields, SCHEMA_SQL, SCHEMA_VERSION } from './schema.ts';
 import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
 import type { Snapshot, SnapshotImport } from './snapshot.ts';
+import { issueSortKey } from './issue-id.ts';
 
 export type LocalStore = { db: SqlExecutor; exportSnapshot(): Snapshot; importSnapshot(snapshot: Snapshot): SnapshotImport; close(): void };
 
@@ -61,7 +62,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   if (rows.length !== 1 || rows[0]?.version !== SCHEMA_VERSION) {
     throw new PolylinedbError('unsupported_schema', 'Database schema version is unsupported', 409, { supported: SCHEMA_VERSION, actual: rows.map((row) => row.version) });
   }
-  if (!tables.some((table) => table.name === 'issues') || !tables.some((table) => table.name === 'comments')) {
+  if (['issues', 'comments', 'counters', 'requests'].some(name => !tables.some(table => table.name === name))) {
     throw new PolylinedbError('invalid_store', 'Database schema is incomplete', 500);
   }
   return 'current';
@@ -114,14 +115,17 @@ export function openStore(location: StoreLocation): LocalStore {
     },
   };
   const readSnapshot = (): Snapshot => parseSnapshot({
-    format: 'polylinedb.snapshot', version: 1,
+    format: 'polylinedb.snapshot', version: 2,
     issues: database.prepare('SELECT * FROM issues').all().map(row => {
       const issue = issueRow(row);
       const split = issue.id.lastIndexOf('.');
       if (row.parent_id !== (split < 0 ? null : issue.id.slice(0, split))) throw new PolylinedbError('invalid_store', 'Stored parent does not match the issue ID', 500);
+      if (row.sort_key !== issueSortKey(issue.id)) throw new PolylinedbError('invalid_store', 'Stored ordering does not match the issue ID', 500);
       return issue;
     }),
     comments: database.prepare('SELECT * FROM comments').all().map(commentRow),
+    counters: database.prepare('SELECT scope, last_number FROM counters').all(),
+    requests: database.prepare('SELECT request_id, actor, payload, issue_id FROM requests').all(),
   });
   return {
     db,
@@ -141,16 +145,20 @@ export function openStore(location: StoreLocation): LocalStore {
           database.exec('COMMIT');
           return { result: 'already_present', ...summary };
         }
-        if (existing.issues.length || existing.comments.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
-        const columns = ['id', 'parent_id', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by'];
+        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
+        const columns = ['id', 'parent_id', 'sort_key', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by'];
         const insertIssue = database.prepare(`INSERT INTO issues (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
         const issues = [...snapshot.issues].sort((a, b) => a.id.split('.').length - b.id.split('.').length);
         for (const issue of issues) {
           const split = issue.id.lastIndexOf('.');
-          insertIssue.run(issue.id, split < 0 ? null : issue.id.slice(0, split), ...fields.map(field => field === 'labels' ? JSON.stringify(issue.labels) : issue[field]), ...fields.map(field => issue.versions[field]), issue.created_at, issue.created_by, issue.updated_at, issue.updated_by);
+          insertIssue.run(issue.id, split < 0 ? null : issue.id.slice(0, split), issueSortKey(issue.id), ...fields.map(field => field === 'labels' ? JSON.stringify(issue.labels) : issue[field]), ...fields.map(field => issue.versions[field]), issue.created_at, issue.created_by, issue.updated_at, issue.updated_by);
         }
         const insertComment = database.prepare('INSERT INTO comments (id, issue_id, body, created_at, created_by) VALUES (?, ?, ?, ?, ?)');
         for (const comment of snapshot.comments) insertComment.run(comment.id, comment.issue_id, comment.body, comment.created_at, comment.created_by);
+        const insertCounter = database.prepare('INSERT INTO counters(scope, last_number) VALUES (?, ?)');
+        for (const counter of snapshot.counters) insertCounter.run(counter.scope, counter.last_number);
+        const insertRequest = database.prepare('INSERT INTO requests(request_id, actor, payload, issue_id) VALUES (?, ?, ?, ?)');
+        for (const request of snapshot.requests) insertRequest.run(request.request_id, request.actor, request.payload, request.issue_id);
         if (canonicalSnapshot(readSnapshot()) !== canonical) throw new PolylinedbError('invalid_store', 'Restored snapshot does not match the input', 500);
         database.exec('COMMIT');
         return { result: 'imported', ...summary };

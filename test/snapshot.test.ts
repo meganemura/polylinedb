@@ -7,12 +7,13 @@ import { join } from 'node:path';
 import { initializeStore, openStore } from '../src/sqlite.ts';
 import { canonicalSnapshot, parseSnapshot } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
+import { executeOperation, parseOperation } from '../src/issues.ts';
 
-const parent = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const child = `${parent}.bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb`;
+const parent = 'pd-9';
+const child = `${parent}.99`;
 function fixture(): Snapshot {
   const issue = { id: parent, tool: 'tool', project: 'project', body: 'original body', status: 'closed', type: 'epic', priority: 2, labels: ['z', 'a'], versions: { tool: 1, project: 2, body: 3, status: 4, type: 5, priority: 6, labels: 7 }, created_at: '2020-01-02T03:04:05Z', created_by: 'original:author', updated_at: '2021-02-03T04:05:06.123456+09:00', updated_by: 'original:editor' };
-  return parseSnapshot({ format: 'polylinedb.snapshot', version: 1, issues: [{ ...issue, id: child, type: 'task' }, issue], comments: [{ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', issue_id: child, body: 'original comment', created_at: '2021-02-03T04:05:06Z', created_by: 'original:commenter' }] });
+  return parseSnapshot({ format: 'polylinedb.snapshot', version: 2, issues: [{ ...issue, id: child, type: 'task' }, issue], comments: [{ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', issue_id: child, body: 'original comment', created_at: '2021-02-03T04:05:06Z', created_by: 'original:commenter' }], counters: [{ scope: 'pd', last_number: 20 }, { scope: parent, last_number: 99 }], requests: [] });
 }
 function local() {
   const root = mkdtempSync(join(tmpdir(), 'pd-snapshot-'));
@@ -59,7 +60,7 @@ test('validation rejects malformed shape, versions, dates, parents and comments'
   const base = fixture();
   const root = base.issues.find(issue => issue.id === parent)!;
   const bad: unknown[] = [
-    { ...base, extra: true }, { ...base, version: 2 },
+    { ...base, extra: true }, { ...base, version: 1 },
     { ...base, issues: [root, root] },
     { ...base, issues: [{ ...root, versions: { ...root.versions, body: 0 } }] },
     { ...base, issues: [{ ...root, created_at: '2020-02-30T01:00:00Z' }] },
@@ -68,6 +69,10 @@ test('validation rejects malformed shape, versions, dates, parents and comments'
     { ...base, issues: base.issues.map(issue => ({ ...issue, type: 'task' })) },
     { ...base, comments: [...base.comments, ...base.comments] },
     { ...base, comments: [{ ...base.comments[0], issue_id: 'dddddddd-dddd-dddd-dddd-dddddddddddd' }] },
+    { ...base, counters: [] },
+    { ...base, counters: [{ scope: 'pd', last_number: 8 }, { scope: parent, last_number: 99 }] },
+    { ...base, counters: [...base.counters, ...base.counters] },
+    { ...base, requests: [{ request_id: crypto.randomUUID(), actor: 'x', payload: '{}', issue_id: parent }] },
   ];
   for (const input of bad) assert.throws(() => parseSnapshot(input), { code: 'invalid_snapshot' });
 });
@@ -79,10 +84,28 @@ test('canonical form ignores array order and label set order but retains metadat
 test('empty snapshots are repeatable and metadata-only differences reject restore', () => {
   const { store, cleanup } = local();
   try {
-    const empty = parseSnapshot({ format: 'polylinedb.snapshot', version: 1, issues: [], comments: [] });
+    const empty = parseSnapshot({ format: 'polylinedb.snapshot', version: 2, issues: [], comments: [], counters: [], requests: [] });
     assert.equal(store.importSnapshot(empty).result, 'already_present');
     const snapshot = fixture(); store.importSnapshot(snapshot);
     assert.throws(() => store.importSnapshot({ ...snapshot, issues: snapshot.issues.map(issue => ({ ...issue, created_by: 'changed' })) }), { code: 'destination_not_empty' });
     assert.equal(canonicalSnapshot(store.exportSnapshot()), canonicalSnapshot(snapshot));
   } finally { cleanup(); }
+});
+
+test('restored counters retain gaps and request replay survives a snapshot round trip', async () => {
+  const first = local(); const second = local();
+  try {
+    first.store.importSnapshot(fixture());
+    const create = parseOperation({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'project', body: 'After restore' });
+    const created = await executeOperation(first.store.db, create, 'alice');
+    assert.ok('issue' in created); assert.equal(created.issue.id, 'pd-21');
+    const childCreated = await executeOperation(first.store.db, parseOperation({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), parent, tool: 'test', project: 'project', body: 'Next child' }), 'alice');
+    assert.ok('issue' in childCreated); assert.equal(childCreated.issue.id, 'pd-9.100');
+    const saved = first.store.exportSnapshot();
+    assert.throws(() => parseSnapshot({ ...saved, requests: saved.requests.map(request => ({ ...request, actor: 'bob' })) }), { code: 'invalid_snapshot' });
+    second.store.importSnapshot(saved);
+    assert.deepEqual(await executeOperation(second.store.db, create, 'alice'), created);
+    assert.equal(canonicalSnapshot(second.store.exportSnapshot()), canonicalSnapshot(saved));
+    await assert.rejects(executeOperation(second.store.db, create, 'bob'), { code: 'request_conflict' });
+  } finally { first.cleanup(); second.cleanup(); }
 });

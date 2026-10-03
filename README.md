@@ -52,8 +52,19 @@ Read again and decide whether the proposed edit still applies.
 polylinedb does not retry with newer versions automatically.
 
 Create an epic with `--type epic`, then create children with `--parent EPIC_ID`.
-A child ID appends a UUID suffix to the parent ID.
+A root ID looks like `pd-1`; its first child is `pd-1.1`.
+Numbers continue from 99 to 100 without a fixed digit count.
+Use `--prefix NAME` to select a numbering namespace.
+The CLI accepts `pd show 1` as shorthand for `pd show pd-1` with the default prefix.
 Closing an epic does not close its children.
+
+For repository defaults, run `pd init --stealth --prefix pd --tool compiler --project parser --actor local:owner` inside Git.
+The command saves the external store location and defaults in Git metadata, shared by linked worktrees.
+
+Create accepts `--request-id UUID` to identify a request across retries.
+Reuse that UUID with the same arguments and actor after an uncertain result.
+The command returns the existing issue without allocating another number.
+When omitted, the CLI generates a new request UUID for that invocation.
 
 ```sh
 pd list --status deferred --label maintenance

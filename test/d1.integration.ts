@@ -22,7 +22,7 @@ try {
   await database.batch(SCHEMA_SQL.split(';').map((sql) => sql.trim()).filter(Boolean).map((sql) => database.prepare(sql)));
   const db = d1Executor(database);
   const run = (operation: unknown) => executeOperation(db, parseOperation(operation), 'test:d1');
-  const created = await run({ op: 'create', tool: 'compiler', project: 'parser', body: 'D1 persistence' });
+  const created = await run({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'D1 persistence' });
   assert('issue' in created);
   assert.equal(created.issue.body, 'D1 persistence');
   const id = created.issue.id;
@@ -54,5 +54,31 @@ try {
   const comments = await run({ op: 'show', id });
   assert('comments' in comments);
   assert.deepEqual(comments.comments.map((comment) => comment.body).sort(), ['alpha', 'beta']);
-  process.stdout.write('PASS: local workerd D1 persistence, field CAS, unrelated edits, atomic conflict, rollback, and comments\n');
+  const request = { op: 'create', prefix: 'seq', request_id: crypto.randomUUID(), tool: 't', project: 'p', body: 'retry', type: 'epic' };
+  const duplicates = await Promise.all([run(request), run(request), run(request)]);
+  assert.deepEqual(duplicates[0], duplicates[1]); assert.deepEqual(duplicates[1], duplicates[2]);
+  assert('issue' in duplicates[0]); assert.equal(duplicates[0].issue.id, 'seq-1');
+  await run({ op: 'update', id: 'seq-1', changes: [{ field: 'body', expected: 1, value: 'edited' }] });
+  const replay = await run(request); assert('issue' in replay); assert.equal(replay.issue.body, 'edited');
+  await assert.rejects(run({ ...request, body: 'different' }), { code: 'request_conflict', status: 409 });
+  await assert.rejects(executeOperation(db, parseOperation(request), 'other'), { code: 'request_conflict', status: 409 });
+  const distinct = await Promise.all(Array.from({ length: 4 }, () => run({ ...request, request_id: crypto.randomUUID() })));
+  assert.deepEqual(distinct.map(value => { assert('issue' in value); return value.issue.id; }).sort(), ['seq-2', 'seq-3', 'seq-4', 'seq-5']);
+  await database.batch([
+    database.prepare('INSERT INTO counters(scope,last_number) VALUES (?,?)').bind('seq-1', 98),
+    database.prepare('UPDATE counters SET last_number = 98 WHERE scope = ?').bind('seq'),
+  ]);
+  for (const parent of [undefined, 'seq-1']) {
+    for (const number of [99, 100]) {
+      const next = await run({ ...request, request_id: crypto.randomUUID(), ...(parent ? { parent } : {}) });
+      assert('issue' in next); assert.equal(next.issue.id, parent ? `${parent}.${number}` : `seq-${number}`);
+    }
+  }
+  const page = await run({ op: 'list', after: 'seq-1', limit: 3 }); assert('issues' in page);
+  assert.deepEqual(page.issues.map(issue => issue.id), ['seq-1.99', 'seq-1.100', 'seq-2']);
+  const nextPage = await run({ op: 'list', after: page.next_cursor, limit: 10 }); assert('issues' in nextPage);
+  assert.deepEqual(nextPage.issues.map(issue => issue.id), ['seq-3', 'seq-4', 'seq-5', 'seq-99', 'seq-100']);
+  await database.prepare('INSERT INTO counters(scope,last_number) VALUES (?,?)').bind('full', Number.MAX_SAFE_INTEGER).run();
+  await assert.rejects(run({ ...request, prefix: 'full', request_id: crypto.randomUUID() }), { code: 'counter_exhausted', status: 409 });
+  process.stdout.write('PASS: local workerd D1 persistence, CAS, rollback, comments, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
 } finally { await runtime.dispose(); }

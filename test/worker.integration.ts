@@ -95,7 +95,7 @@ try {
   assert.equal((await post('/v1/operations', { op: 'actor' }, parts.join('.'))).status, 401);
   assert.deepEqual(await http({ op: 'actor' }), { actor: 'access:owner' });
 
-  const created = record((await http({ op: 'create', tool: 'compiler', project: 'parser', body: 'Built Worker persistence' })).issue);
+  const created = record((await http({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'Built Worker persistence' })).issue);
   assert.equal(created.created_by, 'access:owner');
   assert.equal(created.body, 'Built Worker persistence');
   const id = created.id;
