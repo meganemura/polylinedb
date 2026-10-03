@@ -50,6 +50,25 @@ test('cf envelopes fail closed and targets reject ambiguous extra fields', () =>
   assert.throws(() => parseTarget({ ...target, profile: '--other' + '\n' }));
 });
 
+test('D1 schema inspection tolerates reserved storage tables and rejects unrelated tables', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { createHash } = await import('node:crypto');
+  const { SCHEMA_SQL } = await import('../src/schema.ts');
+  const { canonicalSnapshot, parseSnapshot } = await import('../src/snapshot.ts');
+  const { snapshotMigration } = await import('../scripts/d1-snapshot-store.ts');
+  const database = new DatabaseSync(':memory:');
+  try {
+    database.exec(SCHEMA_SQL);
+    database.exec('CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID');
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 3, issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] });
+    const digest = createHash('sha256').update(canonicalSnapshot(snapshot)).digest('hex');
+    const migration = snapshotMigration(async statement => database.prepare(statement.sql).all(...statement.params), snapshot, digest);
+    assert.equal((await migration.inspect()).state, 'identical');
+    database.exec('CREATE TABLE _cf_unexpected (value TEXT)');
+    await assert.rejects(migration.inspect(), /canonical polylinedb schema/);
+  } finally { database.close(); }
+});
+
 test('verify CLI exports the checked remote snapshot privately and refuses overwrite', async () => {
   const { spawnSync } = await import('node:child_process');
   const { createHash, randomUUID } = await import('node:crypto');

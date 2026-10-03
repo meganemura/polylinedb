@@ -1,4 +1,4 @@
-// Owns operator snapshot claims and exact D1 restoration; application operations stay in src/issues.ts.
+// Owns operator snapshot claims and exact D1 restoration; domain modules own application operations.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalSnapshot, parseSnapshot } from '../src/snapshot.ts';
@@ -36,7 +36,7 @@ function expectedRows(input: unknown): { canonical: string; rows: Rows } {
 
 async function checkSchema(query: Query): Promise<boolean> {
   const reference = new DatabaseSync(':memory:');
-  const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name != '_cf_METADATA' ORDER BY name";
+  const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT IN ('_cf_METADATA', '_cf_KV') ORDER BY name";
   try {
     reference.exec(SCHEMA_SQL);
     const expected = reference.prepare(sql).all();

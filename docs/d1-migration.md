@@ -12,6 +12,10 @@ Export the source with `pd export --file SNAPSHOT`. Keep the snapshot outside Gi
 
 Provision the destination with the SQL emitted by `node scripts/schema.ts`. The importer requires the canonical schema, including its stored SQL definitions. Equivalent custom DDL is refused. The operator command does not create databases or change Worker bindings.
 
+Schema comparison excludes Cloudflare's `_cf_METADATA` and `_cf_KV` storage tables.
+Other extra tables still fail the comparison.
+Cloudflare documents `_cf_KV` as a reserved table in its [D1 import guide](https://developers.cloudflare.com/d1/best-practices/import-export-data/).
+
 Create a target file with mode 0600 outside Git checkouts. Environment-specific identifiers, snapshots, and receipts must stay outside the repository. Create the target file with these fields:
 
 ```json
