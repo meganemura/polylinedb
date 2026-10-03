@@ -8,7 +8,7 @@ Direct dependencies use exact versions, and `package-lock.json` fixes the resolv
 | --- | --- | --- | --- |
 | `@cloudflare/vite-plugin` | `1.60.2` | Build the Worker with `cf`; provide the local workerd and D1 runtime | 2026-09-25 |
 | `vite` | `8.3.1` | Run the Cloudflare build plugin | 2026-09-24 |
-| `typescript` | `7.0.2` | Check source and test types without emitting files | 2026-07-08 |
+| `typescript` | `7.0.2` | Check source and test types; emit JavaScript for the npm CLI | 2026-07-08 |
 | `@types/node` | `24.19.0` | Describe Node APIs used by the CLI and tests | 2026-09-25 |
 | `undici` override | `7.30.0` | Replace the vulnerable HTTP dependency selected by the development runtime | 2026-09-25 |
 

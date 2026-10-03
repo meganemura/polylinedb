@@ -9,14 +9,19 @@ These are independent stores; polylinedb does not synchronize them.
 ## Start locally
 
 Use Node.js 24 or later.
-The CLI needs no package installation or running server.
-Run these commands from this project directory:
+Install the CLI from npm:
 
 ```sh
-node src/cli.ts init
-node src/cli.ts --actor local:owner create --tool compiler --project parser --body 'Handle empty input'
-node src/cli.ts list
-node src/cli.ts --help
+npm install --global polylinedb
+```
+
+Run these commands from your working project:
+
+```sh
+pd init
+pd --actor local:owner create --tool compiler --project parser --body 'Handle empty input'
+pd list
+pd --help
 ```
 
 The default directory is `$XDG_DATA_HOME/polylinedb` when `XDG_DATA_HOME` is absolute, or `~/.local/share/polylinedb` otherwise.
@@ -34,11 +39,11 @@ The actor identifies the caller for local attribution; filesystem permissions co
 Read the issue before writing, then use the returned field versions:
 
 ```sh
-node src/cli.ts show ISSUE_ID
-node src/cli.ts --actor local:owner update ISSUE_ID --status in_progress --expect status=1
-node src/cli.ts --actor local:owner comment ISSUE_ID --body 'Reproduced with empty input'
-node src/cli.ts --actor local:owner close ISSUE_ID --expected 2
-node src/cli.ts --actor local:owner reopen ISSUE_ID --expected 3
+pd show ISSUE_ID
+pd --actor local:owner update ISSUE_ID --status in_progress --expect status=1
+pd --actor local:owner comment ISSUE_ID --body 'Reproduced with empty input'
+pd --actor local:owner close ISSUE_ID --expected 2
+pd --actor local:owner reopen ISSUE_ID --expected 3
 ```
 
 The example versions assume the issue started at version 1 and each previous command succeeded.
@@ -51,10 +56,10 @@ A child ID appends a UUID suffix to the parent ID.
 Closing an epic does not close its children.
 
 ```sh
-node src/cli.ts list --status deferred --label maintenance
-node src/cli.ts search 'empty input' --project parser
-node src/cli.ts search -- -Werror
-node src/cli.ts --actor local:owner update ISSUE_ID --body-file ./description.md --expect body=1
+pd list --status deferred --label maintenance
+pd search 'empty input' --project parser
+pd search -- -Werror
+pd --actor local:owner update ISSUE_ID --body-file ./description.md --expect body=1
 ```
 
 Search matches literal, case-sensitive text in bodies and comments.
@@ -63,6 +68,8 @@ See the [operation contract](docs/operations.md) for fields, defaults, paginatio
 
 ## Use cloud agents
 
+The npm package distributes the local CLI and documentation.
+Worker deployment requires access to the source repository and a separate Cloudflare setup.
 Deploy the Worker behind Cloudflare Access with Managed OAuth.
 Connect an agent host to its `/mcp` endpoint through the host's protected connector storage.
 Credentials must stay outside prompts, tool arguments, and the agent's readable sandbox.
@@ -73,12 +80,14 @@ Local tests do not establish that a particular cloud host preserves and refreshe
 
 ## Develop
 
+These commands require a source checkout, not the installed npm package.
 The development dependencies are pinned in the package manifest and lockfile.
 
 ```sh
 npm ci --ignore-scripts
 npm run typecheck
 npm test
+npm run test:package
 npm run test:d1
 npm run test:worker
 ```
@@ -92,3 +101,7 @@ The `undici` override selects a security-fixed version for Cloudflare's developm
 See [development dependencies](docs/dependencies.md) for the selection record.
 
 Read the [architecture](docs/architecture.md) and [field version decision](docs/adr/0001-field-versions.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

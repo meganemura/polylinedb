@@ -1,14 +1,13 @@
 {
   "name": "polylinedb",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.0.1",
   "type": "module",
-  "description": "A personal issue store for local tools and cloud agents",
+  "description": "Polyline database: a personal issue store for local tools and cloud agents",
   "engines": {
     "node": ">=24.0.0"
   },
   "bin": {
-    "pd": "./src/cli.ts"
+    "pd": "dist/cli.js"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
@@ -18,7 +17,10 @@
     "typecheck": "tsc --noEmit",
     "test:d1": "node test/d1.integration.ts",
     "schema": "node scripts/schema.ts",
-    "test:worker": "npm run build:worker && node test/worker.integration.ts"
+    "test:worker": "npm run build:worker && node test/worker.integration.ts",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "prepack": "npm run build:cli",
+    "test:package": "node scripts/test-package.ts"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.60.2",
@@ -28,5 +30,21 @@
   },
   "overrides": {
     "undici": "7.30.0"
+  },
+  "license": "MIT",
+  "files": [
+    "dist/cli.js",
+    "dist/issues.js",
+    "dist/schema.js",
+    "dist/sqlite.js",
+    "docs/"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meganemura/polylinedb.git"
   }
 }
