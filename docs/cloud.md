@@ -5,7 +5,9 @@ The cloud Worker stores issues in D1. The local CLI stores issues in its own SQL
 To transfer an existing local store, use the [D1 snapshot migration guide](d1-migration.md). Restore into an isolated destination and verify its complete contents before changing the Worker binding.
 
 The setup commands, Worker deployment, and unauthenticated OAuth discovery have been exercised against Cloudflare.
-Connector linking, actor identity, and token refresh remain unverified.
+Cursor Cloud linking, actor identity, and issue creation with a comment were verified.
+A new Cursor Cloud agent used the connection without another login.
+Token refresh after access-token expiry remains unverified.
 Complete the acceptance checks in your own account before relying on the store.
 
 ## Establish the connection boundary
@@ -33,7 +35,7 @@ The following evidence was checked on October 3, 2026. Product documentation est
 | Host | Documented mechanism | polylinedb status |
 | --- | --- | --- |
 | Claude custom remote connector | Claude brokers remote MCP through Anthropic's cloud. The connector supports OAuth. | Managed OAuth linking, refresh, and tool calls are unverified. |
-| Cursor Cloud Agents | HTTP MCP calls use a backend proxy. Cursor documents that credentials remain outside the agent VM. | Managed OAuth linking, refresh, and tool calls are unverified. |
+| Cursor Cloud Agents | HTTP MCP calls use a backend proxy. Cursor documents that credentials remain outside the agent VM. | Linking, actor, create, show, and comment passed. A new agent needed no additional login. Expired-token refresh remains unverified. |
 | Codex Cloud | OpenAI documents OAuth for plugin MCP servers in Codex. Its MCP documentation distinguishes local host configuration from hosted plugin tools. | The exact Codex Cloud installation path, credential isolation, and Managed OAuth compatibility are unverified. |
 
 For Claude, use the account's custom remote connector for `https://issues.example.com/mcp`. Complete OAuth in the host interface. See [Claude custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
@@ -87,7 +89,7 @@ If an agent runs those commands for you, give explicit approval for resource cre
 The authentication, Access application creation, D1 creation, schema, and deployment commands below were exercised with `cf` version `1.0.0-beta.12`.
 Check command support for your installed version with anonymous queries such as `cf cli search "create an Access application"`.
 Use the matching command's `--help` for flags.
-Actual connector authorization and token refresh still require the acceptance checks below.
+Repeat the connector acceptance checks below for your own account.
 
 ### Prepare a private deployment copy
 
@@ -233,9 +235,9 @@ Find the owner in your Access users:
 cf zero-trust access users list --email 'OWNER_EMAIL'
 ```
 
-The listed Access user ID is a candidate for `OWNER_SUBJECT`.
+Use the listed Access user ID for `OWNER_SUBJECT`.
 Confirm that subject through the connected `actor` tool after deployment.
-The user-list ID and actual assertion subject have not yet been compared in the deployment acceptance run.
+The connected Cursor Cloud actor matched the configured Access user ID in the acceptance run.
 
 If the owner has not signed in to Access, use this bootstrap sequence.
 This sequence is proposed and has not yet been exercised from a new account:
@@ -269,6 +271,14 @@ cf deploy
 ```
 
 After deployment, verify that `DB` resolves to the recorded database UUID in your account.
+Read the deployed version's bindings:
+
+```sh
+cf workers versions get latest --worker-id "$POLYLINEDB_WORKER_NAME"
+```
+
+Check that its version ID matches the deployment receipt.
+In `bindings`, the entry named `DB` must have `type: "d1"` and `database_id` equal to your recorded database UUID.
 Inspect the deployed Worker settings:
 
 ```sh
@@ -316,6 +326,11 @@ If the host cannot link or refresh its grant, keep that host unverified rather t
 ## Verify each host and D1
 
 Use a dedicated test project in the deployed store. Record the exact host product, account configuration, date, and observed result for each check. Keep credentials out of the report.
+
+On October 3, 2026, the operator confirmed Cursor Cloud linking and a new agent's `actor`, `create`, `show`, and `comment` calls.
+The agent needed no additional login.
+An independent D1 query confirmed the issue, comment, and expected audit actor.
+This confirms connection reuse during that test interval, but not refresh after token expiry.
 
 - An unauthenticated request reaches the Access OAuth discovery challenge.
 - Initial connector linking completes authorization and PKCE with the correct resource and callback.
