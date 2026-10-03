@@ -8,8 +8,10 @@ To transfer an existing local store, use the [D1 snapshot migration guide](d1-mi
 The setup commands, Worker deployment, and unauthenticated OAuth discovery have been exercised against Cloudflare.
 Cursor Cloud linking, actor identity, and issue creation with a comment were verified.
 A new Cursor Cloud agent used the connection without another login.
-The operator also confirmed ChatGPT custom MCP linking, `actor`, and an existing issue's contents and comments.
-Token refresh after access-token expiry remains unverified.
+The operator also confirmed Claude and Codex Cloud issue creation, reads, and comments through their connectors.
+ChatGPT custom MCP linking, `actor`, and existing issue reads were confirmed separately.
+CLI checks observed token renewal and rejection of old tokens after logout.
+Those CLI results do not establish each cloud host's internal refresh behavior.
 Complete the acceptance checks in your own account before relying on the store.
 
 ## Establish the connection boundary
@@ -36,12 +38,16 @@ The following evidence was checked on October 3, 2026. Product documentation est
 
 | Host | Documented mechanism | polylinedb status |
 | --- | --- | --- |
-| Claude custom remote connector | Claude brokers remote MCP through Anthropic's cloud. The connector supports OAuth. | Managed OAuth linking, refresh, and tool calls are unverified. |
+| Claude custom remote connector | Claude brokers remote MCP through Anthropic's cloud. The connector supports OAuth. | The operator confirmed DCR linking, actor, create, show, and comment. The calls required no additional authentication. Expired-token refresh remains unverified. |
 | Cursor Cloud Agents | HTTP MCP calls use a backend proxy. Cursor documents that credentials remain outside the agent VM. | Linking, actor, create, show, and comment passed. A new agent needed no additional login. Expired-token refresh remains unverified. |
 | ChatGPT custom MCP | OAuth with dynamic client registration through the public HTTPS endpoint. | The operator confirmed linking, actor, and issue/comment reads. Writes and expired-token refresh remain unverified. |
-| Codex Cloud | OpenAI documents OAuth for plugin MCP servers in Codex. Its MCP documentation distinguishes local host configuration from hosted plugin tools. | The exact Codex Cloud installation path, credential isolation, and Managed OAuth compatibility are unverified. |
+| Codex Cloud | OpenAI documents OAuth for plugin MCP servers in Codex. Its MCP documentation distinguishes local host configuration from hosted plugin tools. | The operator confirmed actor, create, show, and comment through the cloud connector. Tool responses requested no additional login. Host credential isolation and expired-token refresh need separate verification. |
 
-For Claude, use the account's custom remote connector for `https://issues.example.com/mcp`. Complete OAuth in the host interface. See [Claude custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+For Claude, use the account's custom remote connector for `https://issues.example.com/mcp`.
+Choose immediate sign-in, automatic client registration (DCR), and Streamable HTTP. Leave additional request headers empty.
+Allow `https://claude.ai/api/mcp/auth_callback` for that connector, then complete OAuth in the host interface.
+Those settings passed the operator's connection check.
+See [Claude custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
 
 For Cursor, add a personal HTTP MCP server through the MCP controls at `cursor.com/agents`. Complete its OAuth flow. Cursor documents that HTTP server settings, refresh tokens, and headers remain outside the agent VM. See [Cloud Agent capabilities](https://cursor.com/docs/cloud-agent/capabilities#http-vs-stdio).
 
@@ -331,16 +337,18 @@ If the host cannot link or refresh its grant, keep that host unverified rather t
 In ChatGPT's custom MCP settings, choose OAuth with dynamic client registration for this Access configuration.
 The example Access application above allows only Cursor's callback, so configure ChatGPT's callback before expecting its registration to succeed.
 OpenAI specifies either `https://chatgpt.com/connector_platform_oauth_redirect` or a connection-specific URL under `https://chatgpt.com/connector/oauth/`.
-Use the exact Redirect URI shown in the connection's management page.
+If the interface displays a complete Redirect URI, you can allow that exact URI.
 See OpenAI's [redirect URL contract](https://developers.openai.com/plugins/build/auth#redirect-url).
 
-Use complete redirect URIs in the DCR allowlist, without wildcard patterns.
+Some DCR interfaces do not display the connection-specific URI before registration.
+For that flow, allow `https://chatgpt.com/connector/oauth/*` and retain the fixed callback when required by the host.
+Cloudflare supports a terminal `/*` for subpaths in its [DCR registration settings](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#managed-oauth-settings).
+Keep the scope at that HTTPS host and callback path. Do not expand it to `https://chatgpt.com/*` or arbitrary hosts.
 A registration allowlist determines which callback URIs new clients may register; it is separate from matching a registered client's redirect during authorization.
 Allowing an entire callback path admits other connections in that path, not only the intended connection.
 An owner-only Access policy still restricts users, but does not make that broader registration scope equivalent to a fixed callback.
 OAuth's [security best practice](https://www.rfc-editor.org/rfc/rfc9700.html#section-2.1) requires exact matching against registered redirects, apart from native-app loopback port exceptions.
-If the interface does not expose the required URI, resolve that registration step with the provider before expanding the allowlist.
-Do not use a wildcard as the standard bootstrap procedure.
+The path pattern applies to registration. It does not authorize arbitrary redirect URIs for an already registered client.
 Keep the owner policy, existing callbacks, and token durations unchanged.
 
 Read the current application before changing it:
@@ -368,6 +376,10 @@ On October 3, 2026, the operator confirmed Cursor Cloud linking and a new agent'
 The agent needed no additional login.
 An independent D1 query confirmed the issue, comment, and expected audit actor.
 This confirms connection reuse during that test interval, but not refresh after token expiry.
+The operator subsequently reported successful create, show, and comment calls from Claude and Codex Cloud.
+ChatGPT linking and reads were reported separately. Record these host reports separately from independent database checks.
+The CLI acceptance checks observed token renewal, four successful concurrent processes, and rejection of both old tokens after logout.
+Synthetic tests verify the single refresh request under contention. Repeat expiry and revocation checks in each host whose lifecycle you intend to guarantee.
 
 - An unauthenticated request reaches the Access OAuth discovery challenge.
 - Initial connector linking completes authorization and PKCE with the correct resource and callback.
