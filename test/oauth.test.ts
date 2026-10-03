@@ -71,7 +71,7 @@ async function fixture(t: test.TestContext, providerIssuer = issuer) {
     callback.searchParams.set('code', 'authorization-secret');
     const response = await fetch(callback); assert.equal(response.status, 200);
   };
-  return { auth, options, store, stateDirectory, metadata, authorize, setRevoke: (handler: NonNullable<typeof revoke>) => { revoke = handler; }, setMode: (value: string) => { mode = value; }, setExpiry: (value: number) => { tokenExpiry = value; }, counts: () => ({ registrations, refreshes, tokenCalls }) };
+  return { auth, setAuthorizationUrl: (url: string) => { authUrl = new URL(url); }, options, store, stateDirectory, metadata, authorize, setRevoke: (handler: NonNullable<typeof revoke>) => { revoke = handler; }, setMode: (value: string) => { mode = value; }, setExpiry: (value: number) => { tokenExpiry = value; }, counts: () => ({ registrations, refreshes, tokenCalls }) }
 }
 
 test('login validates PKCE and callback, persists credentials, and reuses its client and port', async t => {
@@ -99,11 +99,51 @@ test('wrong state, unicode state, path, duplicate parameters, and mixed code/err
   } });
 });
 
+test('callback pages report receipt without exposing credentials or promising a saved login', async t => {
+  const f = await fixture(t);
+  let received = '';
+  await assert.rejects(f.auth.login({ showAuthorizationUrl: async url => {
+    f.setAuthorizationUrl(url);
+    const auth = new URL(url), callback = new URL(auth.searchParams.get('redirect_uri') ?? '');
+    const state = auth.searchParams.get('state') ?? '';
+    callback.searchParams.set('state', state);
+    callback.searchParams.set('code', 'authorization-secret');
+    const invalid = new URL(callback); invalid.searchParams.set('state', 'wrong-state-secret');
+    const invalidResponse = await fetch(invalid);
+    assert.equal(invalidResponse.status, 400);
+    assert.match(await invalidResponse.text(), /<h1>Invalid authorization callback<\/h1>/);
+    const response = await fetch(callback);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    received = await response.text();
+    assert.match(received, /<h1>Authorization received<\/h1>/);
+    assert.match(received, /Return to your terminal to check the login result\./);
+    assert.match(received, /<html lang="en">/);
+    assert.match(received, /name="viewport"/);
+    const style = received.match(/<style>([^]*?)<\/style>/)?.[1];
+    assert.ok(style);
+    assert.equal(response.headers.get('content-security-policy'), `default-src 'none'; style-src 'sha256-${createHash('sha256').update(style).digest('base64')}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
+    for (const secret of [state, 'authorization-secret', 'access-secret', 'refresh-secret', 'wrong-state-secret']) assert.equal(received.includes(secret), false);
+    assert.equal(/<script|<link|<img|https?:\/\//i.test(received), false);
+    assert.equal(/login complete|logged in|success/i.test(received), false);
+    assert.equal(f.counts().tokenCalls, 0);
+    f.store.failWrite = true;
+  } }), /store unavailable/);
+  f.store.failWrite = false;
+  assert.equal((await f.auth.status()).state, 'reauthorization_required');
+});
+
 test('callback denial and timeout preserve registration for a later login', async t => {
   const f = await fixture(t);
   await assert.rejects(f.auth.login({ showAuthorizationUrl: async url => {
     const auth = new URL(url), callback = new URL(auth.searchParams.get('redirect_uri') ?? '');
-    callback.searchParams.set('state', auth.searchParams.get('state') ?? ''); callback.searchParams.set('error', 'secret-provider-message'); await fetch(callback);
+    callback.searchParams.set('state', auth.searchParams.get('state') ?? ''); callback.searchParams.set('error', 'secret-provider-message');
+    const response = await fetch(callback), page = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(page, /<h1>Authorization was not completed<\/h1>/);
+    assert.equal(page.includes('secret-provider-message'), false);
   } }), error => error instanceof OAuthError && error.code === 'auth_denied' && !error.message.includes('secret'));
   const quick = createCloudAuth({ ...f.options, loginTimeoutMs: 20 });
   await assert.rejects(quick.login({ showAuthorizationUrl: () => {} }), error => error instanceof OAuthError && error.code === 'auth_timeout');

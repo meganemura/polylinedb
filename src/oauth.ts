@@ -13,6 +13,25 @@ type Session = { version: 1; resource: string; metadata: Metadata; registration:
 export type AuthStatus = { resource: string; issuer: string | null; state: 'logged_out' | 'reauthorization_required' | 'stored'; expiresAt: number | null; needsRefresh: boolean; refreshAvailable: boolean };
 type Options = { origin: string; credentialStore: CredentialStore; stateDirectory: string; fetch?: typeof globalThis.fetch; requestTimeoutMs?: number; loginTimeoutMs?: number; lockTimeoutMs?: number };
 const limit = 64 * 1024;
+type CallbackPage = { kind: 'received' } | { kind: 'denied' } | { kind: 'invalid' };
+const callbackStyle = `:root{color-scheme:light dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#26312d;background:#f3f5f2}*{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px}main{width:100%;max-width:440px;padding:36px;border:1px solid #dce2dc;border-radius:16px;background:#fff;box-shadow:0 8px 32px #26312d08}.brand{margin:0 0 32px;font-size:14px;font-weight:650;letter-spacing:.02em}.mark{display:grid;place-items:center;width:40px;height:40px;margin-bottom:20px;border:1px solid #cfd9d0;border-radius:50%;color:#4c6654;font-size:22px}h1{margin:0 0 16px;font-size:clamp(24px,5vw,28px);line-height:1.2;letter-spacing:-.025em}p{margin:0;line-height:1.6;font-size:15px;color:#526059}.hint{margin-top:24px;padding-top:20px;border-top:1px solid #e5e9e4;font-size:13px;color:#637168}@media(prefers-color-scheme:dark){:root{color:#edf2ed;background:#171c19}main{background:#202722;border-color:#364139;box-shadow:none}.mark{border-color:#506755;color:#b8d0bb}p{color:#c0ccc2}.hint{border-color:#364139;color:#aab9ad}}@media(max-width:380px){body{padding:16px}main{padding:28px 24px}}`;
+const callbackPolicy = `default-src 'none'; style-src 'sha256-${createHash('sha256').update(callbackStyle).digest('base64')}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+function callbackPage(page: CallbackPage): string {
+  let title: string, message: string, hint: string;
+  switch (page.kind) {
+    case 'received':
+      title = 'Authorization received'; message = 'Return to your terminal to check the login result.'; hint = 'You can close this page.'; break;
+    case 'denied':
+      title = 'Authorization was not completed'; message = 'Return to your terminal. Run auth login again when you are ready.'; hint = 'You can close this page.'; break;
+    case 'invalid':
+      title = 'Invalid authorization callback'; message = 'This request could not complete authorization.'; hint = 'Return to your terminal to check the login result.'; break;
+    default: {
+      const exhaustive: never = page;
+      return exhaustive;
+    }
+  }
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${title} | polylinedb</title><style>${callbackStyle}</style></head><body><main><p class="brand">polylinedb</p><span class="mark" aria-hidden="true">&middot;</span><h1>${title}</h1><p>${message}</p><p class="hint">${hint}</p></main></body></html>`;
+}
 const fail = (code: string, message: string): never => { throw new OAuthError(code, message); };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('auth_response_invalid', 'The authentication response is invalid.');
@@ -80,12 +99,14 @@ async function loopback(savedRedirect: string | null, state: string, issuer: str
   void code.catch(() => {});
   let settled = false;
   const server = createServer({ maxHeaderSize: 16_384 }, (request, response) => {
-    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
     response.setHeader('Cache-Control', 'no-store');
-    response.setHeader('Content-Security-Policy', "default-src 'none'");
+    response.setHeader('Content-Security-Policy', callbackPolicy);
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
     const address = server.address();
     if (!request.url?.startsWith('/') || request.url.startsWith('//') || typeof address !== 'object' || !address || request.headers.host !== `127.0.0.1:${address.port}`) {
-      response.writeHead(400).end('Invalid authorization callback.'); return;
+      response.writeHead(400).end(callbackPage({ kind: 'invalid' })); return;
     }
     const url = new URL(request.url, 'http://127.0.0.1');
     const supplied = Buffer.from(url.searchParams.get('state') ?? '');
@@ -93,13 +114,13 @@ async function loopback(savedRedirect: string | null, state: string, issuer: str
     const validState = supplied.length === expected.length && timingSafeEqual(supplied, expected);
     const keys = [...url.searchParams.keys()];
     if (settled || request.method !== 'GET' || url.pathname !== callbackPath || !validState || keys.some(key => url.searchParams.getAll(key).length !== 1) || (url.searchParams.has('iss') && url.searchParams.get('iss') !== issuer) || (url.searchParams.has('code') === url.searchParams.has('error'))) {
-      response.writeHead(400).end('Invalid authorization callback.'); return;
+      response.writeHead(400).end(callbackPage({ kind: 'invalid' })); return;
     }
     settled = true;
-    if (url.searchParams.has('error')) { response.end('Authorization was not completed.'); reject(new OAuthError('auth_denied', 'Authorization was not completed.')); return; }
+    if (url.searchParams.has('error')) { response.end(callbackPage({ kind: 'denied' })); reject(new OAuthError('auth_denied', 'Authorization was not completed.')); return; }
     const authorizationCode = url.searchParams.get('code');
-    if (!authorizationCode || authorizationCode.length > 16384 || /[\x00-\x20\x7f]/.test(authorizationCode)) { response.writeHead(400).end('Invalid authorization callback.'); reject(new OAuthError('auth_callback_invalid', 'The authorization callback is invalid.')); return; }
-    response.end('Authorization received. You can close this page.'); accept(authorizationCode);
+    if (!authorizationCode || authorizationCode.length > 16384 || /[\x00-\x20\x7f]/.test(authorizationCode)) { response.writeHead(400).end(callbackPage({ kind: 'invalid' })); reject(new OAuthError('auth_callback_invalid', 'The authorization callback is invalid.')); return; }
+    response.end(callbackPage({ kind: 'received' })); accept(authorizationCode);
   });
   server.requestTimeout = 5000; server.headersTimeout = 5000;
   await new Promise<void>((resolve, rejectListen) => {
