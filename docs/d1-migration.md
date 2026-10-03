@@ -28,9 +28,10 @@ Use the SHA-256 reported by `pd export`. Authenticate the named profile through 
 node scripts/d1-snapshot.ts inspect --snapshot SNAPSHOT --target TARGET
 node scripts/d1-snapshot.ts restore --snapshot SNAPSHOT --target TARGET
 node scripts/d1-snapshot.ts verify --snapshot SNAPSHOT --target TARGET
+node scripts/d1-snapshot.ts verify --snapshot SNAPSHOT --target TARGET --output ABSOLUTE_PRIVATE_PATH
 ```
 
-The field order in the command is fixed. `inspect` reads the destination. `restore` writes the snapshot claim and missing rows. `verify` reads all four collections and compares their canonical representation with the input. Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
+The field order in the command is fixed. `inspect` reads the destination. `restore` writes the snapshot claim and missing rows. `verify` reads all four collections and compares their canonical representation with the input. Its optional `--output` writes that verified remote snapshot to a new file with mode 0600. The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts. Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
 
 ## Recovery
 
@@ -61,4 +62,4 @@ The integration test requires the same external Miniflare installation used by `
 
 The tests cover committed-response-loss recovery, duplicate and concurrent restores, conflicting claims and rows, corrupt sort keys, a 64 KiB Unicode body, field versions, audit fields, comments, counters, and create requests. They compare the D1 snapshot with a fresh SQLite import/export. They also verify request replay and subsequent root and child IDs. Transport tests inspect fixed account/profile arguments, bound values, private file permissions, cleanup, and sanitized failures.
 
-For a release acceptance run, import the D1-read snapshot into a fresh SQLite store through the installed tarball and compare its export. Keep that result separate from source-tree test results. Production credentials, a live remote transfer, and Worker cutover require their own verification and approval.
+For a release acceptance run, use `verify --output` to save the D1-read snapshot. Import that file into a fresh SQLite store through the installed tarball and compare its export. Keep that result separate from source-tree test results. Production credentials, a live remote transfer, and Worker cutover require their own verification and approval.

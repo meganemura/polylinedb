@@ -113,7 +113,6 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     const before = await inspect();
     if (before.state === 'identical') return { ...await verify(), result: 'already_present' };
     await querySql(query, claimSql.replace('CREATE TABLE ', 'CREATE TABLE IF NOT EXISTS '));
-    // A singleton claim and emptiness condition arbitrate competing imports in one statement.
     await querySql(query, `INSERT INTO ${claimTable}(singleton,sha256) SELECT 1,? WHERE ${tables.map(table => `NOT EXISTS (SELECT 1 FROM ${table})`).join(' AND ')} ON CONFLICT(singleton) DO NOTHING`, [sha256]);
     const claim = await querySql(query, `SELECT singleton,sha256 FROM ${claimTable}`);
     if (claim.length !== 1 || claim[0]?.singleton !== 1 || claim[0]?.sha256 !== sha256) fail('Destination snapshot claim was refused');

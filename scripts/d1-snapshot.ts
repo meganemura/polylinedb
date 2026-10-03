@@ -2,9 +2,10 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { snapshotMigration, type Query } from './d1-snapshot-store.ts';
+import { canonicalSnapshot } from '../src/snapshot.ts';
 
 export function parseTarget(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid target');
@@ -57,14 +58,15 @@ export function cfQuery(target: ReturnType<typeof parseTarget>): Query {
 
 async function main(args: string[]) {
   const [action, ...flags] = args;
-  if (!['inspect', 'restore', 'verify'].includes(action ?? '') || flags.length !== 4 || flags[0] !== '--snapshot' || flags[2] !== '--target' || !flags[1] || !flags[3]) {
-    throw new Error('Usage: node scripts/d1-snapshot.ts inspect|restore|verify --snapshot FILE --target FILE');
+  const output = flags.length === 6 && action === 'verify' && flags[4] === '--output' ? flags[5] : undefined;
+  if (!['inspect', 'restore', 'verify'].includes(action ?? '') || (flags.length !== 4 && !output) || flags[0] !== '--snapshot' || flags[2] !== '--target' || !flags[1] || !flags[3] || (output !== undefined && !isAbsolute(output))) {
+    throw new Error('Usage: node scripts/d1-snapshot.ts inspect|restore|verify --snapshot FILE --target FILE [verify only: --output ABS_PATH]');
   }
   const target = parseTarget(JSON.parse(readFileSync(flags[3], 'utf8')));
   const snapshot: unknown = JSON.parse(readFileSync(flags[1], 'utf8'));
   const migration = snapshotMigration(cfQuery(target), snapshot, target.snapshotSha256);
   const report = action === 'restore' ? await migration.restore() : action === 'verify' ? await migration.verify() : await migration.inspect();
-  // Snapshot content remains private. The receipt includes only identity, counts, and digest.
+  if (output && 'snapshot' in report) writeFileSync(output, canonicalSnapshot(report.snapshot) + '\n', { mode: 0o600, flag: 'wx' });
   const { snapshot: _snapshot, ...receipt } = 'snapshot' in report ? report : { ...report, snapshot: undefined };
   process.stdout.write(JSON.stringify({ target, ...receipt }) + '\n');
 }
