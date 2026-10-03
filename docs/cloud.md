@@ -29,12 +29,16 @@ The following evidence was checked on October 3, 2026. Product documentation est
 | Host | Documented mechanism | polylinedb status |
 | --- | --- | --- |
 | Claude custom remote connector | Claude brokers remote MCP through Anthropic's cloud. The connector supports OAuth. | Managed OAuth linking, refresh, and tool calls are unverified. |
-| Cursor Cloud Agents | The cloud agent interface supports HTTP MCP and OAuth. Cursor documents backend storage for OAuth credentials. | Managed OAuth linking and isolation from the agent VM are unverified. |
+| Cursor Cloud Agents | HTTP MCP calls use a backend proxy. Cursor documents that credentials remain outside the agent VM. | Managed OAuth linking, refresh, and tool calls are unverified. |
 | Codex Cloud | OpenAI documents OAuth for plugin MCP servers in Codex. Its MCP documentation distinguishes local host configuration from hosted plugin tools. | The exact Codex Cloud installation path, credential isolation, and Managed OAuth compatibility are unverified. |
 
 For Claude, use the account's custom remote connector for `https://issues.example.com/mcp`. Complete OAuth in the host interface. See [Claude custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
 
-For Cursor, add the remote HTTP MCP server through the MCP controls at `cursor.com/agents`. Complete its OAuth flow. See [Cloud Agents](https://cursor.com/docs/cloud-agent) and [Cloud Agent security](https://cursor.com/docs/cloud-agent/security).
+For Cursor, add a personal HTTP MCP server through the MCP controls at `cursor.com/agents`. Complete its OAuth flow. Cursor documents that HTTP server settings, refresh tokens, and headers remain outside the agent VM. See [Cloud Agent capabilities](https://cursor.com/docs/cloud-agent/capabilities#http-vs-stdio).
+
+Allow the exact web callback `https://www.cursor.com/agents/mcp/oauth/callback` in Access dynamic client registration. Cursor documents that callback in its [MCP guide](https://cursor.com/docs/mcp#static-redirect-url). Check the actual registration if the provider rejects it. Do not broaden the redirect allowlist to arbitrary domains.
+
+Use the host's HTTP connector for cloud agents. `autospawn` starts and shares local stdio processes. It does not provide an HTTP OAuth connector. A local bridge through autospawn needs separate authentication and lifecycle verification. It does not establish cloud-host credential isolation.
 
 For Codex Cloud, select a host-supported plugin or connector that brokers the remote server and owns its credentials. Verify that mechanism in the actual cloud account before relying on it. OpenAI's [plugin authentication guide](https://developers.openai.com/plugins/build/auth) describes the OAuth contract. Its [MCP guide](https://learn.chatgpt.com/docs/extend/mcp) describes the different local and hosted mechanisms.
 
@@ -53,7 +57,9 @@ If the selected cloud product cannot broker the connection without exposing cred
 | `POLYLINEDB_ACCESS_ACTORS` | `ACCESS_ACTORS` | A nonempty JSON array of allowed actor IDs, such as `["access:OWNER_SUBJECT"]`. |
 | `POLYLINEDB_ALLOWED_ORIGINS` | `ALLOWED_ORIGINS` | A JSON array of exact allowed Origin header values. The default is `[]`. |
 
-The configured Worker name and D1 database name are `polylinedb`. The D1 binding is `DB`. The entry point is `src/worker.ts`.
+The default Worker name and D1 database name are `polylinedb`. Override them with `POLYLINEDB_WORKER_NAME` and `POLYLINEDB_D1_NAME` before build or deployment. The D1 binding is `DB`. The entry point is `src/worker.ts`. Preview URLs are disabled in the project configuration.
+
+A `workers.dev` hostname can use hostname-based Access without a custom domain. Protect the complete hostname as a self-hosted Access application. See [Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/). Check the actual deployment's routes and preview settings before acceptance.
 
 The verifier accepts RS256 assertions from the configured issuer and application audience. It checks signature, expiry, optional `nbf`, optional `iat`, and the actor allowlist. User actors are `access:<sub>`. Service actors use `service:<common_name>` only when the assertion has no nonempty subject. A team login alone does not authorize an actor.
 
