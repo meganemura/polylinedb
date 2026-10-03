@@ -4,7 +4,9 @@ The cloud Worker stores issues in D1. The local CLI stores issues in its own SQL
 
 To transfer an existing local store, use the [D1 snapshot migration guide](d1-migration.md). Restore into an isolated destination and verify its complete contents before changing the Worker binding.
 
-This guide describes the intended deployment and its acceptance checks. No production deployment or host connection has been verified for polylinedb.
+The setup commands, Worker deployment, and unauthenticated OAuth discovery have been exercised against Cloudflare.
+Connector linking, actor identity, and token refresh remain unverified.
+Complete the acceptance checks in your own account before relying on the store.
 
 ## Establish the connection boundary
 
@@ -69,52 +71,247 @@ Missing or invalid identity returns 401. An authenticated actor outside the allo
 
 Both `POST /mcp` and `POST /v1/operations` require the verified actor. The MCP endpoint implements protocol `2025-11-25` with JSON responses and a 128 KiB request limit. MCP requests must accept both `application/json` and `text/event-stream`. GET streaming is not implemented. Requests with an Origin header require an exact configured match.
 
-## Prepare the deployment
+## Build your own cloud store
 
-Run local checks before changing an account:
+Use a source checkout, Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later, and the `cf` CLI.
+The npm CLI package does not contain the Worker source.
+Enable Zero Trust in your Cloudflare account and choose an Access identity provider before creating the application.
+Your account needs permission to manage Workers, D1, and Access applications and policies.
+
+Replace every uppercase placeholder below with your own value before running a command.
+Keep account IDs, domains, email addresses, application JSON, build output, snapshots, and receipts outside the checkout.
+Keep these values out of the checkout, including ignored files.
+Run commands that change cloud resources only after you review the account and destination.
+If an agent runs those commands for you, give explicit approval for resource creation, schema writes, and deployment.
+
+The authentication, Access application creation, D1 creation, schema, and deployment commands below were exercised with `cf` version `1.0.0-beta.12`.
+Check command support for your installed version with anonymous queries such as `cf cli search "create an Access application"`.
+Use the matching command's `--help` for flags.
+Actual connector authorization and token refresh still require the acceptance checks below.
+
+### Prepare a private deployment copy
+
+From the source checkout, create an untracked source copy in a private directory outside Git:
 
 ```sh
+umask 077
+export PD_DEPLOY_DIRECTORY='/ABSOLUTE/PRIVATE_DEPLOY_DIRECTORY'
+mkdir -m 700 "$PD_DEPLOY_DIRECTORY"
+git archive HEAD | tar -x -C "$PD_DEPLOY_DIRECTORY"
+cd "$PD_DEPLOY_DIRECTORY"
+npm ci --ignore-scripts
+npm run typecheck
 npm test
+npm run test:d1
+```
+
+Use an empty destination directory and the committed source version you intend to deploy.
+Keep subsequent configuration files, command output, and `.cloudflare` build output in this private copy.
+
+Authenticate `cf` in your own browser and inspect the selected identity:
+
+```sh
+cf auth login
+cf auth whoami
+export CLOUDFLARE_ACCOUNT_ID='ACCOUNT_ID'
+export POLYLINEDB_WORKER_NAME='WORKER_NAME'
+export POLYLINEDB_D1_NAME='DATABASE_NAME'
+export POLYLINEDB_ACCESS_TEAM_DOMAIN='TEAM_LABEL.cloudflareaccess.com'
+```
+
+Copy your account ID from the authenticated account list.
+Choose resource names for this deployment.
+The Worker hostname is `WORKER_NAME.WORKERS_SUBDOMAIN.workers.dev`, unless you configure a custom domain.
+Find your Workers subdomain in the Cloudflare dashboard before creating the Access application.
+Keep `CLOUDFLARE_ACCOUNT_ID` fixed for every command in this session.
+
+### Create the Access application and owner policy
+
+List your configured identity providers:
+
+```sh
+cf zero-trust identity-providers list
+```
+
+Copy the ID of the provider that your owner uses.
+For email one-time PIN authentication, select that provider's ID.
+Store this JSON as `access-application.json` in the private deployment copy:
+
+```json
+{
+	"name": "APPLICATION_NAME",
+	"type": "self_hosted",
+	"domain": "WORKER_HOSTNAME",
+	"session_duration": "24h",
+	"app_launcher_visible": false,
+	"auto_redirect_to_identity": false,
+	"allowed_idps": ["IDENTITY_PROVIDER_ID"],
+	"oauth_configuration": {
+		"enabled": true,
+		"dynamic_client_registration": {
+			"enabled": true,
+			"allow_any_on_localhost": false,
+			"allow_any_on_loopback": false,
+			"allowed_uris": ["https://www.cursor.com/agents/mcp/oauth/callback"]
+		},
+		"grant": {
+			"access_token_lifetime": "15m",
+			"session_duration": "336h"
+		}
+	},
+	"policies": [{
+		"name": "OWNER_POLICY_NAME",
+		"decision": "allow",
+		"include": [{"email": {"email": "OWNER_EMAIL"}}],
+		"exclude": [],
+		"require": [],
+		"precedence": 1
+	}]
+}
+```
+
+Use the complete hostname without a scheme or path as `domain`.
+This example connects Cursor Cloud Agents.
+For another host, replace `allowed_uris` with that host's documented callback.
+Keep localhost and loopback registration disabled for a cloud-only connection.
+The example uses a 15-minute access token and a two-week grant.
+Adjust those durations to your policy using the [Managed OAuth settings](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#managed-oauth-settings).
+
+Create the application and policy together:
+
+```sh
+cf zero-trust access applications create --body "$(cat access-application.json)"
+```
+
+The `policies` array creates the owner policy with the application.
+Record the returned application `id` and `aud` in your private configuration.
+Set the Worker audience to the returned `aud`:
+
+```sh
+export PD_ACCESS_APPLICATION_ID='APPLICATION_ID'
+export POLYLINEDB_ACCESS_AUD='APPLICATION_AUDIENCE'
+cf zero-trust access applications get "$PD_ACCESS_APPLICATION_ID"
+```
+
+Check the returned hostname, owner policy, identity provider, and OAuth settings.
+If you change the application later, preserve its complete configuration in the update body.
+Cloudflare's [Managed OAuth setup](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#enable-managed-oauth-on-a-self-hosted-application) explains that update requirement.
+The protected hostname must serve Access discovery and its authentication challenge.
+
+### Create and initialize D1
+
+Create a separate database for this deployment:
+
+```sh
+cf d1 create --name "$POLYLINEDB_D1_NAME" --read-replication-mode disabled
+export PD_D1_DATABASE_ID='DATABASE_UUID'
+```
+
+Replace `DATABASE_UUID` with the ID returned by the create command.
+Apply the schema only to this new, empty database:
+
+```sh
+cf d1 query "$PD_D1_DATABASE_ID" --sql "$(node scripts/schema.ts)"
+cf d1 query "$PD_D1_DATABASE_ID" --sql 'SELECT version FROM schema_version'
+```
+
+The version query must return `2`.
+`scripts/schema.ts` emits the SQL owned by `src/schema.ts`.
+That SQL creates tables and the schema-version record.
+It is not safe to apply twice, and it does not upgrade an existing database.
+Local `pd init` initializes SQLite rather than D1.
+
+If you transfer a local snapshot, complete the [D1 migration procedure](d1-migration.md) before binding a Worker to the database.
+Keep the destination free of other writers until migration verification finishes.
+
+### Set the owner actor and deploy
+
+The Worker allowlist uses the owner's Access subject ID, not the owner's email or the account ID.
+Find the owner in your Access users:
+
+```sh
+cf zero-trust access users list --email 'OWNER_EMAIL'
+```
+
+The listed Access user ID is a candidate for `OWNER_SUBJECT`.
+Confirm that subject through the connected `actor` tool after deployment.
+The user-list ID and actual assertion subject have not yet been compared in the deployment acceptance run.
+
+If the owner has not signed in to Access, use this bootstrap sequence.
+This sequence is proposed and has not yet been exercised from a new account:
+
+1. Set `POLYLINEDB_ACCESS_ACTORS='[]'` and deploy using the build and inspection steps below.
+2. Open the protected Worker hostname in your own browser and sign in as the owner.
+3. Run the users-list command again and record the owner's Access user ID outside Git.
+4. Set the actor allowlist to that candidate and repeat the build and deployment.
+5. Confirm the exact actor through the host connector before acceptance.
+
+The empty allowlist refuses application operations even after a successful Access sign-in.
+Keep the owner-only Access policy in place throughout bootstrap.
+Use `access:OWNER_SUBJECT` as the actor value:
+
+```sh
+export POLYLINEDB_ACCESS_ACTORS='["access:OWNER_SUBJECT"]'
+export POLYLINEDB_ALLOWED_ORIGINS='[]'
 npm run build:worker
-cf deploy --help
-cf d1 create --help
-cf d1 query --help
 ```
 
-The command forms below were checked against `cf --help` and the relevant subcommand help. Confirm them again for your installed CLI. Resource creation, schema writes, and deployment require the operator's explicit approval.
+Keep origins empty unless your selected connector sends an Origin header.
+If it does, allow that exact origin.
+Do not use a wildcard.
 
-1. Select the intended Cloudflare account and hostname.
-2. Prepare an Access application that covers the Worker data routes.
-3. Restrict its policy to the personal owner.
-4. Enable Managed OAuth in the application's advanced settings.
-5. Register the host's actual OAuth callback through the provider's supported registration mechanism.
-6. Restrict allowed redirect URIs to the selected host.
-7. Set the Worker configuration values listed above.
-8. Disable or protect alternate Worker hostnames and preview routes.
-
-Configure the Access application using the [provider's setup instructions](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#enable-managed-oauth-on-a-self-hosted-application). The protected hostname must serve the edge's discovery and authentication challenge. polylinedb does not implement an OAuth authorization server or registration service.
-
-After approval, an operator can create an independent D1 database:
-
-```sh
-cf d1 create --name polylinedb --read-replication-mode disabled
-```
-
-Record the returned database UUID as `D1_DATABASE_ID` in the operator's shell. Apply the shared schema only to a new, empty database:
-
-```sh
-cf d1 query "$D1_DATABASE_ID" --sql "$(node scripts/schema.ts)"
-```
-
-`scripts/schema.ts` emits the SQL owned by `src/schema.ts`. The SQL creates tables and a schema-version record. It is not a migration for an existing database and is not safe to apply twice. Keep database changes separate from local CLI initialization.
-
-After approval, deploy the configured Worker:
+Inspect the generated `.cloudflare/output/v0/workers/default/worker.config.json` before deployment.
+Check the Worker name, `DB` database name, Access domain, audience, actors, and `previewUrls: false`.
+After approving those values, deploy:
 
 ```sh
 cf deploy
 ```
 
-Verify that `DB` resolves to the intended database and the hostname passes through the intended Access application. Neither successful compilation nor a deployment receipt proves those bindings or the OAuth path.
+After deployment, verify that `DB` resolves to the recorded database UUID in your account.
+Inspect the deployed Worker settings:
+
+```sh
+cf workers list --per-page 100
+```
+
+Find your Worker by its configured name and inspect `subdomain`.
+For a `workers.dev` deployment, check `enabled: true`, `previews_enabled: false`, and the expected `url`.
+Those deployed settings were confirmed in the setup run.
+If your Worker is on another result page, request that page before evaluating its settings.
+Check the deployed hostname and all alternate routes in the dashboard.
+Disable or protect alternate hostnames and preview routes.
+Neither compilation nor a deployment receipt proves the database binding or the OAuth path.
+
+If `cf` reports a missing platform-specific workerd binary, repair the CLI installation before deployment.
+Preserve optional dependencies when installing `cf`.
+Do not change the application to bypass that installation failure.
+
+### Connect the cloud host
+
+Check discovery before linking the connector:
+
+```sh
+curl -i -X POST 'https://WORKER_HOSTNAME/mcp' \
+	-H 'Accept: application/json, text/event-stream' \
+	-H 'Content-Type: application/json' \
+	--data '{"jsonrpc":"2.0","id":1,"method":"ping"}'
+curl -sS 'https://WORKER_HOSTNAME/.well-known/oauth-protected-resource'
+```
+
+The unauthenticated POST must return `401` with a `WWW-Authenticate` Bearer challenge that names OAuth resource metadata.
+The metadata must name your protected resource and its authorization server.
+These discovery responses were observed on the deployed Worker.
+They establish the Access challenge rather than a successful connector grant.
+
+In the selected host's remote MCP controls, add `https://WORKER_HOSTNAME/mcp` as an HTTP server.
+Complete OAuth with the owner identity that the Access policy permits.
+For Cursor Cloud Agents, use the personal MCP controls at `cursor.com/agents`.
+Keep OAuth credentials in the host's credential store.
+
+Run the `actor` tool and compare the returned actor with `POLYLINEDB_ACCESS_ACTORS`.
+Then run the acceptance checks below in a dedicated test project.
+If the host cannot link or refresh its grant, keep that host unverified rather than copying credentials into its agent VM.
 
 ## Verify each host and D1
 
