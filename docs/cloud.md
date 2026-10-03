@@ -333,11 +333,14 @@ OpenAI specifies either `https://chatgpt.com/connector_platform_oauth_redirect` 
 Use the exact Redirect URI shown in the connection's management page.
 See OpenAI's [redirect URL contract](https://developers.openai.com/plugins/build/auth#redirect-url).
 
-If creation fails before that URI is available, an operator can approve a temporary allowlist containing the fixed URL and `https://chatgpt.com/connector/oauth/*`.
-This permits callbacks for other connections within that ChatGPT path.
-Replace the temporary wildcard with the exact URI after registration once the management page exposes it.
+Use complete redirect URIs in the DCR allowlist, without wildcard patterns.
+A registration allowlist determines which callback URIs new clients may register; it is separate from matching a registered client's redirect during authorization.
+Allowing an entire callback path admits other connections in that path, not only the intended connection.
+An owner-only Access policy still restricts users, but does not make that broader registration scope equivalent to a fixed callback.
+OAuth's [security best practice](https://www.rfc-editor.org/rfc/rfc9700.html#section-2.1) requires exact matching against registered redirects, apart from native-app loopback port exceptions.
+If the interface does not expose the required URI, resolve that registration step with the provider before expanding the allowlist.
+Do not use a wildcard as the standard bootstrap procedure.
 Keep the owner policy, existing callbacks, and token durations unchanged.
-Cloudflare supports redirect patterns in its [Managed OAuth settings](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#managed-oauth-settings).
 
 Read the current application before changing it:
 
