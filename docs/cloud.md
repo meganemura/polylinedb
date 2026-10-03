@@ -7,6 +7,7 @@ To transfer an existing local store, use the [D1 snapshot migration guide](d1-mi
 The setup commands, Worker deployment, and unauthenticated OAuth discovery have been exercised against Cloudflare.
 Cursor Cloud linking, actor identity, and issue creation with a comment were verified.
 A new Cursor Cloud agent used the connection without another login.
+The operator also confirmed ChatGPT custom MCP linking, `actor`, and an existing issue's contents and comments.
 Token refresh after access-token expiry remains unverified.
 Complete the acceptance checks in your own account before relying on the store.
 
@@ -36,6 +37,7 @@ The following evidence was checked on October 3, 2026. Product documentation est
 | --- | --- | --- |
 | Claude custom remote connector | Claude brokers remote MCP through Anthropic's cloud. The connector supports OAuth. | Managed OAuth linking, refresh, and tool calls are unverified. |
 | Cursor Cloud Agents | HTTP MCP calls use a backend proxy. Cursor documents that credentials remain outside the agent VM. | Linking, actor, create, show, and comment passed. A new agent needed no additional login. Expired-token refresh remains unverified. |
+| ChatGPT custom MCP | OAuth with dynamic client registration through the public HTTPS endpoint. | The operator confirmed linking, actor, and issue/comment reads. Writes and expired-token refresh remain unverified. |
 | Codex Cloud | OpenAI documents OAuth for plugin MCP servers in Codex. Its MCP documentation distinguishes local host configuration from hosted plugin tools. | The exact Codex Cloud installation path, credential isolation, and Managed OAuth compatibility are unverified. |
 
 For Claude, use the account's custom remote connector for `https://issues.example.com/mcp`. Complete OAuth in the host interface. See [Claude custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
