@@ -40,6 +40,10 @@ function endpoint(value: unknown, issuer: string): string {
   if (new URL(result).origin !== issuer) return fail('auth_metadata_invalid', 'An authentication endpoint does not match its issuer.');
   return result;
 }
+function cloudflareAccessIssuer(issuer: string): boolean {
+  const url = new URL(issuer);
+  return url.protocol === 'https:' && !url.port && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/.test(url.hostname);
+}
 function scope(value: unknown): string {
   if (value === undefined) return '';
   if (typeof value !== 'string' || value.length > 4096 || /[^\x20-\x21\x23-\x5b\x5d-\x7e]/.test(value)) return fail('auth_response_invalid', 'The grant scope is invalid.');
@@ -124,7 +128,7 @@ export function createCloudAuth(options: Options) {
     if (Buffer.byteLength(raw) > limit) return fail('auth_credentials_invalid', 'The credentials exceed the supported size.');
     await options.credentialStore.write(key, raw);
   };
-  async function request(url: string, init: RequestInit = {}, emptyAllowed = false): Promise<Record<string, unknown>> {
+  async function request(url: string, init: RequestInit = {}, mode: 'json' | 'revocation' = 'json'): Promise<Record<string, unknown>> {
     const controller = new AbortController();
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -140,6 +144,11 @@ export function createCloudAuth(options: Options) {
         const response = await fetcher(url, { ...init, redirect: 'error', signal: controller.signal });
         reader = response.body?.getReader();
         if (response.redirected || response.status >= 300 && response.status < 400) return fail('auth_redirect_rejected', 'Authentication redirects are not permitted for protocol requests.');
+        controller.signal.throwIfAborted();
+        if (mode === 'revocation') {
+          if (response.status === 200) return {};
+          if (response.status !== 400) return fail('auth_request_failed', 'The authentication server rejected the revocation request.');
+        }
         let size = 0; const parts: Uint8Array[] = [];
         if (reader) for (;;) {
           const chunk = await reader.read(); if (chunk.done) break;
@@ -149,7 +158,8 @@ export function createCloudAuth(options: Options) {
         }
         controller.signal.throwIfAborted();
         const raw = Buffer.concat(parts).toString('utf8');
-        const parsed = raw ? object(JSON.parse(raw)) : emptyAllowed ? {} : fail('auth_response_invalid', 'The authentication response is empty.');
+        const parsed = raw ? object(JSON.parse(raw)) : fail('auth_response_invalid', 'The authentication response is empty.');
+        if (mode === 'revocation') return fail(parsed.error === 'invalid_grant' ? 'auth_revocation_invalid_grant' : 'auth_request_failed', 'The authentication server rejected the revocation request.');
         if (!response.ok) return fail(parsed.error === 'invalid_grant' ? 'auth_reauthorization_required' : 'auth_request_failed', parsed.error === 'invalid_grant' ? 'The authorization grant expired or was revoked. Run auth login again.' : 'The authentication server rejected the request.');
         return parsed;
       })()]);
@@ -227,12 +237,20 @@ export function createCloudAuth(options: Options) {
         if (session?.grant) {
           if (!session.metadata.revocation) revocation = 'unsupported';
           else {
-            revocation = 'failed';
+            revocation = 'revoked';
+            let refreshRevoked = false;
             const tokens: [string | null, string][] = [[session.grant.refreshToken, 'refresh_token'], [session.grant.accessToken, 'access_token']];
             for (const [tokenValue, hint] of tokens) {
-              if (tokenValue) await request(session.metadata.revocation, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tokenValue, token_type_hint: hint, client_id: session.registration.clientId }) }, true);
+              if (tokenValue) {
+                try {
+                  await request(session.metadata.revocation, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tokenValue, token_type_hint: hint, client_id: session.registration.clientId }) }, 'revocation');
+                  if (hint === 'refresh_token') refreshRevoked = true;
+                } catch (error) {
+                  // Cloudflare Access cascades refresh revocation and reports the subsequent access token as invalid_grant.
+                  if (!(hint === 'access_token' && refreshRevoked && cloudflareAccessIssuer(session.metadata.issuer) && error instanceof OAuthError && error.code === 'auth_revocation_invalid_grant')) revocation = 'failed';
+                }
+              }
             }
-            revocation = 'revoked';
           }
         }
       } catch { revocation = 'failed'; }

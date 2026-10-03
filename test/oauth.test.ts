@@ -14,17 +14,20 @@ const issuer = 'https://identity.example';
 class MemoryStore implements CredentialStore {
   entries = new Map<string, string>();
   failWrite = false;
+  failDelete = false;
   async read(key: string) { return this.entries.get(key) ?? null; }
   async write(key: string, value: string) { if (this.failWrite) throw new Error('store unavailable'); this.entries.set(key, value); }
-  async delete(key: string) { this.entries.delete(key); }
+  async delete(key: string) { if (this.failDelete) throw new Error('store delete unavailable'); this.entries.delete(key); }
 }
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, providerIssuer = issuer) {
+  const issuer = providerIssuer;
   const stateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-'));
   t.after(() => rm(stateDirectory, { recursive: true, force: true }));
   const store = new MemoryStore();
   let registrations = 0, refreshes = 0, tokenCalls = 0;
   let authUrl = new URL(resource), tokenExpiry = 3600;
   let mode = 'normal';
+  let revoke: ((parameters: URLSearchParams, signal: AbortSignal | null | undefined) => Response | Promise<Response>) | undefined;
   const metadata = { issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, registration_endpoint: `${issuer}/register`, revocation_endpoint: `${issuer}/revoke`, response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'], token_endpoint_auth_methods_supported: ['none'], code_challenge_methods_supported: ['S256'] };
   const provider: typeof fetch = async (input, init) => {
     const url = String(input);
@@ -55,7 +58,7 @@ async function fixture(t: test.TestContext) {
       assert.equal(createHash('sha256').update(params.get('code_verifier') ?? '').digest('base64url'), authUrl.searchParams.get('code_challenge'));
       return Response.json({ token_type: 'Bearer', access_token: 'access-secret', refresh_token: 'refresh-secret', expires_in: tokenExpiry });
     }
-    if (url === `${issuer}/revoke`) return mode === 'revoke-failure' ? new Response('unavailable', { status: 503 }) : new Response('');
+    if (url === `${issuer}/revoke`) return revoke ? revoke(new URLSearchParams(String(init?.body)), init?.signal) : mode === 'revoke-failure' ? new Response('unavailable', { status: 503 }) : new Response('');
     throw new Error(`Unexpected request ${url}`);
   };
   const options = { origin: resource, stateDirectory, credentialStore: store, fetch: provider, loginTimeoutMs: 1500, lockTimeoutMs: 1000 };
@@ -68,7 +71,7 @@ async function fixture(t: test.TestContext) {
     callback.searchParams.set('code', 'authorization-secret');
     const response = await fetch(callback); assert.equal(response.status, 200);
   };
-  return { auth, options, store, stateDirectory, metadata, authorize, setMode: (value: string) => { mode = value; }, setExpiry: (value: number) => { tokenExpiry = value; }, counts: () => ({ registrations, refreshes, tokenCalls }) };
+  return { auth, options, store, stateDirectory, metadata, authorize, setRevoke: (handler: NonNullable<typeof revoke>) => { revoke = handler; }, setMode: (value: string) => { mode = value; }, setExpiry: (value: number) => { tokenExpiry = value; }, counts: () => ({ registrations, refreshes, tokenCalls }) };
 }
 
 test('login validates PKCE and callback, persists credentials, and reuses its client and port', async t => {
@@ -178,6 +181,106 @@ test('logout deletes local credentials when revocation fails', async t => {
   const f = await fixture(t); await f.auth.login({ showAuthorizationUrl: f.authorize }); f.setMode('revoke-failure');
   assert.deepEqual(await f.auth.logout(), { resource, local: 'deleted', revocation: 'failed' });
   assert.equal(f.store.entries.size, 0); assert.equal((await f.auth.status()).state, 'logged_out');
+});
+
+for (const failedHint of ['refresh_token', 'access_token']) test(`logout tries both tokens when ${failedHint} revocation fails`, async t => {
+  const f = await fixture(t); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  const attempts: string[] = [];
+  f.setRevoke(parameters => {
+    const hint = parameters.get('token_type_hint') ?? ''; attempts.push(hint);
+    assert.equal(parameters.get('token'), hint === 'refresh_token' ? 'refresh-secret' : 'access-secret');
+    return hint === failedHint ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response('OK');
+  });
+  assert.deepEqual(await f.auth.logout(), { resource, local: 'deleted', revocation: 'failed' });
+  assert.deepEqual(attempts, ['refresh_token', 'access_token']);
+  assert.equal(f.store.entries.size, 0);
+});
+
+for (const body of ['OK', '<html>revoked</html>', 'x'.repeat(65537)]) test(`logout ignores a successful revocation body of ${body.length} bytes`, async t => {
+  const f = await fixture(t); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  f.setRevoke(() => new Response(body));
+  assert.deepEqual(await f.auth.logout(), { resource, local: 'deleted', revocation: 'revoked' });
+});
+
+test('logout cancels an unfinished HTTP 200 body without awaiting cancellation', async t => {
+  const f = await fixture(t); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  let cancellations = 0;
+  const signals: (AbortSignal | null | undefined)[] = [];
+  f.setRevoke((_parameters, signal) => {
+    signals.push(signal);
+    return new Response(new ReadableStream({ cancel() { cancellations++; return new Promise<void>(() => {}); } }));
+  });
+  const auth = createCloudAuth({ ...f.options, requestTimeoutMs: 20 });
+  assert.deepEqual(await auth.logout(), { resource, local: 'deleted', revocation: 'revoked' });
+  assert.equal(cancellations, 2);
+  assert.equal(signals.every(signal => signal?.aborted), true);
+});
+
+for (const status of [204, 302, 503]) test(`logout treats HTTP ${status} revocation as failed`, async t => {
+  const f = await fixture(t); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  let attempts = 0;
+  f.setRevoke(() => { attempts++; return new Response(null, { status }); });
+  assert.deepEqual(await f.auth.logout(), { resource, local: 'deleted', revocation: 'failed' });
+  assert.equal(attempts, 2);
+});
+
+test('logout still tries the access token after a refresh revocation timeout', async t => {
+  const f = await fixture(t); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  const attempts: string[] = [];
+  f.setRevoke(parameters => {
+    const hint = parameters.get('token_type_hint') ?? ''; attempts.push(hint);
+    return hint === 'refresh_token' ? new Promise<Response>(() => {}) : new Response('OK');
+  });
+  const auth = createCloudAuth({ ...f.options, requestTimeoutMs: 20 });
+  assert.deepEqual(await auth.logout(), { resource, local: 'deleted', revocation: 'failed' });
+  assert.deepEqual(attempts, ['refresh_token', 'access_token']);
+});
+
+test('logout rejects a local deletion failure and retains the credential entry', async t => {
+  const f = await fixture(t); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  f.store.failDelete = true;
+  await assert.rejects(f.auth.logout(), /store delete unavailable/);
+  assert.equal(f.store.entries.size, 1);
+  assert.deepEqual(await readdir(f.stateDirectory), []);
+});
+
+for (const scenario of [
+  { name: 'Cloudflare cascade', issuer: 'https://team.cloudflareaccess.com', refresh: true, refreshStatus: 200, accessStatus: 400, error: 'invalid_grant', expected: 'revoked' },
+  { name: 'generic issuer', issuer, refresh: true, refreshStatus: 200, accessStatus: 400, error: 'invalid_grant', expected: 'failed' },
+  { name: 'fake suffix', issuer: 'https://team.cloudflareaccess.com.attacker.example', refresh: true, refreshStatus: 200, accessStatus: 400, error: 'invalid_grant', expected: 'failed' },
+  { name: 'fake prefix', issuer: 'https://fakecloudflareaccess.com', refresh: true, refreshStatus: 200, accessStatus: 400, error: 'invalid_grant', expected: 'failed' },
+  { name: 'issuer apex', issuer: 'https://cloudflareaccess.com', refresh: true, refreshStatus: 200, accessStatus: 400, error: 'invalid_grant', expected: 'failed' },
+  { name: 'nonstandard port', issuer: 'https://team.cloudflareaccess.com:8443', refresh: true, refreshStatus: 200, accessStatus: 400, error: 'invalid_grant', expected: 'failed' },
+  { name: 'refresh failure', issuer: 'https://team.cloudflareaccess.com', refresh: true, refreshStatus: 400, accessStatus: 400, error: 'invalid_grant', expected: 'failed' },
+  { name: 'missing refresh', issuer: 'https://team.cloudflareaccess.com', refresh: false, refreshStatus: 200, accessStatus: 400, error: 'invalid_grant', expected: 'failed' },
+  { name: 'different access error', issuer: 'https://team.cloudflareaccess.com', refresh: true, refreshStatus: 200, accessStatus: 400, error: 'unsupported_token_type', expected: 'failed' },
+  { name: 'different access status', issuer: 'https://team.cloudflareaccess.com', refresh: true, refreshStatus: 200, accessStatus: 503, error: 'invalid_grant', expected: 'failed' },
+]) test(`logout limits cascading revocation compatibility for ${scenario.name}`, async t => {
+  const f = await fixture(t, scenario.issuer); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  if (!scenario.refresh) for (const [key, raw] of f.store.entries) {
+    const session = JSON.parse(raw); session.grant.refreshToken = null; f.store.entries.set(key, JSON.stringify(session));
+  }
+  const attempts: string[] = [];
+  f.setRevoke(parameters => {
+    const hint = parameters.get('token_type_hint') ?? ''; attempts.push(hint);
+    const status = hint === 'refresh_token' ? scenario.refreshStatus : scenario.accessStatus;
+    return status === 200 ? new Response('OK') : Response.json({ error: scenario.error }, { status });
+  });
+  assert.deepEqual(await f.auth.logout(), { resource, local: 'deleted', revocation: scenario.expected });
+  assert.deepEqual(attempts, scenario.refresh ? ['refresh_token', 'access_token'] : ['access_token']);
+});
+
+for (const failure of ['network', 'oversized', 'unfinished']) test(`Cloudflare access revocation ${failure} remains a failure`, async t => {
+  const f = await fixture(t, 'https://team.cloudflareaccess.com'); await f.auth.login({ showAuthorizationUrl: f.authorize });
+  f.setRevoke(parameters => {
+    if (parameters.get('token_type_hint') === 'refresh_token') return new Response('OK');
+    if (failure === 'network') throw new Error('connection unavailable');
+    const raw = JSON.stringify({ error: 'invalid_grant' });
+    if (failure === 'oversized') return new Response(raw + ' '.repeat(65537), { status: 400 });
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(raw)); } }), { status: 400 });
+  });
+  const auth = createCloudAuth({ ...f.options, requestTimeoutMs: 20 });
+  assert.deepEqual(await auth.logout(), { resource, local: 'deleted', revocation: 'failed' });
 });
 
 test('discovery rejects endpoint rebinding and public registration rejects client secrets', async t => {

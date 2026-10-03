@@ -95,9 +95,15 @@ pd --connection cloud auth logout
 ```
 
 Logout attempts server revocation, then removes the local entry.
+It attempts both token revocations even if one request fails.
 Its JSON result distinguishes local deletion from successful, unsupported, or failed server revocation.
 Local deletion alone does not prove that another copy of the token has been revoked.
 Logout also removes the saved public client registration; the next login registers a new client.
+
+Cloudflare Access can revoke the access token together with its refresh token.
+The subsequent access revocation can then return HTTP 400 with `invalid_grant`.
+For Cloudflare Access issuers, the CLI accepts that response after refresh revocation returns HTTP 200 in the same logout.
+Other failed requests retain the `failed` result.
 
 ## Local agents and 1Password
 
@@ -118,4 +124,8 @@ Credential tests cover command arguments, size limits, denied or unavailable sto
 The macOS Keychain and a disposable Linux Secret Service both passed save, read, overwrite, delete, and missing-entry checks with synthetic credentials.
 The Linux test also verified errors when the service was unavailable.
 The packaged CLI passed local issue operations and unauthenticated cloud credential checks on Linux with Node.js 24.20.
+Local Codex, Claude Code, and Cursor passed cloud issue operations with the installed CLI without another login.
+The live check observed a later token expiry and four successful concurrent CLI processes without another login.
+Synthetic tests verify that concurrent commands send one refresh request.
+Server checks rejected both old tokens after logout against Cloudflare Managed OAuth.
 Desktop unlock prompts and each provider's deployed OAuth policy require separate acceptance checks.
