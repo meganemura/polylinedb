@@ -1,0 +1,9 @@
+.audit/
+node_modules/
+.cf/
+.wrangler/
+.cloudflare/
+dist/
+.env
+.env.*
+*.sqlite*

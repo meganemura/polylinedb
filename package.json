@@ -1,0 +1,32 @@
+{
+  "name": "polylinedb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A personal issue store for local tools and cloud agents",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "pd": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "start": "node src/cli.ts",
+    "build:worker": "cf build",
+    "dev:worker": "cf dev --local",
+    "typecheck": "tsc --noEmit",
+    "test:d1": "node test/d1.integration.ts",
+    "schema": "node scripts/schema.ts",
+    "test:worker": "npm run build:worker && node test/worker.integration.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.60.2",
+    "@types/node": "24.19.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.1"
+  },
+  "overrides": {
+    "undici": "7.30.0"
+  }
+}
