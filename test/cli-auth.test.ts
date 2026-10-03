@@ -1,0 +1,89 @@
+// Verifies auth grammar, JSON output, and real OAuth wiring without live credentials or HTTPS traffic.
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+
+const executable = new URL('../src/cli.ts', import.meta.url).pathname;
+const preload = new URL('./fixtures/cli-auth-preload.ts', import.meta.url).pathname;
+function fixture(context: test.TestContext) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pd-cli-auth-')));
+  const cwd = join(root, 'work');
+  mkdirSync(cwd);
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'),
+    POLYLINEDB_CONNECTION: undefined, POLYLINEDB_DATA_DIR: undefined, POLYLINEDB_ACTOR: undefined,
+    PD_AUTH_FIXTURE_STATE: join(root, 'synthetic-credential'), PD_AUTH_FIXTURE_MODE: 'normal' };
+  const run = (args: string[], status = 0, mode = 'normal') => {
+    const result = spawnSync(process.execPath, ['--import', preload, executable, ...args], {
+      cwd, env: { ...env, PD_AUTH_FIXTURE_MODE: mode }, encoding: 'utf8', timeout: 10000,
+    });
+    assert.equal(result.status, status, `${result.stderr}\n${result.stdout}`);
+    assert.equal(result.stdout.includes('synthetic-access-token'), false);
+    assert.equal(result.stderr.includes('synthetic-private-token'), false);
+    return result;
+  };
+  run(['connection', 'add', 'cloud', '--url', 'https://issues.example.invalid']);
+  return { root, cwd, env, run };
+}
+
+test('auth grammar and local selection reject before credential access or state creation', context => {
+  const { root, run } = fixture(context);
+  for (const args of [['auth'], ['auth', 'unknown'], ['auth', 'status', 'extra'], ['auth', 'login', '--actor', 'local:spoof'],
+    ['auth', 'status', '--prefix', 'pd'], ['auth', 'logout', '--data-dir', root], ['auth', 'status', '--tool', 'tool']]) {
+    const result = run(['--connection', 'cloud', ...args], 2, 'unexpected');
+    assert.equal(result.stdout, '');
+    assert.equal(JSON.parse(result.stderr).error.code, 'invalid_input');
+  }
+  for (const action of ['login', 'status', 'logout']) {
+    const result = run(['auth', action], 2, 'unexpected');
+    assert.equal(JSON.parse(result.stderr).error.message, 'Authentication requires a cloud connection');
+  }
+  assert.equal(existsSync(join(root, 'config', 'polylinedb', 'auth')), false);
+  assert.equal(existsSync(join(root, 'data')), false);
+});
+
+test('auth status and logout emit local JSON without live OS commands or local databases', context => {
+  const { root, run } = fixture(context);
+  const status = run(['auth', 'status', '--connection', 'cloud']);
+  assert.equal(status.stderr, '');
+  assert.deepEqual(JSON.parse(status.stdout), { resource: 'https://issues.example.invalid', issuer: null,
+    state: 'logged_out', expiresAt: null, needsRefresh: false, refreshAvailable: false });
+  const logout = run(['--connection', 'cloud', 'auth', 'logout']);
+  assert.equal(logout.stderr, '');
+  assert.deepEqual(JSON.parse(logout.stdout), { resource: 'https://issues.example.invalid', local: 'deleted', revocation: 'not_needed' });
+  assert.equal(existsSync(join(root, 'data')), false);
+});
+
+test('auth login sends the authorization URL to stderr and returns grant status on stdout', context => {
+  const { root, run } = fixture(context);
+  const result = run(['auth', 'login', '--connection', 'cloud']);
+  const authorization = new URL(result.stderr.trim());
+  assert.equal(authorization.origin, 'https://auth.example.invalid');
+  assert.equal(authorization.searchParams.get('code_challenge_method'), 'S256');
+  const status = JSON.parse(result.stdout);
+  assert.equal(status.state, 'stored');
+  assert.equal(status.resource, 'https://issues.example.invalid');
+  assert.equal(status.refreshAvailable, true);
+  assert.equal(run(['auth', 'status', '--connection', 'cloud']).stderr, '');
+  assert.equal(existsSync(join(root, 'data')), false);
+});
+
+test('auth backend errors stay safe and never expose child diagnostics', context => {
+  const { run } = fixture(context);
+  for (const mode of ['denied', 'unexpected']) {
+    const result = run(['auth', 'status', '--connection', 'cloud'], 1, mode);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'auth_store_unavailable',
+      message: 'The OS credential store is unavailable or did not complete the operation.' } });
+  }
+});
+
+test('repository-selected cloud auth ignores the retained local actor', context => {
+  const { cwd, env, run } = fixture(context);
+  execFileSync('git', ['init', '--quiet', cwd], { env });
+  run(['init', '--connection', 'cloud', '--tool', 'tool', '--project', 'demo']);
+  assert.equal(JSON.parse(run(['auth', 'status']).stdout).state, 'logged_out');
+});

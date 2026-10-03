@@ -10,6 +10,9 @@ import { initializeStore, openStore } from './sqlite.ts';
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from './local-config.ts';
 import type { RepositoryConfiguration } from './local-config.ts';
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from './connections.ts';
+import { createCloudClient } from './cloud.ts';
+import { OAuthError } from './oauth.ts';
+import { CredentialStoreError } from './credential-store.ts';
 import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './issue-id.ts';
 
@@ -30,6 +33,9 @@ Commands:
   connection list
   connection use NAME           Select a connection in existing repository defaults.
   connection default NAME       Select the user default connection.
+  auth login                    Print the authorization URL to stderr and wait for approval.
+  auth status                   Show locally stored cloud authentication status.
+  auth logout                   Remove cloud credentials and report revocation.
   context                       Show the selected store and local defaults.
   export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
@@ -66,6 +72,7 @@ Examples:
 const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'];
 const globals = ['connection', 'data-dir', 'actor', 'prefix'];
 const commandFlags: Record<string, readonly string[]> = {
+  auth: [],
   connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
@@ -130,8 +137,12 @@ async function main(): Promise<void> {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
   const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen'].includes(command);
-  if (command !== 'connection' && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
+  if (!['connection', 'auth'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
+  if (command === 'auth') {
+    if (operands.length !== 1 || !['login', 'status', 'logout'].includes(operands[0])) invalid('Authentication requires login, status, or logout');
+    if (Array.from(flags.keys()).some(name => name !== 'connection')) invalid('Authentication accepts only --connection and --json');
+  }
   if (command === 'connection') {
     const [action, name] = operands;
     const allowed = action === 'add' ? ['data-dir', 'url'] : [];
@@ -166,6 +177,14 @@ async function main(): Promise<void> {
   const current = readConnections();
   const selected = selectConnection({ connection: one('connection'), directory: one('data-dir'), environment: process.env,
     repository: defaults, ...current, fallbackDirectory: stealth ? join(dataRoot, 'stores', randomUUID()) : dataRoot });
+  if (command === 'auth') {
+    if (selected.kind !== 'cloud') invalid('Authentication requires a cloud connection');
+    const cloud = createCloudClient(selected);
+    const result = operands[0] === 'login' ? await cloud.login(url => { process.stderr.write(url + '\n'); })
+      : operands[0] === 'status' ? await cloud.status() : await cloud.logout();
+    process.stdout.write(JSON.stringify(result) + '\n');
+    return;
+  }
   const tool = one('tool') ?? defaults?.tool;
   const project = one('project') ?? defaults?.project;
   const actor = selected.kind === 'cloud' ? undefined : one('actor') ?? process.env.POLYLINEDB_ACTOR ?? defaults?.actor ?? 'local:reader';
@@ -288,6 +307,7 @@ async function main(): Promise<void> {
 }
 main().catch((error: unknown) => {
   const known = error instanceof PolylinedbError;
-  process.stderr.write(JSON.stringify({ error: { code: known ? error.code : 'internal_error', message: error instanceof Error ? error.message : 'Internal error', ...(known && error.details !== undefined ? { details: error.details } : {}) } }) + '\n');
+  const authentication = error instanceof OAuthError || error instanceof CredentialStoreError;
+  process.stderr.write(JSON.stringify({ error: { code: known || authentication ? error.code : 'internal_error', message: error instanceof Error ? error.message : 'Internal error', ...(known && error.details !== undefined ? { details: error.details } : {}) } }) + '\n');
   process.exitCode = known ? ({ 400: 2, 404: 3, 409: 4 }[error.status] ?? 1) : 1;
 });

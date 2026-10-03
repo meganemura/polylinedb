@@ -102,6 +102,10 @@ The Worker accepts a verified Access assertion and uses an explicit actor allowl
 See [cloud setup and acceptance checks](docs/cloud.md).
 Local tests do not establish that a particular cloud host preserves and refreshes OAuth grants across tasks.
 
+For local CLI authentication, select a named cloud connection and run `pd --connection NAME auth login`.
+Credentials use macOS Keychain or Linux Secret Service, with no plaintext fallback.
+See [CLI authentication](docs/cli-authentication.md) for platform prerequisites, loopback registration, and recovery.
+
 ## Develop
 
 These commands require a source checkout, not the installed npm package.
