@@ -39,7 +39,7 @@ Commands:
   context                       Show the selected store and local defaults.
   export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
-  actor                         Show the explicit actor, or local:reader.
+  actor                         Show the local actor or authenticated cloud actor.
   create --tool NAME --project NAME --body TEXT [--parent ID]
          [--type bug|task|epic|feature|chore] [--status STATUS]
          [--priority 0..4] [--label NAME ...] [--request-id UUID]
@@ -56,7 +56,8 @@ Commands:
 STATUS: open, in_progress, deferred, closed.
 FILTERS: --tool, --project, --status, --type, --priority, --label, --after, --limit.
 create, comment and update accept --body-file PATH instead of --body.
-Use --body-file - to read standard input. Mutations require an explicit actor.
+Use --body-file - to read standard input. Local mutations require an explicit actor.
+Cloud commands use OAuth. Run auth login once; tokens stay in the OS credential store.
 Each update field requires its own expected version from show. Conflicts require rereading.
 The prefix defaults to repository settings, otherwise pd. It matches [a-z][a-z0-9]{0,15}.
 Issue numbers expand with the selected prefix: show 42 reads pd-42, and show 42.1 reads pd-42.1.
@@ -222,12 +223,11 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
   }
-  if (selected.kind === 'cloud') throw new PolylinedbError('cloud_not_supported', 'This command does not support cloud connections yet', 400);
-  if (actor === undefined) invalid('Local connection requires an actor');
-  if (['create', 'comment', 'update', 'close', 'reopen', 'import'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
-  if (command === 'actor') { process.stdout.write(JSON.stringify({ actor }) + '\n'); return; }
-  const directory = selected.directory;
+  if (selected.kind === 'local' && ['create', 'comment', 'update', 'close', 'reopen', 'import'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
+  if (selected.kind === 'local' && command === 'actor') { process.stdout.write(JSON.stringify({ actor }) + '\n'); return; }
   if (command === 'import' || command === 'export') {
+    if (selected.kind === 'cloud') throw new PolylinedbError('cloud_snapshot_not_supported', 'Import and export require a local connection. Use the documented D1 migration procedure for cloud data.', 400);
+    const directory = selected.directory;
     let snapshot;
     if (command === 'import') {
       const file = one('file');
@@ -301,7 +301,12 @@ async function main(): Promise<void> {
     raw.changes = changes;
   }
   const operation = parseOperation(raw);
-  const store = openStore({ directory });
+  if (selected.kind === 'cloud') {
+    process.stdout.write(JSON.stringify(await createCloudClient(selected).execute(operation)) + '\n');
+    return;
+  }
+  if (actor === undefined) invalid('Local connection requires an actor');
+  const store = openStore({ directory: selected.directory });
   try { process.stdout.write(JSON.stringify(await executeOperation(store.db, operation, actor)) + '\n'); }
   finally { store.close(); }
 }

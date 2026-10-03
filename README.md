@@ -2,7 +2,7 @@
 
 polylinedb (polyline database) is a personal issue store for local tools and cloud agents.
 Its command is `pd`, and its unscoped npm package name is `polylinedb`.
-The CLI uses one SQLite file outside your working repository.
+The CLI selects either one SQLite file outside your working repository or an authenticated cloud connection.
 The Cloudflare Worker provides the same operations through HTTP and remote MCP, with D1 as its database.
 These are independent stores; polylinedb does not synchronize them.
 
@@ -82,7 +82,7 @@ See the [operation contract](docs/operations.md) for fields, defaults, paginatio
 
 ## Use the agent skill
 
-The package includes [the polylinedb skill](skills/polylinedb/SKILL.md) for agents that manage issues through the local CLI.
+The package includes [the polylinedb skill](skills/polylinedb/SKILL.md) for agents that manage local or cloud issues through the CLI.
 Copy or symlink the complete `skills/polylinedb` directory into your host's skill directory.
 Common user directories are `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`.
 Choose one installed source for each host and reload skill discovery as required by that host.
@@ -92,7 +92,7 @@ It does not initialize a database during ordinary issue work.
 
 ## Use cloud agents
 
-The npm package distributes the local CLI, documentation, and agent skill.
+The npm package distributes the CLI, documentation, and agent skill.
 Worker deployment requires access to the source repository and a separate Cloudflare setup.
 Deploy the Worker behind Cloudflare Access with Managed OAuth.
 Connect an agent host to its `/mcp` endpoint through the host's protected connector storage.
@@ -105,6 +105,20 @@ Local tests do not establish that a particular cloud host preserves and refreshe
 For local CLI authentication, select a named cloud connection and run `pd --connection NAME auth login`.
 Credentials use macOS Keychain or Linux Secret Service, with no plaintext fallback.
 See [CLI authentication](docs/cli-authentication.md) for platform prerequisites, loopback registration, and recovery.
+
+```sh
+pd connection add cloud --url https://issues.example.com
+pd --connection cloud auth login
+pd --connection cloud actor
+pd --connection cloud create --tool editor --project sample --body 'Check cloud operations'
+pd --connection cloud list --project sample
+```
+
+Use the protected origin without `/mcp` when configuring the CLI.
+Issue commands use the same fields and expected versions for either connection kind.
+Cloud commands derive the actor from authentication and reject `--actor`.
+They do not retry mutations after an uncertain response or fall back to local storage.
+Import and export remain local commands; use the [D1 migration guide](docs/d1-migration.md) for cloud transfers.
 
 ## Develop
 

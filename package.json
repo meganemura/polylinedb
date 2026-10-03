@@ -50,7 +50,8 @@
     "dist/cloud.js",
     "dist/oauth.js",
     "dist/credential-session.js",
-    "dist/credential-store.js"
+    "dist/credential-store.js",
+    "dist/cloud-operations.js"
   ],
   "publishConfig": {
     "access": "public",

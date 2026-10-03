@@ -1,11 +1,11 @@
 ---
 name: polylinedb
-description: Use the pd CLI to read and manage agent work in an existing local polylinedb issue store. Applies to issue discovery, progress comments, and authorized status or field changes.
+description: Use the pd CLI to read and manage agent work in an existing local or cloud polylinedb issue store. Applies to issue discovery, progress comments, and authorized status or field changes.
 ---
 
 # Agent issue workflow
 
-Use `pd --help` for the installed CLI contract. This skill uses the local store; cloud MCP has a separate authenticated store.
+Use `pd --help` for the installed CLI contract. Select the task's local or cloud connection deliberately.
 Initialize or change stores only when the task requests setup.
 
 ## Select the work
@@ -16,6 +16,11 @@ Connection selection uses flags, then environment variables, repository defaults
 Use either `--connection NAME` or `--data-dir PATH`. The matching environment variables are `POLYLINEDB_CONNECTION` and `POLYLINEDB_DATA_DIR`.
 For a local actor, an explicit flag overrides an environment variable, which overrides repository defaults.
 Prefix, tool, and project flags override repository defaults directly.
+For cloud context, run `pd actor` to confirm the server's authenticated identity.
+Cloud commands reject `--actor` and ignore inherited local actors.
+If authentication is required, ask the user to complete `pd --connection NAME auth login` in their own browser.
+Keep credentials and authorization URLs out of issue bodies, comments, and shared logs.
+Do not switch to local storage to bypass a cloud failure.
 Repository project and tool defaults apply to creation. They do not filter list or search.
 With a shared store, use the task's project explicitly:
 
@@ -37,7 +42,8 @@ An `in_progress` status records progress; it does not establish exclusive owners
 
 ## Record progress
 
-Mutations require the task's authorized actor, supplied by repository defaults, `POLYLINEDB_ACTOR`, or `--actor`.
+Local mutations require the task's authorized actor, supplied by repository defaults, `POLYLINEDB_ACTOR`, or `--actor`.
+Cloud mutations use the authenticated actor. Omit `--actor` from the examples below when using a cloud connection.
 The actor records attribution. It does not grant permission to change an issue.
 Update only fields that the task authorizes. Use the versions returned by the latest `show`:
 
@@ -69,6 +75,8 @@ Select the project, tool, prefix, and actor deliberately:
 pd --prefix PREFIX --actor ACTOR create --tool TOOL --project PROJECT \
   --body-file ./issue-description.md --request-id REQUEST_UUID
 ```
+
+For a cloud connection, omit `--actor`; the server supplies the identity.
 
 Generate one UUID for each logical creation request and retain it before invoking the command.
 After an uncertain result, reuse that UUID with identical arguments and actor.

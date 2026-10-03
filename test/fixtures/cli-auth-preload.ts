@@ -2,6 +2,9 @@
 import childProcess from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
+import { appendFileSync } from 'node:fs';
+import { initializeStore, openStore } from '../../src/sqlite.ts';
+import { executeOperation, parseOperation, PolylinedbError } from '../../src/issues.ts';
 
 const spawn = childProcess.spawn;
 Object.defineProperty(childProcess, 'spawn', { value: (executable: string, args: string[], options: SpawnOptions) => {
@@ -41,6 +44,28 @@ const networkFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : String(input);
   if (url.startsWith('http://127.0.0.1:')) return networkFetch(input, init);
+  if (url === 'https://issues.example.invalid/v1/operations') {
+    const operation = parseOperation(JSON.parse(String(init?.body)));
+    const log = process.env.PD_CLOUD_FIXTURE_LOG;
+    const directory = process.env.PD_CLOUD_FIXTURE_STORE;
+    if (!log || !directory) throw new Error('Synthetic cloud fixture is not configured');
+    appendFileSync(log, JSON.stringify(operation) + '\n');
+    if (new Headers(init?.headers).get('authorization') !== 'Bearer synthetic-access-token') return new Response(null, { status: 401 });
+    const mode = process.env.PD_CLOUD_FIXTURE_MODE;
+    if (mode === '401' || mode === '403') return new Response(null, { status: Number(mode) });
+    if (mode === 'network') throw new Error('synthetic-private-token');
+    initializeStore({ directory });
+    const store = openStore({ directory });
+    try {
+      const result = await executeOperation(store.db, operation, 'oauth:synthetic-owner');
+      if (mode === 'ambiguous') throw new Error('synthetic-private-token');
+      return Response.json(result);
+    } catch (error) {
+      if (error instanceof PolylinedbError) return Response.json({ error: { code: error.code, message: error.message,
+        ...(error.details === undefined ? {} : { details: error.details }) } }, { status: error.status });
+      throw error;
+    } finally { store.close(); }
+  }
   if (url === 'https://issues.example.invalid/.well-known/oauth-protected-resource') return Response.json({
     resource: 'https://issues.example.invalid', authorization_servers: ['https://auth.example.invalid'],
   });

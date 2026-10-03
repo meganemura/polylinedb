@@ -1,6 +1,7 @@
 # Deploy and connect the cloud store
 
-The cloud Worker stores issues in D1. The local CLI stores issues in its own SQLite database. The two stores do not synchronize.
+The cloud Worker stores issues in D1. The CLI can select that Worker or a local SQLite database. The two stores do not synchronize.
+For a local CLI connected to the Worker, follow [CLI authentication](cli-authentication.md).
 
 To transfer an existing local store, use the [D1 snapshot migration guide](d1-migration.md). Restore into an isolated destination and verify its complete contents before changing the Worker binding.
 
@@ -390,4 +391,4 @@ Local SQLite tests and the local workerd D1 check in `test/d1.integration.ts` pr
 
 An operator-controlled local HTTP client may use an Access Service Token with a Service Auth policy. Keep that credential in the local client's protected credential source. Access must produce a verified service assertion whose actor is explicitly allowlisted.
 
-The bundled CLI operates directly on local SQLite. It does not act as an OAuth connector or a remote service-token client. Never place a Service Token in cloud-agent setup scripts, environment variables, or tool arguments.
+The bundled CLI supports local SQLite and public-client OAuth for the Worker. It does not implement service-token authentication. Never place a Service Token in cloud-agent setup scripts, environment variables, or tool arguments.

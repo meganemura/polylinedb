@@ -4,6 +4,8 @@ import { connectionConfigDirectory } from './connections.ts';
 import type { SelectedConnection } from './connections.ts';
 import { createCloudAuth, OAuthError } from './oauth.ts';
 import { createCredentialStore, CredentialStoreError } from './credential-store.ts';
+import { executeCloudOperation } from './cloud-operations.ts';
+import type { Operation } from './issues.ts';
 
 export function createCloudClient(connection: Extract<SelectedConnection, { kind: 'cloud' }>) {
   const auth = createCloudAuth({ origin: connection.url, stateDirectory: join(connectionConfigDirectory(), 'auth'),
@@ -16,6 +18,8 @@ export function createCloudClient(connection: Extract<SelectedConnection, { kind
     }
   };
   return {
+    execute: (operation: Operation) => executeCloudOperation({ origin: connection.url, operation,
+      authorize: () => authenticate(() => auth.accessToken()) }),
     login: (showAuthorizationUrl: (url: string) => void | Promise<void>) => authenticate(() => auth.login({ showAuthorizationUrl })),
     status: () => authenticate(() => auth.status()),
     logout: () => authenticate(() => auth.logout()),

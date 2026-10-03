@@ -28,7 +28,7 @@ try {
   assert.equal(pack.name, 'polylinedb');
   const expectedFiles = ['LICENSE', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
     'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'dist/connections.js', 'dist/issue-id.js',
-    'dist/cloud.js', 'dist/oauth.js', 'dist/credential-session.js', 'dist/credential-store.js',
+    'dist/cloud.js', 'dist/cloud-operations.js', 'dist/oauth.js', 'dist/credential-session.js', 'dist/credential-store.js',
     'dist/issue-queries.js', 'dist/solarsql.generated.js', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
@@ -100,9 +100,13 @@ try {
   }
   const unavailable = spawnSync(command, ['export', '--file', join(root, 'cloud-export.json')], { cwd: workspace, env, encoding: 'utf8' });
   assert.equal(unavailable.status, 2);
-  assert.equal(JSON.parse(unavailable.stderr).error.code, 'cloud_not_supported');
+  assert.equal(JSON.parse(unavailable.stderr).error.code, 'cloud_snapshot_not_supported');
   connected(['connection', 'use', 'home']);
   assert.equal(connected(['show', '1']).issue.id, issue.id);
+  const cloudTests = spawnSync(process.execPath, ['--test', 'test/cli-cloud.test.ts'], {
+    cwd: project, env: { ...env, PD_CLI_EXECUTABLE: join(installed, 'dist', 'cli.js') }, encoding: 'utf8',
+  });
+  assert.equal(cloudTests.status, 0, cloudTests.stdout + cloudTests.stderr);
   const destination = process.argv[2];
   if (destination) {
     const { copyFileSync } = await import('node:fs');

@@ -170,16 +170,15 @@ test('v2 context remains unchanged until explicit connection use converts its no
   assert.equal(run(['context'], { cwd: root, status: 0 }).mode, 'local');
 });
 
-test('cloud init and unsupported commands never create local storage or read operation files', context => {
+test('cloud init and snapshots never create local storage or read operation files', context => {
   const { root, repo, run } = fixture(context);
   run(['connection', 'add', 'cloud', '--url', 'https://issues.example.invalid']);
   const initialized = run(['init', '--connection', 'cloud', '--tool', 'tool', '--project', 'demo']);
   assert.deepEqual(run(['init']), initialized);
   assert.equal(initialized.mode, 'cloud');
   assert.equal(existsSync(join(root, 'data')), false);
-  for (const args of [['actor'], ['list'], ['create', '--body-file', join(root, 'missing-body')],
-    ['import', '--file', join(root, 'missing-snapshot')], ['export', '--file', join(root, 'export.json')]]) {
-    assert.equal(run(args, { status: 2 }).error.code, 'cloud_not_supported');
+  for (const args of [['import', '--file', join(root, 'missing-snapshot')], ['export', '--file', join(root, 'export.json')]]) {
+    assert.equal(run(args, { status: 2 }).error.code, 'cloud_snapshot_not_supported');
   }
   assert.equal(existsSync(join(root, 'export.json')), false);
   assert.equal(existsSync(join(root, 'data')), false);

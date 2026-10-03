@@ -128,13 +128,19 @@ A writer waits for at most two seconds, then reports a locked configuration.
 A process that exits during a write can leave `polylinedb.json.lock` behind.
 The CLI preserves that lock until the owner resolves the interrupted write.
 
-## Context and cloud command limits
+## Context and cloud operations
 
 `pd context` reports `mode`, `connection`, `source`, the repository defaults, and `config_path`.
 Sources are `flag`, `environment`, `repository`, `user_default`, and `legacy_default`.
 Local context retains `data_dir`, `database_path`, and `actor`.
 Cloud context reports `url` and `actor_source: "authenticated"` without a network request.
 
-Cloud actor and issue commands currently return `cloud_not_supported`.
-Cloud import and export return that error before file access.
-These failures do not open or initialize SQLite.
+Cloud connections support actor, create, show, list, search, comment, update, close, and reopen.
+Run `pd --connection NAME auth login` before the first operation; see [CLI authentication](cli-authentication.md).
+The client sends each operation once to `/v1/operations` and preserves the supplied field versions.
+Authentication or network failures do not select a local store.
+After an uncertain create result, retain the reported `request_id` and reuse it with identical input if retrying.
+After an uncertain comment result, inspect the issue before appending again.
+
+Cloud import and export return `cloud_snapshot_not_supported` before file or credential access.
+Cloud commands do not open or initialize SQLite.
