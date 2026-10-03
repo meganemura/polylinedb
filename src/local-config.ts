@@ -1,6 +1,6 @@
 // Owns local Git metadata defaults; store initialization and issue operations stay outside.
 import { execFileSync } from 'node:child_process';
-import { constants, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { PolylinedbError } from './issues.ts';
@@ -14,6 +14,15 @@ export type RepositoryDefaults = {
   actor: string;
   prefix: string;
 };
+export type RepositorySelection = {
+  version: 3;
+  connection: string;
+  tool: string;
+  project: string;
+  prefix: string;
+  actor?: string;
+};
+export type RepositoryConfiguration = RepositoryDefaults | RepositorySelection;
 
 type Repository = { root: string; common: string };
 const maximumBytes = 16384;
@@ -64,13 +73,27 @@ function plannedDirectory(path: string): string {
   return canonical;
 }
 
-function parseDefaults(value: unknown, found: Repository, allowMissing = false): RepositoryDefaults {
+export function validateExternalDirectory(path: string, cwd = process.cwd()): string {
+  if (!isAbsolute(path) || /\p{Cc}/u.test(path)) return invalid('Configuration directory must be absolute');
+  const directory = plannedDirectory(path);
+  const found = repository(cwd);
+  if (found !== undefined && (inside(directory, found.root) || inside(directory, found.common))) return invalid('Configuration directory must stay outside Git repositories and metadata');
+  for (let current = directory; ; current = dirname(current)) {
+    try { lstatSync(join(current, '.git')); return invalid('Configuration directory must stay outside Git repositories'); }
+    catch (error) { if (!missing(error)) throw error; }
+    if (dirname(current) === current) break;
+  }
+  return directory;
+}
+
+function parseDefaults(value: unknown, found: Repository, allowMissing = false): RepositoryConfiguration {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalid('Repository defaults must be an object');
   const input = value as Record<string, unknown>;
   if (input.version === 1) return invalid('Repository defaults version 1 is unsupported; recreate the local configuration with a prefix');
-  const allowed = ['version', 'data_dir', 'tool', 'project', 'actor', 'prefix'];
-  if (Object.keys(input).length !== allowed.length || allowed.some(key => !Object.hasOwn(input, key))
-    || Object.keys(input).some(key => !allowed.includes(key)) || input.version !== 2) return invalid('Repository defaults have an unsupported shape or version');
+  const required = input.version === 3 ? ['version', 'connection', 'tool', 'project', 'prefix'] : ['version', 'data_dir', 'tool', 'project', 'actor', 'prefix'];
+  const allowed = input.version === 3 ? [...required, 'actor'] : required;
+  if (required.some(key => !Object.hasOwn(input, key)) || Object.keys(input).some(key => !allowed.includes(key))
+    || (input.version !== 2 && input.version !== 3)) return invalid('Repository defaults have an unsupported shape or version');
   let prefix: string;
   try { prefix = parsePrefix(input.prefix); }
   catch { return invalid('Repository default prefix must match [a-z][a-z0-9]{0,15}'); }
@@ -79,6 +102,11 @@ function parseDefaults(value: unknown, found: Repository, allowMissing = false):
       || Buffer.byteLength(value) > 256) return invalid(`Repository default ${field} is invalid`);
     return value;
   };
+  if (input.version === 3) {
+    if (typeof input.connection !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(input.connection)) return invalid('Repository connection name is invalid');
+    return { version: 3, connection: input.connection, tool: name(input.tool, 'tool'), project: name(input.project, 'project'), prefix,
+      ...(Object.hasOwn(input, 'actor') ? { actor: name(input.actor, 'actor') } : {}) };
+  }
   if (typeof input.data_dir !== 'string' || !isAbsolute(input.data_dir) || input.data_dir.includes('\u0000')) return invalid('Repository data_dir must be an absolute external directory');
   let directory: string;
   try {
@@ -97,11 +125,12 @@ function parseDefaults(value: unknown, found: Repository, allowMissing = false):
   return { version: 2, data_dir: directory, tool: name(input.tool, 'tool'), project: name(input.project, 'project'), actor: name(input.actor, 'actor'), prefix };
 }
 
-function readDefaults(path: string, found: Repository): RepositoryDefaults | undefined {
+function readDefaults(path: string, found: Repository): RepositoryConfiguration | undefined {
   let descriptor: number;
   try {
     const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) return invalid('Repository configuration must be a regular file with mode 0600');
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600
+      || (process.getuid && stat.uid !== process.getuid())) return invalid('Repository configuration must be a regular file owned by the current user with mode 0600');
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch (error) {
     if (missing(error)) return undefined;
@@ -110,7 +139,8 @@ function readDefaults(path: string, found: Repository): RepositoryDefaults | und
   }
   try {
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || (stat.mode & 0o777) !== 0o600 || stat.size > maximumBytes) return invalid('Repository configuration is invalid or too large');
+    if (!stat.isFile() || (stat.mode & 0o777) !== 0o600 || stat.size > maximumBytes
+      || (process.getuid && stat.uid !== process.getuid())) return invalid('Repository configuration is invalid or too large');
     const buffer = Buffer.alloc(maximumBytes + 1);
     const count = readSync(descriptor, buffer, 0, buffer.length, 0);
     if (count > maximumBytes) return invalid('Repository configuration is too large');
@@ -124,7 +154,23 @@ function readDefaults(path: string, found: Repository): RepositoryDefaults | und
   } finally { closeSync(descriptor); }
 }
 
-export function readRepositoryDefaults(cwd = process.cwd()): RepositoryDefaults | undefined {
+function mutateRepository(path: string, action: () => string): string {
+  const lock = `${path}.lock`;
+  let descriptor: number | undefined;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < 200; attempt++) {
+    try { descriptor = openSync(lock, 'wx', 0o600); break; }
+    catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+      Atomics.wait(wait, 0, 0, 10);
+    }
+  }
+  if (descriptor === undefined) return invalid('Repository configuration is locked; check the other configuration writer');
+  try { return action(); }
+  finally { closeSync(descriptor); unlinkSync(lock); }
+}
+
+export function readRepositoryDefaults(cwd = process.cwd()): RepositoryConfiguration | undefined {
   const found = repository(cwd);
   return found === undefined ? undefined : readDefaults(join(found.common, 'polylinedb.json'), found);
 }
@@ -132,32 +178,57 @@ export function readRepositoryDefaults(cwd = process.cwd()): RepositoryDefaults 
 export function validateRepositoryDefaults(defaults: RepositoryDefaults, cwd = process.cwd()): RepositoryDefaults {
   const found = repository(cwd);
   if (found === undefined) return invalid('Stealth configuration requires a Git work repository');
-  return parseDefaults(defaults, found, true);
+  const parsed = parseDefaults(defaults, found, true);
+  if (parsed.version !== 2) return invalid('Expected local repository defaults');
+  return parsed;
 }
 
-export function writeRepositoryDefaults(defaults: RepositoryDefaults, cwd = process.cwd()): string {
+export function writeRepositoryDefaults(defaults: RepositoryConfiguration, cwd = process.cwd()): string {
   const found = repository(cwd);
   if (found === undefined) return invalid('Stealth configuration requires a Git work repository');
   const parsed = parseDefaults(defaults, found);
   const path = join(found.common, 'polylinedb.json');
-  const existing = readDefaults(path, found);
-  if (existing !== undefined) {
-    if (JSON.stringify(existing) !== JSON.stringify(parsed)) return invalid('Repository defaults already exist with different values');
-    return path;
-  }
-  const temporary = join(found.common, `.polylinedb-${randomUUID()}.tmp`);
-  const descriptor = openSync(temporary, 'wx', 0o600);
-  try {
-    try {
-      writeFileSync(descriptor, JSON.stringify(parsed, null, 2) + '\n');
-      fsyncSync(descriptor);
-    } finally { closeSync(descriptor); }
-    try { linkSync(temporary, path); }
-    catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
-      const concurrent = readDefaults(path, found);
-      if (JSON.stringify(concurrent) !== JSON.stringify(parsed)) return invalid('Repository defaults already exist with different values');
+  return mutateRepository(path, () => {
+    const existing = readDefaults(path, found);
+    if (existing !== undefined) {
+      if (JSON.stringify(existing) !== JSON.stringify(parsed)) return invalid('Repository defaults already exist with different values');
+      return path;
     }
+    const temporary = join(found.common, `.polylinedb-${randomUUID()}.tmp`);
+    const descriptor = openSync(temporary, 'wx', 0o600);
+    try {
+      try {
+        writeFileSync(descriptor, JSON.stringify(parsed, null, 2) + '\n');
+        fsyncSync(descriptor);
+      } finally { closeSync(descriptor); }
+      try { linkSync(temporary, path); }
+      catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+        const concurrent = readDefaults(path, found);
+        if (JSON.stringify(concurrent) !== JSON.stringify(parsed)) return invalid('Repository defaults already exist with different values');
+      }
+      return path;
+    } finally { unlinkSync(temporary); }
+  });
+}
+
+export function useRepositoryConnection(connection: string, cwd = process.cwd()): string {
+  const found = repository(cwd);
+  if (found === undefined) return invalid('Connection selection requires a Git work repository');
+  const path = join(found.common, 'polylinedb.json');
+  return mutateRepository(path, () => {
+    const existing = readDefaults(path, found);
+    if (existing === undefined) return invalid('Initialize repository defaults before selecting a connection');
+    const selected = parseDefaults({ version: 3, connection, tool: existing.tool, project: existing.project,
+      prefix: existing.prefix, ...(existing.actor === undefined ? {} : { actor: existing.actor }) }, found);
+    if (JSON.stringify(existing) === JSON.stringify(selected)) return path;
+    const temporary = join(found.common, `.polylinedb-${randomUUID()}.tmp`);
+    const writer = openSync(temporary, 'wx', 0o600);
+    try {
+      try { writeFileSync(writer, JSON.stringify(selected, null, 2) + '\n'); fsyncSync(writer); }
+      finally { closeSync(writer); }
+      renameSync(temporary, path);
+    } finally { try { unlinkSync(temporary); } catch (error) { if (!missing(error)) throw error; } }
     return path;
-  } finally { unlinkSync(temporary); }
+  });
 }

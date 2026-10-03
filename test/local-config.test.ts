@@ -194,7 +194,7 @@ test('CLI rejects separate Git metadata destinations before creating a database'
   const cli = new URL('../src/cli.ts', import.meta.url).pathname;
   for (const directory of [join(metadata, 'new', 'store'), join(alias, 'new', 'store')]) {
     assert.throws(() => execFileSync(process.execPath, [cli, '--data-dir', directory, 'init', '--stealth', '--tool', 'demo', '--project', 'demo', '--actor', 'local:test'], {
-      cwd: repo, env: { ...process.env, POLYLINEDB_DATA_DIR: '', POLYLINEDB_ACTOR: '' }, stdio: 'pipe',
+      cwd: repo, env: { ...process.env, XDG_CONFIG_HOME: join(root, 'config-home'), POLYLINEDB_CONNECTION: undefined, POLYLINEDB_DATA_DIR: '', POLYLINEDB_ACTOR: '' }, stdio: 'pipe',
     }), error => error instanceof Error && 'stderr' in error && String(error.stderr).includes('invalid_repository_config'));
     assert.equal(existsSync(join(metadata, 'new')), false);
     assert.equal(existsSync(join(metadata, 'polylinedb.json')), false);
@@ -208,7 +208,7 @@ test('CLI stealth initialization accepts canonical aliases on repeated invocatio
   const cli = new URL('../src/cli.ts', import.meta.url).pathname;
   for (const directory of [data, alias]) {
     const output = execFileSync(process.execPath, [cli, '--data-dir', directory, 'init', '--stealth', '--tool', 'demo', '--project', 'demo', '--actor', 'local:test'], {
-      cwd: repo, env: { ...process.env, POLYLINEDB_DATA_DIR: '', POLYLINEDB_ACTOR: '' }, encoding: 'utf8',
+      cwd: repo, env: { ...process.env, XDG_CONFIG_HOME: join(root, 'config-home'), POLYLINEDB_CONNECTION: undefined, POLYLINEDB_DATA_DIR: '', POLYLINEDB_ACTOR: '' }, encoding: 'utf8',
     });
     assert.equal(JSON.parse(output).database_path, join(realpathSync(data), 'polylinedb.sqlite'));
   }

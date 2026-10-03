@@ -11,8 +11,10 @@ Initialize or change stores only when the task requests setup.
 ## Select the work
 
 Run `pd context` from the working repository before reading issues.
-Check the selected data directory, project, prefix, and actor against the task.
-For the data directory and actor, an explicit flag overrides an environment variable, which overrides repository defaults.
+Check the selected mode, connection, data directory or cloud URL, project, prefix, and actor against the task.
+Connection selection uses flags, then environment variables, repository defaults, the user default, and the legacy local directory.
+Use either `--connection NAME` or `--data-dir PATH`. The matching environment variables are `POLYLINEDB_CONNECTION` and `POLYLINEDB_DATA_DIR`.
+For a local actor, an explicit flag overrides an environment variable, which overrides repository defaults.
 Prefix, tool, and project flags override repository defaults directly.
 Repository project and tool defaults apply to creation. They do not filter list or search.
 With a shared store, use the task's project explicitly:

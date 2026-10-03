@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url';
 const project = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'polylinedb-package-'));
 const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ''}`,
-  npm_config_cache: join(root, 'cache'), npm_config_audit: 'false', npm_config_fund: 'false' };
+  XDG_CONFIG_HOME: join(root, 'config-home'), npm_config_cache: join(root, 'cache'), npm_config_audit: 'false', npm_config_fund: 'false' };
 delete env.POLYLINEDB_ACTOR;
 delete env.POLYLINEDB_DATA_DIR;
+delete env.POLYLINEDB_CONNECTION;
 
 function run(command: string, args: string[], cwd: string, expected = 0): string {
   const result = spawnSync(command, args, { cwd, env, encoding: 'utf8' });
@@ -26,9 +27,9 @@ try {
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
   const expectedFiles = ['LICENSE', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
-    'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'dist/issue-id.js',
+    'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'dist/connections.js', 'dist/issue-id.js',
     'dist/issue-queries.js', 'dist/solarsql.generated.js', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
-    'docs/cloud.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md'].sort();
+    'docs/cloud.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
@@ -81,6 +82,20 @@ try {
   restored(['import', '--file', snapshotPath], 4);
   assert.deepEqual(readdirSync(workspace), []);
   assert.deepEqual(readdirSync(directory), ['polylinedb.sqlite']);
+  const connected = (args: string[], expected = 0) => JSON.parse(run(command, args, workspace, expected));
+  connected(['connection', 'add', 'home', '--data-dir', directory]);
+  connected(['connection', 'add', 'cloud', '--url', 'https://issues.example.invalid']);
+  run('git', ['init', '--quiet', workspace], root);
+  const named = connected(['init', '--connection', 'home', '--actor', 'test:package', '--tool', 'package-test', '--project', 'release']);
+  assert.equal(named.database_path, join(realpathSync(directory), 'polylinedb.sqlite'));
+  assert.equal(connected(['context']).connection, 'home');
+  connected(['connection', 'use', 'cloud']);
+  assert.equal(connected(['context']).mode, 'cloud');
+  const unavailable = spawnSync(command, ['export', '--file', join(root, 'cloud-export.json')], { cwd: workspace, env, encoding: 'utf8' });
+  assert.equal(unavailable.status, 2);
+  assert.equal(JSON.parse(unavailable.stderr).error.code, 'cloud_not_supported');
+  connected(['connection', 'use', 'home']);
+  assert.equal(connected(['show', '1']).issue.id, issue.id);
   const destination = process.argv[2];
   if (destination) {
     const { copyFileSync } = await import('node:fs');

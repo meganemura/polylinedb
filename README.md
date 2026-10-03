@@ -18,13 +18,15 @@ npm install --global polylinedb
 Run these commands from your working project:
 
 ```sh
-pd init
+pd init --tool compiler --project parser --actor local:owner
 pd --actor local:owner create --tool compiler --project parser --body 'Handle empty input'
 pd list
 pd --help
 ```
 
-The default directory is `$XDG_DATA_HOME/polylinedb` when `XDG_DATA_HOME` is absolute, or `~/.local/share/polylinedb` otherwise.
+Inside Git, initialization saves defaults in Git metadata and creates an external store under the data root's `stores` directory.
+The data root is `$XDG_DATA_HOME/polylinedb` when `XDG_DATA_HOME` is absolute, or `~/.local/share/polylinedb` otherwise.
+Outside Git, `pd init` initializes that data root without repository defaults.
 Use `--data-dir /absolute/external/directory` or `POLYLINEDB_DATA_DIR` to select another directory.
 The directory must be outside your current working directory and any enclosing Git repository.
 An existing data directory must have mode `0700`; its database must have mode `0600`.
@@ -58,8 +60,9 @@ Use `--prefix NAME` to select a numbering namespace.
 The CLI accepts `pd show 1` as shorthand for `pd show pd-1` with the default prefix.
 Closing an epic does not close its children.
 
-For repository defaults, run `pd init --stealth --prefix pd --tool compiler --project parser --actor local:owner` inside Git.
-The command saves the external store location and defaults in Git metadata, shared by linked worktrees.
+Initialization inside Git uses stealth behavior by default; `--stealth` remains accepted.
+The external store location and defaults live in Git metadata, shared by linked worktrees.
+Use named connections to select a store explicitly; see [connection selection](docs/connections.md).
 
 Create accepts `--request-id UUID` to identify a request across retries.
 Reuse that UUID with the same arguments and actor after an uncertain result.

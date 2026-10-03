@@ -7,12 +7,14 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { PolylinedbError, executeOperation, parseOperation } from './issues.ts';
 import { initializeStore, openStore } from './sqlite.ts';
-import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults } from './local-config.ts';
+import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from './local-config.ts';
+import type { RepositoryConfiguration } from './local-config.ts';
+import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from './connections.ts';
 import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './issue-id.ts';
 
-const help = `polylinedb (polyline database) stores personal issues in one local SQLite database.
-Usage: pd [--data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--prefix PREFIX] COMMAND [OPTIONS]
+const help = `polylinedb (polyline database) stores personal issues through local or cloud connections.
+Usage: pd [--connection NAME | --data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--prefix PREFIX] COMMAND [OPTIONS]
 All commands return JSON. --json is accepted anywhere. Help returns text.
 Use -- before a positional query that starts with a dash.
 An option consumes its value, so --body --help stores the text --help.
@@ -22,8 +24,12 @@ Storage must be outside the working directory and its Git repository.
 
 Commands:
   init
-  init --stealth --tool NAME --project NAME --actor IDENTITY [--prefix PREFIX]
+  init [--stealth] [--connection NAME] --tool NAME --project NAME [--actor IDENTITY] [--prefix PREFIX]
                                 Store defaults in Git metadata; data stays outside the repository.
+  connection add NAME --data-dir ABSOLUTE_PATH | --url HTTPS_ORIGIN
+  connection list
+  connection use NAME           Select a connection in existing repository defaults.
+  connection default NAME       Select the user default connection.
   context                       Show the selected store and local defaults.
   export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
@@ -58,8 +64,9 @@ Examples:
   pd --actor local:agent close ISSUE_ID --expected 1
 `;
 const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'];
-const globals = ['data-dir', 'actor', 'prefix'];
+const globals = ['connection', 'data-dir', 'actor', 'prefix'];
 const commandFlags: Record<string, readonly string[]> = {
+  connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
   comment: ['body', 'body-file'],
@@ -123,45 +130,84 @@ async function main(): Promise<void> {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
   const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen'].includes(command);
-  if (operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
+  if (command !== 'connection' && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
+  if (command === 'connection') {
+    const [action, name] = operands;
+    const allowed = action === 'add' ? ['data-dir', 'url'] : [];
+    if (Array.from(flags.keys()).some(flag => !allowed.includes(flag))) invalid(`Invalid flags for connection ${action}`);
+    if (action === 'list' && operands.length === 1) {
+      const current = readConnections();
+      process.stdout.write(JSON.stringify({ connections: current.connections.map(connection => ({ name: connection.name,
+        ...connection.definition, default: connection.name === current.defaultName })) }) + '\n');
+      return;
+    }
+    if (operands.length !== 2 || !['add', 'use', 'default'].includes(action)) invalid('Invalid connection command');
+    if (action === 'add') {
+      const directory = one('data-dir');
+      const url = one('url');
+      if ((directory === undefined) === (url === undefined)) invalid('Connection add requires exactly one of --data-dir or --url');
+      const connection = addConnection(name, directory !== undefined ? { kind: 'local', data_dir: directory } : { kind: 'cloud', url: url ?? '' });
+      process.stdout.write(JSON.stringify({ name: connection.name, ...connection.definition }) + '\n');
+    } else {
+      requireConnection(name, readConnections().connections);
+      if (action === 'default') { defaultConnection(name); process.stdout.write(JSON.stringify({ connection: name }) + '\n'); }
+      else { const config_path = useRepositoryConnection(name); process.stdout.write(JSON.stringify({ connection: name, config_path }) + '\n'); }
+    }
+    return;
+  }
   const defaults = readRepositoryDefaults();
   const prefix = parseArgument(parsePrefix, one('prefix') ?? defaults?.prefix ?? 'pd');
-  const actor = one('actor') ?? process.env.POLYLINEDB_ACTOR ?? defaults?.actor ?? 'local:reader';
-  if (!actor.trim() || /\p{Cc}/u.test(actor) || Buffer.byteLength(actor) > 256) invalid('Invalid actor identity');
-  if (['create', 'comment', 'update', 'close', 'reopen', 'import'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
-  if (command === 'actor') { process.stdout.write(JSON.stringify({ actor }) + '\n'); return; }
   const dataRoot = join(process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
     ? process.env.XDG_DATA_HOME : join(homedir(), '.local', 'share'), 'polylinedb');
-  const stealth = command === 'init' && flags.has('stealth');
-  let directory = one('data-dir') ?? process.env.POLYLINEDB_DATA_DIR ?? defaults?.data_dir
-    ?? (stealth ? join(dataRoot, 'stores', randomUUID()) : dataRoot);
+  const configPath = repositoryConfigPath();
+  const stealth = command === 'init' && configPath !== undefined;
+  if (command === 'init' && flags.has('stealth') && !stealth) invalid('Stealth initialization requires a Git working tree');
+  const current = readConnections();
+  const selected = selectConnection({ connection: one('connection'), directory: one('data-dir'), environment: process.env,
+    repository: defaults, ...current, fallbackDirectory: stealth ? join(dataRoot, 'stores', randomUUID()) : dataRoot });
   const tool = one('tool') ?? defaults?.tool;
   const project = one('project') ?? defaults?.project;
+  const actor = selected.kind === 'cloud' ? undefined : one('actor') ?? process.env.POLYLINEDB_ACTOR ?? defaults?.actor ?? 'local:reader';
+  if (selected.kind === 'cloud' && one('actor') !== undefined) invalid('Cloud connections derive the actor from authentication; --actor is not accepted');
+  if (actor !== undefined && (!actor.trim() || /\p{Cc}/u.test(actor) || Buffer.byteLength(actor) > 256)) invalid('Invalid actor identity');
   if (command === 'context') {
-    process.stdout.write(JSON.stringify({ data_dir: directory, database_path: join(directory, 'polylinedb.sqlite'),
-      actor, tool, project, prefix, config_path: repositoryConfigPath() ?? null }) + '\n');
+    process.stdout.write(JSON.stringify({ mode: selected.kind, connection: selected.name, source: selected.source,
+      ...(selected.kind === 'local' ? { data_dir: selected.directory, database_path: join(selected.directory, 'polylinedb.sqlite'), actor }
+        : { url: selected.url, actor_source: 'authenticated' }), tool, project, prefix, config_path: configPath ?? null }) + '\n');
     return;
   }
   if (command === 'init') {
-    if (!stealth && (one('tool') !== undefined || one('project') !== undefined)) invalid('Use --stealth to save repository defaults');
+    if (!stealth && selected.kind === 'cloud') invalid('Cloud initialization requires a Git working tree');
+    let proposed: RepositoryConfiguration | undefined;
     if (stealth) {
-      if (!repositoryConfigPath()) invalid('Stealth initialization requires a Git working tree');
       if (!tool || !project) invalid('Stealth initialization requires --tool and --project');
-      if (one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('Stealth initialization requires an actor');
       parseOperation({ op: 'create', tool, project, body: 'Validate repository defaults', prefix, request_id: randomUUID() });
-      directory = validateRepositoryDefaults({ version: 2, data_dir: directory, tool, project, actor, prefix }).data_dir;
-      if (defaults && (defaults.data_dir !== directory || defaults.tool !== tool || defaults.project !== project || defaults.actor !== actor || defaults.prefix !== prefix)) {
+      if (selected.kind === 'local' && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('Stealth initialization requires an actor');
+      proposed = selected.name !== null
+        ? { version: 3, connection: selected.name, tool, project, prefix,
+          ...(actor === undefined ? (defaults?.actor === undefined ? {} : { actor: defaults.actor }) : { actor }) }
+        : validateRepositoryDefaults({ version: 2, data_dir: selected.kind === 'local' ? selected.directory : '', tool, project, actor: actor ?? 'local:reader', prefix });
+      if (defaults && JSON.stringify(defaults) !== JSON.stringify(proposed)) {
         throw new PolylinedbError('local_defaults_conflict', 'Repository defaults already select a different context', 409);
       }
     }
-    const initialized = initializeStore({ directory });
-    const config_path = stealth && tool && project
-      ? writeRepositoryDefaults({ version: 2, data_dir: dirname(initialized.database_path), tool, project, actor, prefix })
-      : undefined;
+    if (selected.kind === 'cloud') {
+      const config_path = proposed === undefined ? undefined : writeRepositoryDefaults(proposed);
+      process.stdout.write(JSON.stringify({ mode: 'cloud', connection: selected.name, url: selected.url, config_path }) + '\n');
+      return;
+    }
+    const initialized = initializeStore({ directory: proposed?.version === 2 ? proposed.data_dir : selected.directory });
+    const config_path = proposed === undefined ? undefined : writeRepositoryDefaults(proposed.version === 2
+      ? { ...proposed, data_dir: dirname(initialized.database_path) } : proposed);
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
   }
+  if (selected.kind === 'cloud') throw new PolylinedbError('cloud_not_supported', 'This command does not support cloud connections yet', 400);
+  if (actor === undefined) invalid('Local connection requires an actor');
+  if (['create', 'comment', 'update', 'close', 'reopen', 'import'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
+  if (command === 'actor') { process.stdout.write(JSON.stringify({ actor }) + '\n'); return; }
+  const directory = selected.directory;
   if (command === 'import' || command === 'export') {
     let snapshot;
     if (command === 'import') {

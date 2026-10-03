@@ -9,6 +9,13 @@ import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 
 const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+function isolatedEnvironment(cwd: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(cwd, '..', 'config-home') };
+  delete env.POLYLINEDB_ACTOR;
+  delete env.POLYLINEDB_DATA_DIR;
+  delete env.POLYLINEDB_CONNECTION;
+  return env;
+}
 function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'polylinedb-cli-'));
   const cwd = join(root, 'work');
@@ -16,9 +23,7 @@ function fixture(t: TestContext) {
   mkdirSync(cwd);
   t.after(() => rmSync(root, { recursive: true, force: true }));
   function run(args: string[], options: { status?: number; input?: string; actor?: boolean } = {}) {
-    const env = { ...process.env };
-    delete env.POLYLINEDB_ACTOR;
-    delete env.POLYLINEDB_DATA_DIR;
+    const env = isolatedEnvironment(cwd);
     const result = spawnSync(process.execPath, [executable, '--data-dir', directory, ...(options.actor === false ? [] : ['--actor', 'local:test']), ...args], {
       cwd, encoding: 'utf8', input: options.input,
       env,
@@ -76,7 +81,7 @@ test('CLI prevents repository and symlink storage paths', t => {
   const alias = join(root, 'alias');
   symlinkSync(cwd, alias);
   for (const directory of [join(cwd, 'state'), join(alias, 'state')]) {
-    const result = spawnSync(process.execPath, [executable, 'init', '--data-dir', directory], { cwd, encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [executable, 'init', '--data-dir', directory], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
     assert.notEqual(result.status, 0);
     assert.equal(result.status, 2);
     assert.equal(JSON.parse(result.stderr).error.code, 'invalid_data_directory');
@@ -98,12 +103,12 @@ test('CLI treats dash queries and help option values as literal text', t => {
 
 test('help documents version expectations without initializing storage', t => {
   const { root, cwd, directory } = fixture(t);
-  const result = spawnSync(process.execPath, [executable, '--data-dir', directory, '--help'], { cwd, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [executable, '--data-dir', directory, '--help'], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /--expected VERSION/);
   assert.match(result.stdout, /--expect FIELD=VERSION/);
   for (const args of [['search', '--help'], ['-h'], []]) {
-    const helpResult = spawnSync(process.execPath, [executable, ...args], { cwd, encoding: 'utf8' });
+    const helpResult = spawnSync(process.execPath, [executable, ...args], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
     assert.equal(helpResult.status, 0);
     assert.equal(helpResult.stdout, result.stdout);
   }
@@ -111,9 +116,7 @@ test('help documents version expectations without initializing storage', t => {
 });
 
 function plainCli(cwd: string, args: string[], options: { status?: number; input?: string; env?: Record<string, string> } = {}) {
-  const env = { ...process.env };
-  delete env.POLYLINEDB_ACTOR;
-  delete env.POLYLINEDB_DATA_DIR;
+  const env = isolatedEnvironment(cwd);
   const result = spawnSync(process.execPath, [executable, ...args], {
     cwd, env: { ...env, ...options.env }, encoding: 'utf8', input: options.input,
   });
@@ -140,6 +143,7 @@ test('stealth init supplies external storage and defaults without changing Git s
   assert.equal(statSync(initialized.config_path).mode & 0o777, 0o600);
   const context = plainCli(cwd, ['context'], { env });
   assert.deepEqual(context, {
+    mode: 'local', connection: null, source: 'repository',
     data_dir: initialized.database_path.slice(0, -'/polylinedb.sqlite'.length), database_path: initialized.database_path,
     actor: 'local:owner', tool: 'demo', project: 'demo', prefix: 'pd', config_path: initialized.config_path,
   });
@@ -162,8 +166,10 @@ test('CLI flags override environment and environment overrides repository actor 
   plainCli(cwd, ['init', '--stealth', '--data-dir', directory, '--tool', 'repo-tool', '--project', 'repo-project', '--actor', 'local:repo']);
   const envDirectory = join(root, 'env-store');
   const flagDirectory = join(root, 'flag-store');
-  plainCli(cwd, ['init', '--data-dir', envDirectory]);
-  plainCli(cwd, ['init', '--data-dir', flagDirectory]);
+  const outside = join(root, 'outside');
+  mkdirSync(outside);
+  plainCli(outside, ['init', '--data-dir', envDirectory], { env: { XDG_CONFIG_HOME: join(root, 'config-home') } });
+  plainCli(outside, ['init', '--data-dir', flagDirectory], { env: { XDG_CONFIG_HOME: join(root, 'config-home') } });
   const env = { POLYLINEDB_DATA_DIR: envDirectory, POLYLINEDB_ACTOR: 'local:env' };
   const environment = plainCli(cwd, ['create', '--body', 'Environment target'], { env }).issue;
   assert.equal(environment.created_by, 'local:env');
