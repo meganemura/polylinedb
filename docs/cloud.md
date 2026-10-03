@@ -259,6 +259,13 @@ This sequence is proposed and has not yet been exercised from a new account:
 
 The empty allowlist refuses application operations even after a successful Access sign-in.
 Keep the owner-only Access policy in place throughout bootstrap.
+
+An isolated deployment in an existing account verified this refusal after CLI OAuth login.
+The Worker returned `503` with `invalid_access_configuration` while the actor allowlist was empty.
+After the owner actor was configured and the Worker redeployed, the same CLI grant could read and write issues and memories.
+The CLI currently reports that bootstrap error as `cloud_invalid_response`; check the actor configuration before repeating login.
+This check reused an existing Access user and identity provider. It does not verify first-user registration in a new account.
+
 Use `access:OWNER_SUBJECT` as the actor value:
 
 ```sh
