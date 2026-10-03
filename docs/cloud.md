@@ -323,6 +323,37 @@ Run the `actor` tool and compare the returned actor with `POLYLINEDB_ACCESS_ACTO
 Then run the acceptance checks below in a dedicated test project.
 If the host cannot link or refresh its grant, keep that host unverified rather than copying credentials into its agent VM.
 
+### Register a ChatGPT connection
+
+In ChatGPT's custom MCP settings, choose OAuth with dynamic client registration for this Access configuration.
+The example Access application above allows only Cursor's callback, so configure ChatGPT's callback before expecting its registration to succeed.
+OpenAI specifies either `https://chatgpt.com/connector_platform_oauth_redirect` or a connection-specific URL under `https://chatgpt.com/connector/oauth/`.
+Use the exact Redirect URI shown in the connection's management page.
+See OpenAI's [redirect URL contract](https://developers.openai.com/plugins/build/auth#redirect-url).
+
+If creation fails before that URI is available, an operator can approve a temporary allowlist containing the fixed URL and `https://chatgpt.com/connector/oauth/*`.
+This permits callbacks for other connections within that ChatGPT path.
+Replace the temporary wildcard with the exact URI after registration once the management page exposes it.
+Keep the owner policy, existing callbacks, and token durations unchanged.
+Cloudflare supports redirect patterns in its [Managed OAuth settings](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#managed-oauth-settings).
+
+Read the current application before changing it:
+
+```sh
+cf zero-trust access applications get "$PD_ACCESS_APPLICATION_ID" > access-current.json
+```
+
+In the private deployment copy, prepare `access-updated.json` with the current configuration and the required additions to `oauth_configuration.dynamic_client_registration.allowed_uris`.
+Review the change, then apply it:
+
+```sh
+cf zero-trust access applications update "$PD_ACCESS_APPLICATION_ID" --body "$(cat access-updated.json)"
+```
+
+Compare the returned owner policy, identity provider, audience, and grant durations with the saved configuration.
+Retry registration and test `actor` and `show` through ChatGPT.
+A successful ChatGPT connection does not establish availability in a Codex Cloud task; test that product separately.
+
 ## Verify each host and D1
 
 Use a dedicated test project in the deployed store. Record the exact host product, account configuration, date, and observed result for each check. Keep credentials out of the report.
