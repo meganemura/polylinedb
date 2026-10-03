@@ -39,6 +39,8 @@ A destination can be empty, identical, or a matching partial restore. A partial 
 
 Repeat the same restore command after an interruption. Inserts use bound parameters and never replace existing rows. The importer checks the claim with every insert. A request can commit before its response disappears; the next run reads the actual destination before it continues. The claim remains as provenance after success.
 
+Create-request records retain their original actor. Replaying a local request through a different cloud actor returns `request_conflict`. New cloud operations use new request IDs.
+
 Keep the target file and source snapshot unchanged across retries. A changed source snapshot needs a new destination. After remote verification, keep the source backup and receipt. Obtain approval before binding or deploying the production Worker.
 
 ## Transport and limits

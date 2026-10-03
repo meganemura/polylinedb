@@ -2,6 +2,8 @@
 
 The cloud Worker stores issues in D1. The local CLI stores issues in its own SQLite database. The two stores do not synchronize.
 
+To transfer an existing local store, use the [D1 snapshot migration guide](d1-migration.md). Restore into an isolated destination and verify its complete contents before changing the Worker binding.
+
 This guide describes the intended deployment and its acceptance checks. No production deployment or host connection has been verified for polylinedb.
 
 ## Establish the connection boundary
