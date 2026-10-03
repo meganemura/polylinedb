@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/d1.ts';
-import { executeOperation, parseOperation } from '../src/issues.ts';
+import { executeOperation, parseOperation } from '../src/operations.ts';
 import { SCHEMA_SQL } from '../src/schema.ts';
 
 const modulePath = process.argv[2];
@@ -22,6 +22,18 @@ try {
   await database.batch(SCHEMA_SQL.split(';').map((sql) => sql.trim()).filter(Boolean).map((sql) => database.prepare(sql)));
   const db = d1Executor(database);
   const run = (operation: unknown) => executeOperation(db, parseOperation(operation), 'test:d1');
+  const memoryRequest = { op: 'memory_create', project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'D1 fact', body: 'Shared memory contract' };
+  const memory = await run(memoryRequest); assert('memory' in memory); assert.equal(memory.memory.id, 'pd-m1');
+  assert.deepEqual(await run(memoryRequest), memory);
+  const memoryWriters = await Promise.allSettled([
+    run({ op: 'memory_update', project: 'parser', id: 'pd-m1', title: 'D1 fact', body: 'First', expected: 1 }),
+    run({ op: 'memory_update', project: 'parser', id: 'pd-m1', title: 'D1 fact', body: 'Second', expected: 1 }),
+  ]);
+  assert.equal(memoryWriters.filter(result => result.status === 'fulfilled').length, 1);
+  const memoryLoser = memoryWriters.find(result => result.status === 'rejected');
+  assert(memoryLoser?.status === 'rejected'); assert.equal(memoryLoser.reason.code, 'memory_conflict');
+  await run({ op: 'memory_delete', project: 'parser', id: 'pd-m1', expected: 2 });
+  await assert.rejects(run(memoryRequest), { code: 'memory_deleted' });
   const created = await run({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'D1 persistence' });
   assert('issue' in created);
   assert.equal(created.issue.body, 'D1 persistence');

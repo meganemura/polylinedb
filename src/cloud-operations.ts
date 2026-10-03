@@ -1,5 +1,8 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
-import { PolylinedbError, issueRow, commentRow, type Operation, type OperationResult, type Issue } from './issues.ts';
+import { PolylinedbError, issueRow, commentRow, type Issue } from './issues.ts';
+import type { Operation, OperationResult } from './operations.ts';
+import { memoryRow, parseMemoryId } from './memories.ts';
+import type { Memory, MemoryContext } from './memories.ts';
 import { fields } from './schema.ts';
 import { parseIssueId } from './issue-id.ts';
 
@@ -22,8 +25,47 @@ function issue(value: unknown): Issue {
   if (JSON.stringify(parsed.labels) !== JSON.stringify(row.labels)) return invalid();
   return parsed;
 }
+function memory(value: unknown): Memory {
+  return memoryRow(exact(value, ['id', 'project', 'title', 'body', 'version', 'created_at', 'created_by', 'updated_at', 'updated_by']));
+}
 function result(operation: Operation, value: unknown): OperationResult {
   switch (operation.op) {
+    case 'memory_create': case 'memory_show': case 'memory_update': {
+      const parsed = memory(exact(value, ['memory']).memory);
+      if (parsed.project !== operation.project || ('id' in operation && parsed.id !== operation.id)) return invalid();
+      return { memory: parsed };
+    }
+    case 'memory_delete': {
+      const deleted = exact(exact(value, ['deleted']).deleted, ['id', 'project', 'version']);
+      if (deleted.id !== operation.id || deleted.project !== operation.project || deleted.version !== operation.expected) return invalid();
+      return { deleted: { id: operation.id, project: operation.project, version: operation.expected } };
+    }
+    case 'memory_list': case 'memory_search': {
+      const row = exact(value, ['memories', 'next_cursor']);
+      if (!Array.isArray(row.memories) || row.memories.length > operation.limit) return invalid();
+      const memories = row.memories.map(memory);
+      if (memories.some(entry => entry.project !== operation.project)) return invalid();
+      return { memories, next_cursor: row.next_cursor === null ? null : parseMemoryId(row.next_cursor) };
+    }
+    case 'memory_context': {
+      const row = exact(value, ['project', 'store', 'memories', 'limits', 'omitted', 'next_cursor', 'notices']);
+      const store = exact(row.store, ['kind', 'url']);
+      const limits = exact(row.limits, ['entries', 'bytes']);
+      if (row.project !== operation.project || store.kind !== 'cloud' || typeof store.url !== 'string' || limits.entries !== operation.limit || limits.bytes !== operation.max_bytes
+        || typeof row.omitted !== 'boolean' || !Array.isArray(row.memories) || row.memories.length > operation.limit || !Array.isArray(row.notices) || row.notices.length > 1
+        || new TextEncoder().encode(JSON.stringify(value)).length > operation.max_bytes) return invalid();
+      const memories = row.memories.map(memory);
+      if (memories.some(entry => entry.project !== operation.project)) return invalid();
+      const notices: MemoryContext['notices'] = row.notices.map(value => {
+        const notice = object(value);
+        exact(notice, Object.hasOwn(notice, 'skipped_id') ? ['code', 'skipped_id'] : ['code']);
+        if (notice.code !== 'entry_limit' && notice.code !== 'byte_limit') return invalid();
+        return { code: notice.code, ...(notice.skipped_id === undefined ? {} : { skipped_id: parseMemoryId(notice.skipped_id) }) };
+      });
+      if (row.omitted !== (notices.length > 0)) return invalid();
+      return { project: operation.project, store: { kind: 'cloud', url: store.url }, memories, limits: { entries: operation.limit, bytes: operation.max_bytes }, omitted: row.omitted,
+        next_cursor: row.next_cursor === null ? null : parseMemoryId(row.next_cursor), notices };
+    }
     case 'actor': {
       const row = exact(value, ['actor']);
       if (typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)) return invalid();
@@ -44,9 +86,28 @@ function result(operation: Operation, value: unknown): OperationResult {
     default: { const exhaustive: never = operation; return exhaustive; }
   }
 }
-function errorDetails(code: string, value: unknown): unknown {
+function errorDetails(operation: Operation, code: string, value: unknown): unknown {
   if (value === undefined) return undefined;
   switch (code) {
+    case 'memory_not_found': case 'memory_deleted': {
+      const row = exact(value, ['id', 'project']);
+      if (!operation.op.startsWith('memory_') || !('project' in operation) || row.project !== operation.project
+        || ('id' in operation && row.id !== operation.id)) return invalid();
+      return { id: parseMemoryId(row.id), project: row.project };
+    }
+    case 'memory_conflict': {
+      const row = exact(value, ['memory', 'expected']);
+      const current = memory(row.memory);
+      if ((operation.op !== 'memory_update' && operation.op !== 'memory_delete') || row.expected !== operation.expected
+        || current.project !== operation.project || current.id !== operation.id || current.version === operation.expected) return invalid();
+      return { memory: current, expected: row.expected };
+    }
+    case 'memory_version_exhausted': {
+      const current = memory(exact(value, ['memory']).memory);
+      if (operation.op !== 'memory_update' || current.project !== operation.project || current.id !== operation.id
+        || current.version !== Number.MAX_SAFE_INTEGER || current.version !== operation.expected) return invalid();
+      return { memory: current };
+    }
     case 'not_found': return { id: parseIssueId(exact(value, ['id']).id) };
     case 'epic_has_children': return { issue: issue(exact(value, ['issue']).issue) };
     case 'version_exhausted': {
@@ -126,16 +187,20 @@ export async function executeCloudOperation(input: {
       if (Object.keys(error).some(key => !['code', 'message', 'details'].includes(key)) || typeof error.code !== 'string'
         || !/^[a-z][a-z0-9_]{0,63}$/.test(error.code) || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
       let details: unknown;
-      try { details = errorDetails(error.code, error.details); } catch { return invalid(); }
+      try { details = errorDetails(input.operation, error.code, error.details); } catch { return invalid(); }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);
     }
-    try { return result(input.operation, value); } catch { return invalid(); }
+    try {
+      const parsed = result(input.operation, value);
+      if ('store' in parsed && (parsed.store.kind !== 'cloud' || parsed.store.url !== origin.origin)) return invalid();
+      return parsed;
+    } catch { return invalid(); }
   } catch (error) {
     if (error instanceof PolylinedbError) {
-      if (input.operation.op === 'create' && error.status >= 500) error.details = { request_id: input.operation.request_id };
+      if ((input.operation.op === 'create' || input.operation.op === 'memory_create') && error.status >= 500) error.details = { request_id: input.operation.request_id };
       throw error;
     }
-    const details = input.operation.op === 'create' ? { request_id: input.operation.request_id } : undefined;
+    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' ? { request_id: input.operation.request_id } : undefined;
     throw new PolylinedbError('cloud_unavailable', 'The cloud operation did not return a valid result. Its outcome may be unknown.', 503, details);
   } finally {
     clearTimeout(timer);

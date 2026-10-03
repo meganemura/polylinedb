@@ -13,7 +13,7 @@ export function parseTarget(value: unknown) {
     || !('accountId' in value) || typeof value.accountId !== 'string' || !/^[a-f0-9]{32}$/.test(value.accountId)
     || !('databaseId' in value) || typeof value.databaseId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.databaseId)
     || !('snapshotSha256' in value) || typeof value.snapshotSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.snapshotSha256)
-    || !('schemaVersion' in value) || value.schemaVersion !== 2
+    || !('schemaVersion' in value) || value.schemaVersion !== 3
     || Object.keys(value).sort().join(',') !== 'accountId,databaseId,profile,schemaVersion,snapshotSha256') throw new Error('Invalid fixed target fields');
   return Object.freeze({ profile: value.profile, accountId: value.accountId, databaseId: value.databaseId, snapshotSha256: value.snapshotSha256, schemaVersion: value.schemaVersion });
 }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cfQuery, parseQueryOutput, parseTarget } from '../scripts/d1-snapshot.ts';
 
-const target = parseTarget({ profile: 'migration', accountId: 'a'.repeat(32), databaseId: '11111111-1111-4111-8111-111111111111', snapshotSha256: 'b'.repeat(64), schemaVersion: 2 });
+const target = parseTarget({ profile: 'migration', accountId: 'a'.repeat(32), databaseId: '11111111-1111-4111-8111-111111111111', snapshotSha256: 'b'.repeat(64), schemaVersion: 3 });
 
 test('cf transport fixes identity, protects bound values, cleans files, and sanitizes failures', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pd-cf-test-'));

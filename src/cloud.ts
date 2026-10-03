@@ -5,7 +5,7 @@ import type { SelectedConnection } from './connections.ts';
 import { createCloudAuth, OAuthError } from './oauth.ts';
 import { createCredentialStore, CredentialStoreError } from './credential-store.ts';
 import { executeCloudOperation } from './cloud-operations.ts';
-import type { Operation } from './issues.ts';
+import type { Operation } from './operations.ts';
 
 export function createCloudClient(connection: Extract<SelectedConnection, { kind: 'cloud' }>) {
   const auth = createCloudAuth({ origin: connection.url, stateDirectory: join(connectionConfigDirectory(), 'auth'),

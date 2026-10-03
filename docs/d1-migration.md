@@ -1,6 +1,8 @@
 # Restore a local snapshot into D1
 
-The repository operator command restores snapshot v2 into a new D1 database. It preserves issues, comments, counters, create requests, field versions, and audit fields. Ordinary `pd` commands continue to use SQLite.
+The repository operator command restores snapshot v3 into a new D1 database.
+It preserves issues, comments, memories, counters, creation requests, versions, and audit fields.
+Ordinary `pd` commands can select SQLite or the authenticated cloud API. Snapshot maintenance remains an operator task.
 
 ## Prepare the transfer
 
@@ -18,7 +20,7 @@ Create a target file with mode 0600 outside Git checkouts. Environment-specific 
   "accountId": "ACCOUNT_ID",
   "databaseId": "DATABASE_UUID",
   "snapshotSha256": "CANONICAL_SNAPSHOT_SHA256",
-  "schemaVersion": 2
+  "schemaVersion": 3
 }
 ```
 
@@ -31,7 +33,31 @@ node scripts/d1-snapshot.ts verify --snapshot SNAPSHOT --target TARGET
 node scripts/d1-snapshot.ts verify --snapshot SNAPSHOT --target TARGET --output ABSOLUTE_PRIVATE_PATH
 ```
 
-The field order in the command is fixed. `inspect` reads the destination. `restore` writes the snapshot claim and missing rows. `verify` reads all four collections and compares their canonical representation with the input. Its optional `--output` writes that verified remote snapshot to a new file with mode 0600. The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts. Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
+The field order in the command is fixed. `inspect` reads the destination. `restore` writes the snapshot claim and missing rows.
+`verify` reads all seven collections and compares their canonical representation with the input.
+Its optional `--output` writes that verified remote snapshot to a new file with mode 0600.
+The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts.
+Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
+
+## Upgrade an existing schema 2 deployment
+
+The new Worker needs schema 3 before memory operations can run. The CLI's `upgrade` command applies only to local SQLite.
+Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
+Record the account, database UUID, and Worker binding. Check that the source has the canonical schema 2 and all four original collections.
+
+Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
+Run `pd snapshot convert --file OLD --output NEW`, then use the new v3 digest and the normal restore procedure.
+Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
+
+For an in-place upgrade, compare the deployed DDL with `SCHEMA_V2_SQL` in `src/schema.ts` before a write.
+Apply `MEMORY_SCHEMA_SQL` from that file, then change the single schema version row from 2 to 3.
+Use the operator's approved D1 transaction or batch mechanism; do not send these statements through the public Worker API.
+Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
+Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
+Verify that the three new collections are empty. Deploy the new Worker only after those checks pass.
+If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
+
+The application does not perform this remote upgrade automatically. This procedure requires separate operator approval and live verification.
 
 ## Recovery
 
@@ -47,9 +73,11 @@ Keep the target file and source snapshot unchanged across retries. A changed sou
 
 The command uses `cf d1 query DATABASE_UUID --profile PROFILE --batch @FILE`. Each request contains one bound statement. Temporary files have mode 0600 inside private temporary directories and are removed after success or failure. The child process receives a fixed `CLOUDFLARE_ACCOUNT_ID`. Ambient API-token variables are removed so the named profile owns authentication. Child stderr is not copied into operator output.
 
-The cf 0.15.0 implementation resolves `CLOUDFLARE_ACCOUNT_ID` before project settings. Its query handler passes the resolved account and database UUID to the API. Its output formatter preserves API envelopes, except that it unwraps result arrays with `result_info`. The importer checks both supported output shapes and every statement success value. This behavior was checked against the installed CLI implementation.
-
-A local probe of cf 0.15.0 reported that its explorer API does not implement the D1 query endpoint. Workerd tests therefore use the real D1 binding directly. They prove database behavior; they do not prove production authentication or the live CLI response. A disposable remote probe remains required before production use.
+An isolated live D1 probe passed with cf 1.0.0-beta.12 on October 4, 2026.
+It exercised the selected profile, fixed account, bound batch parameters, and response parser against an empty destination.
+The importer checks supported output envelopes and every statement success value.
+This SELECT probe proves transport behavior; a full restore and readback remain separate acceptance checks.
+Workerd tests use the real D1 binding directly and do not prove production authentication.
 
 D1 permits 100 bound parameters and 100,000 SQL bytes per statement. The whole API batch has a 30-second deadline. Bound values keep large UTF-8 bodies outside SQL text. The operator limits encoded rows to 1,900,000 bytes and reads one row per page. This favors bounded requests over transfer speed. See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
@@ -62,6 +90,9 @@ node test/d1-snapshot.integration.ts
 
 The integration test requires the same external Miniflare installation used by `test/d1.integration.ts`. An optional module path can be passed as its first argument.
 
-The tests cover committed-response-loss recovery, duplicate and concurrent restores, conflicting claims and rows, corrupt sort keys, a 64 KiB Unicode body, field versions, audit fields, comments, counters, and create requests. They compare the D1 snapshot with a fresh SQLite import/export. They also verify request replay and subsequent root and child IDs. Transport tests inspect fixed account/profile arguments, bound values, private file permissions, cleanup, and sanitized failures.
+The tests cover committed-response-loss recovery, duplicate and concurrent restores, conflicting claims and rows, corrupt sort keys, and a 64 KiB issue body.
+They preserve issue and memory versions, audit fields, comments, counters, and creation requests.
+They compare the D1 snapshot with a fresh SQLite import/export and check that deleted memory requests cannot recreate records.
+They also verify subsequent issue and memory numbers. Transport tests inspect target arguments, bound values, private files, cleanup, and sanitized failures.
 
 For a release acceptance run, use `verify --output` to save the D1-read snapshot. Import that file into a fresh SQLite store through the installed tarball and compare its export. Keep that result separate from source-tree test results. Production credentials, a live remote transfer, and Worker cutover require their own verification and approval.

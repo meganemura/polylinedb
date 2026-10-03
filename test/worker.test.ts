@@ -67,7 +67,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     assert.equal((await init.json()).result.protocolVersion, '2025-11-25');
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const names = (await listed.json()).result.tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'close', 'comment', 'create', 'list', 'reopen', 'search', 'show', 'update']);
+    assert.deepEqual(names, ['actor', 'close', 'comment', 'create', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update']);
     const updated = await request('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
       name: 'update', arguments: { id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] },
     } });
@@ -83,6 +83,19 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const show = await request('/v1/operations', { op: 'show', id: issue.id });
     const shown = await show.json();
     assert.equal(shown.comments[0].body, 'confirmed');
+    const memoryCreate = await request('/v1/operations', { op: 'memory_create', project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Parser constraint', body: 'Keep empty input valid.' });
+    assert.equal(memoryCreate.status, 200);
+    const savedMemory = (await memoryCreate.json()).memory;
+    assert.equal(savedMemory.id, 'pd-m1'); assert.equal(savedMemory.created_by, 'access:owner');
+    const recall = await request('/mcp', { jsonrpc: '2.0', id: 20, method: 'tools/call', params: { name: 'memory_context', arguments: { project: 'parser' } } });
+    const context = (await recall.json()).result.structuredContent;
+    assert.equal(context.memories[0].body, 'Keep empty input valid.');
+    assert.deepEqual(context.store, { kind: 'cloud', url: 'https://issues.example' });
+    const memoryEdit = await request('/v1/operations', { op: 'memory_update', project: 'parser', id: 'pd-m1', title: 'Parser constraint', body: 'Verified.', expected: 1 });
+    assert.equal((await memoryEdit.json()).memory.version, 2);
+    const memoryConflict = await request('/mcp', { jsonrpc: '2.0', id: 21, method: 'tools/call', params: { name: 'memory_delete', arguments: { project: 'parser', id: 'pd-m1', expected: 1 } } });
+    const rejected = (await memoryConflict.json()).result;
+    assert.equal(rejected.isError, true); assert.equal(rejected.structuredContent.error.code, 'memory_conflict');
     assert.equal(shown.issue.versions.status, 2);
     const spoof = await request('/v1/operations', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'x', project: 'x', body: 'x', actor: 'admin' });
     assert.equal(spoof.status, 400);

@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { snapshotMigration, type Query } from '../scripts/d1-snapshot-store.ts';
 import { parseQueryOutput, parseTarget } from '../scripts/d1-snapshot.ts';
 import { initializeStore, openStore } from '../src/sqlite.ts';
-import { executeOperation, parseOperation } from '../src/issues.ts';
+import { executeOperation, parseOperation } from '../src/operations.ts';
 import { d1Executor } from '../src/d1.ts';
 import { canonicalSnapshot } from '../src/snapshot.ts';
 import { SCHEMA_SQL } from '../src/schema.ts';
@@ -31,7 +31,7 @@ try {
     return result.results;
   };
   const reset = async () => {
-    for (const table of ['comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
+    for (const table of ['memory_requests', 'memory_counters', 'memories', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
     await database.batch(SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => database.prepare(sql)));
   };
   await reset();
@@ -42,6 +42,11 @@ try {
   await run({ op: 'create', prefix: 'pd', parent: created.issue.id, request_id: randomUUID(), tool: 'compiler', project: 'other', body: 'child' });
   await run({ op: 'comment', id: created.issue.id, body: 'Unicode 日本語 quote\' slash\\' });
   await source.db.batch([{ sql: 'UPDATE counters SET last_number = 98 WHERE scope = ?', params: ['pd'] }]);
+  const memoryRequest = { op: 'memory_create', project: 'p', prefix: 'pd', request_id: randomUUID(), title: 'Fact', body: '日本語の知識' };
+  await run(memoryRequest);
+  await run({ op: 'memory_delete', project: 'p', id: 'pd-m1', expected: 1 });
+  await run({ ...memoryRequest, request_id: randomUUID() });
+  await run({ op: 'memory_update', project: 'p', id: 'pd-m2', title: 'Verified fact', body: 'Preserve attribution', expected: 1 });
   const snapshot = source.exportSnapshot();
   const canonical = canonicalSnapshot(snapshot);
   const sha256 = createHash('sha256').update(canonical).digest('hex');
@@ -89,6 +94,9 @@ try {
   await reset();
   await Promise.all([migration.restore(), migration.restore()]);
   const remote = d1Executor(database);
+  await assert.rejects(executeOperation(remote, parseOperation(memoryRequest), 'test:original'), { code: 'memory_deleted' });
+  const nextMemory = await executeOperation(remote, parseOperation({ ...memoryRequest, request_id: randomUUID() }), 'test:original');
+  assert('memory' in nextMemory); assert.equal(nextMemory.memory.id, 'pd-m3');
   const replay = await executeOperation(remote, parseOperation(request), 'test:original');
   assert('issue' in replay); assert.equal(replay.issue.body, 'é'.repeat(32768));
   assert.equal(replay.issue.versions.body, 2);

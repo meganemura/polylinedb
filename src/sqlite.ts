@@ -6,10 +6,11 @@ import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, st
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { commentRow, issueRow, PolylinedbError } from './issues.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { fields, SCHEMA_SQL, SCHEMA_VERSION } from './schema.ts';
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, MEMORY_SCHEMA_SQL } from './schema.ts';
 import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
 import type { Snapshot, SnapshotImport } from './snapshot.ts';
 import { issueSortKey } from './issue-id.ts';
+import { memoryRow, memorySortKey } from './memories.ts';
 
 export type LocalStore = { db: SqlExecutor; exportSnapshot(): Snapshot; importSnapshot(snapshot: Snapshot): SnapshotImport; close(): void };
 
@@ -63,7 +64,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   if (rows.length !== 1 || rows[0]?.version !== SCHEMA_VERSION) {
     throw new PolylinedbError('unsupported_schema', 'Database schema version is unsupported', 409, { supported: SCHEMA_VERSION, actual: rows.map((row) => row.version) });
   }
-  if (['issues', 'comments', 'counters', 'requests'].some(name => !tables.some(table => table.name === name))) {
+  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests'].some(name => !tables.some(table => table.name === name))) {
     throw new PolylinedbError('invalid_store', 'Database schema is incomplete', 500);
   }
   return 'current';
@@ -100,6 +101,32 @@ export function initializeStore(location: StoreLocation): { database_path: strin
   return { database_path: approved.database_path };
 }
 
+export function upgradeStore(location: StoreLocation): { result: 'upgraded' | 'already_current'; version: number; database_path: string } {
+  const { database_path } = approvedPath(location);
+  if (!existsSync(database_path)) throw new PolylinedbError('uninitialized_store', 'Initialize this store first', 400);
+  const database = connect(database_path);
+  const reference = new DatabaseSync(':memory:');
+  try {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const versions = database.prepare('SELECT version FROM schema_version').all();
+      if (versions.length === 1 && versions[0]?.version === SCHEMA_VERSION) {
+        schemaVersion(database);
+        database.exec('COMMIT');
+        return { result: 'already_current', version: SCHEMA_VERSION, database_path };
+      }
+      if (versions.length !== 1 || versions[0]?.version !== 2) throw new PolylinedbError('unsupported_schema', 'Only schema 2 can be upgraded', 409);
+      reference.exec(SCHEMA_V2_SQL);
+      const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
+      if (JSON.stringify(database.prepare(sql).all()) !== JSON.stringify(reference.prepare(sql).all())) throw new PolylinedbError('invalid_store', 'Upgrade requires the canonical schema 2', 409);
+      database.exec(MEMORY_SCHEMA_SQL);
+      database.exec(`UPDATE schema_version SET version = ${SCHEMA_VERSION} WHERE version = 2`);
+      database.exec('COMMIT');
+      return { result: 'upgraded', version: SCHEMA_VERSION, database_path };
+    } catch (error) { database.exec('ROLLBACK'); throw error; }
+  } finally { reference.close(); database.close(); }
+}
+
 export function openStore(location: StoreLocation): LocalStore {
   const { database_path } = approvedPath(location);
   if (!existsSync(database_path)) throw new PolylinedbError('uninitialized_store', 'Run init for this data directory first', 400);
@@ -117,7 +144,7 @@ export function openStore(location: StoreLocation): LocalStore {
     },
   };
   const readSnapshot = (): Snapshot => parseSnapshot({
-    format: 'polylinedb.snapshot', version: 2,
+    format: 'polylinedb.snapshot', version: 3,
     issues: database.prepare('SELECT * FROM issues').all().map(row => {
       const issue = issueRow(row);
       const split = issue.id.lastIndexOf('.');
@@ -128,6 +155,13 @@ export function openStore(location: StoreLocation): LocalStore {
     comments: database.prepare('SELECT * FROM comments').all().map(commentRow),
     counters: database.prepare('SELECT scope, last_number FROM counters').all(),
     requests: database.prepare('SELECT request_id, actor, payload, issue_id FROM requests').all(),
+    memories: database.prepare('SELECT * FROM memories').all().map(row => {
+      const memory = memoryRow(row);
+      if (row.sort_key !== memorySortKey(memory.id)) throw new PolylinedbError('invalid_store', 'Stored memory ordering differs from its ID', 500);
+      return memory;
+    }),
+    memory_counters: database.prepare('SELECT prefix, last_number FROM memory_counters').all(),
+    memory_requests: database.prepare('SELECT request_id, actor, payload, memory_id FROM memory_requests').all(),
   });
   return {
     db,
@@ -139,7 +173,7 @@ export function openStore(location: StoreLocation): LocalStore {
     importSnapshot(input) {
       const snapshot = parseSnapshot(input);
       const canonical = canonicalSnapshot(snapshot);
-      const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, sha256: createHash('sha256').update(canonical).digest('hex') };
+      const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, memories: snapshot.memories.length, sha256: createHash('sha256').update(canonical).digest('hex') };
       database.exec('BEGIN IMMEDIATE');
       try {
         const existing = readSnapshot();
@@ -147,7 +181,7 @@ export function openStore(location: StoreLocation): LocalStore {
           database.exec('COMMIT');
           return { result: 'already_present', ...summary };
         }
-        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
+        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
         const columns = ['id', 'parent_id', 'sort_key', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by'];
         const insertIssue = database.prepare(`INSERT INTO issues (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
         const issues = [...snapshot.issues].sort((a, b) => a.id.split('.').length - b.id.split('.').length);
@@ -161,6 +195,12 @@ export function openStore(location: StoreLocation): LocalStore {
         for (const counter of snapshot.counters) insertCounter.run(counter.scope, counter.last_number);
         const insertRequest = database.prepare('INSERT INTO requests(request_id, actor, payload, issue_id) VALUES (?, ?, ?, ?)');
         for (const request of snapshot.requests) insertRequest.run(request.request_id, request.actor, request.payload, request.issue_id);
+        const insertMemory = database.prepare('INSERT INTO memories(id,sort_key,project,title,body,version,created_at,created_by,updated_at,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?)');
+        for (const memory of snapshot.memories) insertMemory.run(memory.id, memorySortKey(memory.id), memory.project, memory.title, memory.body, memory.version, memory.created_at, memory.created_by, memory.updated_at, memory.updated_by);
+        const insertMemoryCounter = database.prepare('INSERT INTO memory_counters(prefix,last_number) VALUES (?,?)');
+        for (const counter of snapshot.memory_counters) insertMemoryCounter.run(counter.prefix, counter.last_number);
+        const insertMemoryRequest = database.prepare('INSERT INTO memory_requests(request_id,actor,payload,memory_id) VALUES (?,?,?,?)');
+        for (const request of snapshot.memory_requests) insertMemoryRequest.run(request.request_id, request.actor, request.payload, request.memory_id);
         if (canonicalSnapshot(readSnapshot()) !== canonical) throw new PolylinedbError('invalid_store', 'Restored snapshot does not match the input', 500);
         database.exec('COMMIT');
         return { result: 'imported', ...summary };

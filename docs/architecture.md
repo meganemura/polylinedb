@@ -2,6 +2,8 @@
 
 polylinedb stores personal issues for local tools and cloud agents.
 The local database and the cloud database are independent stores.
+Project memories store current knowledge separately from issue status and discussion.
+The [memory decision](adr/0003-project-memory.md) records their version and retrieval contract.
 
 ## Operations and storage
 
@@ -20,6 +22,9 @@ Every accepted write increments its field version, even when its value is unchan
 This protects against a value changing and later returning to its original value.
 
 Comments append independently and do not change issue field versions.
+Each memory has one version for its title and body. Updates and deletion require that observed version.
+Memory IDs use separate persistent counters, and creation receipts survive memory deletion.
+The shared operation dispatcher exposes issue and memory operations to CLI, HTTP, and MCP.
 Mutations are never automatically retried with fresh versions.
 After an uncertain network result, read the issue before deciding what to do next.
 

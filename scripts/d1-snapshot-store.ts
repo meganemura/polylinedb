@@ -5,15 +5,16 @@ import { canonicalSnapshot, parseSnapshot } from '../src/snapshot.ts';
 import { commentRow, issueRow } from '../src/issues.ts';
 import { issueSortKey } from '../src/issue-id.ts';
 import { fields, SCHEMA_SQL } from '../src/schema.ts';
+import { memoryRow, memorySortKey } from '../src/memories.ts';
 
 export type Statement = { sql: string; params: (string | number | null)[] };
 export type Query = (statement: Statement) => Promise<Record<string, unknown>[]>;
 const claimTable = 'polylinedb_snapshot_claim';
 const claimSql = `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)`;
-const tables = ['issues', 'comments', 'counters', 'requests'] as const;
+const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests'] as const;
 type Table = typeof tables[number];
 type Rows = Record<Table, Record<string, unknown>[]>;
-const key = { issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id' };
+const key = { issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id', memories: 'id', memory_counters: 'prefix', memory_requests: 'request_id' };
 const fail = (message: string): never => { throw new Error(message); };
 const querySql = (query: Query, sql: string, params: Statement['params'] = []) => query({ sql, params });
 const digest = (canonical: string) => createHash('sha256').update(canonical).digest('hex');
@@ -29,6 +30,7 @@ function expectedRows(input: unknown): { canonical: string; rows: Rows } {
         ...Object.fromEntries(fields.map(field => [`${field}_v`, issue.versions[field]])),
         created_at: issue.created_at, created_by: issue.created_by, updated_at: issue.updated_at, updated_by: issue.updated_by };
     }), comments: snapshot.comments.map(row => ({ ...row })), counters: snapshot.counters.map(row => ({ ...row })), requests: snapshot.requests.map(row => ({ ...row })),
+    memories: snapshot.memories.map(row => ({ ...row, sort_key: memorySortKey(row.id) })), memory_counters: snapshot.memory_counters.map(row => ({ ...row })), memory_requests: snapshot.memory_requests.map(row => ({ ...row })),
   } };
 }
 
@@ -47,13 +49,13 @@ async function checkSchema(query: Query): Promise<boolean> {
       if (!expectedClaim || ordered(claim) !== ordered(expectedClaim)) fail('Destination claim schema differs');
     }
     const versions = await querySql(query, 'SELECT version FROM schema_version');
-    if (versions.length !== 1 || versions[0]?.version !== 2) fail('Destination schema version differs');
+    if (versions.length !== 1 || versions[0]?.version !== 3) fail('Destination schema version differs');
     return claim !== undefined;
   } finally { reference.close(); }
 }
 
 async function readRows(query: Query): Promise<Rows> {
-  const rows: Rows = { issues: [], comments: [], counters: [], requests: [] };
+  const rows: Rows = { issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] };
   // One-row pages also bound responses when a valid body approaches the row limit.
   for (const table of tables) {
     let after: string | undefined;
@@ -104,8 +106,9 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     await inspect();
     const actual = await readRows(query);
     if (!compareRows(rows, actual)) fail('Destination snapshot is incomplete');
-    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 2,
-      issues: actual.issues.map(issueRow), comments: actual.comments.map(commentRow), counters: actual.counters, requests: actual.requests });
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 3,
+      issues: actual.issues.map(issueRow), comments: actual.comments.map(commentRow), counters: actual.counters, requests: actual.requests,
+      memories: actual.memories.map(memoryRow), memory_counters: actual.memory_counters, memory_requests: actual.memory_requests });
     if (canonicalSnapshot(snapshot) !== canonical) fail('Destination canonical snapshot differs');
     return { result: 'verified', sha256, counts, snapshot };
   };

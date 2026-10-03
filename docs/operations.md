@@ -136,23 +136,27 @@ Keep each repository in a dedicated store when list should show only that reposi
 
 ## Local snapshots
 
-`pd export --file snapshot.json` exports issues, comments, field versions, audit metadata, counters, and creation requests.
+`pd export --file snapshot.json` exports issues, comments, memories, versions, audit metadata, counters, and creation requests.
 The output file has mode 0600; an existing file causes an error.
 Omit `--file` or use `--file -` to write JSON to standard output.
 
 Initialize the destination, then run `pd --actor IDENTITY import --file snapshot.json` to restore a snapshot.
 Import accepts at most 16 MiB of UTF-8 JSON and validates the complete snapshot before a write.
-The snapshot has format `polylinedb.snapshot`, version `2`, and arrays named `issues`, `comments`, `counters`, and `requests`.
+The snapshot has format `polylinedb.snapshot` and version `3`.
+Its arrays are `issues`, `comments`, `counters`, `requests`, `memories`, `memory_counters`, and `memory_requests`.
 Every child must include its epic parent, and every comment must name an included issue.
 Import preserves IDs, versions, timestamps, and actors in the snapshot.
 The command actor does not replace historical actors.
 
 Import into an empty store runs in one transaction and checks the restored records before commit.
 Repeating an identical snapshot returns `already_present` without changing records.
-A different snapshot causes a conflict when the destination contains issue, comment, counter, or request records.
+A different snapshot causes a conflict when any destination collection contains records.
 Export uses one read transaction for a consistent snapshot.
 These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
 
-Schema, snapshot, and repository configuration versions are now 2.
+Schema and snapshot versions are now 3. Repository configuration retains its existing version rules.
+Use `pd upgrade` to explicitly upgrade a local schema 2 store after making a private backup.
+Use `pd snapshot convert --file OLD --output NEW` to convert a v2 snapshot before import.
+See [project memory](memory.md) for memory operations and upgrade details.
 Version 1 UUID stores and configurations require an explicit rebuild; opening them does not silently migrate or overwrite data.

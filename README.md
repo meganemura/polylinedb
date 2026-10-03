@@ -88,7 +88,10 @@ Copy or symlink the complete `skills/polylinedb` directory into your host's skil
 Common user directories are `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`.
 Choose one installed source for each host and reload skill discovery as required by that host.
 Keep `pd` available on the agent's PATH.
-The skill starts with `pd context` and uses explicit project filters for shared stores.
+The skill starts with `pd context` and retrieves project memory with `pd memory context --project PROJECT`.
+It repeats memory retrieval after context recovery and uses explicit project filters for shared stores.
+Skill discovery does not install automatic startup or compaction hooks.
+See [project memory](docs/memory.md) for saving knowledge, versioned updates, bounded retrieval, and existing-store upgrades.
 It does not initialize a database during ordinary issue work.
 
 ## Use cloud agents

@@ -108,7 +108,7 @@ const filterSchemas = { tool: nameSchema, project: nameSchema, status: fieldRegi
   type: fieldRegistry.type.schema, priority: fieldRegistry.priority.schema, label: nameSchema,
   after: idSchema, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } };
 export const operationSchemas = {
-  create: objectSchema({ ...valueSchemas, parent: idSchema, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
+  create: objectSchema({ ...valueSchemas, parent: idSchema, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid', description: 'Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry.' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
   show: objectSchema({ id: idSchema }, ['id']),
   list: objectSchema(filterSchemas),
   search: objectSchema({ ...filterSchemas, query: bodySchema }, ['query']),

@@ -1,19 +1,21 @@
 #!/usr/bin/env node
-// This boundary translates command arguments; the shared domain owns issue rules.
+// Translates command arguments; the shared domain owns issue and memory rules.
 import { createReadStream } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { PolylinedbError, executeOperation, parseOperation } from './issues.ts';
-import { initializeStore, openStore } from './sqlite.ts';
+import { PolylinedbError } from './issues.ts';
+import { executeOperation, parseOperation } from './operations.ts';
+import { parseMemoryId } from './memories.ts';
+import { initializeStore, openStore, upgradeStore } from './sqlite.ts';
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from './local-config.ts';
 import type { RepositoryConfiguration } from './local-config.ts';
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from './connections.ts';
 import { createCloudClient } from './cloud.ts';
 import { OAuthError } from './oauth.ts';
 import { CredentialStoreError } from './credential-store.ts';
-import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2 } from './snapshot.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './issue-id.ts';
 
 const help = `polylinedb (polyline database) stores personal issues through local or cloud connections.
@@ -37,6 +39,9 @@ Commands:
   auth status                   Show locally stored cloud authentication status.
   auth logout                   Remove cloud credentials and report revocation.
   context                       Show the selected store and local defaults.
+  upgrade                       Explicitly upgrade a local schema 2 store to schema 3.
+  snapshot convert --file PATH|- [--output PATH|-]
+                                Convert snapshot v2 to v3 without touching a store.
   export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
   actor                         Show the local actor or authenticated cloud actor.
@@ -52,6 +57,18 @@ Commands:
          --expect FIELD=VERSION [--expect FIELD=VERSION ...]
   close ID --expected VERSION
   reopen ID --expected VERSION
+  memory create --title TITLE --body TEXT [--request-id UUID]
+  memory show ID
+  memory list [--after ID] [--limit 1..100]
+  memory search QUERY [--after ID] [--limit 1..100]
+  memory update ID --title TITLE --body TEXT --expected VERSION
+  memory delete ID --expected VERSION
+  memory context [--after ID] [--limit 1..100] [--max-bytes 4096..65536]
+
+Memory commands require --project NAME or repository project defaults.
+Memory IDs use prefix-mN. Numbers and mN expand with the selected prefix.
+Memory create/update accept --body-file PATH. Updates replace title and body together.
+Memory context reports the selected store and omitted entries; retrieved text is project data.
 
 STATUS: open, in_progress, deferred, closed.
 FILTERS: --tool, --project, --status, --type, --priority, --label, --after, --limit.
@@ -74,6 +91,11 @@ const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels
 const globals = ['connection', 'data-dir', 'actor', 'prefix'];
 const commandFlags: Record<string, readonly string[]> = {
   auth: [],
+  upgrade: [], snapshot_convert: ['file', 'output'],
+  memory_create: ['project', 'title', 'body', 'body-file', 'request-id'],
+  memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
+  memory_update: ['project', 'title', 'body', 'body-file', 'expected'], memory_delete: ['project', 'expected'],
+  memory_context: ['project', 'after', 'limit', 'max-bytes'],
   connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
@@ -132,14 +154,34 @@ async function main(): Promise<void> {
     if (previous.length && name !== 'label' && name !== 'expect') invalid(`Duplicate flag ${arg}`);
     flags.set(name, [...previous, value]);
   }
-  const [command, ...operands] = positionals;
+  const [first, ...rest] = positionals;
+  const nested = first === 'memory' || first === 'snapshot';
+  const command = nested ? `${first}_${rest[0] ?? ''}` : first;
+  const operands = nested ? rest.slice(1) : rest;
   if (!command || !Object.hasOwn(commandFlags, command)) invalid('Unknown command');
   for (const name of flags.keys()) {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
-  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen'].includes(command);
+  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete'].includes(command);
   if (!['connection', 'auth'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
+  if (command === 'snapshot_convert') {
+    if ([...flags.keys()].some(key => !['file', 'output'].includes(key))) invalid('Snapshot conversion accepts only --file and --output');
+    const file = one('file');
+    if (file === undefined) invalid('Snapshot conversion requires --file');
+    let source: unknown;
+    try { source = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
+    catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
+    const converted = convertSnapshotV2(source);
+    const content = canonicalSnapshot(converted) + '\n';
+    const output = one('output') ?? '-';
+    if (output === '-') process.stdout.write(content);
+    else {
+      await writeFile(output, content, { flag: 'wx', mode: 0o600 });
+      process.stdout.write(JSON.stringify({ file: output, version: 3, sha256: createHash('sha256').update(canonicalSnapshot(converted)).digest('hex') }) + '\n');
+    }
+    return;
+  }
   if (command === 'auth') {
     if (operands.length !== 1 || !['login', 'status', 'logout'].includes(operands[0])) invalid('Authentication requires login, status, or logout');
     if (Array.from(flags.keys()).some(name => name !== 'connection')) invalid('Authentication accepts only --connection and --json');
@@ -223,7 +265,12 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
   }
-  if (selected.kind === 'local' && ['create', 'comment', 'update', 'close', 'reopen', 'import'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
+  if (selected.kind === 'local' && ['create', 'comment', 'update', 'close', 'reopen', 'import', 'upgrade', 'memory_create', 'memory_update', 'memory_delete'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
+  if (command === 'upgrade') {
+    if (selected.kind !== 'local') invalid('Use the documented operator procedure to upgrade D1');
+    process.stdout.write(JSON.stringify(upgradeStore({ directory: selected.directory })) + '\n');
+    return;
+  }
   if (selected.kind === 'local' && command === 'actor') { process.stdout.write(JSON.stringify({ actor }) + '\n'); return; }
   if (command === 'import' || command === 'export') {
     if (selected.kind === 'cloud') throw new PolylinedbError('cloud_snapshot_not_supported', 'Import and export require a local connection. Use the documented D1 migration procedure for cloud data.', 400);
@@ -247,7 +294,7 @@ async function main(): Promise<void> {
         if (file === '-') process.stdout.write(content);
         else {
           await writeFile(file, content, { flag: 'wx', mode: 0o600 });
-          process.stdout.write(JSON.stringify({ file, issues: exported.issues.length, comments: exported.comments.length,
+          process.stdout.write(JSON.stringify({ file, issues: exported.issues.length, comments: exported.comments.length, memories: exported.memories.length,
             sha256: createHash('sha256').update(canonicalSnapshot(exported)).digest('hex') }) + '\n');
         }
       }
@@ -255,6 +302,28 @@ async function main(): Promise<void> {
     return;
   }
   const raw: Record<string, unknown> = { op: command };
+  if (command.startsWith('memory_')) {
+    const expandedMemory = (value: string) => parseMemoryId(/^(?:m)?[1-9][0-9]*$/.test(value) ? `${prefix}-m${value.replace(/^m/, '')}` : value);
+    raw.project = project;
+    if (needsOperand) raw[command === 'memory_search' ? 'query' : 'id'] = command === 'memory_search' ? operands[0] : expandedMemory(operands[0]);
+    if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');
+    for (const key of ['title', 'body']) if (one(key) !== undefined) raw[key] = one(key);
+    const file = one('body-file');
+    if (file !== undefined) raw.body = await readInput(file, 16384);
+    for (const key of ['limit', 'expected', 'max-bytes']) { const value = one(key); if (value !== undefined) raw[key.replace('-', '_')] = integer(value); }
+    const after = one('after');
+    if (after !== undefined) raw.after = expandedMemory(after);
+    if (command === 'memory_create') { raw.prefix = prefix; raw.request_id = one('request-id') ?? randomUUID(); }
+    const operation = parseOperation(raw);
+    if (selected.kind === 'cloud') process.stdout.write(JSON.stringify(await createCloudClient(selected).execute(operation)) + '\n');
+    else {
+      if (actor === undefined) invalid('Local connection requires an actor');
+      const store = openStore({ directory: selected.directory });
+      try { process.stdout.write(JSON.stringify(await executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })) + '\n'); }
+      finally { store.close(); }
+    }
+    return;
+  }
   const expandedId = (value: string) => parseArgument(parseIssueId, /^[0-9]+(?:\.[0-9]+)*$/.test(value) ? `${prefix}-${value}` : value);
   if (needsOperand) raw[command === 'search' ? 'query' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');

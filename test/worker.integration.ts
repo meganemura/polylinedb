@@ -133,10 +133,34 @@ try {
   assert.equal(record(final.versions).priority, 1);
   const stored = await database.prepare('SELECT body, body_v, priority, priority_v, created_by FROM issues WHERE id = ?').bind(id).first();
   assert.deepEqual(stored, { body: 'Changed through MCP', body_v: 2, priority: 2, priority_v: 1, created_by: 'access:owner' });
+  assert.ok(listed.tools.map(tool => record(tool).name).includes('memory_context'));
+  const memoryRequest = { project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Build fact', body: 'Verified in workerd' };
+  const memoryCreated = await rpc('tools/call', { name: 'memory_create', arguments: memoryRequest });
+  assert.equal(memoryCreated.isError, false);
+  const memory = record(record(memoryCreated.structuredContent).memory);
+  assert.equal(memory.id, 'pd-m1');
+  assert.equal(memory.created_by, 'access:owner');
+  const memoryUpdated = record((await http({ op: 'memory_update', project: 'parser', id: memory.id, title: 'Build fact', body: 'Shared HTTP and MCP state', expected: 1 })).memory);
+  assert.equal(memoryUpdated.version, 2);
+  const memoryContext = await rpc('tools/call', { name: 'memory_context', arguments: { project: 'parser' } });
+  assert.equal(memoryContext.isError, false);
+  const context = record(memoryContext.structuredContent);
+  assert.equal(context.project, 'parser');
+  assert.deepEqual(context.store, { kind: 'cloud', url: 'http://polylinedb.test' });
+  assert.deepEqual(context.memories, [memoryUpdated]);
+  const memoryConflict = await rpc('tools/call', { name: 'memory_delete', arguments: { project: 'parser', id: memory.id, expected: 1 } });
+  assert.equal(memoryConflict.isError, true);
+  assert.equal(record(record(memoryConflict.structuredContent).error).code, 'memory_conflict');
+  assert.equal(record((await http({ op: 'memory_show', project: 'other', id: memory.id }, 404)).error).code, 'memory_not_found');
+  assert.deepEqual(await database.prepare('SELECT body, version, created_by FROM memories WHERE id = ?').bind(memory.id).first(),
+    { body: 'Shared HTTP and MCP state', version: 2, created_by: 'access:owner' });
+  await http({ op: 'memory_delete', project: 'parser', id: memory.id, expected: 2 });
+  assert.equal(record((await http({ op: 'memory_create', ...memoryRequest }, 409)).error).code, 'memory_deleted');
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
       'real JWT verification', 'missing and invalid credentials rejected', 'HTTP create', 'MCP initialize and show',
       'MCP update', 'HTTP and MCP stale conflicts', 'D1 atomicity and persisted audit identity', 'JWKS cache',
+      'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

@@ -1,6 +1,6 @@
 # Deploy and connect the cloud store
 
-The cloud Worker stores issues in D1. The CLI can select that Worker or a local SQLite database. The two stores do not synchronize.
+The cloud Worker stores issues and project memories in D1. The CLI can select that Worker or a local SQLite database. The two stores do not synchronize.
 For a local CLI connected to the Worker, follow [CLI authentication](cli-authentication.md).
 
 To transfer an existing local store, use the [D1 snapshot migration guide](d1-migration.md). Restore into an isolated destination and verify its complete contents before changing the Worker binding.
@@ -226,7 +226,7 @@ cf d1 query "$PD_D1_DATABASE_ID" --sql "$(node scripts/schema.ts)"
 cf d1 query "$PD_D1_DATABASE_ID" --sql 'SELECT version FROM schema_version'
 ```
 
-The version query must return `2`.
+The version query must return `3`.
 `scripts/schema.ts` emits the SQL owned by `src/schema.ts`.
 That SQL creates tables and the schema-version record.
 It is not safe to apply twice, and it does not upgrade an existing database.

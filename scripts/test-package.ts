@@ -29,7 +29,7 @@ try {
   const expectedFiles = ['LICENSE', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
     'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'dist/connections.js', 'dist/issue-id.js',
     'dist/cloud.js', 'dist/cloud-operations.js', 'dist/oauth.js', 'dist/credential-session.js', 'dist/credential-store.js',
-    'dist/issue-queries.js', 'dist/solarsql.generated.js', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
+    'dist/issue-queries.js', 'dist/solarsql.generated.js', 'dist/memories.js', 'dist/operations.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
@@ -66,6 +66,14 @@ try {
   assert.equal(JSON.parse(pd(['search', 'Works from npm'])).issues[0].id, issue.id);
   assert.equal(JSON.parse(pd(['close', issue.id, '--expected', '2'])).issue.status, 'closed');
   assert.equal(JSON.parse(pd(['reopen', issue.id, '--expected', '3'])).issue.status, 'open');
+  const memoryCreation = ['memory', 'create', '--project', 'release', '--title', 'Package fact', '--body', 'Installed sessions share this memory.', '--request-id', '56361bb3-2f79-4e47-bd3a-4d0b52d9b7cc'];
+  assert.equal(JSON.parse(pd(memoryCreation)).memory.id, 'pd-m1');
+  assert.equal(JSON.parse(pd(['memory', 'context', '--project', 'release'])).memories[0].body, 'Installed sessions share this memory.');
+  assert.equal(JSON.parse(pd(['memory', 'update', '1', '--project', 'release', '--title', 'Package fact', '--body', 'Verified through the installed CLI.', '--expected', '1'])).memory.version, 2);
+  pd(['memory', 'delete', '1', '--project', 'release', '--expected', '1'], 4);
+  const skill = readFileSync(join(installed, 'skills', 'polylinedb', 'SKILL.md'), 'utf8');
+  assert.match(skill, /pd memory context/);
+  assert.match(skill, /context compaction/);
   const snapshotPath = join(root, 'snapshot.json');
   const exported = JSON.parse(pd(['export', '--file', snapshotPath]));
   const restoredDirectory = join(root, 'restored');
@@ -79,6 +87,8 @@ try {
   assert.equal(JSON.parse(restored(creation)).issue.id, issue.id);
   assert.equal(JSON.parse(restored(['show', issue.id])).issue.versions.status, 4);
   assert.equal(JSON.parse(restored(['show', issue.id])).comments[0].body, 'Works from npm');
+  assert.equal(JSON.parse(restored(['memory', 'show', '1', '--project', 'release'])).memory.version, 2);
+  assert.equal(JSON.parse(restored(memoryCreation)).memory.body, 'Verified through the installed CLI.');
   assert.equal(JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'release', '--body', 'After restoration'])).issue.id, 'pd-2');
   restored(['import', '--file', snapshotPath], 4);
   assert.deepEqual(readdirSync(workspace), []);

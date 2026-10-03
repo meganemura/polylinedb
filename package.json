@@ -51,7 +51,9 @@
     "dist/oauth.js",
     "dist/credential-session.js",
     "dist/credential-store.js",
-    "dist/cloud-operations.js"
+    "dist/cloud-operations.js",
+    "dist/memories.js",
+    "dist/operations.js"
   ],
   "publishConfig": {
     "access": "public",
