@@ -6,6 +6,8 @@ The client does not require a client secret or a Cloudflare Service Token.
 
 ## Prepare the credential store
 
+Install Git and keep it on PATH, including on headless Linux hosts.
+The CLI requires Git to inspect repository defaults before selecting a connection.
 On macOS, `pd` uses `/usr/bin/security` and the user's Keychain.
 Keychain may ask the user to permit access.
 On Linux, install `secret-tool` and run an unlocked Secret Service on the user's D-Bus session.
@@ -115,4 +117,5 @@ Synthetic OAuth tests cover PKCE, callback checks, failed repeat login, refresh 
 Credential tests cover command arguments, size limits, denied or unavailable stores, and write verification.
 The macOS Keychain and a disposable Linux Secret Service both passed save, read, overwrite, delete, and missing-entry checks with synthetic credentials.
 The Linux test also verified errors when the service was unavailable.
+The packaged CLI passed local issue operations and unauthenticated cloud credential checks on Linux with Node.js 24.20.
 Desktop unlock prompts and each provider's deployed OAuth policy require separate acceptance checks.

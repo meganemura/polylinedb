@@ -9,6 +9,7 @@ These are independent stores; polylinedb does not synchronize them.
 ## Start locally
 
 Use Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later.
+Install Git and keep it on PATH; the CLI uses it to resolve repository defaults safely.
 Install the CLI from npm:
 
 ```sh

@@ -1,7 +1,7 @@
 // Tests Git metadata defaults and CLI initialization in disposable repositories and stores.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,6 +24,22 @@ function fixture(context: test.TestContext) {
 function rejected(action: () => unknown) {
   assert.throws(action, error => error instanceof PolylinedbError && error.code === 'invalid_repository_config');
 }
+
+test('missing Git reports the prerequisite without selecting or creating a store', context => {
+  const { root, repo } = fixture(context);
+  const directory = join(root, 'new-store');
+  for (const args of [['context'], ['init', '--data-dir', directory, '--tool', 'demo', '--project', 'demo', '--actor', 'local:owner']]) {
+    const result = spawnSync(process.execPath, [new URL('../src/cli.ts', import.meta.url).pathname, ...args], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, PATH: join(root, 'without-git'), XDG_CONFIG_HOME: join(root, 'config') },
+    });
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'git_unavailable',
+      message: 'Git must be installed and available on PATH to resolve repository defaults safely.' } });
+  }
+  assert.equal(existsSync(directory), false);
+  assert.equal(existsSync(join(repo, '.git', 'polylinedb.json')), false);
+});
 
 test('normal repository writes private metadata defaults and reads from subdirectories', context => {
   const { repo, defaults, path } = fixture(context);

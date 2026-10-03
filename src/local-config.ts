@@ -44,6 +44,9 @@ function repository(cwd: string): Repository | undefined {
     if (!statSync(common).isDirectory()) return invalid('Git common metadata is not a directory');
     return { root, common };
   } catch (error) {
+    if (missing(error) && error instanceof Error && 'syscall' in error && error.syscall === 'spawnSync git') {
+      throw new PolylinedbError('git_unavailable', 'Git must be installed and available on PATH to resolve repository defaults safely.', 400);
+    }
     if (error instanceof Error && 'status' in error && error.status === 128) return undefined;
     throw error;
   }
