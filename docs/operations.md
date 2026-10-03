@@ -97,3 +97,38 @@ It exposes `initialize`, `ping`, `tools/list`, and `tools/call`.
 
 CLI errors use the same error object on stderr.
 Exit codes are 0 for success, 2 for invalid input, 3 for missing issues, 4 for conflicts, and 1 for other failures.
+
+## Local repository defaults
+
+Run `pd init --stealth --tool NAME --project NAME --actor IDENTITY` inside a Git working tree.
+The command creates a dedicated external store and saves defaults in the Git common directory as `polylinedb.json`.
+Use `--data-dir ABSOLUTE_PATH` to select an external store explicitly.
+The configuration has mode 0600 and is shared by linked worktrees.
+The command preserves existing defaults or rejects conflicting values.
+It does not change tracked files or Git ignore rules.
+
+Explicit flags override environment variables, which override repository defaults.
+`POLYLINEDB_DATA_DIR` and `POLYLINEDB_ACTOR` are the supported environment variables.
+Repository defaults supply `tool` and `project` for create, but do not filter list or search.
+Run `pd context` to inspect the selected paths and defaults.
+Keep each repository in a dedicated store when list should show only that repository's issues.
+
+## Local snapshots
+
+`pd export --file snapshot.json` exports all issues, comments, field versions, and audit metadata.
+The output file has mode 0600; an existing file causes an error.
+Omit `--file` or use `--file -` to write JSON to standard output.
+
+Initialize the destination, then run `pd --actor IDENTITY import --file snapshot.json` to restore a snapshot.
+Import accepts at most 16 MiB of UTF-8 JSON and validates the complete snapshot before a write.
+The snapshot has format `polylinedb.snapshot`, version `1`, and arrays named `issues` and `comments`.
+Every child must include its epic parent, and every comment must name an included issue.
+Import preserves IDs, versions, timestamps, and actors in the snapshot.
+The command actor does not replace historical actors.
+
+Import into an empty store runs in one transaction and checks the restored records before commit.
+Repeating an identical snapshot returns `already_present` without changing records.
+A different snapshot causes a conflict when the destination already contains issues or comments.
+Export uses one read transaction for a consistent snapshot.
+These maintenance commands operate on local SQLite stores.
+The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.

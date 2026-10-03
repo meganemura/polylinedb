@@ -1,10 +1,15 @@
 // Owns local database paths and transactions; issue policy remains in issues.ts.
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { PolylinedbError } from './issues.ts';
+import { commentRow, issueRow, PolylinedbError } from './issues.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { SCHEMA_SQL, SCHEMA_VERSION } from './schema.ts';
+import { fields, SCHEMA_SQL, SCHEMA_VERSION } from './schema.ts';
+import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
+import type { Snapshot, SnapshotImport } from './snapshot.ts';
+
+export type LocalStore = { db: SqlExecutor; exportSnapshot(): Snapshot; importSnapshot(snapshot: Snapshot): SnapshotImport; close(): void };
 
 type StoreLocation = { directory: string; cwd?: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_data_directory', message, 400); };
@@ -93,7 +98,7 @@ export function initializeStore(location: StoreLocation): { database_path: strin
   return { database_path: approved.database_path };
 }
 
-export function openStore(location: StoreLocation): { db: SqlExecutor; close(): void } {
+export function openStore(location: StoreLocation): LocalStore {
   const { database_path } = approvedPath(location);
   if (!existsSync(database_path)) throw new PolylinedbError('uninitialized_store', 'Run init for this data directory first', 400);
   verifyExisting(database_path, false);
@@ -108,5 +113,49 @@ export function openStore(location: StoreLocation): { db: SqlExecutor; close(): 
       } catch (error) { database.exec('ROLLBACK'); throw error; }
     },
   };
-  return { db, close: () => database.close() };
+  const readSnapshot = (): Snapshot => parseSnapshot({
+    format: 'polylinedb.snapshot', version: 1,
+    issues: database.prepare('SELECT * FROM issues').all().map(row => {
+      const issue = issueRow(row);
+      const split = issue.id.lastIndexOf('.');
+      if (row.parent_id !== (split < 0 ? null : issue.id.slice(0, split))) throw new PolylinedbError('invalid_store', 'Stored parent does not match the issue ID', 500);
+      return issue;
+    }),
+    comments: database.prepare('SELECT * FROM comments').all().map(commentRow),
+  });
+  return {
+    db,
+    exportSnapshot() {
+      database.exec('BEGIN');
+      try { const snapshot = readSnapshot(); database.exec('COMMIT'); return snapshot; }
+      catch (error) { database.exec('ROLLBACK'); throw error; }
+    },
+    importSnapshot(input) {
+      const snapshot = parseSnapshot(input);
+      const canonical = canonicalSnapshot(snapshot);
+      const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, sha256: createHash('sha256').update(canonical).digest('hex') };
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        const existing = readSnapshot();
+        if (canonicalSnapshot(existing) === canonical) {
+          database.exec('COMMIT');
+          return { result: 'already_present', ...summary };
+        }
+        if (existing.issues.length || existing.comments.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
+        const columns = ['id', 'parent_id', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by'];
+        const insertIssue = database.prepare(`INSERT INTO issues (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
+        const issues = [...snapshot.issues].sort((a, b) => a.id.split('.').length - b.id.split('.').length);
+        for (const issue of issues) {
+          const split = issue.id.lastIndexOf('.');
+          insertIssue.run(issue.id, split < 0 ? null : issue.id.slice(0, split), ...fields.map(field => field === 'labels' ? JSON.stringify(issue.labels) : issue[field]), ...fields.map(field => issue.versions[field]), issue.created_at, issue.created_by, issue.updated_at, issue.updated_by);
+        }
+        const insertComment = database.prepare('INSERT INTO comments (id, issue_id, body, created_at, created_by) VALUES (?, ?, ?, ?, ?)');
+        for (const comment of snapshot.comments) insertComment.run(comment.id, comment.issue_id, comment.body, comment.created_at, comment.created_by);
+        if (canonicalSnapshot(readSnapshot()) !== canonical) throw new PolylinedbError('invalid_store', 'Restored snapshot does not match the input', 500);
+        database.exec('COMMIT');
+        return { result: 'imported', ...summary };
+      } catch (error) { database.exec('ROLLBACK'); throw error; }
+    },
+    close: () => database.close(),
+  };
 }

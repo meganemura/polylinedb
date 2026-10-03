@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 // This boundary translates command arguments; the shared domain owns issue rules.
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { PolylinedbError, executeOperation, parseOperation } from './issues.ts';
 import { initializeStore, openStore } from './sqlite.ts';
+import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults } from './local-config.ts';
+import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
 
 const help = `polylinedb (polyline database) stores personal issues in one local SQLite database.
 Usage: pd [--data-dir ABSOLUTE_PATH] [--actor IDENTITY] COMMAND [OPTIONS]
@@ -17,6 +21,11 @@ Storage must be outside the working directory and its Git repository.
 
 Commands:
   init
+  init --stealth --tool NAME --project NAME --actor IDENTITY
+                                Store defaults in Git metadata; data stays outside the repository.
+  context                       Show the selected store and local defaults.
+  export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
+  import --file PATH|-           Restore into an empty store; exact reruns do nothing.
   actor                         Show the explicit actor, or local:reader.
   create --tool NAME --project NAME --body TEXT [--parent ID]
          [--type bug|task|epic|feature|chore] [--status STATUS]
@@ -46,7 +55,7 @@ Examples:
 const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'];
 const globals = ['data-dir', 'actor'];
 const commandFlags: Record<string, readonly string[]> = {
-  init: [], actor: [], show: [],
+  init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent'],
   comment: ['body', 'body-file'],
   update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect'],
@@ -60,6 +69,19 @@ function integer(value: string): number {
   const number = Number(value);
   if (!Number.isSafeInteger(number)) invalid('Integer exceeds the safe range');
   return number;
+}
+async function readInput(path: string, maximum: number): Promise<string> {
+  const input = path === '-' ? process.stdin : createReadStream(path);
+  const chunks: Buffer[] = [];
+  let length = 0;
+  for await (const chunk of input) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    length += bytes.length;
+    if (length > maximum) invalid(`Input exceeds ${maximum} UTF-8 bytes`);
+    chunks.push(bytes);
+  }
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
+  catch { return invalid('Input must be valid UTF-8'); }
 }
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -80,7 +102,7 @@ async function main(): Promise<void> {
     if (!arg.startsWith('--')) invalid(`Unknown flag ${arg}`);
     const name = arg.slice(2);
     if (![...globals, ...Object.values(commandFlags).flat()].includes(name)) invalid(`Unknown flag ${arg}`);
-    const value = name === 'clear-labels' ? 'true' : args[++index];
+    const value = ['clear-labels', 'stealth'].includes(name) ? 'true' : args[++index];
     if (value === undefined || value === '--' || (value.startsWith('--') && value !== '--help')) invalid(`Missing value for ${arg}`);
     const previous = flags.get(name) ?? [];
     if (previous.length && name !== 'label' && name !== 'expect') invalid(`Duplicate flag ${arg}`);
@@ -94,26 +116,82 @@ async function main(): Promise<void> {
   const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen'].includes(command);
   if (operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
-  const actor = one('actor') ?? process.env.POLYLINEDB_ACTOR ?? 'local:reader';
+  const defaults = readRepositoryDefaults();
+  const actor = one('actor') ?? process.env.POLYLINEDB_ACTOR ?? defaults?.actor ?? 'local:reader';
   if (!actor.trim() || /\p{Cc}/u.test(actor) || Buffer.byteLength(actor) > 256) invalid('Invalid actor identity');
-  if (['create', 'comment', 'update', 'close', 'reopen'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR) invalid('An explicit --actor or POLYLINEDB_ACTOR is required');
+  if (['create', 'comment', 'update', 'close', 'reopen', 'import'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
   if (command === 'actor') { process.stdout.write(JSON.stringify({ actor }) + '\n'); return; }
-  const directory = one('data-dir') ?? process.env.POLYLINEDB_DATA_DIR ?? join(
-    process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME) ? process.env.XDG_DATA_HOME : join(homedir(), '.local', 'share'), 'polylinedb');
-  if (command === 'init') { process.stdout.write(JSON.stringify(initializeStore({ directory })) + '\n'); return; }
+  const dataRoot = join(process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
+    ? process.env.XDG_DATA_HOME : join(homedir(), '.local', 'share'), 'polylinedb');
+  const stealth = command === 'init' && flags.has('stealth');
+  let directory = one('data-dir') ?? process.env.POLYLINEDB_DATA_DIR ?? defaults?.data_dir
+    ?? (stealth ? join(dataRoot, 'stores', randomUUID()) : dataRoot);
+  const tool = one('tool') ?? defaults?.tool;
+  const project = one('project') ?? defaults?.project;
+  if (command === 'context') {
+    process.stdout.write(JSON.stringify({ data_dir: directory, database_path: join(directory, 'polylinedb.sqlite'),
+      actor, tool, project, config_path: repositoryConfigPath() ?? null }) + '\n');
+    return;
+  }
+  if (command === 'init') {
+    if (!stealth && (one('tool') !== undefined || one('project') !== undefined)) invalid('Use --stealth to save repository defaults');
+    if (stealth) {
+      if (!repositoryConfigPath()) invalid('Stealth initialization requires a Git working tree');
+      if (!tool || !project) invalid('Stealth initialization requires --tool and --project');
+      if (one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('Stealth initialization requires an actor');
+      parseOperation({ op: 'create', tool, project, body: 'Validate repository defaults' });
+      directory = validateRepositoryDefaults({ version: 1, data_dir: directory, tool, project, actor }).data_dir;
+      if (defaults && (defaults.data_dir !== directory || defaults.tool !== tool || defaults.project !== project || defaults.actor !== actor)) {
+        throw new PolylinedbError('local_defaults_conflict', 'Repository defaults already select a different context', 409);
+      }
+    }
+    const initialized = initializeStore({ directory });
+    const config_path = stealth && tool && project
+      ? writeRepositoryDefaults({ version: 1, data_dir: dirname(initialized.database_path), tool, project, actor })
+      : undefined;
+    process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
+    return;
+  }
+  if (command === 'import' || command === 'export') {
+    let snapshot;
+    if (command === 'import') {
+      const file = one('file');
+      if (file === undefined) invalid('Import requires --file');
+      let value: unknown;
+      try { value = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
+      catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
+      snapshot = parseSnapshot(value);
+    }
+    const store = openStore({ directory });
+    try {
+      if (snapshot) process.stdout.write(JSON.stringify(store.importSnapshot(snapshot)) + '\n');
+      else {
+        const exported = store.exportSnapshot();
+        const content = JSON.stringify(exported, null, 2) + '\n';
+        const file = one('file') ?? '-';
+        if (file === '-') process.stdout.write(content);
+        else {
+          await writeFile(file, content, { flag: 'wx', mode: 0o600 });
+          process.stdout.write(JSON.stringify({ file, issues: exported.issues.length, comments: exported.comments.length,
+            sha256: createHash('sha256').update(canonicalSnapshot(exported)).digest('hex') }) + '\n');
+        }
+      }
+    } finally { store.close(); }
+    return;
+  }
   const raw: Record<string, unknown> = { op: command };
   if (needsOperand) raw[command === 'search' ? 'query' : 'id'] = operands[0];
   if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');
   const bodyFile = one('body-file');
   let body = one('body');
   if (bodyFile !== undefined) {
-    if (bodyFile === '-') {
-      const chunks: Buffer[] = [];
-      for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      body = Buffer.concat(chunks).toString('utf8');
-    } else body = await readFile(bodyFile, 'utf8');
+    body = await readInput(bodyFile, 65536);
   }
   for (const name of ['tool', 'project', 'status', 'type', 'parent', 'after']) if (one(name) !== undefined) raw[name] = one(name);
+  if (command === 'create') {
+    if (raw.tool === undefined && tool !== undefined) raw.tool = tool;
+    if (raw.project === undefined && project !== undefined) raw.project = project;
+  }
   for (const name of ['priority', 'limit', 'expected']) {
     const value = one(name);
     if (value !== undefined) raw[name] = integer(value);

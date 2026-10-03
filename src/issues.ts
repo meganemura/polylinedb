@@ -179,7 +179,7 @@ export function parseOperation(value: unknown): Operation {
   }
 }
 
-function issueRow(row: Record<string, unknown>): Issue {
+export function issueRow(row: Record<string, unknown>): Issue {
   try {
     const versions = Object.fromEntries(fields.map((field) => [field, integer(row[`${field}_v`], `${field} version`, 1, Number.MAX_SAFE_INTEGER)])) as Record<Field, number>;
     if (typeof row.labels_json !== 'string') throw new Error('labels_json is not text');
@@ -192,7 +192,7 @@ function issueRow(row: Record<string, unknown>): Issue {
     throw new PolylinedbError('invalid_store', `Stored issue is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);
   }
 }
-function commentRow(row: Record<string, unknown>): Comment {
+export function commentRow(row: Record<string, unknown>): Comment {
   try { return { id: id(row.id), issue_id: id(row.issue_id), body: text(row.body, 'body'),
     created_at: text(row.created_at, 'created_at'), created_by: name(row.created_by, 'created_by') }; }
   catch { throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500); }

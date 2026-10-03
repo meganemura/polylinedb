@@ -1,7 +1,7 @@
 // Subprocesses verify the executable contract against real persistent storage.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -108,4 +108,140 @@ test('help documents version expectations without initializing storage', t => {
     assert.equal(helpResult.stdout, result.stdout);
   }
   assert.deepEqual(readdirSync(root), ['work']);
+});
+
+function plainCli(cwd: string, args: string[], options: { status?: number; input?: string; env?: Record<string, string> } = {}) {
+  const env = { ...process.env };
+  delete env.POLYLINEDB_ACTOR;
+  delete env.POLYLINEDB_DATA_DIR;
+  const result = spawnSync(process.execPath, [executable, ...args], {
+    cwd, env: { ...env, ...options.env }, encoding: 'utf8', input: options.input,
+  });
+  assert.equal(result.status, options.status ?? 0, result.stderr);
+  if (result.status === 0) assert.equal(result.stderr.replace(/^.*ExperimentalWarning.*\n(?:.*\n)?/gm, ''), '');
+  else assert.equal(result.stdout, '');
+  return JSON.parse(result.status === 0 ? result.stdout : result.stderr);
+}
+
+function git(cwd: string, args: string[]): string {
+  const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout;
+}
+
+test('stealth init supplies external storage and defaults without changing Git status', t => {
+  const { root, cwd } = fixture(t);
+  git(cwd, ['init', '--quiet']);
+  const before = git(cwd, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const env = { XDG_DATA_HOME: join(root, 'data-home') };
+  const initialized = plainCli(cwd, ['init', '--stealth', '--tool', 'demo', '--project', 'demo', '--actor', 'local:owner'], { env });
+  assert.ok(initialized.database_path.startsWith(join(realpathSync(root), 'data-home', 'polylinedb', 'stores') + '/'));
+  assert.equal(initialized.config_path, join(realpathSync(cwd), '.git', 'polylinedb.json'));
+  assert.equal(statSync(initialized.config_path).mode & 0o777, 0o600);
+  const context = plainCli(cwd, ['context'], { env });
+  assert.deepEqual(context, {
+    data_dir: initialized.database_path.slice(0, -'/polylinedb.sqlite'.length), database_path: initialized.database_path,
+    actor: 'local:owner', tool: 'demo', project: 'demo', config_path: initialized.config_path,
+  });
+  const { issue } = plainCli(cwd, ['create', '--body', 'Uses repository defaults'], { env });
+  assert.equal(issue.tool, 'demo');
+  assert.equal(issue.project, 'demo');
+  assert.equal(issue.created_by, 'local:owner');
+  const other = plainCli(cwd, ['create', '--tool', 'manual-tool', '--project', 'other-project', '--body', 'Explicit overrides'], { env }).issue;
+  assert.equal(other.tool, 'manual-tool');
+  assert.equal(other.project, 'other-project');
+  assert.deepEqual(plainCli(cwd, ['list'], { env }).issues.map((row: { id: string }) => row.id).sort(), [issue.id, other.id].sort());
+  assert.deepEqual(plainCli(cwd, ['init', '--stealth'], { env }), initialized);
+  assert.equal(git(cwd, ['status', '--porcelain=v1', '--untracked-files=all']), before);
+  assert.deepEqual(readdirSync(cwd), ['.git']);
+});
+
+test('CLI flags override environment and environment overrides repository actor and store', t => {
+  const { root, cwd, directory } = fixture(t);
+  git(cwd, ['init', '--quiet']);
+  plainCli(cwd, ['init', '--stealth', '--data-dir', directory, '--tool', 'repo-tool', '--project', 'repo-project', '--actor', 'local:repo']);
+  const envDirectory = join(root, 'env-store');
+  const flagDirectory = join(root, 'flag-store');
+  plainCli(cwd, ['init', '--data-dir', envDirectory]);
+  plainCli(cwd, ['init', '--data-dir', flagDirectory]);
+  const env = { POLYLINEDB_DATA_DIR: envDirectory, POLYLINEDB_ACTOR: 'local:env' };
+  const environment = plainCli(cwd, ['create', '--body', 'Environment target'], { env }).issue;
+  assert.equal(environment.created_by, 'local:env');
+  const flagged = plainCli(cwd, ['--data-dir', flagDirectory, '--actor', 'local:flag', 'create', '--tool', 'flag-tool', '--project', 'flag-project', '--body', 'Explicit target'], { env }).issue;
+  assert.equal(flagged.created_by, 'local:flag');
+  assert.equal(flagged.tool, 'flag-tool');
+  assert.equal(flagged.project, 'flag-project');
+  assert.equal(plainCli(cwd, ['context'], { env }).data_dir, envDirectory);
+  assert.equal(plainCli(cwd, ['context'], { env }).actor, 'local:env');
+  assert.equal(plainCli(cwd, ['context', '--data-dir', flagDirectory, '--actor', 'local:flag'], { env }).actor, 'local:flag');
+  assert.deepEqual(plainCli(cwd, ['list']).issues, []);
+  assert.deepEqual(plainCli(cwd, ['list'], { env }).issues.map((row: { id: string }) => row.id), [environment.id]);
+  assert.deepEqual(plainCli(cwd, ['list', '--data-dir', flagDirectory], { env }).issues.map((row: { id: string }) => row.id), [flagged.id]);
+});
+
+test('stealth init outside Git rejects before creating a database', t => {
+  const { cwd, directory } = fixture(t);
+  const result = plainCli(cwd, ['init', '--stealth', '--data-dir', directory, '--actor', 'local:owner', '--tool', 'tool', '--project', 'project'], { status: 2 });
+  assert.equal(result.error.code, 'invalid_input');
+  assert.equal(existsSync(directory), false);
+});
+
+test('CLI snapshot restores IDs, hierarchy, comments, audit and versions with safe rerun', t => {
+  const { root, cwd, run } = fixture(t);
+  run(['init']);
+  const parent = run(['create', '--tool', 'tool', '--project', 'project', '--type', 'epic', '--body', 'Parent']).issue;
+  const child = run(['create', '--tool', 'tool', '--project', 'project', '--parent', parent.id, '--body', 'Child', '--label', 'selected']).issue;
+  run(['update', child.id, '--body', 'Revised child', '--expect', 'body=1']);
+  run(['comment', child.id, '--body', 'Original comment']);
+  const source = run(['export']);
+  const destination = join(root, 'restored');
+  const target = (args: string[], options: { status?: number; input?: string } = {}) => plainCli(cwd, ['--data-dir', destination, '--actor', 'local:restorer', ...args], options);
+  target(['init']);
+  const imported = target(['import', '--file', '-'], { input: JSON.stringify(source) });
+  assert.equal(imported.result, 'imported');
+  assert.equal(imported.issues, 2);
+  assert.equal(imported.comments, 1);
+  assert.deepEqual(target(['export']), source);
+  const repeated = target(['import', '--file', '-'], { input: JSON.stringify(source) });
+  assert.deepEqual(repeated, { ...imported, result: 'already_present' });
+  assert.equal(target(['show', child.id]).comments[0].body, 'Original comment');
+  assert.equal(target(['show', child.id]).issue.versions.body, 2);
+  target(['update', child.id, '--priority', '0', '--expect', 'priority=1']);
+  const changed = target(['export']);
+  const rejected = target(['import', '--file', '-'], { input: JSON.stringify(source), status: 4 });
+  assert.equal(rejected.error.code, 'destination_not_empty');
+  assert.deepEqual(target(['export']), changed);
+});
+
+test('malformed and oversized CLI imports leave the initialized store unchanged', t => {
+  const { root, run } = fixture(t);
+  run(['init']);
+  const before = run(['export']);
+  const malformed = run(['import', '--file', '-'], { input: '{not JSON', status: 2 });
+  assert.equal(malformed.error.code, 'invalid_input');
+  assert.deepEqual(run(['export']), before);
+  const invalid = run(['import', '--file', '-'], { input: JSON.stringify({ ...before, issues: [{ id: 'invalid' }] }), status: 2 });
+  assert.equal(invalid.error.code, 'invalid_snapshot');
+  assert.deepEqual(run(['export']), before);
+  const oversizedFile = join(root, 'oversized.json');
+  writeFileSync(oversizedFile, ' '.repeat(16 * 1024 * 1024 + 1));
+  const oversized = run(['import', '--file', oversizedFile], { status: 2 });
+  assert.equal(oversized.error.code, 'invalid_input');
+  assert.deepEqual(run(['export']), before);
+});
+
+test('CLI file export is private and refuses to overwrite an existing snapshot', t => {
+  const { root, run } = fixture(t);
+  run(['init']);
+  run(['create', '--tool', 'tool', '--project', 'project', '--body', 'Export body']);
+  const file = join(root, 'snapshot.json');
+  const receipt = run(['export', '--file', file]);
+  assert.equal(receipt.file, file);
+  assert.equal(receipt.issues, 1);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), run(['export']));
+  const before = readFileSync(file);
+  const refused = run(['export', '--file', file], { status: 1 });
+  assert.equal(refused.error.code, 'internal_error');
+  assert.deepEqual(readFileSync(file), before);
 });

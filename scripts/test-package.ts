@@ -27,7 +27,7 @@ try {
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
   const expectedFiles = ['LICENSE', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
-    'dist/schema.js', 'dist/sqlite.js', 'docs/operations.md', 'docs/architecture.md',
+    'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'docs/operations.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/adr/0001-field-versions.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
