@@ -21,8 +21,7 @@ function run(command: string, args: string[], cwd: string, expected = 0): string
 }
 
 try {
-  run('npm', ['run', 'build:cli'], project);
-  const packed = JSON.parse(run('npm', ['pack', '--json', '--pack-destination', root], project));
+  const packed = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts=false', '--foreground-scripts=false', '--pack-destination', root], project));
   assert.equal(packed.length, 1);
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
