@@ -26,7 +26,7 @@ try {
   assert.equal(packed.length, 1);
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
-  const expectedFiles = ['LICENSE', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
+  const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
     'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'dist/connections.js', 'dist/issue-id.js',
     'dist/cloud.js', 'dist/cloud-operations.js', 'dist/oauth.js', 'dist/credential-session.js', 'dist/credential-store.js',
     'dist/issue-queries.js', 'dist/solarsql.generated.js', 'dist/memories.js', 'dist/operations.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',

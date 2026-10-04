@@ -53,7 +53,8 @@
     "dist/credential-store.js",
     "dist/cloud-operations.js",
     "dist/memories.js",
-    "dist/operations.js"
+    "dist/operations.js",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "access": "public",

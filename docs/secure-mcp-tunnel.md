@@ -32,13 +32,15 @@ Its deployment documentation describes the companion process and runtime token. 
 | Private HTTP server backed by SQLite | Add an HTTP runtime around existing operations and define its authentication boundary. | A tunnel identifier cannot supply a trusted issue actor. |
 | Local stdio server backed by SQLite | Add a persistent MCP stdio adapter. The current `pd` process handles CLI commands. | Define who can call the adapter and how it assigns the audit actor. |
 
-These are implementation assessments based on [the Worker entry point](../src/worker.ts), [the CLI boundary](../src/cli.ts), and [shared operations](../src/issues.ts).
+These assessments use the Worker entry point (`src/worker.ts`), CLI boundary (`src/cli.ts`), and shared operations (`src/issues.ts`).
+These source files are available in the GitHub checkout.
 The existing Worker serves HTTP MCP and calls D1.
 An HTTP target is therefore the smallest candidate to test.
 The external client would run on an owner-controlled host that can reach the Worker, rather than inside the Worker handler.
 This deployment assessment uses the client's [HTTP and stdio binding contract](https://github.com/openai/tunnel-client/blob/master/docs/connectors.md).
 
-[createAccessVerifier](../src/access.ts) reads `Cf-Access-Jwt-Assertion`, checks its signature, issuer, audience, and time claims, then checks the actor allowlist.
+`createAccessVerifier` in `src/access.ts` reads `Cf-Access-Jwt-Assertion` and checks its signature, issuer, audience, and time claims.
+It then checks the actor allowlist.
 The Worker derives user actors as `access:<sub>` and service actors as `service:<common_name>`.
 An OpenAI runtime key or tunnel permission does not satisfy those checks.
 Calling the Worker without a valid Access assertion continues to fail.
