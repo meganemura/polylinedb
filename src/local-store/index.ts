@@ -84,6 +84,41 @@ function connect(path: string): DatabaseSync {
   } catch (error) { database.close(); throw error; }
 }
 
+const retiredTables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests',
+  'memory_store_identity', 'project_memory_revisions'] as const;
+const retiredOperations = ['INSERT', 'UPDATE', 'DELETE'] as const;
+function retiredConnection(database: DatabaseSync, error: unknown): string | undefined {
+  if (!database.isTransaction || !(error instanceof Error) || !('code' in error) || error.code !== 'ERR_SQLITE_ERROR' ||
+    !('errcode' in error) || error.errcode !== 1811) return undefined;
+  const match = /^This local database is retired\. Use cloud connection ([a-z][a-z0-9_-]{0,63})\.$/.exec(error.message);
+  const connectionName = match?.[1];
+  if (!connectionName) return undefined;
+  let rows: Record<string, unknown>[];
+  try {
+    rows = database.prepare("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name GLOB 'polylinedb_retired_*'").all();
+  } catch { return undefined; }
+  if (rows.length !== retiredTables.length * retiredOperations.length) return undefined;
+  const actual = new Map<string, { table: string; sql: string }>();
+  for (const row of rows) {
+    if (typeof row.name !== 'string' || typeof row.tbl_name !== 'string' || typeof row.sql !== 'string') return undefined;
+    actual.set(row.name, { table: row.tbl_name, sql: row.sql });
+  }
+  const message = `This local database is retired. Use cloud connection ${connectionName}.`;
+  for (const table of retiredTables) for (const operation of retiredOperations) {
+    const name = `polylinedb_retired_${table}_${operation.toLowerCase()}`;
+    const sql = `CREATE TRIGGER "${name}" BEFORE ${operation} ON "${table}" BEGIN SELECT RAISE(ABORT, '${message}'); END`;
+    const trigger = actual.get(name);
+    if (!trigger || trigger.table !== table || trigger.sql !== sql) return undefined;
+  }
+  return connectionName;
+}
+function rollbackWrite(database: DatabaseSync, error: unknown): never {
+  const connectionName = retiredConnection(database, error);
+  try { database.exec('ROLLBACK'); } catch { throw error; }
+  if (connectionName !== undefined) throw new PolylinedbError('store_retired', `This local database is retired. Use cloud connection ${connectionName}.`, 409);
+  throw error;
+}
+
 export function initializeStore(location: StoreLocation): { database_path: string } {
   const approved = approvedPath(location);
   if (existsSync(approved.database_path)) verifyExisting(approved.database_path, true);
@@ -141,7 +176,7 @@ export function openStore(location: StoreLocation): LocalStore {
         const results = statements.map(({ sql, params }) => ({ rows: database.prepare(sql).all(...params) }));
         database.exec('COMMIT');
         return results;
-      } catch (error) { database.exec('ROLLBACK'); throw error; }
+      } catch (error) { rollbackWrite(database, error); }
     },
   };
   const readSnapshot = (): Snapshot => parseSnapshot({
@@ -206,7 +241,7 @@ export function openStore(location: StoreLocation): LocalStore {
         if (canonicalSnapshot(readSnapshot()) !== canonical) throw new PolylinedbError('invalid_store', 'Restored snapshot does not match the input', 500);
         database.exec('COMMIT');
         return { result: 'imported', ...summary };
-      } catch (error) { database.exec('ROLLBACK'); throw error; }
+      } catch (error) { rollbackWrite(database, error); }
     },
     close: () => database.close(),
   };

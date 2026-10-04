@@ -288,6 +288,13 @@ test('CLI reports retired stores for writes while reads and exports remain avail
     await assert.rejects(alreadyOpenStore.db.batch([{ sql: 'UPDATE issues SET body = body WHERE id = ?', params: [issue.id] }]),
       error => error instanceof Error && 'code' in error && error.code === 'store_retired' && error.message === message);
     assert.equal(run(['list']).issues.length, 1);
+    assert.equal(run(['show', issue.id]).issue.body, 'Keep this issue');
+    const shownMemory = run(['memory', 'show', memory.id, '--project', 'project']).memory;
+    assert.equal(shownMemory.title, 'Keep this memory');
+    assert.equal(shownMemory.body, 'Memory body');
+    const context = run(['memory', 'context', '--project', 'project', '--with-revision']);
+    assert.equal(context.memories[0]?.body, 'Memory body');
+    assert.ok(context.memory_revision);
     assert.deepEqual(run(['export']), snapshot);
 
     const destination = join(root, 'empty-retired-store');
@@ -330,6 +337,18 @@ test('CLI does not classify lookalike or partial retirement triggers as a retire
   } finally { partialRetirement.close(); }
   assert.deepEqual(partial(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error,
     { code: 'internal_error', message });
+
+  const mixedDirectory = join(root, 'mixed-retired-store');
+  const mixed = (args: string[], options: { status?: number } = {}) => plainCli(cwd,
+    ['--data-dir', mixedDirectory, '--actor', 'local:test', ...args], options);
+  mixed(['init']);
+  const mixedRetirement = retire(mixedDirectory);
+  const differentMessage = 'This local database is retired. Use cloud connection different.';
+  try {
+    mixedRetirement.exec(`DROP TRIGGER polylinedb_retired_counters_insert; CREATE TRIGGER "polylinedb_retired_counters_insert" BEFORE INSERT ON "counters" BEGIN SELECT RAISE(ABORT, '${differentMessage}'); END`);
+  } finally { mixedRetirement.close(); }
+  assert.deepEqual(mixed(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error,
+    { code: 'internal_error', message: differentMessage });
 });
 
 test('CLI sequential IDs support natural pagination, child aliases and explicit prefix overrides', t => {

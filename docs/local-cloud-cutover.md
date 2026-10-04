@@ -107,9 +107,10 @@ Successful output contains `result: "VERIFIED"`, collection counts, and configur
 The receipt directory contains the final snapshots, digest manifest, complete cloud verification, and routing verification.
 Keep these files for recovery.
 
-Source retirement installs write-rejection triggers on the seven application tables.
+Source retirement installs write-rejection triggers on seven application tables and two metadata tables.
 Previously opened connections also reject inserts, updates, and deletes after retirement commits.
 The old store remains readable and exportable.
+Blocked writes return `store_retired` and name the cloud connection to use.
 Direct SQL administrators can remove those triggers, so retirement protects ordinary clients rather than administrative access.
 
 ## Check normal CLI operation
@@ -136,7 +137,7 @@ Use new request UUIDs for new cloud creations.
 
 Flags and environment selectors take precedence over repository defaults.
 Remove an obsolete `POLYLINEDB_DATA_DIR` override from host startup settings.
-An explicit old `--data-dir` can still read the retired store, but its writes fail.
+An explicit old `--data-dir` can still read the retired store, but its writes fail with `store_retired`.
 The operator clears selectors in its child processes; it does not edit your shell or other applications' environments.
 
 Use `pd connection use cloud` for another initialized repository after confirming that its data belongs to the transferred source.
