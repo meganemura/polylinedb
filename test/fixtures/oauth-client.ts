@@ -1,7 +1,7 @@
 /** Test-only plaintext store lets independent processes exercise the real credential lock. */
 import { readFile, writeFile, rename, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createCloudAuth, OAuthError } from '../../src/oauth.ts';
+import { createCloudAuth, OAuthError } from '../../src/cloud-client/oauth.ts';
 const directory = process.argv[2];
 const mode = process.argv[3];
 const file = join(directory, 'test-store.json');

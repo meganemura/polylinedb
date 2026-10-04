@@ -6,9 +6,9 @@ import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, realpath } from 'node
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createCloudAuth, OAuthError } from '../src/oauth.ts';
-import type { CredentialStore } from '../src/oauth.ts';
-import { credentialKey } from '../src/credential-session.ts';
+import { createCloudAuth, OAuthError } from '../src/cloud-client/oauth.ts';
+import type { CredentialStore } from '../src/cloud-client/oauth.ts';
+import { credentialKey } from '../src/cloud-client/credential-session.ts';
 const resource = 'https://issues.example';
 const issuer = 'https://identity.example';
 class MemoryStore implements CredentialStore {

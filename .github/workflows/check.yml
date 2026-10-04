@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
-      - run: npm exec -- archstrict check
+      - run: npm run check:architecture
       - run: npm test
       - run: npm run test:d1
       - run: npm exec -- vite build

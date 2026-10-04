@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createCredentialStore, runCredentialCommand } from '../src/credential-store.ts';
+import { createCredentialStore, runCredentialCommand } from '../src/cloud-client/credential-store.ts';
 
 const key = `oauth-${'a'.repeat(64)}`;
 const value = JSON.stringify({ accessToken: 'secret "quote"\n日本語\0', refreshToken: 'refresh' });

@@ -10,7 +10,7 @@ import { executeOperation, parseOperation } from '../src/operations.ts';
 import { initializeStore, openStore, upgradeStore } from '../src/sqlite.ts';
 import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, ROTATE_MEMORY_IDENTITY_SQL, schemaUpgradeStatements } from '../src/schema.ts';
 import type { SqlExecutor } from '../src/issues.ts';
-import { executeCloudOperation } from '../src/cloud-operations.ts';
+import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-freshness-'));

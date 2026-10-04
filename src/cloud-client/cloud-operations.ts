@@ -1,10 +1,10 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
-import { PolylinedbError, issueRow, commentRow, type Issue } from './issues.ts';
-import type { Operation, OperationResult } from './operations.ts';
-import { memoryRow, parseMemoryId, parseMemoryRevision, observedMemoryProject } from './memories.ts';
-import type { Memory, MemoryContext } from './memories.ts';
-import { fields } from './schema.ts';
-import { parseIssueId } from './issue-id.ts';
+import { PolylinedbError, issueRow, commentRow, type Issue } from '../issues.ts';
+import type { Operation, OperationResult } from '../operations.ts';
+import { memoryRow, parseMemoryId, parseMemoryRevision, observedMemoryProject } from '../memories.ts';
+import type { Memory, MemoryContext } from '../memories.ts';
+import { fields } from '../schema.ts';
+import { parseIssueId } from '../issue-id.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;

@@ -1,7 +1,7 @@
 // Checks the authenticated response boundary without accessing credentials or external hosts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { executeCloudOperation } from '../src/cloud-operations.ts';
+import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 import { parseOperation } from '../src/operations.ts';
 
 const entry = { id: 'pd-m1', project: 'demo', title: 'Fact', body: 'Verified', version: 2,

@@ -1,0 +1,95 @@
+# Organize modules by the knowledge they own
+
+## Problem
+
+The source began with one public module per file.
+Layer rules protected the shared operations from adapters and entrypoints.
+Files in the same layer could still import each other.
+The CLI imported cloud composition, OAuth errors, and credential errors through separate files.
+
+We need boundaries that hide implementation decisions and preserve existing behavior.
+Directory names and import counts alone do not establish those boundaries.
+
+## Decision
+
+Group modules around capabilities and the knowledge they protect.
+Keep execution environment and layer classifications as separate constraints.
+
+The first implemented module is `src/cloud-client/`.
+Its `index.ts` exposes `createCloudClient`, authentication error categories, and the non-secret `AuthStatus` type.
+The client retains four actions: `execute`, `login`, `status`, and `logout`.
+OAuth discovery, callbacks, refresh, revocation, credential commands, locks, and HTTP response validation stay internal.
+The CLI imports that public entry.
+Internal tests exercise individual implementations outside the production module graph.
+
+The remaining capability groups are a target for later verified changes:
+
+| Capability | Knowledge it owns |
+| --- | --- |
+| records | Issue and memory rules, operation dispatch, SQL plans, revisions, and portable snapshot validation |
+| local-store | SQLite lifetime, ordered transactions, upgrades, and snapshot restoration |
+| workspace | Named connections, Git metadata, selection precedence, and path validation |
+| host-hooks | Host settings, event translation, and CLI invocation |
+| service | HTTP/MCP envelopes, Access verification, and D1 adaptation |
+
+Issue and memory behavior can remain separate private files under records.
+Their shared dispatcher owns the freshness advisory after an issue operation completes.
+Storage callers need an explicit persistence contract distinct from ordinary command callers.
+Before consolidating records, inventory those callers and prove the complete public type closure.
+
+Retain the existing ordered `SqlExecutor` contract during these structural changes.
+Both SQLite and D1 already implement it.
+Do not add a generic provider registry or a new query abstraction for this migration.
+The CLI keeps its explicit local/cloud branch and visible resource lifetime.
+
+## Constraints
+
+The domain layer must not import adapters or entrypoints.
+Node modules and Worker modules must not import each other, including type imports.
+Portable and Worker code must not import Node builtins.
+Every module exposes explicit public entries; production callers must not bypass them.
+
+Classification entries retain both layer and environment tags.
+The layer rule already rejects domain-to-host dependencies.
+A second rule for that same relationship would duplicate the existing constraint.
+
+## Change scenarios
+
+A memory operation changes its record contract and behavior.
+CLI syntax, MCP descriptions, and cloud response validation change when that public contract changes.
+Those edits reflect actual protocol consumers.
+A directory move does not remove the need for them.
+
+An alternate credential store changes cloud-client internals through the existing credential-store interface.
+A different authentication protocol changes client composition and actions.
+A Worker authentication route changes service verification.
+The bearer token, Access assertion, and domain actor retain their distinct roles.
+
+## Alternatives
+
+One shared, Node, and Worker module would expose broad runtime surfaces.
+Maintenance callers would need storage operations through the same Node entry as the CLI.
+Capability modules give those callers more specific contracts.
+We retain runtime isolation from this alternative as an independent check.
+
+Public issue and memory modules would require another owner for dispatch, snapshots, and freshness.
+Private record submodules preserve their distinct rules under the shared record contract.
+
+A universal execution object would add forwarding while hiding little of the actor and lifetime decisions.
+The current local/cloud branch remains explicit.
+
+## Verification and limits
+
+Run `npm run check:architecture` to check the graph and prove its boundaries with in-memory imports.
+The controls cover public access, private OAuth access, both runtime directions, domain-to-host access, and Node builtin access.
+Each forbidden control must identify its intended rule and config entry.
+
+Archstrict 0.2.1 reports `node:sqlite` imports as unresolved in this project.
+A deliberate portable `node:sqlite` import also passes its current simulation.
+Resolved builtin controls therefore do not establish detection for every builtin.
+The unresolved-import issue needs a tool fix; builds and runtime tests remain separate verification obligations.
+Third-party package internals and global runtime APIs also require build and runtime checks.
+
+Structural changes preserve field conflicts, creation receipts, transaction order, snapshot values, and freshness behavior.
+Package installation tests verify the emitted paths and the CLI binary.
+Local SQLite, D1, and Worker checks do not establish production deployment or host authentication results.

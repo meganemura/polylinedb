@@ -1,11 +1,15 @@
 // Owns authenticated cloud actions; local storage and command parsing stay outside.
 import { join } from 'node:path';
-import { connectionConfigDirectory } from './connections.ts';
-import type { SelectedConnection } from './connections.ts';
+import { connectionConfigDirectory } from '../connections.ts';
+import type { SelectedConnection } from '../connections.ts';
 import { createCloudAuth, OAuthError } from './oauth.ts';
 import { createCredentialStore, CredentialStoreError } from './credential-store.ts';
 import { executeCloudOperation } from './cloud-operations.ts';
-import type { Operation } from './operations.ts';
+import type { Operation } from '../operations.ts';
+
+export { OAuthError } from './oauth.ts';
+export { CredentialStoreError } from './credential-store.ts';
+export type { AuthStatus } from './oauth.ts';
 
 export function createCloudClient(connection: Extract<SelectedConnection, { kind: 'cloud' }>) {
   const auth = createCloudAuth({ origin: connection.url, stateDirectory: join(connectionConfigDirectory(), 'auth'),

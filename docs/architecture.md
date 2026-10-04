@@ -26,6 +26,12 @@ The issue module keeps validation and SQL together because both stores run its o
 Run `npm exec -- archstrict check` after changing imports or module boundaries.
 The CI check runs the same command.
 
+The cloud client now has one public entry at `src/cloud-client/index.ts`.
+It exposes authenticated actions while keeping OAuth, credentials, and transport internal.
+Node and Worker environment tags prevent imports between those hosts.
+Run `npm run check:architecture` to verify the graph and deliberate boundary controls.
+The [capability decision](adr/0006-capability-boundaries.md) records the module plan and verification limits.
+
 Each mutable field has its own version, starting at 1.
 An update supplies the observed version for each field it changes.
 One conditional SQL UPDATE checks every supplied version and changes every requested field atomically.

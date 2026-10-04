@@ -29,11 +29,11 @@ try {
   assert.equal(pack.name, 'polylinedb');
   const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/issues.js',
     'dist/schema.js', 'dist/sqlite.js', 'dist/snapshot.js', 'dist/local-config.js', 'dist/connections.js', 'dist/issue-id.js',
-    'dist/cloud.js', 'dist/cloud-operations.js', 'dist/oauth.js', 'dist/credential-session.js', 'dist/credential-store.js',
+    'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
     'dist/issue-queries.js', 'dist/solarsql.generated.js', 'dist/memories.js', 'dist/operations.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
     'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md',
-    'dist/agent-hooks.js', 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/verification.md'].sort();
+    'dist/agent-hooks.js', 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');

@@ -8,7 +8,7 @@ import { handleRequest } from '../src/worker.ts';
 import { SCHEMA_SQL } from '../src/schema.ts';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { executeCloudOperation } from '../src/cloud-operations.ts';
+import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 import { parseOperation, PolylinedbError } from '../src/issues.ts';
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
