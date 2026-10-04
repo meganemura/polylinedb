@@ -47,7 +47,9 @@ Both checks used isolated project hooks and a schema 4 store.
 The event log recorded `startup` and `compact`, successful adapter exits, and the expected memory marker in each response.
 The user reported that each session returned the marker after each event.
 These checks used the unreleased source CLI and synthetic memory, not a deployed cloud store or the user-scope installer.
-Cursor still requires an actual host delivery check for `sessionStart`.
+A local Cursor session also verified `sessionStart` delivery with the same isolated store.
+After the manual adapter check, another invocation returned the expected marker, and the user reported it in the new session.
+Cursor post-compaction delivery remains outside this adapter's supported events.
 The installer does not verify that a host loaded its settings.
 
 See the official host references for event and response details:
