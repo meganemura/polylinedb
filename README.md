@@ -91,6 +91,7 @@ Keep `pd` available on the agent's PATH.
 The skill starts with `pd context` and retrieves project memory with `pd memory context --project PROJECT`.
 It repeats memory retrieval after context recovery and uses explicit project filters for shared stores.
 Skill discovery does not install lifecycle hooks. Use `pd agent install HOST` for a user-scope adapter.
+Lifecycle adapters and revision observations require the unreleased source version.
 See [project memory](docs/memory.md) and [host lifecycle hooks](docs/host-hooks.md) for retrieval and host support.
 It does not initialize a database during ordinary issue work.
 
@@ -125,6 +126,23 @@ They do not retry mutations after an uncertain response or fall back to local st
 Import and export remain local commands; use the [D1 migration guide](docs/d1-migration.md) for cloud transfers.
 To retain an existing cloud store and change shared repository defaults, use the [local-to-cloud cutover guide](docs/local-cloud-cutover.md).
 
+## Hand work between local and cloud agents
+
+A local investigator can save confirmed facts as project memory and record the remaining work in an issue.
+A cloud agent can retrieve both records through MCP, add acceptance cases, and leave an implementation handoff in a comment.
+A new local session can read those records through the cloud-connected CLI and continue the work.
+Each session selects the same project and reads current versions before changes.
+Git carries source changes separately. The shared store carries facts, task state, and discussion.
+
+A synthetic experiment used a small label formatter to check recovery without the original conversation.
+Cursor Cloud retrieved the issue and complete project memory through its existing authenticated MCP connection.
+It saved acceptance cases and a plan in a comment without additional authentication or source changes.
+A fresh local agent received only the store, project, and issue identifiers.
+It read the contract and acceptance cases, implemented the formatter, and passed all 11 tests.
+It then recorded its result in the same issue, and an independent read verified the comment.
+The cloud operator confirmed its host and operations, and a separate local review reran the 11 tests.
+This experiment verifies both handoff directions through the shared cloud store.
+
 ## Develop
 
 These commands require a source checkout, not the installed npm package.
@@ -133,6 +151,7 @@ The development dependencies are pinned in the package manifest and lockfile.
 ```sh
 npm ci --ignore-scripts
 npm run typecheck
+npm run check:architecture
 npm test
 npm run test:package
 npm run test:d1
@@ -150,6 +169,7 @@ Read queries use solarsql on SQLite and D1; see the [SQL adoption decision](docs
 After a schema or query edit, run `npm run generate:sql` and commit the generated file.
 
 Read the [architecture](docs/architecture.md) and [field version decision](docs/adr/0001-field-versions.md).
+See [verification](docs/verification.md) for seeded properties, bounded mutation tests, and their measured scope.
 
 ## License
 
