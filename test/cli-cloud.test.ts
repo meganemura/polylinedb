@@ -141,12 +141,12 @@ test('cloud CLI reports valid 503 access configuration errors with fixed guidanc
   const { run, requests } = fixture(context);
   assert.deepEqual(run(['actor']), { actor: 'oauth:synthetic-owner' });
   const actorFailure = run(['actor'], { mode: 'access-configuration', status: 1 }).error;
-  assert.deepEqual(actorFailure, { code: 'invalid_access_configuration', message: 'Cloud Access is misconfigured. Check the Worker actor settings.' });
+  assert.deepEqual(actorFailure, { code: 'invalid_access_configuration', message: 'Cloud Access is misconfigured. Check the Worker Access configuration.' });
   assert.equal(JSON.stringify(actorFailure).includes('synthetic-private-token'), false);
   const createFailure = run(['create', '--body', 'Access configuration error'], { mode: 'access-configuration', status: 1 }).error;
   const requestId = requests().at(-1)?.request_id;
   assert.match(requestId ?? '', /^[a-f0-9-]{36}$/);
-  assert.deepEqual(createFailure, { code: 'invalid_access_configuration', message: 'Cloud Access is misconfigured. Check the Worker actor settings.', details: { request_id: requestId } });
+  assert.deepEqual(createFailure, { code: 'invalid_access_configuration', message: 'Cloud Access is misconfigured. Check the Worker Access configuration.', details: { request_id: requestId } });
   assert.equal(JSON.stringify(createFailure).includes('synthetic-private-token'), false);
 });
 

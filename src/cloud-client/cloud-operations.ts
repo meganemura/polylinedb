@@ -211,7 +211,7 @@ export async function executeCloudOperation(input: {
       if (response.status === 503) {
         const error = exact(exact(value, ['error']).error, ['code', 'message']);
         if (error.code !== 'invalid_access_configuration' || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
-        throw new PolylinedbError('invalid_access_configuration', 'Cloud Access is misconfigured. Check the Worker actor settings.', 503);
+        throw new PolylinedbError('invalid_access_configuration', 'Cloud Access is misconfigured. Check the Worker Access configuration.', 503);
       }
       if (![400, 404, 409].includes(response.status)) return invalid();
       const error = object(exact(value, ['error']).error);
