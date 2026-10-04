@@ -1,4 +1,4 @@
-// Replaces OS commands and HTTPS responses only inside synthetic CLI test subprocesses.
+// Keep credentials, callback listeners, and HTTPS responses synthetic in CLI test subprocesses.
 import childProcess from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
 import http from 'node:http';

@@ -89,6 +89,8 @@ An interrupted process can leave `oauth-HASH.lock` under `$XDG_CONFIG_HOME/polyl
 Before removing that directory, verify that no `pd auth` or cloud operation is still running for this configuration.
 Do not remove another process's active lock.
 If the registered callback port is in use, the CLI reports `auth_callback_unavailable` rather than silently registering another client.
+If the environment denies loopback access, the same code explains that the callback is not permitted.
+Other listener failures use generic guidance without printing the operating system error.
 
 ```sh
 pd --connection cloud auth logout

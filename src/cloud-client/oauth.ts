@@ -124,7 +124,22 @@ async function loopback(savedRedirect: string | null, state: string, issuer: str
   });
   server.requestTimeout = 5000; server.headersTimeout = 5000;
   await new Promise<void>((resolve, rejectListen) => {
-    server.once('error', () => rejectListen(new OAuthError('auth_callback_unavailable', 'The registered callback port is unavailable. Close the process using it and retry.')));
+    server.once('error', error => {
+      const code = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+      let message: string;
+      switch (code) {
+        case 'EADDRINUSE':
+          message = 'The registered callback port is unavailable. Close the process using it and retry.';
+          break;
+        case 'EPERM':
+        case 'EACCES':
+          message = 'The current environment does not permit the loopback callback.';
+          break;
+        default:
+          message = 'The callback listener could not start.';
+      }
+      rejectListen(new OAuthError('auth_callback_unavailable', message));
+    });
     server.listen(savedRedirect ? Number(new URL(savedRedirect).port) : 0, '127.0.0.1', () => resolve());
   });
   const address = server.address();
