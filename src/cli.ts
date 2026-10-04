@@ -17,6 +17,7 @@ import { OAuthError } from './oauth.ts';
 import { CredentialStoreError } from './credential-store.ts';
 import { canonicalSnapshot, parseSnapshot, convertSnapshotV2 } from './snapshot.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './issue-id.ts';
+import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from './agent-hooks.ts';
 
 const help = `polylinedb (polyline database) stores personal issues through local or cloud connections.
 Usage: pd [--connection NAME | --data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--prefix PREFIX] COMMAND [OPTIONS]
@@ -39,6 +40,9 @@ Commands:
   auth status                   Show locally stored cloud authentication status.
   auth logout                   Remove cloud credentials and report revocation.
   context                       Show the selected store and local defaults.
+  agent install HOST            Install a user-scope lifecycle hook.
+  agent remove HOST             Remove the owned lifecycle hook.
+  agent context HOST            Read hook input and return host context JSON.
   upgrade                       Explicitly upgrade a local schema 2 store to schema 3.
   snapshot convert --file PATH|- [--output PATH|-]
                                 Convert snapshot v2 to v3 without touching a store.
@@ -96,6 +100,7 @@ const commandFlags: Record<string, readonly string[]> = {
   memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
   memory_update: ['project', 'title', 'body', 'body-file', 'expected'], memory_delete: ['project', 'expected'],
   memory_context: ['project', 'after', 'limit', 'max-bytes'],
+  agent_install: [], agent_remove: [], agent_context: [],
   connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
@@ -155,14 +160,14 @@ async function main(): Promise<void> {
     flags.set(name, [...previous, value]);
   }
   const [first, ...rest] = positionals;
-  const nested = first === 'memory' || first === 'snapshot';
+  const nested = first === 'memory' || first === 'snapshot' || first === 'agent';
   const command = nested ? `${first}_${rest[0] ?? ''}` : first;
   const operands = nested ? rest.slice(1) : rest;
   if (!command || !Object.hasOwn(commandFlags, command)) invalid('Unknown command');
   for (const name of flags.keys()) {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
-  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete'].includes(command);
+  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context'].includes(command);
   if (!['connection', 'auth'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
@@ -179,6 +184,18 @@ async function main(): Promise<void> {
     else {
       await writeFile(output, content, { flag: 'wx', mode: 0o600 });
       process.stdout.write(JSON.stringify({ file: output, version: 3, sha256: createHash('sha256').update(canonicalSnapshot(converted)).digest('hex') }) + '\n');
+    }
+    return;
+  }
+  if (command.startsWith('agent_')) {
+    if ([...flags.keys()].some(name => globals.includes(name))) invalid('Agent hook commands do not accept connection selectors');
+    const host = parseAgentHost(operands[0]);
+    if (command === 'agent_install') process.stdout.write(JSON.stringify(installAgentHost(host)) + '\n');
+    else if (command === 'agent_remove') process.stdout.write(JSON.stringify(removeAgentHost(host)) + '\n');
+    else {
+      let input = '';
+      try { input = await readInput('-', 1024 * 1024); } catch { }
+      process.stdout.write(JSON.stringify(agentContext(host, input)) + '\n');
     }
     return;
   }

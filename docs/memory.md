@@ -108,9 +108,9 @@ Remove only the directory or link that you installed when removing it.
 
 The skill instructs the agent to retrieve memory at task start and after context compaction.
 Skill discovery does not guarantee automatic execution at either lifecycle event.
-This release provides the shared retrieval operation and skill instructions.
-It does not install automatic startup or compaction hooks for Codex, Claude Code, or Cursor.
-Host adapters can call the same operation when that host's supported lifecycle mechanism has been verified.
+Use `pd agent install HOST` to install the user-scope adapter for a supported host.
+The adapter uses the shared CLI retrieval operation and keeps the selected connection.
+See [host lifecycle hooks](host-hooks.md) for event support, limitations, and removal.
 
 ## Existing stores and snapshots
 

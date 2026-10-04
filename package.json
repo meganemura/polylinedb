@@ -60,7 +60,8 @@
     "dist/cloud-operations.js",
     "dist/memories.js",
     "dist/operations.js",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "dist/agent-hooks.js"
   ],
   "publishConfig": {
     "access": "public",
