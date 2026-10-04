@@ -28,6 +28,8 @@ The records group now uses `src/records/index.ts` for commands, identifiers, and
 Its `persistence.ts` entry supplies storage ports, snapshots, schema statements, and row decoding for adapters.
 Cloud response validation deliberately uses that row-decoding contract.
 The SQL catalog, generated queries, mutation handlers, and freshness implementation remain internal.
+The local-store group now exposes initialization, opening, and upgrades from `src/local-store/index.ts`.
+The CLI still closes each opened store in its explicit local branch.
 
 | Capability | Knowledge it owns |
 | --- | --- |

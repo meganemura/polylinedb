@@ -45,6 +45,7 @@ const controls: Control[] = [
   { name: 'public record commands', path: 'src/cli.ts', statement: "import { parseOperation as proof } from './records/index.ts'; void proof;" },
   { name: 'public record persistence', path: 'src/cli.ts', statement: "import { parseSnapshot as proof } from './records/persistence.ts'; void proof;" },
   { name: 'private issue behavior', path: 'src/cli.ts', statement: "import { parseOperation as proof } from './records/issues.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records') },
+  { name: 'public local store', path: 'src/cli.ts', statement: "import { openStore as proof } from './local-store/index.ts'; void proof;" },
 ];
 for (const control of controls) {
   const content = readFileSync(new URL(`../${control.path}`, import.meta.url), 'utf8') + '\n' + control.statement + '\n';

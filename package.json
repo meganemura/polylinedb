@@ -50,7 +50,7 @@
     "dist/local-config.js",
     "dist/records/snapshot.js",
     "dist/records/schema.js",
-    "dist/sqlite.js",
+    "dist/local-store/index.js",
     "docs/",
     "skills/polylinedb/",
     "dist/records/issue-queries.js",

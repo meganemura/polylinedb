@@ -19,12 +19,12 @@ export default {
       { name: "connections.ts", glob: "src/connections.ts", surface: "connections.ts" },
       { name: "d1.ts", glob: "src/d1.ts", surface: "d1.ts" },
       { name: "local-config.ts", glob: "src/local-config.ts", surface: "local-config.ts" },
-      { name: "sqlite.ts", glob: "src/sqlite.ts", surface: "sqlite.ts" },
       { name: "worker.ts", glob: "src/worker.ts", surface: "worker.ts" },
       { name: "cloudflare.config.ts", glob: "cloudflare.config.ts", surface: "cloudflare.config.ts" },
       { name: "scripts", glob: "scripts/**" },
       { name: "vite.config.ts", glob: "vite.config.ts", surface: "vite.config.ts" },
       { name: "records", glob: "src/records/**", surface: ["index.ts", "persistence.ts"] },
+      { name: "local-store", glob: "src/local-store/**", surface: "index.ts" },
     ],
   classify: [
       { glob: "src/access.ts", tags: ["layer:adapter", "env:worker"] },
@@ -36,10 +36,10 @@ export default {
       { glob: "src/d1.ts", tags: ["layer:adapter", "env:worker"] },
       { glob: "src/local-config.ts", tags: ["layer:adapter", "env:node"] },
       { glob: "scripts/**", tags: ["layer:entrypoint"] },
-      { glob: "src/sqlite.ts", tags: ["layer:adapter", "env:node"] },
       { glob: "vite.config.ts", tags: ["layer:entrypoint"] },
       { glob: "src/worker.ts", tags: ["layer:entrypoint", "env:worker"] },
       { glob: "src/records/**", tags: ["layer:domain", "env:portable"] },
+      { glob: "src/local-store/**", tags: ["layer:adapter", "env:node"] },
     ],
   edges: {
     allowDeny: [

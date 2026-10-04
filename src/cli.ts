@@ -8,7 +8,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { PolylinedbError } from './records/index.ts';
 import { executeOperation, parseOperation } from './records/index.ts';
 import { parseMemoryId } from './records/index.ts';
-import { initializeStore, openStore, upgradeStore } from './sqlite.ts';
+import { initializeStore, openStore, upgradeStore } from "./local-store/index.ts";
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from './local-config.ts';
 import type { RepositoryConfiguration } from './local-config.ts';
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from './connections.ts';

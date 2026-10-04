@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { node } from 'solarsql/node';
-import { initializeStore, openStore, upgradeStore } from '../src/sqlite.ts';
+import { initializeStore, openStore, upgradeStore } from "../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from "../src/records/snapshot.ts";
 import { SCHEMA_V2_SQL } from "../src/records/schema.ts";

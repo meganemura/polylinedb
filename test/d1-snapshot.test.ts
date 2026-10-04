@@ -73,7 +73,7 @@ test('verify CLI exports the checked remote snapshot privately and refuses overw
   const { spawnSync } = await import('node:child_process');
   const { createHash, randomUUID } = await import('node:crypto');
   const { statSync } = await import('node:fs');
-  const { initializeStore, openStore } = await import('../src/sqlite.ts');
+  const { initializeStore, openStore } = await import("../src/local-store/index.ts");
   const { executeOperation, parseOperation } = await import("../src/records/issues.ts");
   const { canonicalSnapshot } = await import("../src/records/snapshot.ts");
   const directory = mkdtempSync(join(tmpdir(), 'pd-verify-cli-'));

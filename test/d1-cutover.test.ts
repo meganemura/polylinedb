@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { initializeStore, openStore } from '../src/sqlite.ts';
+import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories.ts";
 import { addConnection } from '../src/connections.ts';

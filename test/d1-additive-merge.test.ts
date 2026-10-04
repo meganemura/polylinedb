@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { executeOperation, parseOperation } from "../src/records/issues.ts";
 import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories.ts";
 import { canonicalSnapshot } from "../src/records/snapshot.ts";
-import { initializeStore, openStore } from '../src/sqlite.ts';
+import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { additiveMerge, rawToSnapshot, retireSource, tables } from '../scripts/d1-additive-merge.ts';
 
 type StoreFile = { databasePath: string; close(): void };

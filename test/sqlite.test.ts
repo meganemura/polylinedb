@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { initializeStore, openStore } from '../src/sqlite.ts';
+import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { PolylinedbError, executeOperation, parseOperation } from "../src/records/issues.ts";
 
 function fixture(t: test.TestContext) {

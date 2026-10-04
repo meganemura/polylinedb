@@ -28,7 +28,7 @@ try {
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
   const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', "dist/records/issues.js",
-    "dist/records/schema.js", 'dist/sqlite.js', "dist/records/snapshot.js", 'dist/local-config.js', 'dist/connections.js', "dist/records/issue-id.js",
+    "dist/records/schema.js", "dist/local-store/index.js", "dist/records/snapshot.js", 'dist/local-config.js', 'dist/connections.js', "dist/records/issue-id.js",
     'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
     "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',

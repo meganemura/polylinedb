@@ -6,7 +6,7 @@ import * as gs from '@hegeldev/hegel/generators';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initializeStore, openStore } from '../src/sqlite.ts';
+import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { canonicalSnapshot, parseSnapshot } from "../src/records/snapshot.ts";
 import type { Snapshot } from "../src/records/snapshot.ts";
 import { executeOperation, parseOperation } from "../src/records/issues.ts";
