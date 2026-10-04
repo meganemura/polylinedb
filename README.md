@@ -123,6 +123,7 @@ Issue commands use the same fields and expected versions for either connection k
 Cloud commands derive the actor from authentication and reject `--actor`.
 They do not retry mutations after an uncertain response or fall back to local storage.
 Import and export remain local commands; use the [D1 migration guide](docs/d1-migration.md) for cloud transfers.
+To retain an existing cloud store and change shared repository defaults, use the [local-to-cloud cutover guide](docs/local-cloud-cutover.md).
 
 ## Develop
 

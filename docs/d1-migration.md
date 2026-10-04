@@ -1,5 +1,8 @@
 # Restore a local snapshot into D1
 
+To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
+The additive operator requires disjoint keys and counter namespaces.
+
 The repository operator command restores snapshot v3 into a new D1 database.
 It preserves issues, comments, memories, counters, creation requests, versions, and audit fields.
 Ordinary `pd` commands can select SQLite or the authenticated cloud API. Snapshot maintenance remains an operator task.

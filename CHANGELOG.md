@@ -25,6 +25,8 @@
 - Document Worker, D1, and Access Managed OAuth setup with the Cloudflare CLI.
 - Document connector setup and observed results for cloud agent hosts.
 - Restore snapshots into an isolated D1 destination with resumable writes and complete readback verification.
+- Add disjoint local records to an existing D1 store through a guarded operator batch, then change shared repository defaults.
+- Retire the previous local store for writes while retaining read access and recovery snapshots.
 
 Automatic host hooks for memory retrieval remain separate work. The bundled skill supplies the retrieval instructions.
 
