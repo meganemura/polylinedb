@@ -5,16 +5,16 @@ import { writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { PolylinedbError } from './issues.ts';
-import { executeOperation, parseOperation } from './operations.ts';
-import { parseMemoryId } from './memories.ts';
+import { PolylinedbError } from './records/index.ts';
+import { executeOperation, parseOperation } from './records/index.ts';
+import { parseMemoryId } from './records/index.ts';
 import { initializeStore, openStore, upgradeStore } from './sqlite.ts';
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from './local-config.ts';
 import type { RepositoryConfiguration } from './local-config.ts';
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from './connections.ts';
 import { createCloudClient, OAuthError, CredentialStoreError } from './cloud-client/index.ts';
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2 } from './snapshot.ts';
-import { parsePrefix, parseIssueId, parseRequestId } from './issue-id.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2 } from './records/persistence.ts';
+import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from './agent-hooks.ts';
 
 const help = `polylinedb (polyline database) stores personal issues through local or cloud connections.

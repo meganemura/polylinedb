@@ -51,7 +51,7 @@ Each command prints a receipt with target identity, counts, and digest. The rece
 The new Worker needs schema 4. The CLI's `upgrade` command applies only to local SQLite.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
 Record the account, database UUID, and Worker binding.
-Compare the deployed DDL with `SCHEMA_V2_SQL` or `SCHEMA_V3_SQL` in `src/schema.ts` before a write.
+Compare the deployed DDL with `SCHEMA_V2_SQL` or `SCHEMA_V3_SQL` in `src/records/schema.ts` before a write.
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.

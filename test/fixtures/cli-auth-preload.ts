@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { appendFileSync } from 'node:fs';
 import { traceCredentialChild } from './credential-trace.ts';
 import { initializeStore, openStore } from '../../src/sqlite.ts';
-import { executeOperation, parseOperation, PolylinedbError } from '../../src/issues.ts';
+import { executeOperation, parseOperation, PolylinedbError } from "../../src/records/issues.ts";
 
 const spawn = childProcess.spawn;
 Object.defineProperty(childProcess, 'spawn', { value: (executable: string, args: string[], options: SpawnOptions) => {

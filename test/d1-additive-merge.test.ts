@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { executeOperation, parseOperation } from '../src/issues.ts';
-import { executeMemoryOperation, parseMemoryOperation } from '../src/memories.ts';
-import { canonicalSnapshot } from '../src/snapshot.ts';
+import { executeOperation, parseOperation } from "../src/records/issues.ts";
+import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories.ts";
+import { canonicalSnapshot } from "../src/records/snapshot.ts";
 import { initializeStore, openStore } from '../src/sqlite.ts';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from '../scripts/d1-additive-merge.ts';
 

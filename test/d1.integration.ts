@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/d1.ts';
-import { executeOperation, parseOperation } from '../src/operations.ts';
-import { SCHEMA_STATEMENTS } from '../src/schema.ts';
+import { executeOperation, parseOperation } from "../src/records/operations.ts";
+import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
 
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');

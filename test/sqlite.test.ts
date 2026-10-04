@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { initializeStore, openStore } from '../src/sqlite.ts';
-import { PolylinedbError, executeOperation, parseOperation } from '../src/issues.ts';
+import { PolylinedbError, executeOperation, parseOperation } from "../src/records/issues.ts";
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'polylinedb-sqlite-'));

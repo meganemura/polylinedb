@@ -5,7 +5,7 @@ import type { SelectedConnection } from '../connections.ts';
 import { createCloudAuth, OAuthError } from './oauth.ts';
 import { createCredentialStore, CredentialStoreError } from './credential-store.ts';
 import { executeCloudOperation } from './cloud-operations.ts';
-import type { Operation } from '../operations.ts';
+import type { Operation } from '../records/index.ts';
 
 export { OAuthError } from './oauth.ts';
 export { CredentialStoreError } from './credential-store.ts';

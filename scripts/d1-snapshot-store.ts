@@ -1,11 +1,11 @@
 // Owns operator snapshot claims and exact D1 restoration; domain modules own application operations.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { canonicalSnapshot, parseSnapshot } from '../src/snapshot.ts';
-import { commentRow, issueRow } from '../src/issues.ts';
-import { issueSortKey } from '../src/issue-id.ts';
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, ROTATE_MEMORY_IDENTITY_SQL } from '../src/schema.ts';
-import { memoryRow, memorySortKey } from '../src/memories.ts';
+import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence.ts';
+import { commentRow, issueRow } from '../src/records/persistence.ts';
+import { issueSortKey } from '../src/records/persistence.ts';
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, ROTATE_MEMORY_IDENTITY_SQL } from '../src/records/persistence.ts';
+import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
 
 export type Statement = { sql: string; params: (string | number | null)[] };
 export type Query = (statement: Statement) => Promise<Record<string, unknown>[]>;

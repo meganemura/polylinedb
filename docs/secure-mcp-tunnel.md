@@ -32,7 +32,7 @@ Its deployment documentation describes the companion process and runtime token. 
 | Private HTTP server backed by SQLite | Add an HTTP runtime around existing operations and define its authentication boundary. | A tunnel identifier cannot supply a trusted issue actor. |
 | Local stdio server backed by SQLite | Add a persistent MCP stdio adapter. The current `pd` process handles CLI commands. | Define who can call the adapter and how it assigns the audit actor. |
 
-These assessments use the Worker entry point (`src/worker.ts`), CLI boundary (`src/cli.ts`), and shared operations (`src/issues.ts`).
+These assessments use the Worker entry point (`src/worker.ts`), CLI boundary (`src/cli.ts`), and shared operations (`src/records/issues.ts`).
 These source files are available in the GitHub checkout.
 The existing Worker serves HTTP MCP and calls D1.
 An HTTP target is therefore the smallest candidate to test.

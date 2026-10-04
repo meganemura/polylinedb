@@ -7,10 +7,10 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { node } from 'solarsql/node';
 import { initializeStore, openStore, upgradeStore } from '../src/sqlite.ts';
-import { executeOperation, parseOperation } from '../src/operations.ts';
-import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from '../src/snapshot.ts';
-import { SCHEMA_V2_SQL } from '../src/schema.ts';
-import type { SqlExecutor } from '../src/issues.ts';
+import { executeOperation, parseOperation } from "../src/records/operations.ts";
+import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from "../src/records/snapshot.ts";
+import { SCHEMA_V2_SQL } from "../src/records/schema.ts";
+import type { SqlExecutor } from "../src/records/issues.ts";
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-memory-'));

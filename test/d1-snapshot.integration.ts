@@ -8,10 +8,10 @@ import { pathToFileURL } from 'node:url';
 import { snapshotMigration, type Query } from '../scripts/d1-snapshot-store.ts';
 import { parseQueryOutput, parseTarget } from '../scripts/d1-snapshot.ts';
 import { initializeStore, openStore } from '../src/sqlite.ts';
-import { executeOperation, parseOperation } from '../src/operations.ts';
+import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { d1Executor } from '../src/d1.ts';
-import { canonicalSnapshot } from '../src/snapshot.ts';
-import { SCHEMA_STATEMENTS } from '../src/schema.ts';
+import { canonicalSnapshot } from "../src/records/snapshot.ts";
+import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
 
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');

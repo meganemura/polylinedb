@@ -53,8 +53,8 @@ test('cf envelopes fail closed and targets reject ambiguous extra fields', () =>
 test('D1 schema inspection tolerates reserved storage tables and rejects unrelated tables', async () => {
   const { DatabaseSync } = await import('node:sqlite');
   const { createHash } = await import('node:crypto');
-  const { SCHEMA_SQL } = await import('../src/schema.ts');
-  const { canonicalSnapshot, parseSnapshot } = await import('../src/snapshot.ts');
+  const { SCHEMA_SQL } = await import("../src/records/schema.ts");
+  const { canonicalSnapshot, parseSnapshot } = await import("../src/records/snapshot.ts");
   const { snapshotMigration } = await import('../scripts/d1-snapshot-store.ts');
   const database = new DatabaseSync(':memory:');
   try {
@@ -74,8 +74,8 @@ test('verify CLI exports the checked remote snapshot privately and refuses overw
   const { createHash, randomUUID } = await import('node:crypto');
   const { statSync } = await import('node:fs');
   const { initializeStore, openStore } = await import('../src/sqlite.ts');
-  const { executeOperation, parseOperation } = await import('../src/issues.ts');
-  const { canonicalSnapshot } = await import('../src/snapshot.ts');
+  const { executeOperation, parseOperation } = await import("../src/records/issues.ts");
+  const { canonicalSnapshot } = await import("../src/records/snapshot.ts");
   const directory = mkdtempSync(join(tmpdir(), 'pd-verify-cli-'));
   const location = { directory: join(directory, 'database') };
   const { database_path } = initializeStore(location);

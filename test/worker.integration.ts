@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare';
-import { SCHEMA_STATEMENTS } from '../src/schema.ts';
+import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
 
 const bundleUrl = new URL('../.cloudflare/output/v0/workers/default/bundle/index.js', import.meta.url);
 const bundle = await readFile(bundleUrl, 'utf8');

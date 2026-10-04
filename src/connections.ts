@@ -3,7 +3,7 @@ import { constants, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirS
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { PolylinedbError } from './issues.ts';
+import { PolylinedbError } from './records/index.ts';
 import type { RepositoryConfiguration } from './local-config.ts';
 import { validateExternalDirectory } from './local-config.ts';
 

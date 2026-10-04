@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
-import { parseOperation } from '../src/operations.ts';
+import { parseOperation } from "../src/records/operations.ts";
 
 const entry = { id: 'pd-m1', project: 'demo', title: 'Fact', body: 'Verified', version: 2,
   created_at: '2026-01-01T00:00:00Z', created_by: 'access:owner', updated_at: '2026-01-02T00:00:00Z', updated_by: 'access:owner' };

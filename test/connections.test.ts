@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { addConnection, connectionConfigDirectory, defaultConnection, readConnections, selectConnection } from '../src/connections.ts';
 import { readRepositoryDefaults, useRepositoryConnection, writeRepositoryDefaults } from '../src/local-config.ts';
-import { PolylinedbError } from '../src/issues.ts';
+import { PolylinedbError } from "../src/records/issues.ts";
 
 const executable = new URL('../src/cli.ts', import.meta.url).pathname;
 function fixture(context: test.TestContext) {

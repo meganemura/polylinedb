@@ -24,6 +24,11 @@ Internal tests exercise individual implementations outside the production module
 
 The remaining capability groups are a target for later verified changes:
 
+The records group now uses `src/records/index.ts` for commands, identifiers, and domain types.
+Its `persistence.ts` entry supplies storage ports, snapshots, schema statements, and row decoding for adapters.
+Cloud response validation deliberately uses that row-decoding contract.
+The SQL catalog, generated queries, mutation handlers, and freshness implementation remain internal.
+
 | Capability | Knowledge it owns |
 | --- | --- |
 | records | Issue and memory rules, operation dispatch, SQL plans, revisions, and portable snapshot validation |

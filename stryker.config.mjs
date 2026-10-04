@@ -1,10 +1,10 @@
 // Selects bounded mutations and existing behavior tests; full type checks run separately.
 export default {
   mutate: [
-    "src/issue-id.ts:16:1-20:1",
-    "src/issues.ts:222:1-240:1",
-    "src/issues.ts:258:1-282:1",
-    "src/snapshot.ts:97:1-99:1",
+    "src/records/issue-id.ts:16:1-20:1",
+    "src/records/issues.ts:222:1-240:1",
+    "src/records/issues.ts:258:1-282:1",
+    "src/records/snapshot.ts:97:1-99:1",
   ],
   testRunner: "tap",
   tap: {

@@ -6,8 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
-import { canonicalSnapshot } from '../src/snapshot.ts';
-import { SCHEMA_SQL, SCHEMA_VERSION } from '../src/schema.ts';
+import { canonicalSnapshot } from '../src/records/persistence.ts';
+import { SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
 import { validateExternalDirectory } from '../src/local-config.ts';
 
 assert.equal(process.argv[2],'--plan','Usage: node scripts/d1-cutover.ts --plan PRIVATE_JSON --apply');

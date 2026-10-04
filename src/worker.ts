@@ -1,8 +1,8 @@
 /** Adapts authenticated HTTP and MCP requests to issue and memory operations. OAuth belongs to Access. */
 import { AccessError, createAccessVerifier, type AccessSettings } from './access.ts';
 import { d1Executor, type D1DatabaseLike } from './d1.ts';
-import { PolylinedbError } from './issues.ts';
-import { executeOperation, operationSchemas, parseOperation } from './operations.ts';
+import { PolylinedbError } from './records/index.ts';
+import { executeOperation, operationSchemas, parseOperation } from './records/index.ts';
 
 export type Environment = AccessSettings & {
   DB: D1DatabaseLike;

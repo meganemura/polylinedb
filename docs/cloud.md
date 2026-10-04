@@ -227,7 +227,7 @@ cf d1 query "$PD_D1_DATABASE_ID" --sql 'SELECT version FROM schema_version'
 ```
 
 The version query must return `3`.
-`scripts/schema.ts` emits the SQL owned by `src/schema.ts`.
+`scripts/schema.ts` emits the SQL owned by `src/records/schema.ts`.
 That SQL creates tables and the schema-version record.
 It is not safe to apply twice, and it does not upgrade an existing database.
 Local `pd init` initializes SQLite rather than D1.

@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { Miniflare } from 'miniflare';
 import { d1Executor } from '../src/d1.ts';
-import { executeOperation, parseOperation } from '../src/operations.ts';
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from '../src/schema.ts';
+import { executeOperation, parseOperation } from "../src/records/operations.ts";
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../src/records/schema.ts";
 
 const runtime = new Miniflare({ host: '127.0.0.1', cf: false, telemetry: { enabled: false }, workers: [{ config: {
   name: 'freshness-test', compatibilityDate: '2026-09-25',

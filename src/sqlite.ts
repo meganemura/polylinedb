@@ -4,13 +4,14 @@ import { node } from 'solarsql/node';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { commentRow, issueRow, PolylinedbError } from './issues.ts';
-import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from './schema.ts';
-import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
-import type { Snapshot, SnapshotImport } from './snapshot.ts';
-import { issueSortKey } from './issue-id.ts';
-import { memoryRow, memorySortKey } from './memories.ts';
+import { commentRow, issueRow } from './records/persistence.ts';
+import { PolylinedbError } from './records/index.ts';
+import type { SqlExecutor, SqlStatement } from './records/persistence.ts';
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from './records/persistence.ts';
+import { canonicalSnapshot, parseSnapshot } from './records/persistence.ts';
+import type { Snapshot, SnapshotImport } from './records/persistence.ts';
+import { issueSortKey } from './records/persistence.ts';
+import { memoryRow, memorySortKey } from './records/persistence.ts';
 
 export type LocalStore = { db: SqlExecutor; exportSnapshot(): Snapshot; importSnapshot(snapshot: Snapshot): SnapshotImport; close(): void };
 

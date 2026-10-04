@@ -1,9 +1,9 @@
 // Owns current project knowledge, its write conflicts, and bounded retrieval; hosts own invocation and identity.
-import { PolylinedbError } from './issues.ts';
-import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { parsePrefix, parseRequestId } from './issue-id.ts';
-import { issueQueries } from './issue-queries.ts';
-import { statements } from './solarsql.generated.ts';
+import { PolylinedbError } from "./issues.ts";
+import type { SqlExecutor, SqlStatement } from "./issues.ts";
+import { parsePrefix, parseRequestId } from "./issue-id.ts";
+import { issueQueries } from "./issue-queries.ts";
+import { statements } from "./solarsql.generated.ts";
 
 export type Memory = { id: string; project: string; title: string; body: string; version: number;
   created_at: string; created_by: string; updated_at: string; updated_by: string };

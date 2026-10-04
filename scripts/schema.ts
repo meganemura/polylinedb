@@ -1,5 +1,5 @@
 // Emits the shared schema for an explicitly selected D1 database.
-import { SCHEMA_SQL, schemaUpgradeStatements } from '../src/schema.ts';
+import { SCHEMA_SQL, schemaUpgradeStatements } from '../src/records/persistence.ts';
 
 const args = process.argv.slice(2);
 if (args.length === 0) process.stdout.write(SCHEMA_SQL + '\n');

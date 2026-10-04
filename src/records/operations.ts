@@ -1,9 +1,9 @@
 // Selects the domain operation; each domain owns its validation, SQL, and conflicts.
-import { executeOperation as executeIssue, parseOperation as parseIssue, operationSchemas as issueSchemas } from './issues.ts';
-import type { Operation as IssueOperation, OperationResult as IssueResult, SqlExecutor } from './issues.ts';
-import { executeMemoryOperation, parseMemoryOperation, memorySchemas, parseMemoryRevision, observedMemoryProject, memoryFreshness } from './memories.ts';
-import type { MemoryOperation, MemoryResult, MemoryStore, MemoryRevision, MemoryFreshness } from './memories.ts';
-import { issueQueries } from './issue-queries.ts';
+import { executeOperation as executeIssue, parseOperation as parseIssue, operationSchemas as issueSchemas } from "./issues.ts";
+import type { Operation as IssueOperation, OperationResult as IssueResult, SqlExecutor } from "./issues.ts";
+import { executeMemoryOperation, parseMemoryOperation, memorySchemas, parseMemoryRevision, observedMemoryProject, memoryFreshness } from "./memories.ts";
+import type { MemoryOperation, MemoryResult, MemoryStore, MemoryRevision, MemoryFreshness } from "./memories.ts";
+import { issueQueries } from "./issue-queries.ts";
 export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation;
 export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness }) | MemoryResult;
 const observedSchema = { type: 'string', maxLength: 4100, description: 'Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search.' };

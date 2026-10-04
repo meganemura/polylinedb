@@ -1,8 +1,8 @@
 // Owns issue operations and atomic SQL; transports and connection lifetimes stay outside.
-import { parseIssueId, issueSortKey, parsePrefix, parseRequestId } from './issue-id.ts';
-import { fields, issueTypes, statuses } from './schema.ts';
+import { parseIssueId, issueSortKey, parsePrefix, parseRequestId } from "./issue-id.ts";
+import { fields, issueTypes, statuses } from "./schema.ts";
 import type { Database } from 'solarsql';
-import { issueQueries } from './issue-queries.ts';
+import { issueQueries } from "./issue-queries.ts";
 
 export type Status = typeof statuses[number];
 export type IssueType = typeof issueTypes[number];

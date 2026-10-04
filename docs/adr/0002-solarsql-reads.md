@@ -1,7 +1,7 @@
 # Generate and execute read queries with solarsql
 
 The CLI and Worker use solarsql 0.7.1 for `show`, `list`, and `search`.
-The SQL catalog is `src/issue-queries.json`.
+The SQL catalog is `src/records/issue-queries.json`.
 The Node and D1 adapters execute its generated queries through the same operation handler.
 
 The existing schema uses non-STRICT tables.
@@ -10,7 +10,7 @@ The existing row parsers validate those values before they become issues or comm
 Converting every column with SQL casts would hide invalid stored values.
 
 `npm run generate:sql` initializes the actual schema in memory and extracts its CREATE statements.
-It then runs the installed solarsql analyzer and writes `src/solarsql.generated.ts`.
+It then runs the installed solarsql analyzer and writes `src/records/solarsql.generated.ts`.
 Commit that generated file when changing the schema or catalog.
 `npm run check:sql` checks freshness without changing the generated file.
 Type checks and both package builds run this check.

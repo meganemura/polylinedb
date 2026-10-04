@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { snapshotMigration, type Query } from './d1-snapshot-store.ts';
-import { canonicalSnapshot } from '../src/snapshot.ts';
+import { canonicalSnapshot } from '../src/records/persistence.ts';
 
 export function parseTarget(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid target');
