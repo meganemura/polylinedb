@@ -55,6 +55,20 @@ globalThis.fetch = async (input, init) => {
     const mode = process.env.PD_CLOUD_FIXTURE_MODE;
     if (mode === '401' || mode === '403') return new Response(null, { status: Number(mode) });
     if (mode === 'network') throw new Error('synthetic-private-token');
+    if (mode?.startsWith('access-configuration')) {
+      const variant = mode.slice('access-configuration'.length).replace(/^-/, '');
+      const error: Record<string, unknown> = { code: 'invalid_access_configuration', message: 'synthetic-private-token' };
+      const body: Record<string, unknown> = { error };
+      let status = 503;
+      if (variant === 'wrong-code') error.code = 'unexpected_error';
+      if (variant === 'extra-error-field') error.details = { diagnostic: 'synthetic-private-token' };
+      if (variant === 'extra-envelope-field') body.request_id = 'synthetic-private-token';
+      if (variant === 'wrong-status-409') status = 409;
+      if (variant === 'wrong-status-502') status = 502;
+      if (variant === 'long-message') error.message = 'x'.repeat(4097);
+      if (variant === 'non-string-message') error.message = 42;
+      return Response.json(body, { status });
+    }
     initializeStore({ directory });
     const store = openStore({ directory });
     try {

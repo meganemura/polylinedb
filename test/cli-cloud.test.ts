@@ -136,3 +136,26 @@ test('an ambiguous create preserves its request ID, makes one attempt, and expli
   assert.deepEqual(run(['list']).issues.map((row: { id: string }) => row.id), ['sm-1']);
   assert.equal(requests()[1].request_id, requestId);
 });
+
+test('cloud CLI reports valid 503 access configuration errors with fixed guidance', context => {
+  const { run, requests } = fixture(context);
+  assert.deepEqual(run(['actor']), { actor: 'oauth:synthetic-owner' });
+  const actorFailure = run(['actor'], { mode: 'access-configuration', status: 1 }).error;
+  assert.deepEqual(actorFailure, { code: 'invalid_access_configuration', message: 'Cloud Access is misconfigured. Check the Worker actor settings.' });
+  assert.equal(JSON.stringify(actorFailure).includes('synthetic-private-token'), false);
+  const createFailure = run(['create', '--body', 'Access configuration error'], { mode: 'access-configuration', status: 1 }).error;
+  const requestId = requests().at(-1)?.request_id;
+  assert.match(requestId ?? '', /^[a-f0-9-]{36}$/);
+  assert.deepEqual(createFailure, { code: 'invalid_access_configuration', message: 'Cloud Access is misconfigured. Check the Worker actor settings.', details: { request_id: requestId } });
+  assert.equal(JSON.stringify(createFailure).includes('synthetic-private-token'), false);
+});
+
+test('cloud CLI rejects invalid 503 access configuration envelopes and status codes', context => {
+  const { run } = fixture(context);
+  for (const mode of ['access-configuration-wrong-code', 'access-configuration-extra-error-field', 'access-configuration-extra-envelope-field',
+    'access-configuration-wrong-status-409', 'access-configuration-wrong-status-502', 'access-configuration-long-message', 'access-configuration-non-string-message']) {
+    const result = run(['actor'], { mode, status: 1 });
+    assert.deepEqual(result.error, { code: 'cloud_invalid_response', message: 'The cloud returned an invalid operation response.' }, mode);
+    assert.equal(JSON.stringify(result).includes('synthetic-private-token'), false, mode);
+  }
+});
