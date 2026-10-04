@@ -101,6 +101,9 @@ The package includes `skills/polylinedb/SKILL.md`.
 Copy or link its complete directory into the host's supported skill directory, then refresh skill discovery.
 The documented user directories are `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`.
 Keep existing host configuration and choose one installed source for this skill.
+The skill prefers the installed CLI in local coding sessions, including CLI connections to Cloudflare.
+Cloud sessions can use the configured remote MCP connector. An explicit MCP request takes precedence.
+Keep the cloud connector available when changing local routing. A routing preference does not remove a connector.
 Remove only the directory or link that you installed when removing it.
 
 The skill instructs the agent to retrieve memory at task start and after context compaction.

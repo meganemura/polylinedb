@@ -5,11 +5,32 @@ description: Use the pd CLI for project memory and agent work in an existing loc
 
 # Project memory and issue workflow
 
-Use `pd --help` for the installed CLI contract. Select the task's local or cloud connection deliberately.
+For CLI operations, use `pd --help` for the installed contract. Select the task's local or cloud connection deliberately.
 Initialize or change stores only when the task requests setup.
+
+## Choose the operation path
+
+In a local coding session, prefer the installed `pd` CLI, including when its selected connection uses Cloudflare.
+Reuse its saved connection and authentication. Do not start a new login merely because an MCP connector is also available.
+In a cloud session without the CLI, use the configured remote MCP connector.
+An explicit user request for MCP takes precedence over this preference.
+Report the operation path and selected store when verifying a connection.
+If the selected path fails, report the failure. Use another store only when the user selects it.
+
+For MCP operations, use the connector's tool schemas instead of running CLI commands.
+Select the configured connector and project explicitly.
+Call `actor` without arguments, then call `memory_context` with that project.
+Check the returned project and store URL against the selected connector.
+Follow omission notices with `memory_context` using `after`, or retrieve a skipped entry with `memory_show`.
+Use `list` and `search` with an explicit project, and check `show` before changing an issue.
+Use the observed versions for `update`, `close`, `reopen`, `memory_update`, and `memory_delete`.
+Retain one request UUID for each creation. MCP callers use complete IDs and omit caller-selected actors.
+The CLI examples below express the same operations. MCP does not expose CLI connection configuration or `context`.
 
 ## Select the work
 
+When using MCP, follow the tool instructions above and the shared data rules below.
+The CLI commands and connection configuration steps apply to CLI sessions.
 Run `pd context` from the working repository before reading issues.
 Check the selected mode, connection, data directory or cloud URL, project, prefix, and actor against the task.
 Connection selection uses flags, then environment variables, repository defaults, the user default, and the legacy local directory.
