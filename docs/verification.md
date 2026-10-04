@@ -16,6 +16,23 @@ The D1, Worker, and authentication fixtures need temporary local listeners.
 Tests use synthetic data. They do not validate a deployed account or a host's lifecycle events.
 The package check installs the tarball into a temporary prefix and executes its CLI.
 
+## CI runtime and operating systems
+
+CI runs every required check on Ubuntu 24.04 and Ubuntu 26.04 with Node 24.20.0 and Node 26.7.0.
+The four jobs verify generated SQL, types, architecture boundaries, unit tests, D1, the Worker, and the installed package.
+Explicit operating-system labels keep the verification conditions stable when GitHub changes `ubuntu-latest`.
+
+The workflow pins `actions/checkout` v7.0.1 and `actions/setup-node` v7.0.0 to full commit SHAs.
+Both actions declare the Node 24 runtime.
+The repository permits selected actions and requires full SHA pins.
+
+GitHub announced the `ubuntu-latest` migration for October 19 through November 19, 2026.
+See the [Ubuntu 26 announcement](https://github.blog/changelog/2026-09-17-ubuntu-26-generally-available-and-latest-migration/).
+See the official releases for [checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) and [setup-node v7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0).
+
+The CI fixtures use synthetic OAuth responses and credentials.
+Real credential-store access and host authentication require separate verification on the target system.
+
 ## Generated behavior tests
 
 ```sh
