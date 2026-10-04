@@ -78,7 +78,7 @@ function verifyExisting(path: string, allowEmpty: boolean): void {
 function connect(path: string): DatabaseSync {
   const database = new DatabaseSync(path);
   try {
-    database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = DELETE;');
+    database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     return database;
   } catch (error) { database.close(); throw error; }
 }

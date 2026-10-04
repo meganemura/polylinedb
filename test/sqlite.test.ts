@@ -39,6 +39,23 @@ test('init is idempotent and runtime leaves only one persistent database file', 
   assert.equal(statSync(initialized.database_path).mode & 0o777, 0o600);
 });
 
+test('opening an existing store preserves its journal mode', async t => {
+  const location = fixture(t);
+  const { database_path } = initializeStore(location);
+  const database = new DatabaseSync(database_path);
+  assert.equal(database.prepare('PRAGMA journal_mode = WAL').get()?.journal_mode, 'wal');
+  database.close();
+  const store = openStore(location);
+  try {
+    const result = await executeOperation(store.db, parseOperation({ op: 'list', project: 'sample' }), 'reader');
+    assert.deepEqual(result, { issues: [], next_cursor: null });
+  } finally { store.close(); }
+  initializeStore(location);
+  const observed = new DatabaseSync(database_path, { readOnly: true });
+  try { assert.equal(observed.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal'); }
+  finally { observed.close(); }
+});
+
 test('runtime never initializes missing stores', (t) => {
   const location = fixture(t);
   assert.throws(() => openStore(location), (error: unknown) => error instanceof PolylinedbError && error.code === 'uninitialized_store');
