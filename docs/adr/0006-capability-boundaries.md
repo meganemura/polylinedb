@@ -33,6 +33,8 @@ The CLI still closes each opened store in its explicit local branch.
 The workspace group exposes selection and mutations through `src/workspace/index.ts`.
 Its legacy defaults and named selection types have explicit public names.
 Git metadata formats and settings locks stay in private implementation files.
+The host-hooks group exposes its existing host actions from `src/host-hooks/index.ts`.
+Hook subprocesses still invoke the CLI entry from `process.argv[1]`.
 
 | Capability | Knowledge it owns |
 | --- | --- |

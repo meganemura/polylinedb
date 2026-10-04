@@ -15,7 +15,7 @@ import { addConnection, defaultConnection, readConnections, requireConnection, s
 import { createCloudClient, OAuthError, CredentialStoreError } from './cloud-client/index.ts';
 import { canonicalSnapshot, parseSnapshot, convertSnapshotV2 } from './records/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
-import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from './agent-hooks.ts';
+import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 
 const help = `polylinedb (polyline database) stores personal issues through local or cloud connections.
 Usage: pd [--connection NAME | --data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--prefix PREFIX] COMMAND [OPTIONS]

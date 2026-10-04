@@ -5,9 +5,9 @@ import type { Stats } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { PolylinedbError } from './records/index.ts';
-import type { Memory, MemoryContext, MemoryStore } from './records/index.ts';
-import { parseMemoryRevision } from './records/index.ts';
+import { PolylinedbError } from "../records/index.ts";
+import type { Memory, MemoryContext, MemoryStore } from "../records/index.ts";
+import { parseMemoryRevision } from "../records/index.ts";
 
 export type AgentHost = 'claude' | 'codex' | 'cursor';
 

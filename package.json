@@ -64,7 +64,7 @@
     "dist/records/memories.js",
     "dist/records/operations.js",
     "CHANGELOG.md",
-    "dist/agent-hooks.js",
+    "dist/host-hooks/index.js",
     "dist/records/index.js",
     "dist/records/persistence.js",
     "dist/workspace/index.js"

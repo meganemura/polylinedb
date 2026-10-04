@@ -13,7 +13,6 @@ export default {
   ],
   declaredModules: [
       { name: "access.ts", glob: "src/access.ts", surface: "access.ts" },
-      { name: "agent-hooks.ts", glob: "src/agent-hooks.ts", surface: "agent-hooks.ts" },
       { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
       { name: "cloud-client", glob: "src/cloud-client/**", surface: "index.ts" },
       { name: "d1.ts", glob: "src/d1.ts", surface: "d1.ts" },
@@ -24,10 +23,10 @@ export default {
       { name: "records", glob: "src/records/**", surface: ["index.ts", "persistence.ts"] },
       { name: "local-store", glob: "src/local-store/**", surface: "index.ts" },
       { name: "workspace", glob: "src/workspace/**", surface: "index.ts" },
+      { name: "host-hooks", glob: "src/host-hooks/**", surface: "index.ts" },
     ],
   classify: [
       { glob: "src/access.ts", tags: ["layer:adapter", "env:worker"] },
-      { glob: "src/agent-hooks.ts", tags: ["layer:adapter", "env:node"] },
       { glob: "src/cli.ts", tags: ["layer:entrypoint", "env:node"] },
       { glob: "src/cloud-client/**", tags: ["layer:adapter", "env:node"] },
       { glob: "cloudflare.config.ts", tags: ["layer:entrypoint"] },
@@ -38,6 +37,7 @@ export default {
       { glob: "src/records/**", tags: ["layer:domain", "env:portable"] },
       { glob: "src/local-store/**", tags: ["layer:adapter", "env:node"] },
       { glob: "src/workspace/**", tags: ["layer:adapter", "env:node"] },
+      { glob: "src/host-hooks/**", tags: ["layer:adapter", "env:node"] },
     ],
   edges: {
     allowDeny: [

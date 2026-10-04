@@ -48,6 +48,7 @@ const controls: Control[] = [
   { name: 'public local store', path: 'src/cli.ts', statement: "import { openStore as proof } from './local-store/index.ts'; void proof;" },
   { name: 'public workspace selection', path: 'src/cli.ts', statement: "import { selectConnection as proof } from './workspace/index.ts'; void proof;" },
   { name: 'private workspace settings', path: 'src/cli.ts', statement: "import { readConnections as proof } from './workspace/connections.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('workspace') },
+  { name: 'public host hooks', path: 'src/cli.ts', statement: "import { agentContext as proof } from './host-hooks/index.ts'; void proof;" },
 ];
 for (const control of controls) {
   const content = readFileSync(new URL(`../${control.path}`, import.meta.url), 'utf8') + '\n' + control.statement + '\n';
