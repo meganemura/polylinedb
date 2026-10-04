@@ -1,7 +1,7 @@
 // Owns authenticated cloud actions; local storage and command parsing stay outside.
 import { join } from 'node:path';
-import { connectionConfigDirectory } from '../connections.ts';
-import type { SelectedConnection } from '../connections.ts';
+import { connectionConfigDirectory } from "../workspace/index.ts";
+import type { SelectedConnection } from "../workspace/index.ts";
 import { createCloudAuth, OAuthError } from './oauth.ts';
 import { createCredentialStore, CredentialStoreError } from './credential-store.ts';
 import { executeCloudOperation } from './cloud-operations.ts';

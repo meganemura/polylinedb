@@ -30,6 +30,9 @@ Cloud response validation deliberately uses that row-decoding contract.
 The SQL catalog, generated queries, mutation handlers, and freshness implementation remain internal.
 The local-store group now exposes initialization, opening, and upgrades from `src/local-store/index.ts`.
 The CLI still closes each opened store in its explicit local branch.
+The workspace group exposes selection and mutations through `src/workspace/index.ts`.
+Its legacy defaults and named selection types have explicit public names.
+Git metadata formats and settings locks stay in private implementation files.
 
 | Capability | Knowledge it owns |
 | --- | --- |

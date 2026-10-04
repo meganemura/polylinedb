@@ -8,7 +8,7 @@ import { isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import { canonicalSnapshot } from '../src/records/persistence.ts';
 import { SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
-import { validateExternalDirectory } from '../src/local-config.ts';
+import { validateExternalDirectory } from "../src/workspace/index.ts";
 
 assert.equal(process.argv[2],'--plan','Usage: node scripts/d1-cutover.ts --plan PRIVATE_JSON --apply');
 assert.equal(process.argv[4],'--apply');

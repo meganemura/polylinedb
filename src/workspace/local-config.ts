@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { constants, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { PolylinedbError } from './records/index.ts';
-import { parsePrefix } from './records/index.ts';
+import { PolylinedbError } from "../records/index.ts";
+import { parsePrefix } from "../records/index.ts";
 
 export type RepositoryDefaults = {
   version: 2;

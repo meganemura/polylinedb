@@ -6,8 +6,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { addConnection, connectionConfigDirectory, defaultConnection, readConnections, selectConnection } from '../src/connections.ts';
-import { readRepositoryDefaults, useRepositoryConnection, writeRepositoryDefaults } from '../src/local-config.ts';
+import { addConnection, connectionConfigDirectory, defaultConnection, readConnections, selectConnection } from "../src/workspace/connections.ts";
+import { readRepositoryDefaults, useRepositoryConnection, writeRepositoryDefaults } from "../src/workspace/local-config.ts";
 import { PolylinedbError } from "../src/records/issues.ts";
 
 const executable = new URL('../src/cli.ts', import.meta.url).pathname;
@@ -220,7 +220,7 @@ test('configuration and selected local directories stay outside repository and s
 test('concurrent independent definitions both persist and equal initializers converge', async context => {
   const { root, environment } = fixture(context);
   const run = promisify(execFile);
-  const module = new URL('../src/connections.ts', import.meta.url).href;
+  const module = new URL("../src/workspace/connections.ts", import.meta.url).href;
   const code = `import { addConnection } from ${JSON.stringify(module)}; addConnection(process.argv[1], {kind:'cloud',url:'https://issues.example.invalid'});`;
   await Promise.all(['first', 'second', 'first'].map(name => run(process.execPath, ['--input-type=module', '-e', code, name], { env: environment })));
   assert.deepEqual(readConnections(environment).connections.map(row => row.name), ['first', 'second']);
@@ -234,7 +234,7 @@ test('repository init and selection share a lock so an initial writer cannot ove
   mkdirSync(directory, { mode: 0o700 });
   const defaults = { version: 2 as const, data_dir: directory, tool: 'tool', project: 'demo', actor: 'local:owner', prefix: 'dm' };
   writeRepositoryDefaults(defaults, repo);
-  const module = new URL('../src/local-config.ts', import.meta.url).href;
+  const module = new URL("../src/workspace/local-config.ts", import.meta.url).href;
   const run = promisify(execFile);
   const code = `import { writeRepositoryDefaults, useRepositoryConnection } from ${JSON.stringify(module)};
     try { process.argv[1] === 'init' ? writeRepositoryDefaults(JSON.parse(process.argv[2]), process.argv[3]) : useRepositoryConnection('cloud',process.argv[3]); }

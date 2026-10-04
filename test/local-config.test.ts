@@ -6,8 +6,8 @@ import { promisify } from 'node:util';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readRepositoryDefaults, repositoryConfigPath, writeRepositoryDefaults } from '../src/local-config.ts';
-import type { RepositoryDefaults } from '../src/local-config.ts';
+import { readRepositoryDefaults, repositoryConfigPath, writeRepositoryDefaults } from "../src/workspace/local-config.ts";
+import type { RepositoryDefaults } from "../src/workspace/local-config.ts";
 import { PolylinedbError } from "../src/records/issues.ts";
 
 function fixture(context: test.TestContext) {
@@ -76,7 +76,7 @@ test('exclusive write is idempotent for equal values and refuses changed default
 
 test('concurrent writers install one complete configuration and never overwrite the winner', async context => {
   const { repo, defaults, path } = fixture(context);
-  const moduleUrl = new URL('../src/local-config.ts', import.meta.url).href;
+  const moduleUrl = new URL("../src/workspace/local-config.ts", import.meta.url).href;
   const run = promisify(execFile);
   const code = `import { writeRepositoryDefaults } from ${JSON.stringify(moduleUrl)};
     try { writeRepositoryDefaults(JSON.parse(process.argv[1]), process.argv[2]); }

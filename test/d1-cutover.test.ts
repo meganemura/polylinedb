@@ -11,7 +11,7 @@ import test from 'node:test';
 import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories.ts";
-import { addConnection } from '../src/connections.ts';
+import { addConnection } from "../src/workspace/connections.ts";
 import { rawToSnapshot, tables } from '../scripts/d1-additive-merge.ts';
 import { canonicalSnapshot } from "../src/records/snapshot.ts";
 const executable=fileURLToPath(new URL('../scripts/d1-cutover.ts',import.meta.url));
