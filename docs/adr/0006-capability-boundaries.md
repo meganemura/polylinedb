@@ -22,7 +22,7 @@ OAuth discovery, callbacks, refresh, revocation, credential commands, locks, and
 The CLI imports that public entry.
 Internal tests exercise individual implementations outside the production module graph.
 
-The remaining capability groups are a target for later verified changes:
+The capability groups now have explicit public entries.
 
 The records group now uses `src/records/index.ts` for commands, identifiers, and domain types.
 Its `persistence.ts` entry supplies storage ports, snapshots, schema statements, and row decoding for adapters.
@@ -35,19 +35,22 @@ Its legacy defaults and named selection types have explicit public names.
 Git metadata formats and settings locks stay in private implementation files.
 The host-hooks group exposes its existing host actions from `src/host-hooks/index.ts`.
 Hook subprocesses still invoke the CLI entry from `process.argv[1]`.
+The service group exposes its handler, deployment fetch entry, and environment types from `src/service/index.ts`.
+Access verification and D1 adaptation remain private.
 
 | Capability | Knowledge it owns |
 | --- | --- |
 | records | Issue and memory rules, operation dispatch, SQL plans, revisions, and portable snapshot validation |
 | local-store | SQLite lifetime, ordered transactions, upgrades, and snapshot restoration |
 | workspace | Named connections, Git metadata, selection precedence, and path validation |
+| cloud-client | Authenticated outbound operations, OAuth, credential storage, and response validation |
 | host-hooks | Host settings, event translation, and CLI invocation |
 | service | HTTP/MCP envelopes, Access verification, and D1 adaptation |
 
 Issue and memory behavior can remain separate private files under records.
 Their shared dispatcher owns the freshness advisory after an issue operation completes.
 Storage callers need an explicit persistence contract distinct from ordinary command callers.
-Before consolidating records, inventory those callers and prove the complete public type closure.
+The public entries name the types that their callers receive.
 
 Retain the existing ordered `SqlExecutor` contract during these structural changes.
 Both SQLite and D1 already implement it.
@@ -64,6 +67,11 @@ Every module exposes explicit public entries; production callers must not bypass
 Classification entries retain both layer and environment tags.
 The layer rule already rejects domain-to-host dependencies.
 A second rule for that same relationship would duplicate the existing constraint.
+
+Capability tags constrain public imports within each runtime as well.
+Local-store, workspace, host-hooks, and service import records rather than each other's implementation knowledge.
+Cloud-client imports records and workspace configuration.
+The CLI composes the Node capabilities directly.
 
 ## Change scenarios
 
@@ -93,8 +101,10 @@ The current local/cloud branch remains explicit.
 ## Verification and limits
 
 Run `npm run check:architecture` to check the graph and prove its boundaries with in-memory imports.
-The controls cover public access, private OAuth access, both runtime directions, domain-to-host access, and Node builtin access.
+The controls cover public entries, private implementations, both runtime directions, domain-to-host access, and Node builtin access.
+Separate controls prove each capability's allowed-import rule, including forbidden public imports within Node.
 Each forbidden control must identify its intended rule and config entry.
+Every simulation must also return its expected exit status.
 
 Archstrict 0.2.1 reports `node:sqlite` imports as unresolved in this project.
 A deliberate portable `node:sqlite` import also passes its current simulation.

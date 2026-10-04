@@ -1,4 +1,4 @@
-// Owns local database paths and transactions; issue policy remains in issues.ts.
+// Owns local database paths and transactions; record rules belong to records.
 import { DatabaseSync } from 'node:sqlite';
 import { node } from 'solarsql/node';
 import { createHash } from 'node:crypto';

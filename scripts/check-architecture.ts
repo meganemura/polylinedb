@@ -1,7 +1,7 @@
 // Proves declared boundaries with in-memory imports; user stores and source files stay untouched.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, relative } from 'node:path';
 import config from '../archstrict.config.ts';
@@ -22,8 +22,8 @@ function run(args: string[], expectedStatus: number, input?: string): Record<str
 }
 const baseline = run(['check', '--json'], 0);
 assert.deepEqual(baseline.violations, [], JSON.stringify(baseline.violations));
-const worker = existsSync(new URL('../src/service/index.ts', import.meta.url)) ? 'src/service/index.ts' : 'src/worker.ts';
-const records = existsSync(new URL('../src/records/issues.ts', import.meta.url)) ? 'src/records/issues.ts' : 'src/issues.ts';
+const worker = 'src/service/index.ts';
+const records = 'src/records/issues.ts';
 const pathTo = (source: string, target: string) => {
   const path = relative(dirname(source), target);
   return path.startsWith('.') ? path : './' + path;
@@ -32,6 +32,11 @@ const modulePointer = (name: string) => {
   const index = config.declaredModules.findIndex(module => module.name === name);
   assert.ok(index >= 0, `Expected module ${name}`);
   return `declaredModules[${index}]`;
+};
+const capabilityPointer = (name: string) => {
+  const index = config.edges.allowDeny.findIndex(rule => rule.source === `capability:${name}`);
+  assert.ok(index >= 0, `Expected capability rule ${name}`);
+  return `edges.allowDeny[${index}].allow`;
 };
 type Control = { name: string; path: string; statement: string; rule?: string; pointer?: string };
 const controls: Control[] = [
@@ -49,6 +54,14 @@ const controls: Control[] = [
   { name: 'public workspace selection', path: 'src/cli.ts', statement: "import { selectConnection as proof } from './workspace/index.ts'; void proof;" },
   { name: 'private workspace settings', path: 'src/cli.ts', statement: "import { readConnections as proof } from './workspace/connections.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('workspace') },
   { name: 'public host hooks', path: 'src/cli.ts', statement: "import { agentContext as proof } from './host-hooks/index.ts'; void proof;" },
+  { name: 'public service handler', path: 'scripts/check-architecture.ts', statement: "import { handleRequest as proof } from '../src/service/index.ts'; void proof;" },
+  { name: 'private Access verifier', path: 'scripts/check-architecture.ts', statement: "import { createAccessVerifier as proof } from '../src/service/access.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('service') },
+  { name: 'private D1 adapter', path: 'scripts/check-architecture.ts', statement: "import { d1Executor as proof } from '../src/service/d1.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('service') },
+  { name: 'store cannot import cloud client', path: 'src/local-store/index.ts', statement: "import { createCloudClient as proof } from '../cloud-client/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('local-store') },
+  { name: 'workspace cannot import hooks', path: 'src/workspace/index.ts', statement: "import { agentContext as proof } from '../host-hooks/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('workspace') },
+  { name: 'hooks cannot import workspace', path: 'src/host-hooks/index.ts', statement: "import { readConnections as proof } from '../workspace/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('host-hooks') },
+  { name: 'cloud client cannot import store', path: 'src/cloud-client/index.ts', statement: "import { openStore as proof } from '../local-store/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('cloud-client') },
+  { name: 'service cannot import workspace', path: worker, statement: "import { readConnections as proof } from '../workspace/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('service') },
 ];
 for (const control of controls) {
   const content = readFileSync(new URL(`../${control.path}`, import.meta.url), 'utf8') + '\n' + control.statement + '\n';

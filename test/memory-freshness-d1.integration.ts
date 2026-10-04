@@ -1,7 +1,7 @@
 // Runs schema upgrades and memory observations against local workerd D1.
 import assert from 'node:assert/strict';
 import { Miniflare } from 'miniflare';
-import { d1Executor } from '../src/d1.ts';
+import { d1Executor } from "../src/service/d1.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../src/records/schema.ts";
 

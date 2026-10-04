@@ -1,8 +1,8 @@
 /** Exercises the trust boundary with generated RSA keys and real signed assertions. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAccessVerifier, AccessError } from '../src/access.ts';
-import type { AccessSettings } from '../src/access.ts';
+import { createAccessVerifier, AccessError } from "../src/service/access.ts";
+import type { AccessSettings } from "../src/service/access.ts";
 
 const settings: AccessSettings = {
   ACCESS_TEAM_DOMAIN: 'personal.cloudflareaccess.com',

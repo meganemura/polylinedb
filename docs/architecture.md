@@ -24,10 +24,22 @@ The CLI, Worker, repository scripts, and build configuration are entrypoints.
 This rule keeps domain behavior independent from storage, authentication, and transport.
 The issue module keeps validation and SQL together because both stores run its ordered statements.
 Run `npm exec -- archstrict check` after changing imports or module boundaries.
-The CI check runs the same command.
+CI runs `npm run check:architecture`, which checks imports and proves the boundary controls.
 
-The cloud client now has one public entry at `src/cloud-client/index.ts`.
-It exposes authenticated actions while keeping OAuth, credentials, and transport internal.
+The source modules expose capability contracts through these public entries:
+
+| Module | Public entries | Responsibility |
+| --- | --- | --- |
+| records | `src/records/index.ts`, `src/records/persistence.ts` | Commands and domain types; storage ports, row decoding, schemas, and portable snapshots |
+| local-store | `src/local-store/index.ts` | SQLite lifetime, transactions, upgrades, and restoration |
+| workspace | `src/workspace/index.ts` | Connection selection and repository settings |
+| cloud-client | `src/cloud-client/index.ts` | Authenticated outbound actions; private OAuth, credentials, and transport |
+| host-hooks | `src/host-hooks/index.ts` | Host settings and memory retrieval events |
+| service | `src/service/index.ts` | HTTP/MCP requests and deployment fetch; private Access verification and D1 adaptation |
+
+The CLI retains its explicit local/cloud branch and closes each local store after execution.
+The Worker build uses the service's default fetch entry.
+Capability rules restrict public imports to each module's required contracts.
 Node and Worker environment tags prevent imports between those hosts.
 Run `npm run check:architecture` to verify the graph and deliberate boundary controls.
 The [capability decision](adr/0006-capability-boundaries.md) records the module plan and verification limits.

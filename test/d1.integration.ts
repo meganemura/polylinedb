@@ -1,7 +1,7 @@
 /** Checks the shared store against local workerd D1. It does not validate a production account. */
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
-import { d1Executor } from '../src/d1.ts';
+import { d1Executor } from "../src/service/d1.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
 

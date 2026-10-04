@@ -2,7 +2,7 @@
 export default {
   worker: {
     name: process.env.POLYLINEDB_WORKER_NAME ?? 'polylinedb',
-    entrypoint: './src/worker.ts',
+    entrypoint: "./src/service/index.ts",
     compatibilityDate: '2026-09-25',
     previewUrls: false,
     env: {

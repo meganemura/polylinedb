@@ -1,5 +1,5 @@
 // Connects generated reads and atomic write batches to D1; domain modules own operation rules.
-import type { SqlExecutor } from './records/persistence.ts';
+import type { SqlExecutor } from "../records/persistence.ts";
 import { d1 } from 'solarsql/d1';
 import type { D1Like } from 'solarsql/d1';
 
