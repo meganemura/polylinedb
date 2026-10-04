@@ -208,10 +208,15 @@ export async function executeCloudOperation(input: {
     let value: unknown;
     try { value = await readResponse(response, controller.signal); } catch { controller.signal.throwIfAborted(); return invalid(); }
     if (response.status !== 200) {
+      if (response.status === 503) {
+        const error = exact(exact(value, ['error']).error, ['code', 'message']);
+        if (error.code !== 'invalid_access_configuration' || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
+        throw new PolylinedbError('invalid_access_configuration', 'Cloud Access is misconfigured. Check the Worker actor settings.', 503);
+      }
       if (![400, 404, 409].includes(response.status)) return invalid();
       const error = object(exact(value, ['error']).error);
       if (Object.keys(error).some(key => !['code', 'message', 'details'].includes(key)) || typeof error.code !== 'string'
-        || !/^[a-z][a-z0-9_]{0,63}$/.test(error.code) || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
+        || !/^[a-z][a-z0-9_]{0,63}$/.test(error.code) || error.code === 'invalid_access_configuration' || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
       let details: unknown;
       try { details = errorDetails(input.operation, error.code, error.details); } catch { return invalid(); }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);

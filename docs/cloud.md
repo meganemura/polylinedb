@@ -80,6 +80,8 @@ The verifier accepts RS256 assertions from the configured issuer and application
 
 Missing or invalid identity returns 401. An authenticated actor outside the allowlist receives 403. Invalid authentication configuration or an unavailable signing-key endpoint returns 503. Do not log assertions, bearer tokens, or raw OAuth responses.
 
+An empty `ACCESS_ACTORS` list is invalid and blocks every authenticated actor. The CLI accepts `invalid_access_configuration` only in an HTTP 503 response whose `error` object contains exactly `code` and `message`. It checks that `message` is a string of at most 4,096 characters, discards it, and reports `Cloud Access is misconfigured. Check the Worker actor settings.` This keeps Worker diagnostics out of CLI output. Other status or field combinations for this code, and other 5xx responses, remain invalid responses. Create failures retain their request ID.
+
 Both `POST /mcp` and `POST /v1/operations` require the verified actor. The MCP endpoint implements protocol `2025-11-25` with JSON responses and a 128 KiB request limit. MCP requests must accept both `application/json` and `text/event-stream`. GET streaming is not implemented. Requests with an Origin header require an exact configured match.
 
 ## Build your own cloud store
