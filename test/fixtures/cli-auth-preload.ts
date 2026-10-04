@@ -1,6 +1,8 @@
 // Replaces OS commands and HTTPS responses only inside synthetic CLI test subprocesses.
 import childProcess from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
+import http from 'node:http';
+import type { RequestListener, ServerOptions } from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import { appendFileSync } from 'node:fs';
 import { traceCredentialChild } from './credential-trace.ts';
@@ -39,6 +41,18 @@ Object.defineProperty(childProcess, 'spawn', { value: (executable: string, args:
   `;
   return traceCredentialChild(spawn, process.execPath, ['-e', code, JSON.stringify(args)], options, args);
 } });
+const listenerCode = process.env.PD_OAUTH_LISTENER_CODE;
+if (listenerCode) {
+  const nativeCreateServer = http.createServer;
+  Object.defineProperty(http, 'createServer', { value: (options: ServerOptions, listener: RequestListener) => {
+    const server = nativeCreateServer(options, listener);
+    Object.defineProperty(server, 'listen', { value: () => {
+      process.nextTick(() => server.emit('error', Object.assign(new Error('synthetic-private-token'), { code: listenerCode })));
+      return server;
+    } });
+    return server;
+  } });
+}
 syncBuiltinESMExports();
 
 const networkFetch = globalThis.fetch;

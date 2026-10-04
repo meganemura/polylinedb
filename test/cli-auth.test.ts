@@ -15,10 +15,10 @@ function fixture(context: test.TestContext) {
   context.after(() => rmSync(root, { recursive: true, force: true }));
   const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'),
     POLYLINEDB_CONNECTION: undefined, POLYLINEDB_DATA_DIR: undefined, POLYLINEDB_ACTOR: undefined,
-    PD_AUTH_FIXTURE_STATE: join(root, 'synthetic-credential'), PD_AUTH_FIXTURE_MODE: 'normal' };
-  const run = (args: string[], status = 0, mode = 'normal') => {
+    PD_AUTH_FIXTURE_STATE: join(root, 'synthetic-credential'), PD_AUTH_FIXTURE_MODE: 'normal', PD_OAUTH_LISTENER_CODE: '' };
+  const run = (args: string[], status = 0, mode = 'normal', listenerCode?: string) => {
     const result = spawnSync(process.execPath, ['--import', preload, executable, ...args], {
-      cwd, env: { ...env, PD_AUTH_FIXTURE_MODE: mode }, encoding: 'utf8', timeout: 10000,
+      cwd, env: { ...env, PD_AUTH_FIXTURE_MODE: mode, PD_OAUTH_LISTENER_CODE: listenerCode ?? '' }, encoding: 'utf8', timeout: 10000,
     });
     assert.equal(result.status, status, `${result.stderr}\n${result.stdout}`);
     assert.equal(result.stdout.includes('synthetic-access-token'), false);
@@ -86,4 +86,17 @@ test('repository-selected cloud auth ignores the retained local actor', context 
   execFileSync('git', ['init', '--quiet', cwd], { env });
   run(['init', '--connection', 'cloud', '--tool', 'tool', '--project', 'demo']);
   assert.equal(JSON.parse(run(['auth', 'status']).stdout).state, 'logged_out');
+});
+
+test('auth listener errors distinguish busy ports, denied access, and other failures', context => {
+  const { run } = fixture(context);
+  for (const [code, message] of [
+    ['EADDRINUSE', 'The registered callback port is unavailable. Close the process using it and retry.'],
+    ['EPERM', 'The current environment does not permit the loopback callback.'],
+    ['EACCES', 'The current environment does not permit the loopback callback.'],
+    ['EIO', 'The callback listener could not start.'],
+  ]) {
+    const result = run(['auth', 'login', '--connection', 'cloud'], 1, 'normal', code);
+    assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'auth_callback_unavailable', message } });
+  }
 });
