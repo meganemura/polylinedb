@@ -158,7 +158,8 @@ Requests without these options keep their existing result fields.
 
 The advisory adds one indexed SQLite or D1 query after the issue operation.
 It uses the existing HTTP or MCP response, so it adds no client network round trip.
-In a warm local process, 500 paired list calls had median times of 0.058 ms without an observation and 0.138 ms with one.
+A warm local fixture ran 500 paired list calls.
+Median times were 0.058 ms without an observation and 0.138 ms with one.
 The fixture contained 100 memories with 1,000-byte bodies and used 50 warm-up pairs.
 These measurements cover local query overhead. They exclude CLI startup, authentication, and network latency.
 

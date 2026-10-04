@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const project = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'polylinedb-package-'));
 const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ''}`,
-  XDG_CONFIG_HOME: join(root, 'config-home'), npm_config_cache: join(root, 'cache'), npm_config_audit: 'false', npm_config_fund: 'false' };
+  HOME: join(root, 'home'), XDG_CONFIG_HOME: join(root, 'config-home'), npm_config_cache: join(root, 'cache'), npm_config_audit: 'false', npm_config_fund: 'false' };
 delete env.POLYLINEDB_ACTOR;
 delete env.POLYLINEDB_DATA_DIR;
 delete env.POLYLINEDB_CONNECTION;
@@ -22,6 +22,7 @@ function run(command: string, args: string[], cwd: string, expected = 0): string
 }
 
 try {
+  mkdirSync(env.HOME!);
   const packed = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts=false', '--foreground-scripts=false', '--pack-destination', root], project));
   assert.equal(packed.length, 1);
   const pack = packed[0];
@@ -31,7 +32,8 @@ try {
     'dist/cloud.js', 'dist/cloud-operations.js', 'dist/oauth.js', 'dist/credential-session.js', 'dist/credential-store.js',
     'dist/issue-queries.js', 'dist/solarsql.generated.js', 'dist/memories.js', 'dist/operations.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
-    'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md'].sort();
+    'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md',
+    'dist/agent-hooks.js', 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/verification.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
@@ -70,7 +72,10 @@ try {
   const memoryCreation = ['memory', 'create', '--project', 'release', '--title', 'Package fact', '--body', 'Installed sessions share this memory.', '--request-id', '56361bb3-2f79-4e47-bd3a-4d0b52d9b7cc'];
   assert.equal(JSON.parse(pd(memoryCreation)).memory.id, 'pd-m1');
   assert.equal(JSON.parse(pd(['memory', 'context', '--project', 'release'])).memories[0].body, 'Installed sessions share this memory.');
+  const observation = JSON.parse(pd(['memory', 'context', '--project', 'release', '--with-revision'])).memory_revision;
+  assert.equal(JSON.parse(pd(['list', '--project', 'release', '--observed-memory-revision', observation])).memory_freshness.status, 'current');
   assert.equal(JSON.parse(pd(['memory', 'update', '1', '--project', 'release', '--title', 'Package fact', '--body', 'Verified through the installed CLI.', '--expected', '1'])).memory.version, 2);
+  assert.equal(JSON.parse(pd(['list', '--project', 'release', '--observed-memory-revision', observation])).memory_freshness.reason, 'memory_changed');
   pd(['memory', 'delete', '1', '--project', 'release', '--expected', '1'], 4);
   const skill = readFileSync(join(installed, 'skills', 'polylinedb', 'SKILL.md'), 'utf8');
   assert.match(skill, /pd memory context/);
@@ -101,6 +106,13 @@ try {
   const named = connected(['init', '--connection', 'home', '--actor', 'test:package', '--tool', 'package-test', '--project', 'release']);
   assert.equal(named.database_path, join(realpathSync(directory), 'polylinedb.sqlite'));
   assert.equal(connected(['context']).connection, 'home');
+  assert.equal(connected(['agent', 'install', 'claude']).installed, true);
+  const hook = spawnSync(command, ['agent', 'context', 'claude'], { cwd: workspace, env, encoding: 'utf8', input: JSON.stringify({ cwd: workspace }) });
+  assert.equal(hook.status, 0, hook.stderr);
+  const injected = JSON.parse(hook.stdout).hookSpecificOutput.additionalContext;
+  assert.match(injected, /Verified through the installed CLI/);
+  assert.match(injected, /memory_revision/);
+  assert.equal(connected(['agent', 'remove', 'claude']).removed, true);
   connected(['connection', 'use', 'cloud']);
   assert.equal(connected(['context']).mode, 'cloud');
   for (const arguments_ of [['auth', 'status', 'extra'], ['auth', 'unknown'], ['auth', 'login', '--actor', 'local:spoof']]) {

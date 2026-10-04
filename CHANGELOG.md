@@ -7,6 +7,7 @@
 - Upgrade local schema 2 or 3 stores explicitly to schema 4 for memory revisions and store identity.
 - Document D1 upgrades and identity rotation after a raw database restore.
 - Preserve an existing SQLite journal mode when opening a local store.
+- Check architecture layers in CI and add seeded behavior properties and bounded mutation tests.
 
 ## 0.1.0 (2026-10-04)
 

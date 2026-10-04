@@ -1,9 +1,12 @@
 .audit/
+.hegel/
 node_modules/
 .cf/
 .wrangler/
 .cloudflare/
 dist/
+/reports/mutation/
+/.stryker-tmp/
 .env
 .env.*
 *.sqlite*

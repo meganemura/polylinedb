@@ -1,13 +1,16 @@
 // Exercises observable issue behavior with real SQLite connections and parallel writers.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { PolylinedbError, executeOperation, parseOperation } from '../src/issues.ts';
 import type { Issue, SqlExecutor } from '../src/issues.ts';
 import { initializeStore, openStore } from '../src/sqlite.ts';
+import * as hegel from '@hegeldev/hegel';
+import * as gs from '@hegeldev/hegel/generators';
+import { issueSortKey } from '../src/issue-id.ts';
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'polylinedb-issues-'));
@@ -177,7 +180,10 @@ test('epic containment checks are atomic and parent status does not cascade', as
   const child = await create(second, { parent: epic.id, project: 'other' });
   assert.equal(child.id.slice(0, epic.id.length + 1), `${epic.id}.`);
   assert.equal('parent_id' in child, false);
-  await assert.rejects(execute(first, { op: 'update', id: epic.id, changes: [{ field: 'type', value: 'task', expected: 1 }, { field: 'body', value: 'should roll back', expected: 1 }] }), errorCode('epic_has_children'));
+  const retainedEpic = await execute(first, { op: 'update', id: epic.id, changes: [{ field: 'type', value: 'epic', expected: 1 }] });
+  assert.ok('issue' in retainedEpic);
+  assert.equal(retainedEpic.issue.versions.type, 2);
+  await assert.rejects(execute(first, { op: 'update', id: epic.id, changes: [{ field: 'type', value: 'task', expected: 2 }, { field: 'body', value: 'should roll back', expected: 1 }] }), errorCode('epic_has_children'));
   assert.equal((await show(first, epic.id)).body, 'Empty input fails');
   await execute(first, { op: 'close', id: epic.id, expected: 1 });
   assert.equal((await show(second, child.id)).status, 'open');
@@ -203,6 +209,7 @@ test('invalid input rejects unknown fields, invalid versions and duplicate edits
   ]) assert.throws(() => parseOperation(operation), errorCode('invalid_input'));
   await assert.rejects(execute(first, { op: 'comment', id: issue.id, body: 'valid' }, 'bad\nactor'), errorCode('invalid_input'));
   await assert.rejects(execute(first, { op: 'show', id: 'pd-999' }), errorCode('not_found'));
+  await assert.rejects(execute(first, { op: 'update', id: 'pd-999', changes: [{ field: 'body', value: 'missing', expected: 1 }] }), errorCode('not_found'));
   assert.deepEqual(await execute(first, { op: 'actor' }, 'local:alice'), { actor: 'local:alice' });
 });
 
@@ -321,15 +328,26 @@ test('parallel creates allocate distinct numbers and concurrent duplicate reques
 
 test('root and child counters cross 99 and natural pagination visits every issue once', async t => {
   const { first } = fixture(t);
+  await assert.rejects(create(first, { parent: 'pd-999' }), errorCode('not_found'));
   const parent = await create(first, { type: 'epic' });
   for (let number = 1; number <= 101; number++) assert.equal((await create(first, { parent: parent.id })).id, `pd-1.${number}`);
   for (let number = 2; number <= 101; number++) assert.equal((await create(first)).id, `pd-${number}`);
-  const all: string[] = []; let after: string | undefined;
+  const expected = ['pd-1', ...Array.from({ length: 101 }, (_, i) => `pd-1.${i + 1}`), ...Array.from({ length: 100 }, (_, i) => `pd-${i + 2}`)];
+  const maximumPages = Math.ceil(expected.length / 7);
+  const all: string[] = []; const seen = new Set<string>(); let after: string | undefined; let pageCount = 0;
   do {
+    pageCount += 1;
+    assert.ok(pageCount <= maximumPages, `pagination exceeded ${maximumPages} pages`);
     const page = await execute(first, { op: 'list', limit: 7, ...(after ? { after } : {}) });
-    assert.ok('issues' in page); all.push(...page.issues.map(issue => issue.id)); after = page.next_cursor ?? undefined;
+    assert.ok('issues' in page);
+    for (const issue of page.issues) {
+      assert.equal(seen.has(issue.id), false, `pagination repeated ${issue.id}`);
+      seen.add(issue.id);
+      all.push(issue.id);
+    }
+    after = page.next_cursor ?? undefined;
   } while (after);
-  assert.deepEqual(all, ['pd-1', ...Array.from({ length: 101 }, (_, i) => `pd-1.${i + 1}`), ...Array.from({ length: 100 }, (_, i) => `pd-${i + 2}`)]);
+  assert.deepEqual(all, expected);
   assert.equal((await create(first, { prefix: 'other' })).id, 'other-1');
   await assert.rejects(create(first, { parent: parent.id, prefix: 'other' }), { code: 'invalid_input' });
 });
@@ -344,4 +362,276 @@ test('counter exhaustion and failed create leave counters, requests and issues u
   await assert.rejects(create(first, { prefix: 'fresh' }), /test refusal/);
   const after = await first.batch([{ sql: 'SELECT * FROM counters WHERE scope = ?', params: ['fresh'] }]);
   assert.deepEqual(after[0]?.rows, []);
+});
+
+const propertyCases = Number(process.env.PD_HEGEL_CASES ?? 100);
+assert.ok(Number.isSafeInteger(propertyCases) && propertyCases > 0);
+const propertyNonblankText = (maxSize: number) => gs.text({ minSize: 1, maxSize, excludeCharacters: "\u0000" })
+  .map((value) => value.trim().length === 0 ? "x" : value);
+
+const propertyIssueIdGenerator = gs.composite<string>((tc) => {
+  const prefix = tc.draw(gs.sampledFrom(["a", "pd", "team9"] as const));
+  const numbers = tc.draw(gs.arrays(gs.integers({ minValue: 1 }), { minSize: 1, maxSize: 8 }));
+  return `${prefix}-${numbers.join(".")}`;
+});
+const issueOrderingBoundaryGenerator = gs.composite<string[]>((tc) => {
+  const singleDigit = tc.draw(gs.integers({ minValue: 2, maxValue: 9 }));
+  const twoDigit = tc.draw(gs.integers({ minValue: 10, maxValue: 19 }));
+  return [`hegel-${singleDigit}`, `hegel-${twoDigit}`];
+});
+
+function propertyCompareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function propertyCompareIssueIds(left: string, right: string): number {
+  const leftSeparator = left.indexOf("-");
+  const rightSeparator = right.indexOf("-");
+  const prefixOrder = propertyCompareText(left.slice(0, leftSeparator), right.slice(0, rightSeparator));
+  if (prefixOrder !== 0) return prefixOrder;
+
+  const leftNumbers = left.slice(leftSeparator + 1).split(".").map(Number);
+  const rightNumbers = right.slice(rightSeparator + 1).split(".").map(Number);
+  for (let index = 0; index < Math.min(leftNumbers.length, rightNumbers.length); index += 1) {
+    const leftNumber = leftNumbers[index];
+    const rightNumber = rightNumbers[index];
+    if (leftNumber !== undefined && rightNumber !== undefined && leftNumber !== rightNumber) {
+      return leftNumber < rightNumber ? -1 : 1;
+    }
+  }
+  return leftNumbers.length - rightNumbers.length;
+}
+
+async function propertyShowIssue(db: SqlExecutor, id: string): Promise<Issue> {
+  const result = await executeOperation(db, parseOperation({ op: "show", id }), "hegel-test");
+  assert.ok("issue" in result);
+  return result.issue;
+}
+
+function propertyIsConflict(error: unknown): boolean {
+  return error instanceof PolylinedbError && error.code === "conflict";
+}
+
+function propertyHasCode(code: string) {
+  return (error: unknown): boolean => error instanceof PolylinedbError && error.code === code;
+}
+
+
+test("property: issue sort keys agree with numeric ordering across valid IDs", () => {
+  let casesRun = 0;
+  hegel.test((tc) => {
+    casesRun += 1;
+    const ids = [...tc.draw(issueOrderingBoundaryGenerator), ...tc.draw(gs.arrays(propertyIssueIdGenerator, { maxSize: 48, unique: true }))];
+    assert.equal(new Set(ids.map(issueSortKey)).size, ids.length);
+    const actual = ids.toSorted((left, right) => propertyCompareText(issueSortKey(left), issueSortKey(right)));
+    const expected = ids.toSorted(propertyCompareIssueIds);
+    assert.deepEqual(actual, expected);
+  }, { testCases: propertyCases, seed: 20261004, database: hegel.Database.fromPath(".hegel") });
+  assert.equal(casesRun, propertyCases);
+});
+
+
+test("property: issue updates preserve field versions and reject stale writes in generated sequences", async () => {
+  let casesRun = 0;
+  await hegel.testAsync(async (tc) => {
+    casesRun += 1;
+    const root = mkdtempSync(join(tmpdir(), "polylinedb-hegel-"));
+    const cwd = join(root, "work");
+    const directory = join(root, "store");
+    mkdirSync(cwd);
+
+    try {
+      initializeStore({ directory, cwd });
+      const store = openStore({ directory, cwd });
+      try {
+        const initialBody = tc.draw(propertyNonblankText(16));
+        const initialPriority = tc.draw(gs.integers({ minValue: 0, maxValue: 4 }));
+        const created = await executeOperation(store.db, parseOperation({
+          op: "create",
+          prefix: "pd",
+          request_id: "00000000-0000-4000-8000-000000000001",
+          tool: "hegel",
+          project: "version-property",
+          body: initialBody,
+          priority: initialPriority,
+        }), "hegel-test");
+        assert.ok("issue" in created);
+
+        const issueId = created.issue.id;
+        const primePriority = tc.draw(gs.integers({ minValue: 0, maxValue: 4 }));
+        const priorityResult = await executeOperation(store.db, parseOperation({
+          op: "update",
+          id: issueId,
+          changes: [{ field: "priority", value: primePriority, expected: 1 }],
+        }), "hegel-test");
+        assert.ok("issue" in priorityResult);
+        assert.equal(priorityResult.issue.priority, primePriority);
+        assert.equal(priorityResult.issue.versions.priority, 2);
+
+        const atomicBody = tc.draw(propertyNonblankText(24));
+        const atomicPriority = tc.draw(gs.integers({ minValue: 0, maxValue: 4 }));
+        await assert.rejects(executeOperation(store.db, parseOperation({
+          op: "update",
+          id: issueId,
+          changes: [
+            { field: "body", value: atomicBody, expected: 1 },
+            { field: "priority", value: atomicPriority, expected: 1 },
+          ],
+        }), "hegel-test"), propertyIsConflict);
+
+        const model = {
+          body: initialBody,
+          priority: primePriority,
+          versions: { body: 1, priority: 2 },
+        };
+        const afterAtomicConflict = await propertyShowIssue(store.db, issueId);
+        assert.equal(afterAtomicConflict.body, model.body);
+        assert.equal(afterAtomicConflict.priority, model.priority);
+        assert.equal(afterAtomicConflict.versions.body, model.versions.body);
+        assert.equal(afterAtomicConflict.versions.priority, model.versions.priority);
+
+        const independentBody = tc.draw(propertyNonblankText(24));
+        const independentPriority = tc.draw(gs.integers({ minValue: 0, maxValue: 4 }));
+        const independentResult = await executeOperation(store.db, parseOperation({
+          op: "update",
+          id: issueId,
+          changes: [
+            { field: "body", value: independentBody, expected: model.versions.body },
+            { field: "priority", value: independentPriority, expected: model.versions.priority },
+          ],
+        }), "hegel-test");
+        model.body = independentBody;
+        model.priority = independentPriority;
+        model.versions.body += 1;
+        model.versions.priority += 1;
+        assert.ok("issue" in independentResult);
+        assert.equal(independentResult.issue.body, independentBody);
+        assert.equal(independentResult.issue.priority, independentPriority);
+        assert.deepEqual(independentResult.issue.versions, { ...afterAtomicConflict.versions, body: 2, priority: 3 });
+        const afterIndependentUpdate = await propertyShowIssue(store.db, issueId);
+        assert.equal(afterIndependentUpdate.body, model.body);
+        assert.equal(afterIndependentUpdate.priority, model.priority);
+        assert.deepEqual(afterIndependentUpdate.versions, { ...afterAtomicConflict.versions, body: 2, priority: 3 });
+
+        const steps = tc.draw(gs.arrays(gs.record({
+          field: gs.sampledFrom(["body", "priority"] as const),
+          body: propertyNonblankText(16),
+          priority: gs.integers({ minValue: 0, maxValue: 4 }),
+          stale: gs.booleans(),
+          sameValue: gs.booleans(),
+        }), { maxSize: 16 }));
+
+        for (const step of steps) {
+          if (step.field === "body") {
+            const value = step.sameValue ? model.body : step.body === model.body ? `${step.body}!` : step.body;
+            const version = model.versions.body;
+            const expected = step.stale && version > 1 ? version - 1 : version;
+            const operation = parseOperation({
+              op: "update",
+              id: issueId,
+              changes: [{ field: "body", value, expected }],
+            });
+            if (expected !== version) {
+              await assert.rejects(executeOperation(store.db, operation, "hegel-test"), propertyIsConflict);
+            } else {
+              await executeOperation(store.db, operation, "hegel-test");
+              model.body = value;
+              model.versions.body += 1;
+            }
+          } else {
+            const value = step.sameValue
+              ? model.priority
+              : step.priority === model.priority ? (model.priority + 1) % 5 : step.priority;
+            const version = model.versions.priority;
+            const expected = step.stale && version > 1 ? version - 1 : version;
+            const operation = parseOperation({
+              op: "update",
+              id: issueId,
+              changes: [{ field: "priority", value, expected }],
+            });
+            if (expected !== version) {
+              await assert.rejects(executeOperation(store.db, operation, "hegel-test"), propertyIsConflict);
+            } else {
+              await executeOperation(store.db, operation, "hegel-test");
+              model.priority = value;
+              model.versions.priority += 1;
+            }
+          }
+
+          const actual = await propertyShowIssue(store.db, issueId);
+          assert.equal(actual.body, model.body);
+          assert.equal(actual.priority, model.priority);
+          assert.equal(actual.versions.body, model.versions.body);
+          assert.equal(actual.versions.priority, model.versions.priority);
+        }
+      } finally {
+        store.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, { testCases: propertyCases, seed: 20261005, database: hegel.Database.fromPath(".hegel") });
+  assert.equal(casesRun, propertyCases);
+});
+
+
+test("property: create retries replay the current issue without consuming another number", async () => {
+  let casesRun = 0;
+  await hegel.testAsync(async (tc) => {
+    casesRun += 1;
+    const root = mkdtempSync(join(tmpdir(), "polylinedb-hegel-create-"));
+    const cwd = join(root, "work");
+    const directory = join(root, "store");
+    mkdirSync(cwd);
+
+    try {
+      initializeStore({ directory, cwd });
+      const store = openStore({ directory, cwd });
+      try {
+        const body = tc.draw(propertyNonblankText(24));
+        const changedBody = tc.draw(propertyNonblankText(24));
+        const distinctBody = changedBody === body ? `${changedBody}!` : changedBody;
+        const operation = {
+          op: "create",
+          prefix: "pd",
+          request_id: "00000000-0000-4000-8000-000000000001",
+          tool: "hegel",
+          project: "create-retry-property",
+          body,
+          status: "open",
+          type: "task",
+          priority: tc.draw(gs.integers({ minValue: 0, maxValue: 4 })),
+          labels: [],
+        };
+        const first = await executeOperation(store.db, parseOperation(operation), "hegel-test");
+        assert.ok("issue" in first);
+        assert.equal(first.issue.id, "pd-1");
+
+        await executeOperation(store.db, parseOperation({
+          op: "update",
+          id: first.issue.id,
+          changes: [{ field: "body", value: distinctBody, expected: 1 }],
+        }), "hegel-test");
+        const replay = await executeOperation(store.db, parseOperation(operation), "hegel-test");
+        assert.ok("issue" in replay);
+        assert.equal(replay.issue.id, "pd-1");
+        assert.equal(replay.issue.body, distinctBody);
+        assert.equal(replay.issue.versions.body, 2);
+
+        await assert.rejects(executeOperation(store.db, parseOperation({ ...operation, body: distinctBody }), "hegel-test"), propertyHasCode("request_conflict"));
+        await assert.rejects(executeOperation(store.db, parseOperation(operation), "other-actor"), propertyHasCode("request_conflict"));
+        const next = await executeOperation(store.db, parseOperation({
+          ...operation,
+          request_id: "00000000-0000-4000-8000-000000000002",
+        }), "hegel-test");
+        assert.ok("issue" in next);
+        assert.equal(next.issue.id, "pd-2");
+      } finally {
+        store.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, { testCases: propertyCases, seed: 20261006, database: hegel.Database.fromPath(".hegel") });
+  assert.equal(casesRun, propertyCases);
 });

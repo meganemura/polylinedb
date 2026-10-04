@@ -22,7 +22,10 @@
     "prepack": "npm run build:cli",
     "test:package": "node scripts/test-package.ts",
     "generate:sql": "node scripts/solarsql.ts",
-    "check:sql": "node scripts/solarsql.ts --check"
+    "check:sql": "node scripts/solarsql.ts --check",
+    "check:architecture": "archstrict check",
+    "test:properties": "node --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts",
+    "test:mutation": "stryker run"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.60.2",

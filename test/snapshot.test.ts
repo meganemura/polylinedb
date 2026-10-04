@@ -1,6 +1,8 @@
 // Exercises local snapshot restoration and replay through the public store interface.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import * as hegel from '@hegeldev/hegel';
+import * as gs from '@hegeldev/hegel/generators';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +10,13 @@ import { initializeStore, openStore } from '../src/sqlite.ts';
 import { canonicalSnapshot, parseSnapshot } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
 import { executeOperation, parseOperation } from '../src/issues.ts';
+
+const propertyCases = Number(process.env.PD_HEGEL_CASES ?? 100);
+assert.ok(Number.isSafeInteger(propertyCases) && propertyCases > 0);
+const propertyNonblankText = (maxSize: number) => gs.text({ minSize: 1, maxSize, excludeCharacters: "\u0000" })
+  .map((value) => value.trim().length === 0 ? "x" : value);
+const propertyHasCode = (code: string) => (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === code;
 
 const parent = 'pd-9';
 const child = `${parent}.99`;
@@ -108,4 +117,68 @@ test('restored counters retain gaps and request replay survives a snapshot round
     assert.equal(canonicalSnapshot(second.store.exportSnapshot()), canonicalSnapshot(saved));
     await assert.rejects(executeOperation(second.store.db, create, 'bob'), { code: 'request_conflict' });
   } finally { first.cleanup(); second.cleanup(); }
+});
+
+test("property: generated create sets round-trip through canonical snapshots", async () => {
+  let casesRun = 0;
+  await hegel.testAsync(async (tc) => {
+    casesRun += 1;
+    const root = mkdtempSync(join(tmpdir(), "polylinedb-hegel-snapshot-"));
+    const cwd = join(root, "work");
+    const sourceDirectory = join(root, "source");
+    const targetDirectory = join(root, "target");
+    mkdirSync(cwd);
+
+    try {
+      initializeStore({ directory: sourceDirectory, cwd });
+      const source = openStore({ directory: sourceDirectory, cwd });
+      try {
+        const creates = tc.draw(gs.arrays(gs.record({
+          body: propertyNonblankText(24),
+          priority: gs.integers({ minValue: 0, maxValue: 4 }),
+        }), { minSize: 1, maxSize: 8 }));
+        for (const [index, item] of creates.entries()) {
+          await executeOperation(source.db, parseOperation({
+            op: "create",
+            prefix: "pd",
+            request_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            tool: "hegel",
+            project: "snapshot-property",
+            body: item.body,
+            priority: item.priority,
+          }), "hegel-test");
+        }
+
+        const snapshot = source.exportSnapshot();
+        const ids = snapshot.issues.map((issue) => issue.id);
+        assert.equal(new Set(ids).size, creates.length);
+        assert.deepEqual(ids, creates.map((_, index) => `pd-${index + 1}`));
+        const canonical = canonicalSnapshot(snapshot);
+        const parsed = parseSnapshot(JSON.parse(canonical));
+        assert.equal(canonicalSnapshot(parsed), canonical);
+        assert.equal(parsed.counters[0]?.last_number, creates.length);
+        assert.equal(parsed.requests.length, creates.length);
+
+        const duplicateIssue = { ...snapshot, issues: [...snapshot.issues, snapshot.issues[0]!] };
+        assert.throws(() => parseSnapshot(duplicateIssue), propertyHasCode("invalid_snapshot"));
+        const invalidVersion = { ...snapshot, version: 2 };
+        assert.throws(() => parseSnapshot(invalidVersion), propertyHasCode("invalid_snapshot"));
+
+        initializeStore({ directory: targetDirectory, cwd });
+        const target = openStore({ directory: targetDirectory, cwd });
+        try {
+          assert.equal(target.importSnapshot(parsed).result, "imported");
+          assert.equal(canonicalSnapshot(target.exportSnapshot()), canonical);
+          assert.equal(target.importSnapshot(parsed).result, "already_present");
+        } finally {
+          target.close();
+        }
+      } finally {
+        source.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, { testCases: propertyCases, seed: 20261007, database: hegel.Database.fromPath(".hegel") });
+  assert.equal(casesRun, propertyCases);
 });

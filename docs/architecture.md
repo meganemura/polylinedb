@@ -13,6 +13,19 @@ The Worker adapts the same operations to D1, HTTP, and remote MCP.
 Database adapters execute ordered statement lists as one transaction.
 They do not expose interactive transactions to the issue module.
 
+## Dependency direction
+
+The architecture check orders source modules as domain, adapter, then entrypoint.
+Imports may point toward the domain layer or stay within one layer.
+The domain includes issue and memory behavior, IDs, schemas, queries, and snapshots.
+Adapters include SQLite, D1, cloud access, credentials, and local configuration.
+The CLI, Worker, repository scripts, and build configuration are entrypoints.
+
+This rule keeps domain behavior independent from storage, authentication, and transport.
+The issue module keeps validation and SQL together because both stores run its ordered statements.
+Run `npm exec -- archstrict check` after changing imports or module boundaries.
+The CI check runs the same command.
+
 Each mutable field has its own version, starting at 1.
 An update supplies the observed version for each field it changes.
 One conditional SQL UPDATE checks every supplied version and changes every requested field atomically.
