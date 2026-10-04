@@ -1,7 +1,7 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
 import { PolylinedbError, issueRow, commentRow, type Issue } from './issues.ts';
 import type { Operation, OperationResult } from './operations.ts';
-import { memoryRow, parseMemoryId } from './memories.ts';
+import { memoryRow, parseMemoryId, parseMemoryRevision, observedMemoryProject } from './memories.ts';
 import type { Memory, MemoryContext } from './memories.ts';
 import { fields } from './schema.ts';
 import { parseIssueId } from './issue-id.ts';
@@ -29,6 +29,25 @@ function memory(value: unknown): Memory {
   return memoryRow(exact(value, ['id', 'project', 'title', 'body', 'version', 'created_at', 'created_by', 'updated_at', 'updated_by']));
 }
 function result(operation: Operation, value: unknown): OperationResult {
+  if ('observed_memory_revision' in operation && operation.observed_memory_revision !== undefined) {
+    const row = object(value);
+    const { memory_freshness, ...base } = row;
+    const output = basicResult(operation, base);
+    const freshness = object(memory_freshness);
+    exact(freshness, freshness.status === 'stale' ? ['status', 'project', 'reason'] : ['status', 'project']);
+    if (typeof freshness.project !== 'string' || !freshness.project.trim() || new TextEncoder().encode(freshness.project).length > 256 || /\p{Cc}/u.test(freshness.project)) return invalid();
+    const expectedProject = 'issue' in output ? output.issue.project : ('project' in operation ? operation.project : undefined) ?? observedMemoryProject(operation.observed_memory_revision);
+    if (operation.op !== 'comment' && freshness.project !== expectedProject) return invalid();
+    const observedProject = observedMemoryProject(operation.observed_memory_revision);
+    if (freshness.status === 'current' && freshness.project !== observedProject) return invalid();
+    if (freshness.status === 'stale' && (freshness.reason === 'project_changed') !== (freshness.project !== observedProject)) return invalid();
+    if (freshness.status === 'current' || freshness.status === 'unavailable') return { ...output, memory_freshness: { status: freshness.status, project: freshness.project } };
+    if (freshness.status === 'stale' && (freshness.reason === 'memory_changed' || freshness.reason === 'project_changed' || freshness.reason === 'store_changed')) return { ...output, memory_freshness: { status: 'stale', project: freshness.project, reason: freshness.reason } };
+    return invalid();
+  }
+  return basicResult(operation, value);
+}
+function basicResult(operation: Operation, value: unknown): OperationResult {
   switch (operation.op) {
     case 'memory_create': case 'memory_show': case 'memory_update': {
       const parsed = memory(exact(value, ['memory']).memory);
@@ -48,7 +67,7 @@ function result(operation: Operation, value: unknown): OperationResult {
       return { memories, next_cursor: row.next_cursor === null ? null : parseMemoryId(row.next_cursor) };
     }
     case 'memory_context': {
-      const row = exact(value, ['project', 'store', 'memories', 'limits', 'omitted', 'next_cursor', 'notices']);
+      const row = exact(value, ['project', 'store', 'memories', 'limits', 'omitted', 'next_cursor', 'notices', ...(operation.with_revision ? ['memory_revision'] : [])]);
       const store = exact(row.store, ['kind', 'url']);
       const limits = exact(row.limits, ['entries', 'bytes']);
       if (row.project !== operation.project || store.kind !== 'cloud' || typeof store.url !== 'string' || limits.entries !== operation.limit || limits.bytes !== operation.max_bytes
@@ -63,8 +82,13 @@ function result(operation: Operation, value: unknown): OperationResult {
         return { code: notice.code, ...(notice.skipped_id === undefined ? {} : { skipped_id: parseMemoryId(notice.skipped_id) }) };
       });
       if (row.omitted !== (notices.length > 0)) return invalid();
+      let revision;
+      if (operation.with_revision) {
+        try { revision = parseMemoryRevision(row.memory_revision); } catch { return invalid(); }
+        if (observedMemoryProject(revision) !== operation.project) return invalid();
+      }
       return { project: operation.project, store: { kind: 'cloud', url: store.url }, memories, limits: { entries: operation.limit, bytes: operation.max_bytes }, omitted: row.omitted,
-        next_cursor: row.next_cursor === null ? null : parseMemoryId(row.next_cursor), notices };
+        next_cursor: row.next_cursor === null ? null : parseMemoryId(row.next_cursor), notices, ...(revision === undefined ? {} : { memory_revision: revision }) };
     }
     case 'actor': {
       const row = exact(value, ['actor']);

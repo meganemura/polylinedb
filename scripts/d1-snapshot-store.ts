@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { canonicalSnapshot, parseSnapshot } from '../src/snapshot.ts';
 import { commentRow, issueRow } from '../src/issues.ts';
 import { issueSortKey } from '../src/issue-id.ts';
-import { fields, SCHEMA_SQL } from '../src/schema.ts';
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, ROTATE_MEMORY_IDENTITY_SQL } from '../src/schema.ts';
 import { memoryRow, memorySortKey } from '../src/memories.ts';
 
 export type Statement = { sql: string; params: (string | number | null)[] };
@@ -49,7 +49,7 @@ async function checkSchema(query: Query): Promise<boolean> {
       if (!expectedClaim || ordered(claim) !== ordered(expectedClaim)) fail('Destination claim schema differs');
     }
     const versions = await querySql(query, 'SELECT version FROM schema_version');
-    if (versions.length !== 1 || versions[0]?.version !== 3) fail('Destination schema version differs');
+    if (versions.length !== 1 || versions[0]?.version !== SCHEMA_VERSION) fail('Destination schema version differs');
     return claim !== undefined;
   } finally { reference.close(); }
 }
@@ -119,6 +119,7 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     await querySql(query, `INSERT INTO ${claimTable}(singleton,sha256) SELECT 1,? WHERE ${tables.map(table => `NOT EXISTS (SELECT 1 FROM ${table})`).join(' AND ')} ON CONFLICT(singleton) DO NOTHING`, [sha256]);
     const claim = await querySql(query, `SELECT singleton,sha256 FROM ${claimTable}`);
     if (claim.length !== 1 || claim[0]?.singleton !== 1 || claim[0]?.sha256 !== sha256) fail('Destination snapshot claim was refused');
+    await querySql(query, ROTATE_MEMORY_IDENTITY_SQL);
     for (const table of tables) for (const row of rows[table]) {
       const columns = Object.keys(row);
       const params = Object.values(row).map(value => {

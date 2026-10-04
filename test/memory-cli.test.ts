@@ -22,9 +22,13 @@ test('CLI retrieves a prior session fact, detects conflicts, and preserves it th
   const request = ['memory', 'create', '--project', 'demo', '--title', 'Test command', '--body', 'Run npm test.', '--request-id', 'e9bb3952-0a22-49f1-b892-7a89a36ff3d7'];
   assert.equal(run(request).memory.id, 'pd-m1');
   assert.equal(run(['memory', 'context', '--project', 'demo']).memories[0].body, 'Run npm test.');
+  const observed = run(['memory', 'context', '--project', 'demo', '--with-revision']).memory_revision;
+  assert.equal(typeof observed, 'string');
+  assert.deepEqual(run(['list', '--project', 'demo', '--observed-memory-revision', observed]).memory_freshness, { status: 'current', project: 'demo' });
   assert.equal(run(['memory', 'show', 'm1', '--project', 'demo']).memory.version, 1);
   assert.equal(run(['memory', 'show', '1', '--project', 'other'], 3).error.code, 'memory_not_found');
   assert.equal(run(['memory', 'update', '1', '--project', 'demo', '--title', 'Test command', '--body', 'Run npm test twice.', '--expected', '1']).memory.version, 2);
+  assert.deepEqual(run(['list', '--project', 'demo', '--observed-memory-revision', observed]).memory_freshness, { status: 'stale', project: 'demo', reason: 'memory_changed' });
   assert.equal(run(['memory', 'delete', '1', '--project', 'demo', '--expected', '1'], 4).error.code, 'memory_conflict');
   const snapshot = join(root, 'snapshot.json'); run(['export', '--file', snapshot]);
   const restored = join(root, 'restored'); run(['init'], 0, restored); run(['import', '--file', snapshot], 0, restored);

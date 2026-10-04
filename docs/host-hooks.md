@@ -20,7 +20,9 @@ The hook never sends the CLI's standard error to the host.
 The adapter sends up to 8,192 bytes of memory data to a session.
 It preserves `omitted`, `next_cursor`, and `notices` from the bounded result.
 It encodes memory entries as JSON and labels every field as untrusted project data.
-The host context does not include the local database path or cloud origin.
+The host context omits explicit database paths and cloud origins.
+Its opaque observation token encodes the selected store identity and project.
+Keep that token in the session when passing it to ordinary issue operations.
 
 | Host | User settings | Retrieval events | Limits |
 |---|---|---|---|

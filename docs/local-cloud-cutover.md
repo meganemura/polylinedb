@@ -13,7 +13,7 @@ It also preserves receipts for deleted memories.
 
 Use the supported Node version, an installed `pd`, and an authenticated `cf` profile.
 Run the operator from a source checkout of polylinedb.
-The Worker and both stores must already use canonical schema 3.
+The Worker and both stores must already use canonical schema 4.
 The additive operator refuses additional application tables, including an existing `polylinedb_snapshot_claim` restoration table.
 Use the separate restoration procedure or review that provenance before preparing a different operator.
 The operator does not deploy a Worker, upgrade schemas, or change Access policies.

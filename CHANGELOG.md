@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Install and remove user-scope memory hooks for local Claude Code, Codex, and Cursor sessions.
+- Detect project memory changes during issue operations with an optional context observation token.
+- Upgrade local schema 2 or 3 stores explicitly to schema 4 for memory revisions and store identity.
+- Document D1 upgrades and identity rotation after a raw database restore.
+
 ## 0.1.0 (2026-10-04)
 
 ### Task and memory operations

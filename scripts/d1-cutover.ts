@@ -7,7 +7,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, open
 import { isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import { canonicalSnapshot } from '../src/snapshot.ts';
-import { SCHEMA_SQL } from '../src/schema.ts';
+import { SCHEMA_SQL, SCHEMA_VERSION } from '../src/schema.ts';
 import { validateExternalDirectory } from '../src/local-config.ts';
 
 assert.equal(process.argv[2],'--plan','Usage: node scripts/d1-cutover.ts --plan PRIVATE_JSON --apply');
@@ -63,7 +63,7 @@ function remoteRows(label:string) {
   const results=batch([{sql:schemaSql,params:[]},{sql:'SELECT version FROM schema_version',params:[]},...tables.map(table=>({sql:`SELECT * FROM ${table}`,params:[]}))],label);
   const ref=new DatabaseSync(':memory:');
   try{ref.exec(SCHEMA_SQL);assert.deepEqual(results[0].results,ref.prepare(schemaSql).all().map(r=>({...r})));}finally{ref.close();}
-  assert.deepEqual(results[1].results,[{version:3}]);
+  assert.deepEqual(results[1].results,[{version:SCHEMA_VERSION}]);
   return Object.fromEntries(tables.map((table,index)=>[table,results[index+2].results]));
 }
 function pdRun(args:string[],cwd=base) {

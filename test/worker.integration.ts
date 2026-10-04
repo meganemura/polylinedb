@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare';
-import { SCHEMA_SQL } from '../src/schema.ts';
+import { SCHEMA_STATEMENTS } from '../src/schema.ts';
 
 const bundleUrl = new URL('../.cloudflare/output/v0/workers/default/bundle/index.js', import.meta.url);
 const bundle = await readFile(bundleUrl, 'utf8');
@@ -60,7 +60,7 @@ function record(value: unknown): Record<string, unknown> {
 
 try {
   const database = await runtime.getD1Database('DB');
-  await database.batch(SCHEMA_SQL.split(';').map((sql) => sql.trim()).filter(Boolean).map((sql) => database.prepare(sql)));
+  await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
   const owner = await assertion();
   const post = (path: string, body: unknown, token: string | null = owner) => runtime.dispatchFetch(`http://polylinedb.test${path}`, {
     method: 'POST', headers: {
@@ -150,6 +150,15 @@ try {
   assert.equal(context.project, 'parser');
   assert.deepEqual(context.store, { kind: 'cloud', url: 'http://polylinedb.test' });
   assert.deepEqual(context.memories, [memoryUpdated]);
+  assert.equal(context.memory_revision, undefined);
+  const observation = await rpc('tools/call', { name: 'memory_context', arguments: { project: 'parser', with_revision: true } });
+  const token = record(observation.structuredContent).memory_revision;
+  assert.equal(typeof token, 'string');
+  assert(Array.isArray(observation.content));
+  assert.deepEqual(JSON.parse(String(record(observation.content[0]).text)), observation.structuredContent);
+  const current = await http({ op: 'show', id, observed_memory_revision: token });
+  assert.deepEqual(current.memory_freshness, { status: 'current', project: 'parser' });
+  assert.equal(record(record(record(listed.tools.find(tool => record(tool).name === 'show')).inputSchema).properties).observed_memory_revision !== undefined, true);
   const memoryConflict = await rpc('tools/call', { name: 'memory_delete', arguments: { project: 'parser', id: memory.id, expected: 1 } });
   assert.equal(memoryConflict.isError, true);
   assert.equal(record(record(memoryConflict.structuredContent).error).code, 'memory_conflict');
@@ -157,6 +166,11 @@ try {
   assert.deepEqual(await database.prepare('SELECT body, version, created_by FROM memories WHERE id = ?').bind(memory.id).first(),
     { body: 'Shared HTTP and MCP state', version: 2, created_by: 'access:owner' });
   await http({ op: 'memory_delete', project: 'parser', id: memory.id, expected: 2 });
+  const stale = await rpc('tools/call', { name: 'show', arguments: { id, observed_memory_revision: token } });
+  assert.equal(stale.isError, false);
+  assert.deepEqual(record(stale.structuredContent).memory_freshness, { status: 'stale', project: 'parser', reason: 'memory_changed' });
+  assert(Array.isArray(stale.content));
+  assert.deepEqual(JSON.parse(String(record(stale.content[0]).text)), stale.structuredContent);
   assert.equal(record((await http({ op: 'memory_create', ...memoryRequest }, 409)).error).code, 'memory_deleted');
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,

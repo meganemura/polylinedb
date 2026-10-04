@@ -250,7 +250,7 @@ function checkedStatement(statement: Statement): Statement {
 
 function schemaGuard(): Statement {
   return checkedStatement({
-    sql: 'INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT COUNT(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 3)',
+    sql: `INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT COUNT(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ${SCHEMA_VERSION})`,
     params: [],
   });
 }
@@ -320,8 +320,6 @@ function counts(rows: Rows): Record<Table, number> {
 }
 
 export function additiveMerge(input: { source: unknown; destination: unknown }): MergePlan {
-  const schemaVersion: number = SCHEMA_VERSION;
-  if (schemaVersion !== 3) fail('Additive merge requires canonical schema version 3');
   const source = parseRows(input.source);
   const destination = parseRows(input.destination);
   snapshotFromRows(source);
@@ -349,7 +347,7 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
 
 type DmlOperation = 'INSERT' | 'UPDATE' | 'DELETE';
 
-function retirementSql(table: Table, operation: DmlOperation, connectionName: string): string {
+function retirementSql(table: Table | 'memory_store_identity' | 'project_memory_revisions', operation: DmlOperation, connectionName: string): string {
   const triggerName = quoteIdentifier(`polylinedb_retired_${table}_${operation.toLowerCase()}`);
   const message = `This local database is retired. Use cloud connection ${connectionName}.`.replaceAll("'", "''");
   return `CREATE TRIGGER ${triggerName} BEFORE ${operation} ON ${quoteIdentifier(table)} BEGIN SELECT RAISE(ABORT, '${message}'); END`;
@@ -358,7 +356,7 @@ function retirementSql(table: Table, operation: DmlOperation, connectionName: st
 export function retireSource(database: DatabaseSync, connectionName: string): void {
   if (typeof connectionName !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(connectionName)) fail('Invalid cloud connection name');
   if (!database.isTransaction) fail('Source retirement requires a caller-owned transaction');
-  for (const table of tables) for (const operation of ['INSERT', 'UPDATE', 'DELETE'] as const) {
+  for (const table of [...tables, 'memory_store_identity', 'project_memory_revisions'] as const) for (const operation of ['INSERT', 'UPDATE', 'DELETE'] as const) {
     const sql = retirementSql(table, operation, connectionName);
     const triggerName = `polylinedb_retired_${table}_${operation.toLowerCase()}`;
     const existing = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(triggerName);

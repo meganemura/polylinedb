@@ -32,6 +32,14 @@ export type Generated = {
     params: { project: SqlValue | null; after: SqlValue | null; query: SqlValue; limit: number };
     row: { id: SqlValue; sort_key: SqlValue; project: SqlValue; title: SqlValue; body: SqlValue; version: SqlValue; created_at: SqlValue; created_by: SqlValue; updated_at: SqlValue; updated_by: SqlValue };
   };
+  "SELECT memory_store_identity.incarnation, CAST(COALESCE(project_memory_revisions.revision,0) AS INTEGER) AS revision FROM memory_store_identity LEFT JOIN project_memory_revisions ON project_memory_revisions.project = :project WHERE singleton = 1": {
+    params: { project: SqlValue | null };
+    row: { incarnation: SqlValue; revision: number };
+  };
+  "SELECT project FROM issues WHERE id = :id": {
+    params: { id: SqlValue | null };
+    row: { project: SqlValue };
+  };
 };
 
 export const generated: Meta<Generated> = {
@@ -42,6 +50,8 @@ export const generated: Meta<Generated> = {
   "SELECT issues.* FROM issues WHERE tool = :tool AND project = :project AND status = :status AND (:type IS NULL OR type = :type) AND (:priority IS NULL OR priority = :priority) AND (:label IS NULL OR EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = :label)) AND sort_key > :after AND (:query IS NULL OR instr(body, :query) > 0 OR EXISTS(SELECT 1 FROM comments WHERE issue_id = issues.id AND instr(body, :query) > 0)) ORDER BY sort_key LIMIT :limit": { params: ["tool", "project", "status", "type", "priority", "label", "after", "query", "limit"], encode: [], json: [], reads: ["comments", "issues"] },
   "SELECT * FROM memories WHERE project = :project AND id = :id": { params: ["project", "id"], encode: [], json: [], reads: ["memories"] },
   "SELECT * FROM memories WHERE project = :project AND sort_key > :after AND (:query IS NULL OR instr(title, :query) > 0 OR instr(body, :query) > 0) ORDER BY sort_key LIMIT :limit": { params: ["project", "after", "query", "limit"], encode: [], json: [], reads: ["memories"] },
+  "SELECT memory_store_identity.incarnation, CAST(COALESCE(project_memory_revisions.revision,0) AS INTEGER) AS revision FROM memory_store_identity LEFT JOIN project_memory_revisions ON project_memory_revisions.project = :project WHERE singleton = 1": { params: ["project"], encode: [], json: [], reads: ["memory_store_identity", "project_memory_revisions"] },
+  "SELECT project FROM issues WHERE id = :id": { params: ["id"], encode: [], json: [], reads: ["issues"] },
 };
 
 export const statements = {
@@ -52,4 +62,6 @@ export const statements = {
   ["listByStatus"]: "SELECT issues.* FROM issues WHERE tool = :tool AND project = :project AND status = :status AND (:type IS NULL OR type = :type) AND (:priority IS NULL OR priority = :priority) AND (:label IS NULL OR EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = :label)) AND sort_key > :after AND (:query IS NULL OR instr(body, :query) > 0 OR EXISTS(SELECT 1 FROM comments WHERE issue_id = issues.id AND instr(body, :query) > 0)) ORDER BY sort_key LIMIT :limit",
   ["memoryShow"]: "SELECT * FROM memories WHERE project = :project AND id = :id",
   ["memoryList"]: "SELECT * FROM memories WHERE project = :project AND sort_key > :after AND (:query IS NULL OR instr(title, :query) > 0 OR instr(body, :query) > 0) ORDER BY sort_key LIMIT :limit",
+  ["memoryRevision"]: "SELECT memory_store_identity.incarnation, CAST(COALESCE(project_memory_revisions.revision,0) AS INTEGER) AS revision FROM memory_store_identity LEFT JOIN project_memory_revisions ON project_memory_revisions.project = :project WHERE singleton = 1",
+  ["issueProject"]: "SELECT project FROM issues WHERE id = :id",
 } as const;

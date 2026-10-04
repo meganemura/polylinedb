@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/d1.ts';
 import { executeOperation, parseOperation } from '../src/operations.ts';
-import { SCHEMA_SQL } from '../src/schema.ts';
+import { SCHEMA_STATEMENTS } from '../src/schema.ts';
 
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');
@@ -19,7 +19,7 @@ const runtime = new Miniflare({
 
 try {
   const database = await runtime.getD1Database('DB');
-  await database.batch(SCHEMA_SQL.split(';').map((sql) => sql.trim()).filter(Boolean).map((sql) => database.prepare(sql)));
+  await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
   const db = d1Executor(database);
   const run = (operation: unknown) => executeOperation(db, parseOperation(operation), 'test:d1');
   const memoryRequest = { op: 'memory_create', project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'D1 fact', body: 'Shared memory contract' };

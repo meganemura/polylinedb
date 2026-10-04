@@ -85,7 +85,7 @@ for(const mode of ['success','lost','cas','staged','stale']){
  if(mode==='staged'){
   assert.match(result.stderr,/Latest Worker version is not the active deployment/);
   const unchanged=new DatabaseSync(sourcePath);
-  assert.equal(unchanged.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger'").get()?.n,0);
+  assert.equal(unchanged.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'polylinedb_retired_%'").get()?.n,0);
   const unchangedRows=Object.fromEntries(tables.map(t=>[t,unchanged.prepare('SELECT * FROM '+t).all()]));unchanged.close();
   assert.equal(canonicalSnapshot(rawToSnapshot(unchangedRows)),canonicalSnapshot(rawToSnapshot(before)));
   assert.deepEqual(JSON.parse(readFileSync(configPath,'utf8')),config);
@@ -94,7 +94,7 @@ for(const mode of ['success','lost','cas','staged','stale']){
   assert.equal(canonicalSnapshot(rawToSnapshot(unchangedCloud)),canonicalSnapshot(rawToSnapshot(baseline)));
   outcomes.push({mode,result:'VERIFIED'});continue;
  }
- const retired=new DatabaseSync(sourcePath);assert.equal(retired.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger'").get()?.n,21);assert.throws(()=>retired.exec('UPDATE counters SET last_number=last_number'),/retired/);retired.close();
+ const retired=new DatabaseSync(sourcePath);assert.equal(retired.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'polylinedb_retired_%'").get()?.n,27);assert.throws(()=>retired.exec('UPDATE counters SET last_number=last_number'),/retired/);retired.close();
  const remote=new DatabaseSync(cloudPath);const after=Object.fromEntries(tables.map(t=>[t,remote.prepare('SELECT * FROM '+t).all()]));remote.close();
  assert.equal(canonicalSnapshot(rawToSnapshot(after)),canonicalSnapshot(rawToSnapshot(expected)));
  const actual=JSON.parse(readFileSync(configPath,'utf8'));

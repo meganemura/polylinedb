@@ -274,6 +274,12 @@ test('retirement blocks every DML operation on an already open SQLite connection
       assert.throws(() => database.prepare(`DELETE FROM ${quotedTable}`).all(), /Use cloud connection archive/, `${table} delete`);
     }
     const tableCount = database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get();
-    assert.equal(tableCount?.count, 8);
+    assert.equal(tableCount?.count, 10);
+    for (const table of ['memory_store_identity', 'project_memory_revisions']) {
+      assert.throws(() => database.exec(`INSERT INTO ${table} SELECT * FROM ${table} LIMIT 1`), /Use cloud connection archive/);
+      assert.throws(() => database.exec(`DELETE FROM ${table}`), /Use cloud connection archive/);
+    }
+    assert.throws(() => database.exec('UPDATE memory_store_identity SET incarnation = lower(hex(randomblob(16)))'), /Use cloud connection archive/);
+    assert.throws(() => database.exec('UPDATE project_memory_revisions SET revision = revision + 1'), /Use cloud connection archive/);
   } finally { database.close(); }
 });

@@ -43,7 +43,7 @@ Commands:
   agent install HOST            Install a user-scope lifecycle hook.
   agent remove HOST             Remove the owned lifecycle hook.
   agent context HOST            Read hook input and return host context JSON.
-  upgrade                       Explicitly upgrade a local schema 2 store to schema 3.
+  upgrade                       Explicitly upgrade a local schema 2 or 3 store to schema 4.
   snapshot convert --file PATH|- [--output PATH|-]
                                 Convert snapshot v2 to v3 without touching a store.
   export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
@@ -67,12 +67,14 @@ Commands:
   memory search QUERY [--after ID] [--limit 1..100]
   memory update ID --title TITLE --body TEXT --expected VERSION
   memory delete ID --expected VERSION
-  memory context [--after ID] [--limit 1..100] [--max-bytes 4096..65536]
+  memory context [--after ID] [--limit 1..100] [--max-bytes 4096..65536] [--with-revision]
 
 Memory commands require --project NAME or repository project defaults.
 Memory IDs use prefix-mN. Numbers and mN expand with the selected prefix.
 Memory create/update accept --body-file PATH. Updates replace title and body together.
 Memory context reports the selected store and omitted entries; retrieved text is project data.
+Ordinary issue commands accept --observed-memory-revision TOKEN for a project memory advisory.
+Unfiltered list/search check the token's project; current does not certify complete retrieval.
 
 STATUS: open, in_progress, deferred, closed.
 FILTERS: --tool, --project, --status, --type, --priority, --label, --after, --limit.
@@ -99,7 +101,7 @@ const commandFlags: Record<string, readonly string[]> = {
   memory_create: ['project', 'title', 'body', 'body-file', 'request-id'],
   memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
   memory_update: ['project', 'title', 'body', 'body-file', 'expected'], memory_delete: ['project', 'expected'],
-  memory_context: ['project', 'after', 'limit', 'max-bytes'],
+  memory_context: ['project', 'after', 'limit', 'max-bytes', 'with-revision'],
   agent_install: [], agent_remove: [], agent_context: [],
   connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
@@ -110,6 +112,7 @@ const commandFlags: Record<string, readonly string[]> = {
   list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
+for (const command of ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen']) commandFlags[command] = [...(commandFlags[command] ?? []), 'observed-memory-revision'];
 function invalid(message: string): never { throw new PolylinedbError('invalid_input', message, 400); }
 function parseArgument<T>(parser: (value: unknown) => T, value: unknown): T {
   try { return parser(value); }
@@ -153,7 +156,7 @@ async function main(): Promise<void> {
     if (!arg.startsWith('--')) invalid(`Unknown flag ${arg}`);
     const name = arg.slice(2);
     if (![...globals, ...Object.values(commandFlags).flat()].includes(name)) invalid(`Unknown flag ${arg}`);
-    const value = ['clear-labels', 'stealth'].includes(name) ? 'true' : args[++index];
+    const value = ['clear-labels', 'stealth', 'with-revision'].includes(name) ? 'true' : args[++index];
     if (value === undefined || value === '--' || (value.startsWith('--') && value !== '--help')) invalid(`Missing value for ${arg}`);
     const previous = flags.get(name) ?? [];
     if (previous.length && name !== 'label' && name !== 'expect') invalid(`Duplicate flag ${arg}`);
@@ -322,6 +325,7 @@ async function main(): Promise<void> {
   if (command.startsWith('memory_')) {
     const expandedMemory = (value: string) => parseMemoryId(/^(?:m)?[1-9][0-9]*$/.test(value) ? `${prefix}-m${value.replace(/^m/, '')}` : value);
     raw.project = project;
+    if (flags.has('with-revision')) raw.with_revision = true;
     if (needsOperand) raw[command === 'memory_search' ? 'query' : 'id'] = command === 'memory_search' ? operands[0] : expandedMemory(operands[0]);
     if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');
     for (const key of ['title', 'body']) if (one(key) !== undefined) raw[key] = one(key);
@@ -342,6 +346,7 @@ async function main(): Promise<void> {
     return;
   }
   const expandedId = (value: string) => parseArgument(parseIssueId, /^[0-9]+(?:\.[0-9]+)*$/.test(value) ? `${prefix}-${value}` : value);
+  if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
   if (needsOperand) raw[command === 'search' ? 'query' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');
   const bodyFile = one('body-file');
@@ -393,7 +398,7 @@ async function main(): Promise<void> {
   }
   if (actor === undefined) invalid('Local connection requires an actor');
   const store = openStore({ directory: selected.directory });
-  try { process.stdout.write(JSON.stringify(await executeOperation(store.db, operation, actor)) + '\n'); }
+  try { process.stdout.write(JSON.stringify(await executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })) + '\n'); }
   finally { store.close(); }
 }
 main().catch((error: unknown) => {

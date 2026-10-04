@@ -2,7 +2,7 @@
 export const statuses = ['open', 'in_progress', 'deferred', 'closed'] as const;
 export const issueTypes = ['bug', 'task', 'epic', 'feature', 'chore'] as const;
 export const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'] as const;
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const MEMORY_SCHEMA_SQL = `
 CREATE TABLE memories (
@@ -75,4 +75,42 @@ CREATE TABLE comments (
 );
 CREATE INDEX comments_issue ON comments(issue_id, created_at, id);
 `;
-export const SCHEMA_SQL = SCHEMA_V2_SQL.replace('VALUES (2)', `VALUES (${SCHEMA_VERSION})`) + MEMORY_SCHEMA_SQL;
+export const SCHEMA_V3_SQL = SCHEMA_V2_SQL.replace('VALUES (2)', 'VALUES (3)') + MEMORY_SCHEMA_SQL;
+export const MEMORY_REVISION_STATEMENTS = [
+  `CREATE TABLE memory_store_identity (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1),
+    incarnation TEXT NOT NULL CHECK(length(incarnation) = 32 AND incarnation NOT GLOB '*[^a-f0-9]*')
+  )`,
+  'INSERT INTO memory_store_identity(singleton,incarnation) VALUES (1,lower(hex(randomblob(16))))',
+  `CREATE TABLE project_memory_revisions (
+    project TEXT PRIMARY KEY NOT NULL CHECK(length(project) > 0),
+    revision INTEGER NOT NULL CONSTRAINT memory_revision_not_exhausted CHECK(typeof(revision) = 'integer' AND revision BETWEEN 0 AND 9007199254740991)
+  )`,
+  'INSERT INTO project_memory_revisions(project,revision) SELECT DISTINCT project,1 FROM memories',
+  `CREATE TRIGGER memories_fixed_identity BEFORE UPDATE OF id,project ON memories
+    WHEN NEW.id <> OLD.id OR NEW.project <> OLD.project
+    BEGIN SELECT RAISE(ABORT,'memory_identity_immutable'); END`,
+  ...(['INSERT', 'UPDATE', 'DELETE'] as const).map(event => {
+    const row = event === 'DELETE' ? 'OLD' : 'NEW';
+    return `CREATE TRIGGER memories_revision_${event.toLowerCase()} AFTER ${event} ON memories
+      BEGIN
+        INSERT INTO project_memory_revisions(project,revision) VALUES (${row}.project,1)
+        ON CONFLICT(project) DO UPDATE SET revision = revision + 1;
+      END`;
+  }),
+];
+export const ROTATE_MEMORY_IDENTITY_SQL = 'UPDATE memory_store_identity SET incarnation = lower(hex(randomblob(16))) WHERE singleton = 1';
+export function schemaUpgradeStatements(previous: 2 | 3): readonly string[] {
+  return [
+    `INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT count(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ${previous})`,
+    ...(previous === 2 ? MEMORY_SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean) : []),
+    ...MEMORY_REVISION_STATEMENTS,
+    `UPDATE schema_version SET version = ${SCHEMA_VERSION} WHERE version = ${previous}`,
+  ];
+}
+export const SCHEMA_STATEMENTS = [
+  ...SCHEMA_V2_SQL.replace('VALUES (2)', `VALUES (${SCHEMA_VERSION})`).split(';').map(sql => sql.trim()).filter(Boolean),
+  ...MEMORY_SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean),
+  ...MEMORY_REVISION_STATEMENTS,
+];
+export const SCHEMA_SQL = SCHEMA_STATEMENTS.join(';\n') + ';\n';

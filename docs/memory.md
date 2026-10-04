@@ -114,15 +114,16 @@ See [host lifecycle hooks](host-hooks.md) for event support, limitations, and re
 
 ## Existing stores and snapshots
 
-Schema 3 and snapshot v3 include memory content, versions, attribution, issued counters, and creation receipts.
+Schema 4 stores memory content, versions, attribution, issued counters, creation receipts, and operational memory revisions.
+Snapshot v3 retains its existing content fields and excludes operational revisions and store identity.
 Stop writers and retain a private backup before upgrading an existing local store.
 Use the previous CLI to export schema 2 before replacing it, or copy the stopped SQLite database.
 Then run `pd --actor IDENTITY upgrade` with the selected local connection.
-The command checks the canonical schema 2 and upgrades it in one transaction.
+The command checks canonical schema 2 or 3 and upgrades it to schema 4 in one transaction.
 A repeated upgrade returns `already_current`. Ordinary reads refuse an old schema without migrating it.
 Repository configuration remains compatible with its existing versions.
 
-Convert an old snapshot explicitly before importing it into a new schema 3 store.
+Convert an old snapshot explicitly before importing it into a new schema 4 store.
 
 ```sh
 pd snapshot convert --file snapshot-v2.json --output snapshot-v3.json
@@ -134,3 +135,42 @@ Conversion validates v2 and adds empty memory collections. It does not open a da
 The v3 digest differs from the v2 digest. Use the converted digest for D1 transfer targets.
 Output files are private and existing files are refused.
 Follow the [D1 transfer procedure](d1-migration.md) for a cloud store.
+
+## Detect memory changes during a session
+
+Retrieve context with `--with-revision` and retain the returned `memory_revision` token.
+Pass it to ordinary issue commands with `--observed-memory-revision TOKEN`.
+
+```sh
+pd memory context --project demo --with-revision
+pd list --project demo --observed-memory-revision TOKEN
+pd comment pd-42 --body 'Reviewed' --observed-memory-revision TOKEN
+```
+
+HTTP and MCP use `with_revision: true` and `observed_memory_revision` for the same options.
+The successful issue result adds `memory_freshness` with its `project` and status.
+`current` means the project accepted no memory mutation since the observation.
+`stale` reports `memory_changed`, `project_changed`, or `store_changed`.
+`unavailable` means the issue operation succeeded but the advisory could not complete.
+Retrieve context again after `stale` or `unavailable` before another decision that depends on memory.
+The advisory never advances the retained token.
+Requests without these options keep their existing result fields.
+
+The advisory adds one indexed SQLite or D1 query after the issue operation.
+It uses the existing HTTP or MCP response, so it adds no client network round trip.
+In a warm local process, 500 paired list calls had median times of 0.058 ms without an observation and 0.138 ms with one.
+The fixture contained 100 memories with 1,000-byte bodies and used 50 warm-up pairs.
+These measurements cover local query overhead. They exclude CLI startup, authentication, and network latency.
+
+The token covers the whole project, including omitted entries.
+It does not certify complete retrieval.
+Retain omission notices and compare tokens when combining pages.
+A changed token requires a new traversal.
+An unfiltered list or search checks the token's project, even when results include other projects.
+Issue commands addressed by ID check the returned issue project.
+Comment samples the issue project after the comment completes, so a concurrent project move can change its advisory scope.
+
+Snapshot import into a new store invalidates source observations.
+An identical repeated import keeps the destination's observation.
+Raw database restore requires stopped connections and an incarnation rotation before service resumes.
+See [the observation decision](adr/0005-memory-freshness.md#raw-database-restore) for the SQL and the rollback limitation.

@@ -3,6 +3,7 @@ import { PolylinedbError } from './issues.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
 import { parsePrefix, parseRequestId } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
+import { statements } from './solarsql.generated.ts';
 
 export type Memory = { id: string; project: string; title: string; body: string; version: number;
   created_at: string; created_by: string; updated_at: string; updated_by: string };
@@ -16,10 +17,16 @@ export type MemoryOperation =
   | (Page & { op: 'memory_search'; query: string })
   | (Scope & { op: 'memory_update'; id: string; title: string; body: string; expected: number })
   | (Scope & { op: 'memory_delete'; id: string; expected: number })
-  | (Page & { op: 'memory_context'; max_bytes: number });
+  | (Page & { op: 'memory_context'; max_bytes: number; with_revision?: true });
 export type MemoryContext = { project: string; store: MemoryStore; memories: Memory[];
   limits: { entries: number; bytes: number }; omitted: boolean; next_cursor: string | null;
-  notices: { code: 'entry_limit' | 'byte_limit'; skipped_id?: string }[] };
+  notices: { code: 'entry_limit' | 'byte_limit'; skipped_id?: string }[]; memory_revision?: MemoryRevision };
+export type MemoryRevision = string & { readonly __brand: 'MemoryRevision' };
+export type MemoryFreshness =
+  | { status: 'current'; project: string }
+  | { status: 'stale'; project: string; reason: 'memory_changed' | 'project_changed' | 'store_changed' }
+  | { status: 'unavailable'; project: string };
+type RevisionObservation = { store: MemoryStore; incarnation: string; project: string; revision: number };
 export type MemoryResult = { memory: Memory } | { memories: Memory[]; next_cursor: string | null }
   | { deleted: { id: string; project: string; version: number } } | MemoryContext;
 export type MemoryCounter = { prefix: string; last_number: number };
@@ -61,7 +68,7 @@ export const memorySchemas = {
   memory_search: schema({ ...pageSchema, query: bodySchema }, ['project', 'query']),
   memory_update: schema({ project: nameSchema, id: idSchema, title: nameSchema, body: bodySchema, expected: versionSchema }, ['project', 'id', 'title', 'body', 'expected']),
   memory_delete: schema({ project: nameSchema, id: idSchema, expected: versionSchema }, ['project', 'id', 'expected']),
-  memory_context: schema({ ...pageSchema, max_bytes: { type: 'integer', minimum: 4096, maximum: 65536, default: 32768 } }, ['project']),
+  memory_context: schema({ ...pageSchema, max_bytes: { type: 'integer', minimum: 4096, maximum: 65536, default: 32768 }, with_revision: { const: true, type: 'boolean' } }, ['project']),
 };
 export function parseMemoryOperation(value: unknown): MemoryOperation {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Memory operation must be an object');
@@ -82,7 +89,10 @@ export function parseMemoryOperation(value: unknown): MemoryOperation {
     case 'memory_show': return { op, project, id: parseMemoryId(input.id) };
     case 'memory_list': return { op, ...page() };
     case 'memory_search': return { op, ...page(), query: text(input.query, 'query', 16384) };
-    case 'memory_context': return { op, ...page(), max_bytes: input.max_bytes === undefined ? 32768 : integer(input.max_bytes, 'max_bytes', 4096, 65536) };
+    case 'memory_context': {
+      if (input.with_revision !== undefined && input.with_revision !== true) return invalid('with_revision must be true when supplied');
+      return { op, ...page(), max_bytes: input.max_bytes === undefined ? 32768 : integer(input.max_bytes, 'max_bytes', 4096, 65536), ...(input.with_revision === true ? { with_revision: true } : {}) };
+    }
     case 'memory_update': return { op, project, id: parseMemoryId(input.id), title: name(input.title, 'title'), body: text(input.body, 'body', 16384), expected: integer(input.expected, 'expected') };
     case 'memory_delete': return { op, project, id: parseMemoryId(input.id), expected: integer(input.expected, 'expected') };
     default: return invalid('Unknown memory operation');
@@ -96,11 +106,15 @@ export function memoryRow(row: Record<string, unknown>): Memory {
 }
 const observation = (project: string, id: string): SqlStatement => ({ sql: 'SELECT * FROM memories WHERE project = ? AND id = ?', params: [project, id] });
 const missing = (project: string, id: string): never => { throw new PolylinedbError('memory_not_found', 'Memory not found in this project', 404, { project, id }); };
+function memoryWriteFailure(error: unknown): never {
+  if (error instanceof Error && error.message.includes('memory_revision_not_exhausted')) throw new PolylinedbError('memory_revision_exhausted', 'Project memory revision reached its limit', 409);
+  throw error;
+}
 
-function contextPage(operation: Extract<MemoryOperation, { op: 'memory_context' }>, rows: Memory[], store: MemoryStore): MemoryContext {
+function contextPage(operation: Extract<MemoryOperation, { op: 'memory_context' }>, rows: Memory[], store: MemoryStore, revision?: MemoryRevision): MemoryContext {
   const available = rows.slice(0, operation.limit);
   const output: MemoryContext = { project: operation.project, store, memories: available, limits: { entries: operation.limit, bytes: operation.max_bytes }, omitted: rows.length > operation.limit,
-    next_cursor: rows.length > operation.limit ? available.at(-1)?.id ?? null : null, notices: rows.length > operation.limit ? [{ code: 'entry_limit' }] : [] };
+    next_cursor: rows.length > operation.limit ? available.at(-1)?.id ?? null : null, notices: rows.length > operation.limit ? [{ code: 'entry_limit' }] : [], ...(revision === undefined ? {} : { memory_revision: revision }) };
   while (encode(output) > operation.max_bytes && output.memories.length) {
     output.memories.pop();
     output.omitted = true;
@@ -131,7 +145,7 @@ export async function executeMemoryOperation(db: SqlExecutor, operation: MemoryO
         { sql: 'SELECT memories.* FROM memories JOIN memory_requests ON memories.id = memory_requests.memory_id WHERE request_id = ?', params: [operation.request_id] },
       ]).catch((error: unknown) => {
         if (error instanceof Error && error.message.includes('memory_counter_not_exhausted')) throw new PolylinedbError('counter_exhausted', 'Memory counter reached its limit', 409);
-        throw error;
+        return memoryWriteFailure(error);
       });
       const request = result[3]?.rows[0];
       if (!request) throw new PolylinedbError('storage_error', 'Missing memory creation receipt', 503);
@@ -146,6 +160,14 @@ export async function executeMemoryOperation(db: SqlExecutor, operation: MemoryO
     }
     case 'memory_list': case 'memory_search': case 'memory_context': {
       if (operation.op === 'memory_context' && !store) throw new PolylinedbError('invalid_input', 'Memory context requires the selected store identity', 400);
+      if (operation.op === 'memory_context' && operation.with_revision && store) {
+        const result = await db.batch([
+          { sql: statements.memoryRevision.replace(':project', '?'), params: [operation.project] },
+          { sql: 'SELECT * FROM memories WHERE project = ? AND sort_key > ? ORDER BY sort_key LIMIT ?', params: [operation.project, operation.after ? memorySortKey(operation.after) : '', operation.limit + 1] },
+        ]);
+        const revision = revisionToken(result[0]?.rows, operation.project, store);
+        return contextPage(operation, (result[1]?.rows ?? []).map(memoryRow), store, revision);
+      }
       const rows = (await db.reads.all(issueQueries.memoryList, { project: operation.project, after: operation.after ? memorySortKey(operation.after) : '', limit: operation.limit + 1, query: operation.op === 'memory_search' ? operation.query : null })).map(memoryRow);
       if (operation.op === 'memory_context' && store) return contextPage(operation, rows, store);
       const memories = rows.slice(0, operation.limit);
@@ -155,7 +177,7 @@ export async function executeMemoryOperation(db: SqlExecutor, operation: MemoryO
       const statement: SqlStatement = operation.op === 'memory_update'
         ? { sql: 'UPDATE memories SET title = ?, body = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE project = ? AND id = ? AND version = ? AND version < 9007199254740991 RETURNING *', params: [operation.title, operation.body, new Date().toISOString(), actor, operation.project, operation.id, operation.expected] }
         : { sql: 'DELETE FROM memories WHERE project = ? AND id = ? AND version = ? RETURNING *', params: [operation.project, operation.id, operation.expected] };
-      const result = await db.batch([statement, observation(operation.project, operation.id)]);
+      const result = await db.batch([statement, observation(operation.project, operation.id)]).catch(memoryWriteFailure);
       const changed = result[0]?.rows[0];
       if (changed) {
         const memory = memoryRow(changed);
@@ -169,4 +191,42 @@ export async function executeMemoryOperation(db: SqlExecutor, operation: MemoryO
       throw new PolylinedbError('storage_error', 'The database rejected a memory write without a matching condition', 503);
     }
   }
+}
+
+function decodeRevision(value: string): RevisionObservation {
+  try {
+    if (!/^pm1\.(?:[a-f0-9]{2}){1,2048}$/.test(value)) return invalid('Invalid observed memory revision');
+    const bytes = Uint8Array.from(value.slice(4).match(/../g) ?? [], hex => Number.parseInt(hex, 16));
+    const row: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    if (!row || typeof row !== 'object' || Array.isArray(row) || !('store' in row) || !('incarnation' in row) || !('project' in row) || !('revision' in row) || Object.keys(row).length !== 4) return invalid('Invalid observed memory revision');
+    const store = row.store;
+    if (!store || typeof store !== 'object' || Array.isArray(store) || !('kind' in store) || Object.keys(store).length !== 2) return invalid('Invalid observed memory store');
+    let identity: MemoryStore;
+    if (store.kind === 'local' && 'database_path' in store) identity = { kind: 'local', database_path: text(store.database_path, 'database path', 2048) };
+    else if (store.kind === 'cloud' && 'url' in store) identity = { kind: 'cloud', url: text(store.url, 'cloud origin', 2048) };
+    else return invalid('Invalid observed memory store');
+    if (typeof row.incarnation !== 'string' || !/^[a-f0-9]{32}$/.test(row.incarnation)) return invalid('Invalid observed memory incarnation');
+    return { store: identity, incarnation: row.incarnation, project: name(row.project, 'project'), revision: integer(row.revision, 'revision', 0) };
+  } catch { return invalid('Invalid observed memory revision'); }
+}
+export function parseMemoryRevision(value: unknown): MemoryRevision {
+  if (typeof value !== 'string') return invalid('Observed memory revision must be a token');
+  decodeRevision(value);
+  return value as MemoryRevision;
+}
+function revisionToken(rows: readonly Record<string, unknown>[] | undefined, project: string, store: MemoryStore): MemoryRevision {
+  const row = rows?.[0];
+  if (rows?.length !== 1 || !row || typeof row.incarnation !== 'string' || !/^[a-f0-9]{32}$/.test(row.incarnation) || typeof row.revision !== 'number' || !Number.isSafeInteger(row.revision) || row.revision < 0) throw new PolylinedbError('invalid_store', 'Invalid project memory revision', 500);
+  const payload: RevisionObservation = { store, incarnation: row.incarnation, project, revision: row.revision };
+  return parseMemoryRevision('pm1.' + Array.from(new TextEncoder().encode(JSON.stringify(payload)), byte => byte.toString(16).padStart(2, '0')).join(''));
+}
+export function observedMemoryProject(revision: MemoryRevision): string { return decodeRevision(revision).project; }
+export async function memoryFreshness(db: SqlExecutor, observed: MemoryRevision, project: string, store: MemoryStore): Promise<MemoryFreshness> {
+  const before = decodeRevision(observed);
+  if (before.project !== project) return { status: 'stale', project, reason: 'project_changed' };
+  if (JSON.stringify(before.store) !== JSON.stringify(store)) return { status: 'stale', project, reason: 'store_changed' };
+  const rows = await db.reads.all(issueQueries.memoryRevision, { project });
+  const current = decodeRevision(revisionToken(rows, project, store));
+  if (current.incarnation !== before.incarnation) return { status: 'stale', project, reason: 'store_changed' };
+  return current.revision === before.revision ? { status: 'current', project } : { status: 'stale', project, reason: 'memory_changed' };
 }

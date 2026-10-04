@@ -27,7 +27,7 @@ Create a target file with mode 0600 outside Git checkouts. Environment-specific 
   "accountId": "ACCOUNT_ID",
   "databaseId": "DATABASE_UUID",
   "snapshotSha256": "CANONICAL_SNAPSHOT_SHA256",
-  "schemaVersion": 3
+  "schemaVersion": 4
 }
 ```
 
@@ -46,25 +46,34 @@ Its optional `--output` writes that verified remote snapshot to a new file with 
 The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts.
 Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
 
-## Upgrade an existing schema 2 deployment
+## Upgrade an existing schema 2 or 3 deployment
 
-The new Worker needs schema 3 before memory operations can run. The CLI's `upgrade` command applies only to local SQLite.
+The new Worker needs schema 4. The CLI's `upgrade` command applies only to local SQLite.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
-Record the account, database UUID, and Worker binding. Check that the source has the canonical schema 2 and all four original collections.
+Record the account, database UUID, and Worker binding.
+Compare the deployed DDL with `SCHEMA_V2_SQL` or `SCHEMA_V3_SQL` in `src/schema.ts` before a write.
+Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
 Run `pd snapshot convert --file OLD --output NEW`, then use the new v3 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
-For an in-place upgrade, compare the deployed DDL with `SCHEMA_V2_SQL` in `src/schema.ts` before a write.
-Apply `MEMORY_SCHEMA_SQL` from that file, then change the single schema version row from 2 to 3.
-Use the operator's approved D1 transaction or batch mechanism; do not send these statements through the public Worker API.
+For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2` or `--upgrade-from 3`.
+Apply every statement in one approved D1 batch or transaction; do not send these statements through the public Worker API.
+The `schemaUpgradeStatements` export provides complete statements, including trigger bodies, for a D1 batch adapter.
+Do not split migration SQL at semicolons because trigger bodies contain semicolons.
+The batch checks the previous version, creates revision tables and triggers, seeds existing memory projects at revision 1, and sets schema version 4.
 Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
 Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
-Verify that the three new collections are empty. Deploy the new Worker only after those checks pass.
+Verify that schema 2 upgrades create empty memory collections.
+Verify that schema 3 upgrades preserve their memories and seed one revision row per existing memory project.
+Check that `memory_store_identity` has exactly one valid incarnation.
+Deploy the new Worker only after those checks pass.
 If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
 
 The application does not perform this remote upgrade automatically. This procedure requires separate operator approval and live verification.
+For a raw database rollback, stop readers and writers, restore, rotate the incarnation, then resume traffic.
+See [the restore contract](adr/0005-memory-freshness.md#raw-database-restore) for the exact SQL and verification.
 
 ## Recovery
 

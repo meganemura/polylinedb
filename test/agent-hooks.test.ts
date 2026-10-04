@@ -130,6 +130,23 @@ test('host hooks install, retrieve CLI memory, and remove only their own setting
   assert.deepEqual(readdirSync(cwd), ['.git']);
 });
 
+test('Codex keeps the full bounded context and its omission metadata', t => {
+  const { home, cwd } = fixture(t);
+  run(home, cwd, ['memory', 'create', '--title', 'Large entry', '--body', 'x'.repeat(6000), '--request-id', '123e4567-e89b-12d3-a456-426614174001']);
+  run(home, cwd, ['memory', 'create', '--title', 'Next entry', '--body', 'y'.repeat(5000), '--request-id', '123e4567-e89b-12d3-a456-426614174002']);
+  run(home, cwd, ['agent', 'install', 'codex']);
+  const settings = JSON.parse(readFileSync(settingsPath(home, 'codex'), 'utf8'));
+  const limit = settings.hooks.SessionStart[0].hooks[0].additionalContextLimit;
+  const injected = contextText('codex', run(home, cwd, ['agent', 'context', 'codex'], { input: JSON.stringify({ cwd }) }));
+  assert.ok(injected.length > 5000);
+  assert.ok(injected.length <= limit);
+  const data = JSON.parse(injected.slice(injected.indexOf('\n') + 1));
+  assert.match(data.memory_revision, /^pm1\./);
+  assert.equal(data.omitted, true);
+  assert.ok(data.notices.length > 0);
+  assert.ok(data.memories.some((memory: { body: string }) => memory.body === 'x'.repeat(6000)));
+});
+
 test('installation refuses symlinked settings and ambiguous owned commands', t => {
   const { home, cwd } = fixture(t);
   const directory = join(home, '.claude');

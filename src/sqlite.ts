@@ -6,7 +6,7 @@ import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, st
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { commentRow, issueRow, PolylinedbError } from './issues.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, MEMORY_SCHEMA_SQL } from './schema.ts';
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from './schema.ts';
 import { canonicalSnapshot, parseSnapshot } from './snapshot.ts';
 import type { Snapshot, SnapshotImport } from './snapshot.ts';
 import { issueSortKey } from './issue-id.ts';
@@ -64,7 +64,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   if (rows.length !== 1 || rows[0]?.version !== SCHEMA_VERSION) {
     throw new PolylinedbError('unsupported_schema', 'Database schema version is unsupported', 409, { supported: SCHEMA_VERSION, actual: rows.map((row) => row.version) });
   }
-  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests'].some(name => !tables.some(table => table.name === name))) {
+  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions'].some(name => !tables.some(table => table.name === name))) {
     throw new PolylinedbError('invalid_store', 'Database schema is incomplete', 500);
   }
   return 'current';
@@ -115,12 +115,12 @@ export function upgradeStore(location: StoreLocation): { result: 'upgraded' | 'a
         database.exec('COMMIT');
         return { result: 'already_current', version: SCHEMA_VERSION, database_path };
       }
-      if (versions.length !== 1 || versions[0]?.version !== 2) throw new PolylinedbError('unsupported_schema', 'Only schema 2 can be upgraded', 409);
-      reference.exec(SCHEMA_V2_SQL);
+      if (versions.length !== 1 || (versions[0]?.version !== 2 && versions[0]?.version !== 3)) throw new PolylinedbError('unsupported_schema', 'Only schemas 2 and 3 can be upgraded', 409);
+      const previous = versions[0].version;
+      reference.exec(previous === 2 ? SCHEMA_V2_SQL : SCHEMA_V3_SQL);
       const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
-      if (JSON.stringify(database.prepare(sql).all()) !== JSON.stringify(reference.prepare(sql).all())) throw new PolylinedbError('invalid_store', 'Upgrade requires the canonical schema 2', 409);
-      database.exec(MEMORY_SCHEMA_SQL);
-      database.exec(`UPDATE schema_version SET version = ${SCHEMA_VERSION} WHERE version = 2`);
+      if (JSON.stringify(database.prepare(sql).all()) !== JSON.stringify(reference.prepare(sql).all())) throw new PolylinedbError('invalid_store', `Upgrade requires the canonical schema ${previous}`, 409);
+      database.exec(schemaUpgradeStatements(previous).join(';\n') + ';');
       database.exec('COMMIT');
       return { result: 'upgraded', version: SCHEMA_VERSION, database_path };
     } catch (error) { database.exec('ROLLBACK'); throw error; }
@@ -182,6 +182,7 @@ export function openStore(location: StoreLocation): LocalStore {
           return { result: 'already_present', ...summary };
         }
         if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
+        database.exec(ROTATE_MEMORY_IDENTITY_SQL);
         const columns = ['id', 'parent_id', 'sort_key', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by'];
         const insertIssue = database.prepare(`INSERT INTO issues (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
         const issues = [...snapshot.issues].sort((a, b) => a.id.split('.').length - b.id.split('.').length);

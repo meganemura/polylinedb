@@ -11,7 +11,7 @@ import { initializeStore, openStore } from '../src/sqlite.ts';
 import { executeOperation, parseOperation } from '../src/operations.ts';
 import { d1Executor } from '../src/d1.ts';
 import { canonicalSnapshot } from '../src/snapshot.ts';
-import { SCHEMA_SQL } from '../src/schema.ts';
+import { SCHEMA_STATEMENTS } from '../src/schema.ts';
 
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');
@@ -31,8 +31,8 @@ try {
     return result.results;
   };
   const reset = async () => {
-    for (const table of ['memory_requests', 'memory_counters', 'memories', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
-    await database.batch(SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => database.prepare(sql)));
+    for (const table of ['memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
+    await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
   };
   await reset();
   const run = (operation: unknown) => executeOperation(source.db, parseOperation(operation), 'test:original');

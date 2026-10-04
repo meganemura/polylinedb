@@ -37,7 +37,8 @@ The old local store remains readable, and private snapshots retain recovery evid
 Normal operation uses the cloud connection after cutover.
 This transfer does not provide synchronization or an automatic return to the local store.
 
-The source and destination must have canonical schema 3.
+The source and destination must have the same canonical schema.
+Schema 4 adds operational memory identity and revision tables, as specified in [project memory observations](0005-memory-freshness.md).
 The current operator refuses additional restoration claim tables.
 Operators must pause cloud writers for the exact final comparison and review namespace conflicts before another migration strategy.
 Direct SQL administrators can remove retirement triggers; those triggers protect ordinary clients rather than administrative access.
