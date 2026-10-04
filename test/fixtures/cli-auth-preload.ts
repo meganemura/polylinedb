@@ -3,6 +3,7 @@ import childProcess from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { appendFileSync } from 'node:fs';
+import { traceCredentialChild } from './credential-trace.ts';
 import { initializeStore, openStore } from '../../src/sqlite.ts';
 import { executeOperation, parseOperation, PolylinedbError } from '../../src/issues.ts';
 
@@ -36,7 +37,7 @@ Object.defineProperty(childProcess, 'spawn', { value: (executable: string, args:
       });
     }
   `;
-  return spawn(process.execPath, ['-e', code, JSON.stringify(args)], options);
+  return traceCredentialChild(spawn, process.execPath, ['-e', code, JSON.stringify(args)], options, args);
 } });
 syncBuiltinESMExports();
 

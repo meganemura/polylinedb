@@ -21,15 +21,20 @@ function fixture(context: test.TestContext) {
     grant: { accessToken: 'synthetic-access-token', refreshToken: 'synthetic-refresh-token', expiresAt: Date.now() + 3600000, scope: '' } };
   writeFileSync(credential, 'pd-oauth-v1:' + Buffer.from(JSON.stringify(session)).toString('base64'), { mode: 0o600 });
   const log = join(root, 'requests.jsonl');
+  const trace = join(root, 'credential-outcomes.jsonl');
   const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'local-data'),
     POLYLINEDB_CONNECTION: undefined, POLYLINEDB_DATA_DIR: undefined, POLYLINEDB_ACTOR: 'local:dormant',
-    PD_AUTH_FIXTURE_STATE: credential, PD_AUTH_FIXTURE_MODE: 'normal', PD_CLOUD_FIXTURE_STORE: join(root, 'remote-domain-store'),
+    PD_AUTH_FIXTURE_STATE: credential, PD_AUTH_FIXTURE_MODE: 'normal', PD_AUTH_FIXTURE_TRACE: trace,
+    PD_CLOUD_FIXTURE_STORE: join(root, 'remote-domain-store'),
     PD_CLOUD_FIXTURE_LOG: log, PD_CLOUD_FIXTURE_MODE: 'normal' };
-  const run = (args: string[], options: { status?: number; mode?: string; auth?: string; input?: string } = {}) => {
+  const run = (args: string[], options: { status?: number; mode?: string; auth?: string; input?: string; trace?: string } = {}) => {
     const result = spawnSync(process.execPath, ['--import', preload, executable, ...args], { cwd,
-      env: { ...env, PD_AUTH_FIXTURE_MODE: options.auth ?? 'normal', PD_CLOUD_FIXTURE_MODE: options.mode ?? 'normal' },
+      env: { ...env, PD_AUTH_FIXTURE_MODE: options.auth ?? 'normal', PD_CLOUD_FIXTURE_MODE: options.mode ?? 'normal',
+        PD_AUTH_FIXTURE_TRACE: options.trace ?? trace },
       encoding: 'utf8', input: options.input, timeout: 10000 });
-    assert.equal(result.status, options.status ?? 0, `${result.stderr}\n${result.stdout}`);
+    const expected = options.status ?? 0;
+    const diagnostic = result.status !== expected && existsSync(trace) ? readFileSync(trace, 'utf8').trim().split('\n').slice(-3).join('\n') : '';
+    assert.equal(result.status, expected, `${result.stderr}\n${result.stdout}\n${diagnostic}`);
     assert.equal(result.status === 0 ? result.stderr : result.stdout, '');
     assert.equal(result.stderr.includes('synthetic-private-token'), false);
     assert.equal(result.stdout.includes('synthetic-access-token'), false);
@@ -40,8 +45,28 @@ function fixture(context: test.TestContext) {
   run(['init', '--connection', 'cloud', '--tool', 'cli-test', '--project', 'sample', '--prefix', 'sm']);
   const requests = (): { op: string; request_id?: string }[] => existsSync(log)
     ? readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
-  return { root, run, requests };
+  return { root, run, requests, trace };
 }
+
+test('synthetic credential diagnostics capture rejection without exposing child output', context => {
+  const { root, run, trace } = fixture(context);
+  assert.equal(run(['actor'], { auth: 'denied', status: 1 }).error.code, 'auth_store_unavailable');
+  const diagnostics = readFileSync(trace, 'utf8');
+  assert.equal(diagnostics.includes('synthetic-private-token'), false);
+  assert.equal(diagnostics.includes('synthetic-access-token'), false);
+  const outcome = JSON.parse(diagnostics.trim().split('\n').at(-1) ?? '');
+  assert.equal(outcome.category, 'read');
+  assert.equal(outcome.status, 1);
+  assert.equal(outcome.stdout_bytes, 0);
+  assert.equal(outcome.stderr_bytes, Buffer.byteLength('synthetic-private-token'));
+  assert.throws(() => run(['actor'], { auth: 'denied' }), error => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.message.includes('synthetic-private-token'), false);
+    assert.equal(error.message.includes('"status":1'), true);
+    return true;
+  });
+  assert.deepEqual(run(['actor'], { trace: root }), { actor: 'oauth:synthetic-owner' });
+});
 
 test('cloud CLI executes all nine operations with defaults, actor ownership, body input, and field conflicts', context => {
   const { root, run, requests } = fixture(context);
