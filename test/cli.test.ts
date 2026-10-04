@@ -1,12 +1,15 @@
 // Subprocesses verify the executable contract against real persistent storage.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
+import { retireSource } from '../scripts/d1-additive-merge.ts';
+import { openStore } from '../src/local-store/index.ts';
 
 const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 function isolatedEnvironment(cwd: string): NodeJS.ProcessEnv {
@@ -34,6 +37,15 @@ function fixture(t: TestContext) {
     return JSON.parse(output);
   }
   return { root, cwd, directory, run };
+}
+function retire(directory: string, connectionName = 'archive'): DatabaseSync {
+  const database = new DatabaseSync(join(directory, 'polylinedb.sqlite'));
+  try {
+    database.exec('BEGIN IMMEDIATE');
+    retireSource(database, connectionName);
+    database.exec('COMMIT');
+    return database;
+  } catch (error) { database.close(); throw error; }
 }
 
 test('CLI persists issues, exposes conflicts, and appends comments', t => {
@@ -250,6 +262,74 @@ test('CLI file export is private and refuses to overwrite an existing snapshot',
   const refused = run(['export', '--file', file], { status: 1 });
   assert.equal(refused.error.code, 'internal_error');
   assert.deepEqual(readFileSync(file), before);
+});
+
+test('CLI reports retired stores for writes while reads and exports remain available', async t => {
+  const { root, cwd, directory, run } = fixture(t);
+  run(['init']);
+  const issue = run(['create', '--tool', 'tool', '--project', 'project', '--body', 'Keep this issue']).issue;
+  const memory = run(['memory', 'create', '--project', 'project', '--title', 'Keep this memory', '--body', 'Memory body']).memory;
+  const snapshot = run(['export']);
+  const alreadyOpenStore = openStore({ directory, cwd });
+  const retirement = retire(directory);
+  const message = 'This local database is retired. Use cloud connection archive.';
+  const writes = [
+    ['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked issue'],
+    ['comment', issue.id, '--body', 'Blocked comment'],
+    ['update', issue.id, '--body', 'Blocked update', '--expect', 'body=1'],
+    ['close', issue.id, '--expected', '1'],
+    ['reopen', issue.id, '--expected', '1'],
+    ['memory', 'create', '--project', 'project', '--title', 'Blocked memory', '--body', 'Blocked body'],
+    ['memory', 'update', memory.id, '--project', 'project', '--title', 'Blocked title', '--body', 'Blocked body', '--expected', '1'],
+    ['memory', 'delete', memory.id, '--project', 'project', '--expected', '1'],
+  ];
+  try {
+    for (const args of writes) assert.deepEqual(run(args, { status: 4 }).error, { code: 'store_retired', message });
+    await assert.rejects(alreadyOpenStore.db.batch([{ sql: 'UPDATE issues SET body = body WHERE id = ?', params: [issue.id] }]),
+      error => error instanceof Error && 'code' in error && error.code === 'store_retired' && error.message === message);
+    assert.equal(run(['list']).issues.length, 1);
+    assert.deepEqual(run(['export']), snapshot);
+
+    const destination = join(root, 'empty-retired-store');
+    const destinationCli = (args: string[], options: { status?: number; input?: string } = {}) => plainCli(cwd,
+      ['--data-dir', destination, '--actor', 'local:restorer', ...args], options);
+    destinationCli(['init']);
+    const destinationRetirement = retire(destination);
+    try {
+      assert.deepEqual(destinationCli(['import', '--file', '-'], { input: JSON.stringify(snapshot), status: 4 }).error,
+        { code: 'store_retired', message });
+      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 3,
+        issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] });
+    } finally { destinationRetirement.close(); }
+  } finally {
+    retirement.close();
+    alreadyOpenStore.close();
+  }
+});
+
+test('CLI does not classify lookalike or partial retirement triggers as a retired store', t => {
+  const { root, cwd, run } = fixture(t);
+  const lookalikeDirectory = join(root, 'lookalike-store');
+  const lookalike = (args: string[], options: { status?: number } = {}) => plainCli(cwd,
+    ['--data-dir', lookalikeDirectory, '--actor', 'local:test', ...args], options);
+  lookalike(['init']);
+  const message = 'This local database is retired. Use cloud connection archive.';
+  const lookalikeDatabase = new DatabaseSync(join(lookalikeDirectory, 'polylinedb.sqlite'));
+  lookalikeDatabase.exec(`CREATE TRIGGER lookalike BEFORE INSERT ON counters BEGIN SELECT RAISE(ABORT, '${message}'); END`);
+  lookalikeDatabase.close();
+  assert.deepEqual(lookalike(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error,
+    { code: 'internal_error', message });
+
+  const partialDirectory = join(root, 'partial-retired-store');
+  const partial = (args: string[], options: { status?: number } = {}) => plainCli(cwd,
+    ['--data-dir', partialDirectory, '--actor', 'local:test', ...args], options);
+  partial(['init']);
+  const partialRetirement = retire(partialDirectory);
+  try {
+    partialRetirement.exec('DROP TRIGGER polylinedb_retired_issues_insert');
+  } finally { partialRetirement.close(); }
+  assert.deepEqual(partial(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error,
+    { code: 'internal_error', message });
 });
 
 test('CLI sequential IDs support natural pagination, child aliases and explicit prefix overrides', t => {
