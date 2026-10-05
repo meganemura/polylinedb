@@ -26,7 +26,17 @@ test('CLI retrieves a prior session fact, detects conflicts, and preserves it th
   assert.equal(typeof observed, 'string');
   assert.deepEqual(run(['list', '--project', 'demo', '--observed-memory-revision', observed]).memory_freshness, { status: 'current', project: 'demo' });
   assert.equal(run(['memory', 'show', 'm1', '--project', 'demo']).memory.version, 1);
-  assert.equal(run(['memory', 'show', '1', '--project', 'other'], 3).error.code, 'memory_not_found');
+  assert.deepEqual(run(['memory', 'show', '1', '--project', 'other'], 3).error, {
+    code: 'memory_not_found', message: 'Memory not found in this project',
+    details: { id: 'pd-m1', project: 'other', prefix: 'pd', prefix_source: 'builtin' },
+  });
+  assert.deepEqual(run(['memory', 'show', 'm2', '--project', 'demo'], 3).error, {
+    code: 'memory_not_found', message: 'Memory not found in this project',
+    details: { id: 'pd-m2', project: 'demo', prefix: 'pd', prefix_source: 'builtin' },
+  });
+  assert.deepEqual(run(['memory', 'show', 'pd-m3', '--project', 'demo'], 3).error, {
+    code: 'memory_not_found', message: 'Memory not found in this project', details: { id: 'pd-m3', project: 'demo' },
+  });
   assert.equal(run(['memory', 'update', '1', '--project', 'demo', '--title', 'Test command', '--body', 'Run npm test twice.', '--expected', '1']).memory.version, 2);
   assert.deepEqual(run(['list', '--project', 'demo', '--observed-memory-revision', observed]).memory_freshness, { status: 'stale', project: 'demo', reason: 'memory_changed' });
   assert.equal(run(['memory', 'delete', '1', '--project', 'demo', '--expected', '1'], 4).error.code, 'memory_conflict');

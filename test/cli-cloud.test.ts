@@ -77,6 +77,19 @@ test('cloud CLI executes all nine operations with defaults, actor ownership, bod
   assert.equal(created.project, 'sample');
   assert.equal(created.created_by, 'oauth:synthetic-owner');
   assert.equal(run(['show', '1']).issue.body, 'Original issue');
+  const missingNumeric = run(['show', '48'], { status: 3 }).error;
+  assert.deepEqual(missingNumeric, {
+    code: 'not_found', message: 'The cloud rejected the operation.',
+    details: { id: 'sm-48', prefix: 'sm', prefix_source: 'repository' },
+  });
+  assert.deepEqual(requests().at(-1), { op: 'show', id: 'sm-48' });
+  assert.deepEqual(run(['show', 'sm-49'], { status: 3 }).error, {
+    code: 'not_found', message: 'The cloud rejected the operation.', details: { id: 'sm-49' },
+  });
+  assert.deepEqual(run(['--prefix', 'flag', 'show', '50'], { status: 3 }).error, {
+    code: 'not_found', message: 'The cloud rejected the operation.',
+    details: { id: 'flag-50', prefix: 'flag', prefix_source: 'flag' },
+  });
   assert.deepEqual(run(['list', '--project', 'sample']).issues.map((row: { id: string }) => row.id), ['sm-1']);
   assert.equal(run(['comment', '1', '--body', 'Searchable comment']).comment.created_by, 'oauth:synthetic-owner');
   assert.deepEqual(run(['search', 'Searchable']).issues.map((row: { id: string }) => row.id), ['sm-1']);

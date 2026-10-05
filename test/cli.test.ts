@@ -69,7 +69,21 @@ test('CLI persists issues, exposes conflicts, and appends comments', t => {
   assert.equal(run(['list', '--label', 'urgent', '--tool', 'codex']).issues.length, 1);
   assert.equal(run(['close', issue.id, '--expected', '1']).issue.status, 'closed');
   assert.equal(run(['reopen', issue.id, '--expected', '2']).issue.status, 'open');
-  assert.equal(run(['show', 'pd-999999'], { status: 3 }).error.code, 'not_found');
+  assert.deepEqual(run(['show', '48'], { status: 3 }).error, {
+    code: 'not_found', message: 'Issue was not found',
+    details: { id: 'pd-48', prefix: 'pd', prefix_source: 'builtin' },
+  });
+  assert.deepEqual(run(['--prefix', 'alt', 'comment', '49', '--body', 'missing'], { status: 3 }).error, {
+    code: 'not_found', message: 'Issue was not found',
+    details: { id: 'alt-49', prefix: 'alt', prefix_source: 'flag' },
+  });
+  assert.deepEqual(run(['create', '--tool', 'codex', '--project', 'demo', '--body', 'child', '--parent', '50'], { status: 3 }).error, {
+    code: 'not_found', message: 'Issue was not found',
+    details: { id: 'pd-50', prefix: 'pd', prefix_source: 'builtin' },
+  });
+  assert.deepEqual(run(['show', 'pd-51'], { status: 3 }).error, {
+    code: 'not_found', message: 'Issue was not found', details: { id: 'pd-51' },
+  });
 });
 
 test('CLI rejects invalid arguments before creating storage and actor requires no store', t => {
@@ -96,9 +110,35 @@ test('CLI prevents repository and symlink storage paths', t => {
     const result = spawnSync(process.execPath, [executable, 'init', '--data-dir', directory], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
     assert.notEqual(result.status, 0);
     assert.equal(result.status, 2);
-    assert.equal(JSON.parse(result.stderr).error.code, 'invalid_data_directory');
+    assert.deepEqual(JSON.parse(result.stderr).error, {
+      code: 'invalid_data_directory', message: 'The data directory must be outside the working directory and Git repositories',
+      details: { rule: 'working_directory' },
+    });
   }
   assert.deepEqual(readdirSync(cwd), ['.git']);
+});
+
+test('CLI identifies repository data-directory rejections without exposing paths', t => {
+  const { root, cwd } = fixture(t);
+  git(root, ['init', '--quiet']);
+  const configRoot = mkdtempSync(join(tmpdir(), 'polylinedb-cli-config-'));
+  const otherRoot = mkdtempSync(join(tmpdir(), 'polylinedb-other-checkout-'));
+  t.after(() => rmSync(configRoot, { recursive: true, force: true }));
+  t.after(() => rmSync(otherRoot, { recursive: true, force: true }));
+  const env = { XDG_CONFIG_HOME: join(configRoot, 'config') };
+  const siblingStore = join(root, 'sibling-store');
+  const sibling = plainCli(cwd, ['--data-dir', siblingStore, 'show', '1'], { status: 2, env }).error;
+  assert.deepEqual(sibling, {
+    code: 'invalid_data_directory', message: 'The data directory must be outside the working directory and Git repositories',
+    details: { rule: 'git_repository' },
+  });
+
+  mkdirSync(join(otherRoot, '.git'));
+  const checkout = plainCli(cwd, ['--data-dir', join(otherRoot, 'store'), 'show', '1'], { status: 2, env }).error;
+  assert.deepEqual(checkout, {
+    code: 'invalid_data_directory', message: 'The data directory must be outside the working directory and Git repositories',
+    details: { rule: 'git_repository' },
+  });
 });
 
 test('CLI treats dash queries and help option values as literal text', t => {
@@ -143,6 +183,18 @@ function git(cwd: string, args: string[]): string {
   assert.equal(result.status, 0, result.stderr);
   return result.stdout;
 }
+
+test('CLI reports repository prefix provenance for a missing numeric shorthand', t => {
+  const { root, cwd, directory } = fixture(t);
+  git(cwd, ['init', '--quiet']);
+  plainCli(cwd, ['init', '--stealth', '--data-dir', directory, '--tool', 'demo', '--project', 'demo', '--actor', 'local:owner', '--prefix', 'repo']);
+  const failure = plainCli(cwd, ['show', '48'], { status: 3 }).error;
+  assert.deepEqual(failure, {
+    code: 'not_found', message: 'Issue was not found',
+    details: { id: 'repo-48', prefix: 'repo', prefix_source: 'repository' },
+  });
+  assert.deepEqual(readdirSync(cwd), ['.git']);
+});
 
 test('stealth init supplies external storage and defaults without changing Git status', t => {
   const { root, cwd } = fixture(t);
