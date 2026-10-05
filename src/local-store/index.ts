@@ -269,7 +269,6 @@ export function openStore(location: StoreLocation): LocalStore {
   };
 }
 
-// Recovers canonical historical stores through a read-only connection, including retired sources.
 export function exportHistoricalSnapshot(location: StoreLocation): Snapshot {
   const { database_path } = approvedPath(location);
   if (!existsSync(database_path)) throw new PolylinedbError('uninitialized_store', 'Initialize this store first', 400);

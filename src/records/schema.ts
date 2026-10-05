@@ -100,11 +100,12 @@ export const MEMORY_REVISION_STATEMENTS = [
   }),
 ];
 export const ROTATE_MEMORY_IDENTITY_SQL = 'UPDATE memory_store_identity SET incarnation = lower(hex(randomblob(16))) WHERE singleton = 1';
-export const SCHEMA_V4_SQL = [
+export const SCHEMA_V4_STATEMENTS = [
   ...SCHEMA_V2_SQL.replace('VALUES (2)', 'VALUES (4)').split(';').map(sql => sql.trim()).filter(Boolean),
   ...MEMORY_SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean),
   ...MEMORY_REVISION_STATEMENTS,
-].join(';\n') + ';\n';
+];
+export const SCHEMA_V4_SQL = SCHEMA_V4_STATEMENTS.join(';\n') + ';\n';
 export const DEPENDENCY_STATEMENTS = [
   `CREATE TABLE dependencies (
     dependent_id TEXT NOT NULL REFERENCES issues(id),

@@ -31,7 +31,7 @@ try {
     return result.results;
   };
   const reset = async () => {
-    for (const table of ['memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
+    for (const table of ['dependency_requests', 'dependencies', 'dependency_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
     await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
   };
   await reset();
@@ -41,6 +41,10 @@ try {
   await run({ op: 'update', id: created.issue.id, changes: [{ field: 'body', expected: 1, value: 'é'.repeat(32768) }, { field: 'labels', expected: 1, value: ['quote"', 'slash\\'] }] });
   await run({ op: 'create', prefix: 'pd', parent: created.issue.id, request_id: randomUUID(), tool: 'compiler', project: 'other', body: 'child' });
   await run({ op: 'comment', id: created.issue.id, body: 'Unicode 日本語 quote\' slash\\' });
+  const dependencyRequest = { op: 'dependency_add', dependent_id: 'pd-1.1', blocker_id: 'pd-1', expected_revision: 1, request_id: randomUUID() };
+  const dependencyReceipt = await run(dependencyRequest);
+  await run({ ...dependencyRequest, op: 'dependency_remove', expected_revision: 2, request_id: randomUUID() });
+  await run({ ...dependencyRequest, expected_revision: 3, request_id: randomUUID() });
   await source.db.batch([{ sql: 'UPDATE counters SET last_number = 98 WHERE scope = ?', params: ['pd'] }]);
   const memoryRequest = { op: 'memory_create', project: 'p', prefix: 'pd', request_id: randomUUID(), title: 'Fact', body: '日本語の知識' };
   await run(memoryRequest);
@@ -53,7 +57,8 @@ try {
   const migration = snapshotMigration(query, snapshot, sha256);
   assert.equal((await migration.inspect()).state, 'empty');
   assert.throws(() => snapshotMigration(query, snapshot, '0'.repeat(64)), /digest/);
-  for (const failAt of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+  const totalWrites = 2 + snapshot.issues.length + snapshot.comments.length + snapshot.counters.length + snapshot.requests.length + snapshot.memories.length + snapshot.memory_counters.length + snapshot.memory_requests.length + snapshot.dependencies.length + snapshot.dependency_revisions.length + snapshot.dependency_requests.length;
+  for (let failAt = 1; failAt <= totalWrites; failAt++) {
     await reset();
     let writes = 0;
     const interrupted: Query = async statement => {
@@ -94,6 +99,7 @@ try {
   await reset();
   await Promise.all([migration.restore(), migration.restore()]);
   const remote = d1Executor(database);
+  assert.deepEqual(await executeOperation(remote, parseOperation(dependencyRequest), 'test:original'), dependencyReceipt);
   await assert.rejects(executeOperation(remote, parseOperation(memoryRequest), 'test:original'), { code: 'memory_deleted' });
   const nextMemory = await executeOperation(remote, parseOperation({ ...memoryRequest, request_id: randomUUID() }), 'test:original');
   assert('memory' in nextMemory); assert.equal(nextMemory.memory.id, 'pd-m3');
@@ -108,5 +114,5 @@ try {
   assert.throws(() => parseQueryOutput([{ success: true, results: [null] }]), /Invalid/);
   assert.deepEqual(parseQueryOutput([{ success: true, results: [{ n: 1 }] }]), [{ n: 1 }]);
   assert.throws(() => parseTarget({}), /Invalid/);
-  process.stdout.write('PASS: workerd snapshot exact roundtrip, nine committed-response-loss resumptions, duplicate/concurrent restore, digest/row/unclaimed conflicts, derived columns, 64 KiB Unicode body, audit/version preservation, comments/counters/requests, request replay and root/child next IDs\n');
+  process.stdout.write(`PASS: workerd graph snapshot exact roundtrip, ${totalWrites} committed-response-loss resumptions, duplicate/concurrent restore, digest/row/unclaimed conflicts, derived columns, Unicode/audit preservation, immutable graph replay and root/child next IDs\n`);
 } finally { source.close(); rmSync(root, { recursive: true, force: true }); await runtime.dispose(); }

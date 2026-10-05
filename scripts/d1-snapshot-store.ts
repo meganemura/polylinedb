@@ -63,7 +63,7 @@ async function readRows(query: Query): Promise<Rows> {
     if (table === 'dependencies') {
       let after: [string, string] | undefined;
       for (;;) {
-        const page = await querySql(query, `SELECT dependencies.*, dependent.sort_key AS dependent_sort, blocker.sort_key AS blocker_sort FROM dependencies JOIN issues AS dependent ON dependent.id = dependent_id JOIN issues AS blocker ON blocker.id = blocker_id ${after === undefined ? '' : 'WHERE (dependent.sort_key,blocker.sort_key) > (?,?)'} ORDER BY dependent.sort_key,blocker.sort_key LIMIT 1`, after ?? []);
+        const page = await querySql(query, `SELECT dependencies.*, dependent.sort_key AS dependent_sort, blocker.sort_key AS blocker_sort FROM dependencies LEFT JOIN issues AS dependent ON dependent.id = dependent_id LEFT JOIN issues AS blocker ON blocker.id = blocker_id ${after === undefined ? '' : 'WHERE (dependent.sort_key,blocker.sort_key) > (?,?)'} ORDER BY dependent.sort_key,blocker.sort_key LIMIT 1`, after ?? []);
         const row = page[0]; if (!row) break;
         const dependentSort = row.dependent_sort; const blockerSort = row.blocker_sort;
         if (page.length !== 1 || typeof dependentSort !== 'string' || typeof blockerSort !== 'string') return fail('Invalid dependency tuple page');

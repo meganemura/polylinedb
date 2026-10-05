@@ -65,3 +65,10 @@ test('graph roundtrip preserves removed-edge receipts, validates graph rows and 
   await assert.rejects(migration.restore(), /Lost committed response/); assert.equal((await migration.inspect()).state, 'resumable');
   assert.equal((await migration.restore()).result, 'restored'); assert.equal(canonicalSnapshot((await migration.verify()).snapshot), canonical);
 });
+
+test('operator inspection rejects orphan edges instead of hiding them behind tuple joins', async t => {
+  const directory = join(root(t), 'empty'); initializeStore({ directory }); const store = openStore({ directory }); const snapshot = store.exportSnapshot(); store.close();
+  const db = new DatabaseSync(':memory:'); t.after(() => db.close()); db.exec(SCHEMA_SQL); db.exec("PRAGMA foreign_keys = OFF; INSERT INTO dependencies VALUES ('pd-1','pd-2')");
+  const migration = snapshotMigration(async statement => db.prepare(statement.sql).all(...statement.params), snapshot, createHash('sha256').update(canonicalSnapshot(snapshot)).digest('hex'));
+  await assert.rejects(migration.inspect(), /Invalid dependency tuple page/); await assert.rejects(migration.verify(), /Invalid dependency tuple page/);
+});
