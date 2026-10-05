@@ -357,8 +357,8 @@ test('CLI reports retired stores for writes while reads and exports remain avail
     try {
       assert.deepEqual(destinationCli(['import', '--file', '-'], { input: JSON.stringify(snapshot), status: 4 }).error,
         { code: 'store_retired', message });
-      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 3,
-        issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] });
+      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 4,
+        issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
     } finally { destinationRetirement.close(); }
   } finally {
     retirement.close();
@@ -459,4 +459,18 @@ test('stealth prefix is persisted, shown by context and checked before storage c
     plainCli(cwd, ['init', '--data-dir', store, '--prefix', prefix], { status: 2 });
     assert.equal(existsSync(store), false);
   }
+});
+
+test('CLI exposes named prerequisite endpoints, natural shorthand, worklists, and force reasons', t => {
+  const { run } = fixture(t); run(['--prefix', 'demo', 'init']);
+  for (let i = 0; i < 2; i++) run(['--prefix', 'demo', 'create', '--tool', 'compiler', '--project', 'test', '--body', `Issue ${i}`]);
+  const input = ['--prefix', 'demo', 'dependency', 'add', '--dependent', '1', '--blocker', '2', '--expected-revision', '1', '--request-id', crypto.randomUUID()];
+  const result = run(input); assert.equal(result.dependency.outcome, 'added'); assert.deepEqual(run(input), result);
+  assert.deepEqual(run(['--prefix', 'demo', 'dependency', 'list', '1']).blockers.map((row: { id: string }) => row.id), ['demo-2']);
+  assert.deepEqual(run(['blocked', '--project', 'test']).issues.map((row: { id: string }) => row.id), ['demo-1']);
+  assert.deepEqual(run(['ready', '--project', 'test']).issues.map((row: { id: string }) => row.id), ['demo-2']);
+  assert.equal(run(['--prefix', 'demo', 'close', '1', '--expected', '1'], { status: 4 }).error.code, 'dependency_blocked');
+  run(['--prefix', 'demo', 'close', '1', '--expected', '1', '--force', '--reason', 'Accepted exception']);
+  assert.equal(run(['--prefix', 'demo', 'show', '1']).comments[0].body, 'Accepted exception');
+  assert.equal(run(['--prefix', 'demo', 'dependency', 'remove', '--dependent', '1', '--blocker', '2', '--expected-revision', '2']).dependency.outcome, 'removed');
 });

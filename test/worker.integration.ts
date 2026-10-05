@@ -172,11 +172,29 @@ try {
   assert(Array.isArray(stale.content));
   assert.deepEqual(JSON.parse(String(record(stale.content[0]).text)), stale.structuredContent);
   assert.equal(record((await http({ op: 'memory_create', ...memoryRequest }, 409)).error).code, 'memory_deleted');
+  const blocker = record((await http({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'other', body: 'Prerequisite' })).issue);
+  const graphRequest = { dependent_id: id, blocker_id: blocker.id, expected_revision: 1, request_id: crypto.randomUUID() };
+  const graphAdded = await rpc('tools/call', { name: 'dependency_add', arguments: graphRequest });
+  assert.equal(graphAdded.isError, false);
+  const receipt = record(record(graphAdded.structuredContent).dependency); assert.equal(receipt.outcome, 'added'); assert.equal(receipt.revision, 2);
+  const graph = await http({ op: 'dependency_list', dependent_id: id }); assert.equal(graph.revision, 2); assert.deepEqual(graph.blockers, [{ id: blocker.id, project: 'other', status: 'open' }]);
+  const blocked = await rpc('tools/call', { name: 'dependency_worklist', arguments: { state: 'blocked', project: 'parser' } });
+  assert.ok(Array.isArray(record(blocked.structuredContent).issues));
+  assert.equal(record((await http({ op: 'close', id, expected: 1 }, 409)).error).code, 'dependency_blocked');
+  await http({ op: 'close', id, expected: 1, force: true, reason: 'Approved prerequisite exception' });
+  const shownException = await http({ op: 'show', id }); assert.ok(Array.isArray(shownException.comments));
+  assert.equal(record(shownException.comments[0]).created_by, 'access:owner');
+  assert.equal(record((await http({ op: 'dependency_remove', ...graphRequest, expected_revision: 2, request_id: crypto.randomUUID() })).dependency).outcome, 'removed');
+  assert.deepEqual(record((await http({ op: 'dependency_add', ...graphRequest })).dependency), receipt);
+  assert.deepEqual((await http({ op: 'dependency_list', dependent_id: id })).blockers, []);
+  const staleGraph = await http({ op: 'dependency_add', ...graphRequest, request_id: crypto.randomUUID() }, 409);
+  assert.equal(record(staleGraph.error).code, 'dependency_conflict'); assert.equal(record(record(record(staleGraph.error).details).current).revision, 3);
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
       'real JWT verification', 'missing and invalid credentials rejected', 'HTTP create', 'MCP initialize and show',
       'MCP update', 'HTTP and MCP stale conflicts', 'D1 atomicity and persisted audit identity', 'JWKS cache',
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
+      'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

@@ -1,6 +1,6 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
 import { PolylinedbError, type Issue } from '../records/index.ts';
-import { issueRow, commentRow } from '../records/persistence.ts';
+import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
 import { memoryRow } from '../records/persistence.ts';
 import { parseMemoryId, parseMemoryRevision, observedMemoryProject } from '../records/index.ts';
@@ -70,7 +70,11 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         if (status === undefined) return invalid();
         return { id: parseIssueId(blocker.id), project: blocker.project, status };
       });
-      return { dependent_id: operation.dependent_id, revision: row.revision, blockers, next_cursor: row.next_cursor === null ? null : parseIssueId(row.next_cursor) };
+      let previous = operation.after === undefined ? '' : issueSortKey(operation.after);
+      for (const blocker of blockers) { const sort = issueSortKey(blocker.id); if (sort <= previous) return invalid(); previous = sort; }
+      const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
+      if (next_cursor !== null && (blockers.length !== operation.limit || next_cursor !== blockers.at(-1)?.id)) return invalid();
+      return { dependent_id: operation.dependent_id, revision: row.revision, blockers, next_cursor };
     }
     case 'memory_create': case 'memory_show': case 'memory_update': {
       const parsed = memory(exact(value, ['memory']).memory);
@@ -126,7 +130,18 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
     case 'list': case 'search': case 'dependency_worklist': {
       const row = exact(value, ['issues', 'next_cursor']);
       if (!Array.isArray(row.issues)) return invalid();
-      return { issues: row.issues.map(issue), next_cursor: row.next_cursor === null ? null : parseIssueId(row.next_cursor) };
+      const issues = row.issues.map(issue); const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
+      if (operation.op === 'dependency_worklist') {
+        if (issues.length > operation.limit) return invalid();
+        let previous = operation.after === undefined ? '' : issueSortKey(operation.after);
+        for (const current of issues) {
+          const sort = issueSortKey(current.id);
+          if (sort <= previous || (operation.state === 'ready' ? current.status !== 'open' : current.status === 'closed') || (operation.tool !== undefined && current.tool !== operation.tool) || (operation.project !== undefined && current.project !== operation.project) || (operation.type !== undefined && current.type !== operation.type) || (operation.priority !== undefined && current.priority !== operation.priority) || (operation.label !== undefined && !current.labels.includes(operation.label))) return invalid();
+          previous = sort;
+        }
+        if (next_cursor !== null && (issues.length !== operation.limit || next_cursor !== issues.at(-1)?.id)) return invalid();
+      }
+      return { issues, next_cursor };
     }
     case 'comment': return { comment: commentRow(exact(exact(value, ['comment']).comment, ['id', 'issue_id', 'body', 'created_at', 'created_by'])) };
     case 'create': case 'update': case 'close': case 'reopen': return { issue: issue(exact(value, ['issue']).issue) };
@@ -136,6 +151,20 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
 function errorDetails(operation: Operation, code: string, value: unknown): unknown {
   if (value === undefined) return undefined;
   switch (code) {
+    case 'dependency_conflict': {
+      if (operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') return invalid();
+      const row = exact(value, ['expected_revision', 'current']);
+      if (row.expected_revision !== operation.expected_revision) return invalid();
+      const current = basicResult({ op: 'dependency_list', dependent_id: operation.dependent_id, limit: 50 }, row.current);
+      if (!('revision' in current) || current.revision === operation.expected_revision) return invalid();
+      return { expected_revision: operation.expected_revision, current };
+    }
+    case 'dependency_version_exhausted': {
+      const row = exact(value, ['dependent_id']);
+      if ((operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') || row.dependent_id !== operation.dependent_id || operation.expected_revision !== Number.MAX_SAFE_INTEGER) return invalid();
+      return { dependent_id: operation.dependent_id };
+    }
+    case 'dependency_blocked': return { issue: issue(exact(value, ['issue']).issue) };
     case 'memory_not_found': case 'memory_deleted': {
       const row = exact(value, ['id', 'project']);
       if (!operation.op.startsWith('memory_') || !('project' in operation) || row.project !== operation.project
@@ -249,10 +278,10 @@ export async function executeCloudOperation(input: {
     } catch { return invalid(); }
   } catch (error) {
     if (error instanceof PolylinedbError) {
-      if ((input.operation.op === 'create' || input.operation.op === 'memory_create') && error.status >= 500) error.details = { request_id: input.operation.request_id };
+      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove') && error.status >= 500) error.details = { request_id: input.operation.request_id };
       throw error;
     }
-    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' ? { request_id: input.operation.request_id } : undefined;
+    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' ? { request_id: input.operation.request_id } : undefined;
     throw new PolylinedbError('cloud_unavailable', 'The cloud operation did not return a valid result. Its outcome may be unknown.', 503, details);
   } finally {
     clearTimeout(timer);

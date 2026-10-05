@@ -67,7 +67,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     assert.equal((await init.json()).result.protocolVersion, '2025-11-25');
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const names = (await listed.json()).result.tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'close', 'comment', 'create', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update']);
+    assert.deepEqual(names, ['actor', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update']);
     const updated = await request('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
       name: 'update', arguments: { id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] },
     } });
@@ -79,6 +79,17 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       name: 'close', arguments: { id: issue.id, expected: 1 },
     } });
     assert.equal((await toolConflict.json()).result.isError, true);
+    const blocker = await request('/v1/operations', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'another', body: 'blocker' });
+    const blockerId = (await blocker.json()).issue.id;
+    const graphInput = { dependent_id: issue.id, blocker_id: blockerId, expected_revision: 1, request_id: crypto.randomUUID() };
+    const added = await request('/mcp', { jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'dependency_add', arguments: graphInput } });
+    assert.equal((await added.json()).result.structuredContent.dependency.outcome, 'added');
+    const graph = await request('/v1/operations', { op: 'dependency_list', dependent_id: issue.id });
+    assert.deepEqual((await graph.json()).blockers, [{ id: blockerId, project: 'another', status: 'open' }]);
+    const blockedClose = await request('/v1/operations', { op: 'close', id: issue.id, expected: 2 });
+    assert.equal((await blockedClose.json()).error.code, 'dependency_blocked');
+    const removed = await request('/v1/operations', { op: 'dependency_remove', ...graphInput, expected_revision: 2, request_id: crypto.randomUUID() });
+    assert.equal((await removed.json()).dependency.outcome, 'removed');
     await request('/v1/operations', { op: 'comment', id: issue.id, body: 'confirmed' });
     const show = await request('/v1/operations', { op: 'show', id: issue.id });
     const shown = await show.json();

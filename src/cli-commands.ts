@@ -8,12 +8,12 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { PolylinedbError } from './records/index.ts';
 import { executeOperation, parseOperation } from './records/index.ts';
 import { parseMemoryId } from './records/index.ts';
-import { initializeStore, openStore, upgradeStore } from "./local-store/index.ts";
+import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from "./local-store/index.ts";
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from "./workspace/index.ts";
 import { createCloudClient, OAuthError, CredentialStoreError } from './cloud-client/index.ts';
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2 } from './records/persistence.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3 } from './records/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 
@@ -42,10 +42,11 @@ Commands:
   agent install HOST            Install a user-scope lifecycle hook.
   agent remove HOST             Remove the owned lifecycle hook.
   agent context HOST            Read hook input and return host context JSON.
-  upgrade                       Explicitly upgrade a local schema 2 or 3 store to schema 4.
-  snapshot convert --file PATH|- [--output PATH|-]
-                                Convert snapshot v2 to v3 without touching a store.
-  export [--file PATH|-]         Export a complete local snapshot. Default: stdout.
+  upgrade                       Explicitly upgrade a local schema 2, 3 or 4 store to schema 5.
+  snapshot convert --from 2|3 --file PATH|- [--output PATH|-]
+                                Convert an older snapshot to v4 without touching a store.
+  export [--file PATH|-] [--historical]
+                                Export a local snapshot. Historical export recovers old retired stores read-only.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
   actor                         Show the local actor or authenticated cloud actor.
   create --tool NAME --project NAME --body TEXT [--parent ID]
@@ -58,8 +59,13 @@ Commands:
   update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]
          [--type TYPE] [--priority 0..4] [--label NAME ... | --clear-labels]
          --expect FIELD=VERSION [--expect FIELD=VERSION ...]
-  close ID --expected VERSION
+  close ID --expected VERSION [--force --reason TEXT]
   reopen ID --expected VERSION
+  dependency list ID [--after ID] [--limit 1..100]
+  dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
+  dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]
+  ready [FILTERS]                Open issues with resolved prerequisites.
+  blocked [FILTERS]              Unfinished issues with active blockers.
   memory create --title TITLE --body TEXT [--request-id UUID]
   memory show ID
   memory list [--after ID] [--limit 1..100]
@@ -82,6 +88,10 @@ create, comment and update accept --body-file PATH instead of --body.
 Use --body-file - to read standard input. Local mutations require an explicit actor.
 Cloud commands use OAuth. Run auth login once; tokens stay in the OS credential store.
 Each update field requires its own expected version from show. Conflicts require rereading.
+Start and close require resolved prerequisites. An explicit --force --reason records an attributed exception comment.
+Update accepts the same override when it sets status to in_progress or closed.
+Ready and blocked accept FILTERS except --status. Worklists observe current state; they do not claim work.
+Dependency mutations use a separate aggregate revision. Reuse the request UUID and identical payload on retry.
 The prefix defaults to repository settings, otherwise pd. It matches [a-z][a-z0-9]{0,15}.
 Issue numbers expand with the selected prefix: show 42 reads pd-42, and show 42.1 reads pd-42.1.
 Create retries require the same --request-id and identical input. Omission generates a new UUID.
@@ -97,18 +107,20 @@ const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels
 const globals = ['connection', 'data-dir', 'actor', 'prefix'];
 const commandFlags: Record<string, readonly string[]> = {
   auth: [],
-  upgrade: [], snapshot_convert: ['file', 'output'],
+  upgrade: [], snapshot_convert: ['file', 'output', 'from'],
+  dependency_list: ['after', 'limit'], dependency_add: ['dependent', 'blocker', 'expected-revision', 'request-id'], dependency_remove: ['dependent', 'blocker', 'expected-revision', 'request-id'],
+  ready: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'], blocked: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'],
   memory_create: ['project', 'title', 'body', 'body-file', 'request-id'],
   memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
   memory_update: ['project', 'title', 'body', 'body-file', 'expected'], memory_delete: ['project', 'expected'],
   memory_context: ['project', 'after', 'limit', 'max-bytes', 'with-revision'],
   agent_install: [], agent_remove: [], agent_context: [],
   connection: ['url'],
-  init: ['stealth', 'tool', 'project'], context: [], export: ['file'], import: ['file'], actor: [], show: [],
+  init: ['stealth', 'tool', 'project'], context: [], export: ['file', 'historical'], import: ['file'], actor: [], show: [],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
   comment: ['body', 'body-file'],
-  update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect'],
-  close: ['expected'], reopen: ['expected'],
+  update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason'],
+  close: ['expected', 'force', 'reason'], reopen: ['expected'],
   list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
@@ -184,37 +196,38 @@ async function main(argv: readonly string[]): Promise<void> {
     if (!arg.startsWith('--')) invalid(`Unknown flag ${arg}`);
     const name = arg.slice(2);
     if (![...globals, ...Object.values(commandFlags).flat()].includes(name)) invalid(`Unknown flag ${arg}`);
-    const value = ['clear-labels', 'stealth', 'with-revision'].includes(name) ? 'true' : args[++index];
+    const value = ['clear-labels', 'stealth', 'with-revision', 'force', 'historical'].includes(name) ? 'true' : args[++index];
     if (value === undefined || value === '--' || (value.startsWith('--') && value !== '--help')) invalid(`Missing value for ${arg}`);
     const previous = flags.get(name) ?? [];
     if (previous.length && name !== 'label' && name !== 'expect') invalid(`Duplicate flag ${arg}`);
     flags.set(name, [...previous, value]);
   }
   const [first, ...rest] = positionals;
-  const nested = first === 'memory' || first === 'snapshot' || first === 'agent';
+  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency';
   const command = nested ? `${first}_${rest[0] ?? ''}` : first;
   const operands = nested ? rest.slice(1) : rest;
   if (!command || !Object.hasOwn(commandFlags, command)) invalid('Unknown command');
   for (const name of flags.keys()) {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
-  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context'].includes(command);
+  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list'].includes(command);
   if (!['connection', 'auth'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
-    if ([...flags.keys()].some(key => !['file', 'output'].includes(key))) invalid('Snapshot conversion accepts only --file and --output');
+    if ([...flags.keys()].some(key => !['file', 'output', 'from'].includes(key))) invalid('Snapshot conversion accepts only --file, --output and --from');
     const file = one('file');
     if (file === undefined) invalid('Snapshot conversion requires --file');
     let source: unknown;
     try { source = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
     catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
-    const converted = convertSnapshotV2(source);
+    if (one('from') !== undefined && one('from') !== '2' && one('from') !== '3') invalid('Snapshot --from must be 2 or 3');
+    const converted = one('from') === '3' ? convertSnapshotV3(source) : convertSnapshotV2(source);
     const content = canonicalSnapshot(converted) + '\n';
     const output = one('output') ?? '-';
     if (output === '-') process.stdout.write(content);
     else {
       await writeFile(output, content, { flag: 'wx', mode: 0o600 });
-      process.stdout.write(JSON.stringify({ file: output, version: 3, sha256: createHash('sha256').update(canonicalSnapshot(converted)).digest('hex') }) + '\n');
+      process.stdout.write(JSON.stringify({ file: output, version: 4, sha256: createHash('sha256').update(canonicalSnapshot(converted)).digest('hex') }) + '\n');
     }
     return;
   }
@@ -317,7 +330,7 @@ async function main(argv: readonly string[]): Promise<void> {
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
   }
-  if (selected.kind === 'local' && ['create', 'comment', 'update', 'close', 'reopen', 'import', 'upgrade', 'memory_create', 'memory_update', 'memory_delete'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
+  if (selected.kind === 'local' && ['create', 'comment', 'update', 'close', 'reopen', 'import', 'upgrade', 'memory_create', 'memory_update', 'memory_delete', 'dependency_add', 'dependency_remove'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
   if (command === 'upgrade') {
     if (selected.kind !== 'local') invalid('Use the documented operator procedure to upgrade D1');
     process.stdout.write(JSON.stringify(upgradeStore({ directory: selected.directory })) + '\n');
@@ -327,6 +340,12 @@ async function main(argv: readonly string[]): Promise<void> {
   if (command === 'import' || command === 'export') {
     if (selected.kind === 'cloud') throw new PolylinedbError('cloud_snapshot_not_supported', 'Import and export require a local connection. Use the documented D1 migration procedure for cloud data.', 400);
     const directory = selected.directory;
+    if (command === 'export' && flags.has('historical')) {
+      const exported = exportHistoricalSnapshot({ directory }); const file = one('file') ?? '-'; const content = JSON.stringify(exported, null, 2) + '\n';
+      if (file === '-') process.stdout.write(content);
+      else { await writeFile(file, content, { flag: 'wx', mode: 0o600 }); process.stdout.write(JSON.stringify({ file, sha256: createHash('sha256').update(canonicalSnapshot(exported)).digest('hex') }) + '\n'); }
+      return;
+    }
     let snapshot;
     if (command === 'import') {
       const file = one('file');
@@ -389,7 +408,16 @@ async function main(argv: readonly string[]): Promise<void> {
     return id;
   };
   if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
-  if (needsOperand) raw[command === 'search' ? 'query' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
+  if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
+  if (command === 'ready' || command === 'blocked') { raw.op = 'dependency_worklist'; raw.state = command; }
+  if (command === 'dependency_add' || command === 'dependency_remove') {
+    const dependent = one('dependent'); const blocker = one('blocker'); const expected = one('expected-revision');
+    if (dependent === undefined || blocker === undefined || expected === undefined) invalid('Dependency mutation requires --dependent, --blocker and --expected-revision');
+    raw.dependent_id = expandedId(dependent); raw.blocker_id = expandedId(blocker); raw.expected_revision = integer(expected);
+    raw.request_id = one('request-id') ?? randomUUID();
+  }
+  if (flags.has('force')) raw.force = true;
+  if (one('reason') !== undefined) raw.reason = one('reason');
   if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');
   const bodyFile = one('body-file');
   let body = one('body');
@@ -412,8 +440,9 @@ async function main(argv: readonly string[]): Promise<void> {
     if (value !== undefined) raw[name] = integer(value);
   }
   if (body !== undefined) raw.body = body;
-  if (flags.has('label')) raw[command === 'list' || command === 'search' ? 'label' : 'labels'] = command === 'list' || command === 'search' ? one('label') : flags.get('label');
-  if ((command === 'list' || command === 'search') && (flags.get('label')?.length ?? 0) > 1) invalid('Filter --label is a singleton');
+  const filtered = ['list', 'search', 'ready', 'blocked'].includes(command);
+  if (flags.has('label')) raw[filtered ? 'label' : 'labels'] = filtered ? one('label') : flags.get('label');
+  if (filtered && (flags.get('label')?.length ?? 0) > 1) invalid('Filter --label is a singleton');
   if (command === 'update') {
     if (flags.has('clear-labels') && flags.has('label')) invalid('Use --label or --clear-labels');
     if (flags.has('clear-labels')) raw.labels = [];

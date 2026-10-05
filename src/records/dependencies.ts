@@ -81,7 +81,8 @@ function knownError(error: unknown, marker: string): boolean {
   const seen = new Set<unknown>();
   for (let depth = 0; depth < 8 && cause instanceof Error && !seen.has(cause); depth++) {
     seen.add(cause);
-    if (cause.message === marker || cause.message.includes(`: ${marker}`)) return true;
+    const suffixes = ['', ': SQLITE_CONSTRAINT', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)'];
+    if (suffixes.some(suffix => cause instanceof Error && (cause.message === marker + suffix || cause.message === `D1_ERROR: ${marker}${suffix}`))) return true;
     cause = cause.cause;
   }
   return false;
@@ -125,6 +126,7 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
       { sql: 'SELECT * FROM dependency_requests WHERE request_id = ?', params: [operation.request_id] },
       { sql: 'SELECT revision FROM dependency_revisions WHERE dependent_id = ?', params: [operation.dependent_id] },
       { sql: 'SELECT id FROM issues WHERE id = ?', params: [operation.blocker_id] },
+      { sql: 'SELECT issues.* FROM dependencies JOIN issues ON issues.id = dependencies.blocker_id WHERE dependent_id = ? ORDER BY sort_key LIMIT 51', params: [operation.dependent_id] },
     ]);
   } catch (error) {
     if (knownError(error, 'dependency_cycle')) throw new PolylinedbError('dependency_cycle', 'The prerequisite would create a cycle', 409);
@@ -139,6 +141,9 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
   if (request) return { dependency: dependencyReceipt(request) };
   const observed = rowsAt(result, 4)[0];
   if (!observed || !rowsAt(result, 5)[0]) throw new PolylinedbError('not_found', 'A dependency endpoint was not found', 404, { id: observed ? operation.blocker_id : operation.dependent_id });
-  if (observed.revision !== operation.expected_revision) throw new PolylinedbError('dependency_conflict', 'Read the current prerequisite revision before deciding on a new mutation', 409, { dependent_id: operation.dependent_id, expected_revision: operation.expected_revision, actual_revision: observed.revision });
+  if (observed.revision !== operation.expected_revision) {
+    const all = rowsAt(result, 6).map(issueRow); const blockers = all.slice(0, 50).map(({ id, project, status }) => ({ id, project, status }));
+    throw new PolylinedbError('dependency_conflict', 'Read the current prerequisite revision before deciding on a new mutation', 409, { expected_revision: operation.expected_revision, current: { dependent_id: operation.dependent_id, revision: observed.revision, blockers, next_cursor: all.length > 50 ? blockers.at(-1)?.id ?? null : null } });
+  }
   throw new PolylinedbError('dependency_version_exhausted', 'The prerequisite revision cannot increase', 409, { dependent_id: operation.dependent_id });
 }
