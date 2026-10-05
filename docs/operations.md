@@ -11,7 +11,7 @@ The local `init` command creates storage; cloud schema installation is an operat
 | Field | Meaning and constraints | Create default |
 | --- | --- | --- |
 | `id` | Prefix plus positive integer; children append numeric suffixes, up to eight numeric segments | Generated |
-| `tool` | Tool name, nonempty, at most 256 UTF-8 bytes | Required |
+| `tool` | Tool or component the issue concerns; nonempty, at most 256 UTF-8 bytes | Required |
 | `project` | Project name, nonempty, at most 256 UTF-8 bytes | Required |
 | `body` | Issue content, nonempty, at most 65536 UTF-8 bytes | Required |
 | `status` | `open`, `in_progress`, `deferred`, `closed` | `open` |
@@ -24,6 +24,12 @@ Bodies exclude NUL and whitespace-only content.
 Each label follows the same rules as a tool name.
 An issue also contains `versions`, `created_at`, `created_by`, `updated_at`, and `updated_by`.
 Timestamps use UTC ISO strings.
+
+Use `tool` for the affected tool or component, such as `compiler`, `editor`, or `polylinedb`.
+Use `project` for the project context in which the issue applies.
+The actor identifies who performs an operation and supplies the audit authors.
+For example, an agent can report an `editor` issue in project `parser` with actor `local:agent`.
+An agent's name is not the affected tool merely because that agent created the issue.
 
 ## Requests and results
 

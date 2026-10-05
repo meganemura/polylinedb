@@ -39,6 +39,7 @@ Use these mappings as a starting point:
 | Status | `open`, `in_progress`, `deferred`, or `closed` |
 | Priority and labels | The matching fields after validation |
 | Parent-child relationship | A child ID suffix under an epic |
+| Parent whose source type is not `epic` | Convert the parent to `epic` and record its original type in the body |
 | Comment text and attribution | Comment records linked to the new issue ID |
 | Creation and update timestamps | The corresponding audit fields |
 | Missing author information | An explicit marker such as `migration:unknown` |
@@ -47,9 +48,11 @@ Do not infer an update author from the creation author.
 Validate statuses, types, priorities, timestamps, and relationships instead of silently assigning defaults.
 Inspect relationship records themselves. A summary count can omit parent-child edges.
 
-polylinedb has no dependency graph.
+polylinedb records issues and epic children. Its contract does not schedule dependencies or calculate a ready-work list.
 For other relationship types, stop until you choose how to preserve them.
-You can describe those relationships in the body, but that does not provide blocker scheduling.
+Record blocker IDs in the body, with an optional label such as `blocked`.
+Use `deferred` for postponed work, then change its status when the blocker is resolved.
+List filters select recorded statuses and labels. They do not evaluate blocker IDs or automatically make deferred work ready.
 Keep source fields without a dedicated destination field in the body or in a private accompanying archive.
 If you include a complete source record in the body, it becomes readable by everyone allowed to use the destination store.
 
@@ -82,13 +85,16 @@ Review the converter against the complete captured export before importing its r
 Import the converted snapshot into the empty rehearsal store:
 
 ```sh
-pd --data-dir /srv/private-transfer/rehearsal import \
+pd --data-dir /srv/private-transfer/rehearsal --actor local:operator import \
   --file /srv/private-transfer/converted-snapshot.json
 pd --data-dir /srv/private-transfer/rehearsal export \
   --file /srv/private-transfer/rehearsal-readback.json
 ```
 
 Compare the complete readback with the converted snapshot.
+Local import requires an explicit actor, like other local mutations.
+The actor can come from `--actor`, `POLYLINEDB_ACTOR`, or repository defaults.
+Imported creation and update authors remain the values from the snapshot.
 For every source issue, check the body, status, type, priority, labels, timestamps, attribution, comments, and ID mapping.
 Check every child against its mapped parent.
 Read every list page and verify that the IDs have neither omissions nor duplicates.
@@ -99,12 +105,33 @@ Confirm that an update with an old field version fails without changing the reco
 Confirm that an exact import replay leaves the store unchanged.
 After editing a record in the disposable copy, confirm that replaying the old snapshot is refused.
 
+## Transfer knowledge from another tool
+
+Issue bodies and project memory are separate collections.
+For external knowledge without verifiable polylinedb creation receipts, leave the snapshot memory collections empty.
+Create the reviewed knowledge after import with `pd memory create`:
+
+```sh
+pd --data-dir /srv/private-transfer/rehearsal --actor local:operator --prefix parser \
+  memory create --project parser --title 'Build constraints' \
+  --body-file /srv/private-transfer/knowledge.md --request-id REQUEST_UUID
+```
+
+Generate and retain a lowercase UUID before each logical creation.
+Retry only with the same request ID and inputs.
+The new entry records the migration time and the selected actor as its creation metadata.
+Preserve the original timestamp and attribution in the body when needed.
+For a polylinedb snapshot, retain its existing memory records and receipts instead of recreating them.
+
 ## Activate the checked destination
 
-Import into a new, empty destination. `pd import` does not merge into a populated store.
+Import into a new, empty destination with the same explicit actor selection.
+`pd import` does not merge into a populated store.
 Repeat the complete readback comparison there.
 Export the source again and compare it with the captured source before activation.
 If the source changed, stop and repeat conversion and verification.
+Repeat the reviewed external-knowledge creation steps in the final destination after its issue import.
+Check each memory's title, body, project, and retained source metadata before activation.
 
 Set the repository's defaults only after those checks pass:
 
