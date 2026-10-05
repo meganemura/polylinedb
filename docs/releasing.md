@@ -7,12 +7,12 @@ The GitHub repository can remain private while the npm package is public.
 ## Release stages
 
 Version `0.0.1` is the initial version. Version `0.1.0` adds the verified local and cloud workflows.
-Keep the repository private until the owner approves publication.
-Release `0.1.0` after actual local use and deployed Cloudflare use pass acceptance checks.
+Version `0.2.0` adds prerequisites, memory freshness, and automatic host hooks.
+Database upgrades and Worker deployments require separate verification and approval.
 Verify local installation, persistence, and field conflicts with the installed package.
 Verify the deployed Worker, D1 persistence, Access policy, and cloud-agent OAuth reuse with the [cloud acceptance checks](cloud.md#verify-each-host-and-d1).
 Local workerd tests support development but do not satisfy deployed Cloudflare acceptance.
-Make the GitHub repository public as part of the `0.1.0` release, after owner confirmation of those results.
+Repository visibility changes require explicit owner approval.
 
 ## Prepare an artifact
 
@@ -25,7 +25,7 @@ npm test
 npm run test:d1
 npm run test:worker
 npm audit
-npm run test:package -- /absolute/path/polylinedb-0.1.0.tgz
+npm run test:package -- /absolute/path/polylinedb-0.2.0.tgz
 ```
 
 The package check runs `npm pack`, including its `prepack` build.
@@ -50,23 +50,28 @@ Package inclusion follows npm's [files and bin settings](https://docs.npmjs.com/
 ## Publish the tested artifact
 
 Publication requires explicit owner approval immediately before execution.
-Confirm the package name, version, MIT license, file list, and tarball integrity with the owner.
-Keep credentials outside the repository and chat.
-Use an authenticated npm session with publish permission for the unscoped name.
+Confirm the package name, version, MIT license, reviewed commit, and file list with the owner.
+The approved workflow builds its tarball from that commit and verifies it before publication.
+The `publish.yml` workflow uses npm trusted publishing through GitHub OIDC.
+The job requests `id-token: write`. It does not use an npm token or a local npm login.
+Register the workflow once from an authenticated owner session:
 
 ```sh
-npm whoami --registry=https://registry.npmjs.org/
-npm publish /absolute/path/polylinedb-0.1.0.tgz --dry-run --access public --registry=https://registry.npmjs.org/
+npm trust github polylinedb --repo meganemura/polylinedb --file publish.yml --allow-publish
+npm trust list polylinedb
 ```
 
-After approval, publish that same tarball:
+After approval, push the reviewed commit to `main` and start the workflow with the exact version:
 
 ```sh
-npm publish /absolute/path/polylinedb-0.1.0.tgz --access public --registry=https://registry.npmjs.org/
-npm view polylinedb@0.1.0 version dist.integrity --registry=https://registry.npmjs.org/
+gh workflow run publish.yml --ref main -f version=0.2.0
+npm view polylinedb@0.2.0 version dist.integrity --registry=https://registry.npmjs.org/
 ```
 
-Compare the registry integrity with the tested artifact.
+The workflow checks the requested version against the manifest and lockfile before tests.
+It builds and installs the tarball, publishes that same tarball, and compares its integrity with the registry.
+Keep the workflow filename consistent with the trusted publisher configuration.
+See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for the OIDC requirements.
 Then install the published version in a clean prefix and check `pd --help`.
-Do not rebuild between approval and publication.
+Publish the tested tarball without another pack or build step.
 Choose a new version for later changes, and update both the manifest and lockfile before packing.

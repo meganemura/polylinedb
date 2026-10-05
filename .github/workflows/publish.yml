@@ -1,0 +1,77 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version approved for publication
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+          cache: npm
+      - name: Check approved version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          assert.match(process.env.RELEASE_VERSION, /^\d+\.\d+\.\d+$/);
+          assert.equal(manifest.name, 'polylinedb');
+          assert.equal(manifest.version, process.env.RELEASE_VERSION);
+          assert.equal(lock.version, manifest.version);
+          assert.equal(lock.packages[''].version, manifest.version);
+          NODE
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run check:architecture
+      - run: npm test
+      - run: npm run test:d1
+      - run: npm exec -- vite build
+        env:
+          CLOUDFLARE_VITE_FORCE_BUILD_OUTPUT: 'true'
+      - run: node test/worker.integration.ts
+      - run: npm audit
+      - name: Verify the distributable
+        run: npm run test:package -- "$RUNNER_TEMP/polylinedb.tgz"
+      - name: Publish the verified tarball with OIDC
+        run: |
+          npm publish "$RUNNER_TEMP/polylinedb.tgz" --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org/
+          npm publish "$RUNNER_TEMP/polylinedb.tgz" --ignore-scripts --access public --registry=https://registry.npmjs.org/
+      - name: Verify registry integrity
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          npm view "polylinedb@$RELEASE_VERSION" dist.integrity --json --registry=https://registry.npmjs.org/ > "$RUNNER_TEMP/registry-integrity.json"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          const root = process.env.RUNNER_TEMP;
+          const expected = 'sha512-' + createHash('sha512').update(readFileSync(`${root}/polylinedb.tgz`)).digest('base64');
+          assert.equal(JSON.parse(readFileSync(`${root}/registry-integrity.json`, 'utf8')), expected);
+          NODE

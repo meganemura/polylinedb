@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-05)
 
 - Add prerequisite graphs with aggregate CAS, immutable mutation receipts, and ready/blocked worklists.
 - Guard start and close with active prerequisites; store explicit forced exceptions as atomic attributed comments.
@@ -19,10 +19,43 @@
 - Pin Node 24 GitHub Actions and check Ubuntu 24.04 and 26.04 with Node 24 and 26.
 - Install and remove user-scope memory hooks for local Claude Code, Codex, and Cursor sessions.
 - Detect project memory changes during issue operations with an optional context observation token.
-- Upgrade local schema 2 or 3 stores explicitly to schema 4 for memory revisions and store identity.
+- Add memory revisions and store identity through explicit local upgrades, now targeting schema 5.
 - Document D1 upgrades and identity rotation after a raw database restore.
 - Preserve an existing SQLite journal mode when opening a local store.
 - Check architecture layers in CI and add seeded behavior properties and bounded mutation tests.
+
+### Upgrade from 0.1.0
+
+The CLI requires Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later.
+This release uses database schema 5 and snapshot format 4. Stop writers and preserve a private backup before an upgrade.
+
+For a local connection, install the new CLI and use the same named connection for each command:
+
+```sh
+npm install --global polylinedb@0.2.0
+pd --connection LOCAL export --historical --file /absolute/private/path/before-upgrade.json
+pd --connection LOCAL upgrade
+pd --connection LOCAL list --project PROJECT
+pd --connection LOCAL memory context --project PROJECT
+```
+
+Replace `LOCAL` with your local connection name. Choose a new backup path outside Git.
+The upgrade preserves existing records and creates empty prerequisite graphs.
+Retired stores remain read-only. Recover them with historical export into a separate destination.
+
+For Cloudflare, stop writers and back up D1 before changing its schema or Worker.
+Use the [D1 upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-or-4-deployment).
+Apply the migration for the current schema, verify the preserved records, then deploy the new Worker.
+The CLI's `upgrade` command does not upgrade D1.
+
+Convert an older snapshot before import:
+
+```sh
+pd snapshot convert --from 2 --file OLD --output NEW
+```
+
+For snapshot 3, use `--from 3` instead. Conversion writes snapshot 4 and preserves original creation receipts.
+Review source IDs before adding structured prerequisites. Existing blocker text does not create graph edges automatically.
 
 ## 0.1.0 (2026-10-04)
 
