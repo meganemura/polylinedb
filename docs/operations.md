@@ -75,6 +75,27 @@ Pagination does not preserve a snapshot across requests.
 Search matches literal, case-sensitive substrings in bodies or comments.
 `show` returns all comments, ordered by timestamp and ID.
 
+## CLI diagnostic details
+
+The CLI expands issue numbers and memory shorthand with the selected prefix.
+Selection uses `--prefix`, repository defaults, then the built-in `pd` prefix.
+For a missing expanded ID, `not_found` and `memory_not_found` retain their existing details and add `prefix` and `prefix_source`.
+`prefix_source` is `flag`, `repository`, or `builtin`.
+Full IDs do not depend on the selected prefix and keep their existing error details.
+Numeric parent IDs use the same diagnostic convention.
+These fields describe CLI selection; HTTP and MCP requests retain their existing operation format.
+
+For containment failures, `invalid_data_directory` includes a `details.rule` value:
+
+| Value | Rejected location |
+| --- | --- |
+| `working_directory` | The current working directory or one of its descendants |
+| `git_repository` | A Git checkout outside that working-directory boundary |
+
+When both rules apply, the working-directory rule takes precedence.
+The details identify the rule without returning an absolute path.
+Other directory validation failures keep their existing messages.
+
 ## Field versions
 
 Every mutable field starts at version 1.

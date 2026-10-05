@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Explain the prefix source when a shorthand issue or memory ID is missing.
+- Identify the containment rule that rejects a local data directory.
+- Clarify import actors, parent conversion, external knowledge transfer, and manual blocker conventions in the migration guide.
+- Define the affected tool separately from the project and audit actor.
 - Reject unsupported Node runtimes before loading CLI operations and report package and Node versions with `pd --version`.
 - Document fixed-Node launch wrappers for installations managed by version managers.
 - Report valid Worker access configuration errors with safe CLI guidance.
