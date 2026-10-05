@@ -1,12 +1,13 @@
 // Verifies the distributable through npm installation; source-tree imports cannot satisfy this check.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const project = fileURLToPath(new URL('..', import.meta.url));
+const runtimePreload = fileURLToPath(new URL('../test/fixtures/cli-runtime-preload.mjs', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'polylinedb-package-'));
 const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ''}`,
   HOME: join(root, 'home'), XDG_CONFIG_HOME: join(root, 'config-home'), npm_config_cache: join(root, 'cache'), npm_config_audit: 'false', npm_config_fund: 'false' };
@@ -51,6 +52,48 @@ try {
   const workspace = join(root, 'work');
   mkdirSync(workspace);
   const directory = join(root, 'store');
+  for (const args of [['--version'], ['--version', '--json'], ['--json', '--version']]) {
+    const version = invokeAtNodeVersion(process.versions.node, command, args, workspace);
+    assert.equal(version.status, 0, version.stderr);
+    assert.equal(version.stderr, '');
+    assert.deepEqual(JSON.parse(version.stdout), { version: manifest.version, node: process.versions.node });
+  }
+  const bodyVersion = invokeAtNodeVersion(process.versions.node, command,
+    ['create', '--tool', 'package-test', '--project', 'release', '--body', '--version'], workspace);
+  assert.equal(bodyVersion.status, 2, bodyVersion.stderr);
+  assert.equal(JSON.parse(bodyVersion.stderr).error.code, 'invalid_input');
+  assert.equal(bodyVersion.stdout, '');
+
+  const sideEffectRoot = join(root, 'unsupported-runtime-effects');
+  const unsupportedEnv: NodeJS.ProcessEnv = {
+    ...env,
+    HOME: join(sideEffectRoot, 'home'),
+    XDG_CONFIG_HOME: join(sideEffectRoot, 'config'),
+    XDG_DATA_HOME: join(sideEffectRoot, 'data'),
+  };
+  const unsupportedCommands = [
+    [], ['--help'], ['--version'], ['--unknown'],
+    ['--data-dir', join(sideEffectRoot, 'selected-store'), 'init'],
+    ['list'], ['context'], ['connection', 'list'],
+    ['connection', 'add', 'home', '--data-dir', join(sideEffectRoot, 'connection-store')], ['auth', 'status'],
+  ];
+  for (const nodeVersion of ['20.20.2', '24.18.0']) {
+    for (const args of unsupportedCommands) {
+      const result = invokeAtNodeVersion(nodeVersion, command, args, workspace, unsupportedEnv);
+      assert.equal(result.status, 1, result.stderr || result.stdout);
+      assert.equal(result.stdout, '');
+      const report = JSON.parse(result.stderr);
+      assert.equal(report.error.code, 'unsupported_runtime');
+      assert.deepEqual(report.error.details, {
+        actual_node: nodeVersion,
+        required_node: manifest.engines.node,
+        package_version: manifest.version,
+      });
+      assert.match(report.error.message, new RegExp(nodeVersion.replaceAll('.', '\\.')));
+      assert.ok(report.error.message.includes(manifest.engines.node));
+    }
+  }
+  assert.equal(existsSync(sideEffectRoot), false);
   const pd = (args: string[], expected = 0) => run(command, ['--data-dir', directory, '--actor', 'test:package', ...args], workspace, expected);
   assert.match(pd(['--help']), /Usage: pd /);
   assert.match(pd(['--help']), /polyline database/);
