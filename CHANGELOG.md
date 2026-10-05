@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add prerequisite graphs with aggregate CAS, immutable mutation receipts, and ready/blocked worklists.
+- Guard start and close with active prerequisites; store explicit forced exceptions as atomic attributed comments.
+- Upgrade canonical schemas 2, 3, and 4 to schema 5 and transfer graph state through snapshot 4.
+- Recover canonical retired historical stores through read-only export.
+
 - Explain the prefix source when a shorthand issue or memory ID is missing.
 - Identify the containment rule that rejects a local data directory.
 - Clarify import actors, parent conversion, external knowledge transfer, and manual blocker conventions in the migration guide.

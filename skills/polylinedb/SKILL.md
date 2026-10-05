@@ -86,7 +86,11 @@ Before changing an issue, confirm that `issue.project` matches the task's author
 Full IDs can select issues from any project in the shared store.
 Use complete issue IDs when sharing commands between repositories.
 Numeric IDs expand with the selected prefix; a prefix selects a numbering namespace, not a project filter.
-Use supported list filters to find work. `pd` has no `ready`, `claim`, or dependency command.
+Use `pd ready --project PROJECT` to find open issues with resolved prerequisites.
+Use `pd blocked --project PROJECT` to find unfinished issues with active blockers.
+Read `pd dependency list ID` before adding or removing prerequisites with its separate expected revision.
+Dependency mutations require named `--dependent` and `--blocker` endpoints. Retain one request UUID and payload for each logical mutation.
+An ordinary start or close rejects active prerequisites. An explicit force requires a reason that becomes an attributed comment.
 An `in_progress` status records progress; it does not establish exclusive ownership.
 
 ## Record progress

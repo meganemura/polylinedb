@@ -48,11 +48,12 @@ Do not infer an update author from the creation author.
 Validate statuses, types, priorities, timestamps, and relationships instead of silently assigning defaults.
 Inspect relationship records themselves. A summary count can omit parent-child edges.
 
-polylinedb records issues and epic children. Its contract does not schedule dependencies or calculate a ready-work list.
-For other relationship types, stop until you choose how to preserve them.
-Record blocker IDs in the body, with an optional label such as `blocked`.
-Use `deferred` for postponed work, then change its status when the blocker is resolved.
-List filters select recorded statuses and labels. They do not evaluate blocker IDs or automatically make deferred work ready.
+polylinedb records issue prerequisites separately from epic containment.
+Review an explicit mapping from source dependency endpoints to destination issue IDs before adding each edge through the dependency operation.
+Keep the source direction explicit. The dependent points to its blocker.
+Plaintext blocker notes require human review; migration tools do not parse them automatically.
+Ready and blocked worklists evaluate current blocker statuses. Deferred issues remain postponed until an explicit status change.
+See [issue prerequisites](prerequisites.md) for revisions, request receipts, and status exceptions.
 Keep source fields without a dedicated destination field in the body or in a private accompanying archive.
 If you include a complete source record in the body, it becomes readable by everyone allowed to use the destination store.
 

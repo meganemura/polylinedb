@@ -105,6 +105,7 @@ It repeats memory retrieval after context recovery and uses explicit project fil
 Skill discovery does not install lifecycle hooks. Use `pd agent install HOST` for a user-scope adapter.
 Lifecycle adapters and revision observations require the unreleased source version.
 See [project memory](docs/memory.md) and [host lifecycle hooks](docs/host-hooks.md) for retrieval and host support.
+See [issue prerequisites](docs/prerequisites.md) for dependency revisions, safe retries, and ready/blocked worklists.
 It does not initialize a database during ordinary issue work.
 
 ## Use cloud agents

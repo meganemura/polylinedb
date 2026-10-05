@@ -95,3 +95,29 @@ test('force reason insertion failure rolls back every updated field and version'
   assert.throws(() => parseOperation({ ...input, reason: 'é'.repeat(32769) }), { code: 'invalid_input' });
   assert.doesNotThrow(() => parseOperation({ ...input, reason: 'é'.repeat(32768) }));
 });
+
+test('dependency pages use numeric ID order with independent epic containment', async t => {
+  const run = fixture(t); await issues(run);
+  await run.db.batch([{ sql: "UPDATE counters SET last_number = 98 WHERE scope = 'pd'", params: [] }]);
+  for (const extra of [{ type: 'epic' }, { parent: 'pd-99' }, {}]) await run({ op: 'create', prefix: 'pd', request_id: request(), tool: 'test', project: 'other', body: 'Blocker', ...extra });
+  let expected_revision = 1;
+  for (const blocker_id of ['pd-100', 'pd-99.1', 'pd-99']) await run({ op: 'dependency_add', dependent_id: 'pd-1', blocker_id, expected_revision: expected_revision++, request_id: request() });
+  const first = await run({ op: 'dependency_list', dependent_id: 'pd-1', limit: 1 }); assert.ok('blockers' in first); assert.deepEqual(first.blockers.map(row => row.id), ['pd-99']); assert.equal(first.next_cursor, 'pd-99');
+  const second = await run({ op: 'dependency_list', dependent_id: 'pd-1', after: first.next_cursor, limit: 1 }); assert.ok('blockers' in second); assert.deepEqual(second.blockers.map(row => row.id), ['pd-99.1']);
+  const third = await run({ op: 'dependency_list', dependent_id: 'pd-1', after: second.next_cursor, limit: 1 }); assert.ok('blockers' in third); assert.deepEqual(third.blockers.map(row => row.id), ['pd-100']); assert.equal(third.next_cursor, null);
+});
+test('stale mutation conflict retains the bounded graph observed in its skipped batch', async t => {
+  const run = fixture(t); await issues(run);
+  await run({ op: 'dependency_add', dependent_id: 'pd-1', blocker_id: 'pd-2', expected_revision: 1, request_id: request() });
+  const operation = parseOperation({ op: 'dependency_remove', dependent_id: 'pd-1', blocker_id: 'pd-2', expected_revision: 1, request_id: request() });
+  const db = { ...run.db, async batch(statements: Parameters<typeof run.db.batch>[0]) {
+    const observed = await run.db.batch(statements);
+    await run({ op: 'dependency_remove', dependent_id: 'pd-1', blocker_id: 'pd-2', expected_revision: 2, request_id: request() });
+    return observed;
+  } };
+  await assert.rejects(executeOperation(db, operation, 'tester'), error => {
+    assert.ok(error instanceof Error && 'details' in error);
+    assert.deepEqual(error.details, { expected_revision: 1, current: { dependent_id: 'pd-1', revision: 2, blockers: [{ id: 'pd-2', project: 'test', status: 'open' }], next_cursor: null } }); return true;
+  });
+  const current = await run({ op: 'dependency_list', dependent_id: 'pd-1' }); assert.ok('revision' in current); assert.equal(current.revision, 3);
+});

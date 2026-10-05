@@ -13,7 +13,7 @@ It also preserves receipts for deleted memories.
 
 Use the supported Node version, an installed `pd`, and an authenticated `cf` profile.
 Run the operator from a source checkout of polylinedb.
-The Worker and both stores must already use canonical schema 4.
+The Worker and both stores must already use canonical schema 5.
 The additive operator refuses additional application tables, including an existing `polylinedb_snapshot_claim` restoration table.
 Use the separate restoration procedure or review that provenance before preparing a different operator.
 The operator does not deploy a Worker, upgrade schemas, or change Access policies.
@@ -89,7 +89,7 @@ The operator performs these steps:
 
 1. Check the connection, authenticated actor, Worker binding, and repository selections.
 2. Back up repository configuration files and obtain a SQLite `BEGIN IMMEDIATE` write lock.
-3. Save the final source and cloud snapshots, including all seven collections.
+3. Save the final source and cloud snapshots, including all ten collections.
 4. Validate both snapshots and reject overlapping keys, receipts, or counter namespaces.
 5. Add source records through one guarded D1 batch with bound JSON chunks.
 6. Read every cloud collection and compare the complete result with the expected union.
@@ -107,7 +107,8 @@ Successful output contains `result: "VERIFIED"`, collection counts, and configur
 The receipt directory contains the final snapshots, digest manifest, complete cloud verification, and routing verification.
 Keep these files for recovery.
 
-Source retirement installs write-rejection triggers on seven application tables and two metadata tables.
+Source retirement installs write-rejection triggers on ten application tables and two metadata tables.
+The graph tables include edges, aggregate revisions, and immutable request receipts.
 Previously opened connections also reject inserts, updates, and deletes after retirement commits.
 The old store remains readable and exportable.
 Blocked writes return `store_retired` and name the cloud connection to use.

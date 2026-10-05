@@ -114,25 +114,26 @@ See [host lifecycle hooks](host-hooks.md) for event support, limitations, and re
 
 ## Existing stores and snapshots
 
-Schema 4 stores memory content, versions, attribution, issued counters, creation receipts, and operational memory revisions.
-Snapshot v3 retains its existing content fields and excludes operational revisions and store identity.
+Schema 5 stores memory content, versions, attribution, issued counters, creation receipts, and operational memory revisions.
+Snapshot v4 retains those content fields and prerequisite aggregates. It excludes operational memory revisions and store identity.
 Stop writers and retain a private backup before upgrading an existing local store.
 Use the previous CLI to export schema 2 before replacing it, or copy the stopped SQLite database.
 Then run `pd --actor IDENTITY upgrade` with the selected local connection.
-The command checks canonical schema 2 or 3 and upgrades it to schema 4 in one transaction.
+The command checks canonical schema 2, 3, or 4 and upgrades it to schema 5 in one transaction.
 A repeated upgrade returns `already_current`. Ordinary reads refuse an old schema without migrating it.
 Repository configuration remains compatible with its existing versions.
 
-Convert an old snapshot explicitly before importing it into a new schema 4 store.
+Convert an old snapshot explicitly before importing it into a new schema 5 store.
 
 ```sh
-pd snapshot convert --file snapshot-v2.json --output snapshot-v3.json
+pd snapshot convert --from 2 --file snapshot-v2.json --output snapshot-v4.json
 pd --data-dir /absolute/private/store --actor local:owner init
-pd --data-dir /absolute/private/store --actor local:owner import --file snapshot-v3.json
+pd --data-dir /absolute/private/store --actor local:owner import --file snapshot-v4.json
 ```
 
-Conversion validates v2 and adds empty memory collections. It does not open a database.
-The v3 digest differs from the v2 digest. Use the converted digest for D1 transfer targets.
+Conversion validates v2 and adds empty memory and prerequisite collections with baseline issue revisions. It does not open a database.
+Use `--from 3` for a v3 snapshot with existing memory collections.
+The v4 digest differs from older digests. Use the converted digest for D1 transfer targets.
 Output files are private and existing files are refused.
 Follow the [D1 transfer procedure](d1-migration.md) for a cloud store.
 

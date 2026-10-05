@@ -42,7 +42,7 @@ try {
     "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
     'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
-    "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md'].sort();
+    "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
@@ -160,10 +160,19 @@ try {
   assert.equal(JSON.parse(restored(['import', '--file', snapshotPath])).result, 'already_present');
   assert.equal(JSON.parse(restored(creation)).issue.id, issue.id);
   assert.equal(JSON.parse(restored(['show', issue.id])).issue.versions.status, 4);
+  const blocker = JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'other', '--body', 'Installed prerequisite'])).issue;
+  const dependencyArgs = ['dependency', 'add', '--dependent', issue.id, '--blocker', blocker.id, '--expected-revision', '1', '--request-id', '11111111-1111-4111-8111-111111111111'];
+  const dependency = JSON.parse(restored(dependencyArgs)); assert.equal(dependency.dependency.outcome, 'added');
+  assert.deepEqual(JSON.parse(restored(dependencyArgs)), dependency);
+  assert.equal(JSON.parse(restored(['dependency', 'list', issue.id])).blockers[0].id, blocker.id);
+  assert.equal(JSON.parse(restored(['blocked', '--project', 'release'])).issues[0].id, issue.id);
+  restored(['close', issue.id, '--expected', '4'], 4);
+  const removal = JSON.parse(restored(['dependency', 'remove', '--dependent', issue.id, '--blocker', blocker.id, '--expected-revision', '2']));
+  assert.equal(removal.dependency.outcome, 'removed'); assert.deepEqual(JSON.parse(restored(dependencyArgs)), dependency);
   assert.equal(JSON.parse(restored(['show', issue.id])).comments[0].body, 'Works from npm');
   assert.equal(JSON.parse(restored(['memory', 'show', '1', '--project', 'release'])).memory.version, 2);
   assert.equal(JSON.parse(restored(memoryCreation)).memory.body, 'Verified through the installed CLI.');
-  assert.equal(JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'release', '--body', 'After restoration'])).issue.id, 'pd-2');
+  assert.equal(JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'release', '--body', 'After restoration'])).issue.id, 'pd-3');
   restored(['import', '--file', snapshotPath], 4);
   assert.deepEqual(readdirSync(workspace), []);
   assert.deepEqual(readdirSync(directory), ['polylinedb.sqlite']);

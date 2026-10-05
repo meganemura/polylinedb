@@ -44,11 +44,18 @@ An agent's name is not the affected tool merely because that agent created the i
 | `close` | `id`, `expected` status version | `{ "issue": ... }` |
 | `reopen` | `id`, `expected` status version | `{ "issue": ... }` |
 | `actor` | None | `{ "actor": ... }` |
+| `dependency_list` | `dependent_id`; optional `after`, `limit` | `{ "dependent_id": ..., "revision": ..., "blockers": [...], "next_cursor": ... }` |
+| `dependency_add`, `dependency_remove` | `dependent_id`, `blocker_id`, `expected_revision`, `request_id` | `{ "dependency": { "dependent_id": ..., "blocker_id": ..., "revision": ..., "outcome": ... } }` |
+| `dependency_worklist` | `state: "ready"` or `"blocked"`; optional issue filters except `status` | Same as list |
 
 Unknown arguments are rejected.
 The cloud actor comes from authentication, so requests cannot supply an actor.
 `parent` must name an existing epic.
 The parent relationship is immutable; an epic with children cannot change to another type.
+Prerequisites form a separate acyclic graph. They can cross projects within the selected store.
+See [issue prerequisites](prerequisites.md) for aggregate conflicts, immutable request receipts, and readiness semantics.
+Close and updates that request `in_progress` or `closed` accept `force: true` with a nonempty `reason` for an explicit exception.
+The reason becomes an attributed comment in the successful status transaction. Ordinary operation results retain their existing shapes.
 
 `prefix` has 1 through 16 lowercase ASCII letters or digits and starts with a letter.
 Each store maintains a separate root counter per prefix and a child counter per parent ID.
@@ -182,8 +189,11 @@ Export uses one read transaction for a consistent snapshot.
 These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
 
-Schema and snapshot versions are now 3. Repository configuration retains its existing version rules.
-Use `pd upgrade` to explicitly upgrade a local schema 2 store after making a private backup.
-Use `pd snapshot convert --file OLD --output NEW` to convert a v2 snapshot before import.
+The physical schema version is 5. The portable snapshot version is 4.
+Repository configuration retains its existing version rules.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, or 4 store after making a private backup.
+Use `pd snapshot convert --from 2|3 --file OLD --output NEW` to convert an older snapshot before import.
+Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
+See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.
 Version 1 UUID stores and configurations require an explicit rebuild; opening them does not silently migrate or overwrite data.

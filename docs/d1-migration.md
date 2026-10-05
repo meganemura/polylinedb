@@ -3,8 +3,8 @@
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.
 
-The repository operator command restores snapshot v3 into a new D1 database.
-It preserves issues, comments, memories, counters, creation requests, versions, and audit fields.
+The repository operator command restores snapshot v4 into a new D1 database.
+It preserves issues, comments, memories, prerequisites, counters, request receipts, versions, and audit fields.
 Ordinary `pd` commands can select SQLite or the authenticated cloud API. Snapshot maintenance remains an operator task.
 
 ## Prepare the transfer
@@ -27,7 +27,7 @@ Create a target file with mode 0600 outside Git checkouts. Environment-specific 
   "accountId": "ACCOUNT_ID",
   "databaseId": "DATABASE_UUID",
   "snapshotSha256": "CANONICAL_SNAPSHOT_SHA256",
-  "schemaVersion": 4
+  "schemaVersion": 5
 }
 ```
 
@@ -41,33 +41,37 @@ node scripts/d1-snapshot.ts verify --snapshot SNAPSHOT --target TARGET --output 
 ```
 
 The field order in the command is fixed. `inspect` reads the destination. `restore` writes the snapshot claim and missing rows.
-`verify` reads all seven collections and compares their canonical representation with the input.
+`verify` reads all ten collections and compares their canonical representation with the input.
+Dependency edges use numeric dependent/blocker tuple pagination.
 Its optional `--output` writes that verified remote snapshot to a new file with mode 0600.
 The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts.
 Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
 
-## Upgrade an existing schema 2 or 3 deployment
+## Upgrade an existing schema 2, 3 or 4 deployment
 
-The new Worker needs schema 4. The CLI's `upgrade` command applies only to local SQLite.
+The new Worker needs schema 5. The CLI's `upgrade` command applies only to local SQLite.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
 Record the account, database UUID, and Worker binding.
-Compare the deployed DDL with `SCHEMA_V2_SQL` or `SCHEMA_V3_SQL` in `src/records/schema.ts` before a write.
+Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, or `SCHEMA_V4_SQL` definition before a write.
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
-Run `pd snapshot convert --file OLD --output NEW`, then use the new v3 digest and the normal restore procedure.
+Run `pd snapshot convert --from 2|3 --file OLD --output NEW`, then use the new v4 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
-For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2` or `--upgrade-from 3`.
+For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, or `--upgrade-from 4`.
 Apply every statement in one approved D1 batch or transaction; do not send these statements through the public Worker API.
 The `schemaUpgradeStatements` export provides complete statements, including trigger bodies, for a D1 batch adapter.
 Do not split migration SQL at semicolons because trigger bodies contain semicolons.
-The batch checks the previous version, creates revision tables and triggers, seeds existing memory projects at revision 1, and sets schema version 4.
+The batch checks the previous version and applies its required memory migrations.
+It creates dependency tables and triggers, seeds each issue at prerequisite revision 1, and sets schema version 5.
 Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
 Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
 Verify that schema 2 upgrades create empty memory collections.
 Verify that schema 3 upgrades preserve their memories and seed one revision row per existing memory project.
 Check that `memory_store_identity` has exactly one valid incarnation.
+Verify that schema 4 upgrades preserve memory identity and project revision rows.
+Verify empty edge and dependency-request collections, and one baseline revision row per issue.
 Deploy the new Worker only after those checks pass.
 If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
 
@@ -79,7 +83,16 @@ See [the restore contract](adr/0005-memory-freshness.md#raw-database-restore) fo
 
 A destination can be empty, identical, or a matching partial restore. A partial restore requires the durable `polylinedb_snapshot_claim` row with the same digest. Existing rows must exactly match expected rows, including derived parent IDs and sort keys. Different rows, unrelated rows, another digest, and partial data without a claim are refused.
 
-Repeat the same restore command after an interruption. Inserts use bound parameters and never replace existing rows. The importer checks the claim with every insert. A request can commit before its response disappears; the next run reads the actual destination before it continues. The claim remains as provenance after success.
+Repeat the same restore command after an interruption. Inserts use bound parameters and check the claim.
+Issue insertion creates prerequisite baselines. Restore replaces those revision-1 baselines with the exact snapshot revisions under the same claim.
+Differing graph edges, receipts, or later revision values fail inspection.
+A request can commit before its response disappears; the next run reads the actual destination before it continues.
+The claim remains as provenance after success.
+
+A retired historical local store rejects `pd upgrade` and retains its write guards.
+Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, or 4.
+That export converts the content to snapshot 4 with empty prerequisites and baseline revisions.
+It preserves creation payload strings and source attribution. Transfer it into a separately initialized destination.
 
 Create-request records retain their original actor. Replaying a local request through a different cloud actor returns `request_conflict`. New cloud operations use new request IDs.
 
