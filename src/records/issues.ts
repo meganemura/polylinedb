@@ -14,14 +14,16 @@ export type Values = {
 export type Change = { [K in Field]: { field: K; value: Values[K]; expected: number } }[Field];
 type Filters = { tool?: string; project?: string; status?: Status; type?: IssueType;
   priority?: number; label?: string; after?: string; limit: number };
+type StatusOverride = { force?: never; reason?: never } | { force: true; reason: string };
 export type Operation =
   | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
   | { op: 'show'; id: string }
   | ({ op: 'list' } & Filters)
   | ({ op: 'search'; query: string } & Filters)
   | { op: 'comment'; id: string; body: string }
-  | { op: 'update'; id: string; changes: [Change, ...Change[]] }
-  | { op: 'close' | 'reopen'; id: string; expected: number }
+  | ({ op: 'update'; id: string; changes: [Change, ...Change[]] } & StatusOverride)
+  | ({ op: 'close'; id: string; expected: number } & StatusOverride)
+  | { op: 'reopen'; id: string; expected: number }
   | { op: 'actor' };
 export type Issue = Values & { id: string; versions: Record<Field, number>;
   created_at: string; created_by: string; updated_at: string; updated_by: string };
@@ -115,8 +117,8 @@ export const operationSchemas = {
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
     oneOf: fields.map((field) => objectSchema({ field: { const: field }, value: fieldRegistry[field].schema, expected: versionSchema }, ['field', 'value', 'expected']))
-  } } }, ['id', 'changes']),
-  close: objectSchema({ id: idSchema, expected: versionSchema }, ['id', 'expected']),
+  } }, force: { const: true }, reason: bodySchema }, ['id', 'changes']),
+  close: objectSchema({ id: idSchema, expected: versionSchema, force: { const: true }, reason: bodySchema }, ['id', 'expected']),
   reopen: objectSchema({ id: idSchema, expected: versionSchema }, ['id', 'expected']),
   actor: objectSchema({}),
 };
@@ -149,6 +151,11 @@ function parseFilters(input: Record<string, unknown>): Filters {
     limit: input.limit === undefined ? 50 : integer(input.limit, 'limit', 1, 100),
   };
 }
+function parseOverride(input: Record<string, unknown>): StatusOverride {
+  if (input.force === undefined && input.reason === undefined) return {};
+  if (input.force !== true || input.reason === undefined) return invalid('force requires true and a nonempty reason');
+  return { force: true, reason: text(input.reason, 'reason') };
+}
 export function parseOperation(value: unknown): Operation {
   const input = object(value, 'operation');
   const op = enumeration(input.op, 'op', ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen', 'actor']);
@@ -160,7 +167,8 @@ export function parseOperation(value: unknown): Operation {
     case 'list': return { op, ...parseFilters(input) };
     case 'search': return { op, ...parseFilters(input), query: text(input.query, 'query') };
     case 'comment': return { op, id: id(input.id), body: text(input.body, 'body') };
-    case 'close': case 'reopen': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER) };
+    case 'close': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...parseOverride(input) };
+    case 'reopen': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER) };
     case 'create': {
       const parent = input.parent === undefined ? undefined : id(input.parent, 'parent');
       if (parent?.split('.').length === 8) invalid('An issue cannot have more than eight number segments');
@@ -179,7 +187,9 @@ export function parseOperation(value: unknown): Operation {
       const [first, ...rest] = changes;
       if (first === undefined) return invalid('changes must not be empty');
       if (new Set(changes.map((change) => change.field)).size !== changes.length) invalid('changes must not repeat a field');
-      return { op, id: id(input.id), changes: [first, ...rest] };
+      const override = parseOverride(input);
+      if (override.force && !changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'))) return invalid('force applies only to start or close');
+      return { op, id: id(input.id), changes: [first, ...rest], ...override };
     }
   }
 }
@@ -211,14 +221,17 @@ function notFound(issueId: string): never {
   throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issueId });
 }
 const observation = (issueId: string): SqlStatement => ({ sql: `SELECT issues.*,
+  EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed') AS has_active_blockers,
   EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children
   FROM issues WHERE id = ?`, params: [issueId] });
 
-async function update(db: SqlExecutor, issueId: string, changes: readonly Change[], actor: string): Promise<OperationResult> {
+async function update(db: SqlExecutor, issueId: string, changes: readonly Change[], actor: string, override: StatusOverride = {}): Promise<OperationResult> {
   const assignments: string[] = [];
   const conditions = ['id = ?'];
   const params: (string | number | null)[] = [];
   const guards: (string | number | null)[] = [issueId];
+  const guardedStatus = changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'));
+  if (guardedStatus && !override.force) conditions.push("NOT EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed')");
   for (const change of changes) {
     assignments.push(`${fieldRegistry[change.field].column} = ?`, `${change.field}_v = ${change.field}_v + 1`);
     params.push(change.field === 'labels' ? JSON.stringify(change.value) : change.value);
@@ -228,15 +241,17 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   }
   assignments.push('updated_by = ?', 'updated_at = ?');
   params.push(actor, new Date().toISOString(), ...guards);
-  const result = await db.batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params }, observation(issueId)]);
+  const result = await db.batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
+    ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId)]);
   const changed = rowsAt(result, 0)[0];
   if (changed) return { issue: issueRow(changed) };
-  const observed = rowsAt(result, 1)[0];
+  const observed = rowsAt(result, override.force ? 2 : 1)[0];
   if (!observed) return notFound(issueId);
   const issue = issueRow(observed);
   const conflicts = changes.filter((change) => issue.versions[change.field] !== change.expected)
     .map((change) => ({ field: change.field, expected: change.expected, actual: issue.versions[change.field], current: issue[change.field] }));
   if (conflicts.length) throw new PolylinedbError('conflict', 'Read the current issue before deciding on a new update', 409, { issue, fields: conflicts });
+  if (guardedStatus && !override.force && observed.has_active_blockers === 1) throw new PolylinedbError('dependency_blocked', 'The issue has active prerequisites', 409, { issue });
   const exhausted = changes.find((change) => issue.versions[change.field] === Number.MAX_SAFE_INTEGER);
   if (exhausted) throw new PolylinedbError('version_exhausted', 'The field version cannot increase', 409, { field: exhausted.field, issue });
   if (observed.has_children === 1 && changes.some((change) => change.field === 'type' && change.value !== 'epic')) {
@@ -298,8 +313,9 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
       if (!row) return notFound(operation.id);
       return { comment: commentRow(row) };
     }
-    case 'close': case 'reopen': return update(db, operation.id, [{ field: 'status', value: operation.op === 'close' ? 'closed' : 'open', expected: operation.expected }], actor);
-    case 'update': return update(db, operation.id, operation.changes, actor);
+    case 'close': return update(db, operation.id, [{ field: 'status', value: 'closed', expected: operation.expected }], actor, operation);
+    case 'reopen': return update(db, operation.id, [{ field: 'status', value: 'open', expected: operation.expected }], actor);
+    case 'update': return update(db, operation.id, operation.changes, actor, operation);
     case 'list': case 'search': {
       const query = operation.tool === undefined ? issueQueries.list
         : operation.project === undefined ? issueQueries.listByTool

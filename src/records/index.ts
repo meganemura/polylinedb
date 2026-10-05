@@ -6,3 +6,4 @@ export type { Status, IssueType, Field, Values, Change, Issue, Comment } from '.
 export { parseIssueId, parsePrefix, parseRequestId } from './issue-id.ts';
 export { parseMemoryId, parseMemoryRevision, observedMemoryProject } from './memories.ts';
 export type { Memory, MemoryStore, MemoryOperation, MemoryContext, MemoryRevision, MemoryFreshness, MemoryResult } from './memories.ts';
+export type { DependencyOperation, DependencyMutation, DependencyResult, DependencyReceipt, DependencyOutcome, DependencyRequest, DependencyRevision, Dependency } from './dependencies.ts';

@@ -7,6 +7,7 @@ import { parseMemoryId, parseMemoryRevision, observedMemoryProject } from '../re
 import type { Memory, MemoryContext } from '../records/index.ts';
 import { fields } from '../records/persistence.ts';
 import { parseIssueId } from '../records/index.ts';
+import { statuses } from '../records/persistence.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;
@@ -51,6 +52,26 @@ function result(operation: Operation, value: unknown): OperationResult {
 }
 function basicResult(operation: Operation, value: unknown): OperationResult {
   switch (operation.op) {
+    case 'dependency_add': case 'dependency_remove': {
+      const row = exact(exact(value, ['dependency']).dependency, ['dependent_id', 'blocker_id', 'revision', 'outcome']);
+      if (row.dependent_id !== operation.dependent_id || row.blocker_id !== operation.blocker_id || row.revision !== operation.expected_revision + 1) return invalid();
+      if (operation.op === 'dependency_add' && row.outcome !== 'added' && row.outcome !== 'already_present') return invalid();
+      if (operation.op === 'dependency_remove' && row.outcome !== 'removed' && row.outcome !== 'already_absent') return invalid();
+      if (row.outcome !== 'added' && row.outcome !== 'already_present' && row.outcome !== 'removed' && row.outcome !== 'already_absent') return invalid();
+      return { dependency: { dependent_id: operation.dependent_id, blocker_id: operation.blocker_id, revision: operation.expected_revision + 1, outcome: row.outcome } };
+    }
+    case 'dependency_list': {
+      const row = exact(value, ['dependent_id', 'revision', 'blockers', 'next_cursor']);
+      if (row.dependent_id !== operation.dependent_id || typeof row.revision !== 'number' || !Number.isSafeInteger(row.revision) || row.revision < 1 || !Array.isArray(row.blockers) || row.blockers.length > operation.limit) return invalid();
+      const blockers = row.blockers.map(value => {
+        const blocker = exact(value, ['id', 'project', 'status']);
+        if (typeof blocker.project !== 'string' || !blocker.project.trim() || /\p{Cc}/u.test(blocker.project) || new TextEncoder().encode(blocker.project).length > 256) return invalid();
+        const status = statuses.find(status => status === blocker.status);
+        if (status === undefined) return invalid();
+        return { id: parseIssueId(blocker.id), project: blocker.project, status };
+      });
+      return { dependent_id: operation.dependent_id, revision: row.revision, blockers, next_cursor: row.next_cursor === null ? null : parseIssueId(row.next_cursor) };
+    }
     case 'memory_create': case 'memory_show': case 'memory_update': {
       const parsed = memory(exact(value, ['memory']).memory);
       if (parsed.project !== operation.project || ('id' in operation && parsed.id !== operation.id)) return invalid();
@@ -102,7 +123,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       if (!Array.isArray(row.comments)) return invalid();
       return { issue: issue(row.issue), comments: row.comments.map(entry => commentRow(exact(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))) };
     }
-    case 'list': case 'search': {
+    case 'list': case 'search': case 'dependency_worklist': {
       const row = exact(value, ['issues', 'next_cursor']);
       if (!Array.isArray(row.issues)) return invalid();
       return { issues: row.issues.map(issue), next_cursor: row.next_cursor === null ? null : parseIssueId(row.next_cursor) };

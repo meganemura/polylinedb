@@ -40,6 +40,10 @@ export type Generated = {
     params: { id: SqlValue | null };
     row: { project: SqlValue };
   };
+  "SELECT issues.* FROM issues WHERE (:tool IS NULL OR tool = :tool) AND (:project IS NULL OR project = :project) AND (:type IS NULL OR type = :type) AND (:priority IS NULL OR priority = :priority) AND (:label IS NULL OR EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = :label)) AND sort_key > :after AND ((:state = 'ready' AND status = 'open' AND NOT EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed')) OR (:state = 'blocked' AND status <> 'closed' AND EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed'))) ORDER BY sort_key LIMIT :limit": {
+    params: { tool: SqlValue | null; project: SqlValue | null; type: SqlValue | null; priority: SqlValue | null; label: SqlValue | null; after: SqlValue | null; state: "ready" | "blocked"; limit: number };
+    row: { id: SqlValue; parent_id: SqlValue | null; sort_key: SqlValue; tool: SqlValue; project: SqlValue; body: SqlValue; status: SqlValue; type: SqlValue; priority: SqlValue; labels_json: SqlValue; tool_v: SqlValue; project_v: SqlValue; body_v: SqlValue; status_v: SqlValue; type_v: SqlValue; priority_v: SqlValue; labels_v: SqlValue; created_at: SqlValue; created_by: SqlValue; updated_at: SqlValue; updated_by: SqlValue };
+  };
 };
 
 export const generated: Meta<Generated> = {
@@ -52,6 +56,7 @@ export const generated: Meta<Generated> = {
   "SELECT * FROM memories WHERE project = :project AND sort_key > :after AND (:query IS NULL OR instr(title, :query) > 0 OR instr(body, :query) > 0) ORDER BY sort_key LIMIT :limit": { params: ["project", "after", "query", "limit"], encode: [], json: [], reads: ["memories"] },
   "SELECT memory_store_identity.incarnation, CAST(COALESCE(project_memory_revisions.revision,0) AS INTEGER) AS revision FROM memory_store_identity LEFT JOIN project_memory_revisions ON project_memory_revisions.project = :project WHERE singleton = 1": { params: ["project"], encode: [], json: [], reads: ["memory_store_identity", "project_memory_revisions"] },
   "SELECT project FROM issues WHERE id = :id": { params: ["id"], encode: [], json: [], reads: ["issues"] },
+  "SELECT issues.* FROM issues WHERE (:tool IS NULL OR tool = :tool) AND (:project IS NULL OR project = :project) AND (:type IS NULL OR type = :type) AND (:priority IS NULL OR priority = :priority) AND (:label IS NULL OR EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = :label)) AND sort_key > :after AND ((:state = 'ready' AND status = 'open' AND NOT EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed')) OR (:state = 'blocked' AND status <> 'closed' AND EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed'))) ORDER BY sort_key LIMIT :limit": { params: ["tool", "project", "type", "priority", "label", "after", "state", "limit"], encode: [], json: [], reads: ["dependencies", "issues"] },
 };
 
 export const statements = {
@@ -64,4 +69,5 @@ export const statements = {
   ["memoryList"]: "SELECT * FROM memories WHERE project = :project AND sort_key > :after AND (:query IS NULL OR instr(title, :query) > 0 OR instr(body, :query) > 0) ORDER BY sort_key LIMIT :limit",
   ["memoryRevision"]: "SELECT memory_store_identity.incarnation, CAST(COALESCE(project_memory_revisions.revision,0) AS INTEGER) AS revision FROM memory_store_identity LEFT JOIN project_memory_revisions ON project_memory_revisions.project = :project WHERE singleton = 1",
   ["issueProject"]: "SELECT project FROM issues WHERE id = :id",
+  ["dependencyWorklist"]: "SELECT issues.* FROM issues WHERE (:tool IS NULL OR tool = :tool) AND (:project IS NULL OR project = :project) AND (:type IS NULL OR type = :type) AND (:priority IS NULL OR priority = :priority) AND (:label IS NULL OR EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = :label)) AND sort_key > :after AND ((:state = 'ready' AND status = 'open' AND NOT EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed')) OR (:state = 'blocked' AND status <> 'closed' AND EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed'))) ORDER BY sort_key LIMIT :limit",
 } as const;

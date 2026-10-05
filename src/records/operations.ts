@@ -4,12 +4,15 @@ import type { Operation as IssueOperation, OperationResult as IssueResult, SqlEx
 import { executeMemoryOperation, parseMemoryOperation, memorySchemas, parseMemoryRevision, observedMemoryProject, memoryFreshness } from "./memories.ts";
 import type { MemoryOperation, MemoryResult, MemoryStore, MemoryRevision, MemoryFreshness } from "./memories.ts";
 import { issueQueries } from "./issue-queries.ts";
-export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation;
-export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness }) | MemoryResult;
+import { parseDependencyOperation, executeDependencyOperation, dependencySchemas } from './dependencies.ts';
+import type { DependencyOperation, DependencyResult } from './dependencies.ts';
+export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation;
+export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness }) | MemoryResult | DependencyResult;
 const observedSchema = { type: 'string', maxLength: 4100, description: 'Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search.' };
-export const operationSchemas = { ...issueSchemas, ...memorySchemas,
+export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas,
   ...Object.fromEntries(Object.entries(issueSchemas).filter(([key]) => key !== 'actor').map(([key, value]) => [key, { ...value, properties: { ...value.properties, observed_memory_revision: observedSchema } }])) };
 export function parseOperation(value: unknown): Operation {
+  if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('dependency_')) return parseDependencyOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('memory_')) return parseMemoryOperation(value);
   if (value && typeof value === 'object' && !Array.isArray(value) && 'observed_memory_revision' in value) {
     if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return parseIssue(value);
@@ -22,6 +25,8 @@ export function parseOperation(value: unknown): Operation {
 }
 export async function executeOperation(db: SqlExecutor, operation: Operation, actor: string, store?: MemoryStore): Promise<OperationResult> {
   switch (operation.op) {
+    case 'dependency_add': case 'dependency_remove': case 'dependency_list': case 'dependency_worklist':
+      return executeDependencyOperation(db, operation, actor);
     case 'memory_create': case 'memory_show': case 'memory_list': case 'memory_search': case 'memory_update': case 'memory_delete': case 'memory_context':
       return executeMemoryOperation(db, operation, actor, store);
     default: {
