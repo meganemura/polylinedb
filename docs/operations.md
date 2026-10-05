@@ -192,7 +192,8 @@ The Worker API does not expose them, and the CLI does not synchronize SQLite wit
 The physical schema version is 5. The portable snapshot version is 4.
 Repository configuration retains its existing version rules.
 Use `pd upgrade` to upgrade a canonical local schema 2, 3, or 4 store after making a private backup.
-Use `pd snapshot convert --from 2|3 --file OLD --output NEW` to convert an older snapshot before import.
+Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
+For a v3 snapshot, use `--from 3` instead.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.

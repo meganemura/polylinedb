@@ -56,7 +56,9 @@ Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, or `SCHEMA_V
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
-Run `pd snapshot convert --from 2|3 --file OLD --output NEW`, then use the new v4 digest and the normal restore procedure.
+Run `pd snapshot convert --from 2 --file OLD --output NEW` for a v2 snapshot.
+For a v3 snapshot, use `--from 3` instead.
+Then use the new v4 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
 For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, or `--upgrade-from 4`.
