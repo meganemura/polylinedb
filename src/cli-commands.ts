@@ -113,6 +113,34 @@ const commandFlags: Record<string, readonly string[]> = {
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
 for (const command of ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen']) commandFlags[command] = [...(commandFlags[command] ?? []), 'observed-memory-revision'];
+type PrefixSource = 'flag' | 'repository' | 'builtin';
+type PrefixOrigin = { prefix: string; prefix_source: PrefixSource };
+function plainRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null ? value as Record<string, unknown> : undefined;
+}
+function shorthandNotFoundId(error: PolylinedbError): string | undefined {
+  if (error.status !== 404) return undefined;
+  const details = plainRecord(error.details);
+  if (details === undefined) return undefined;
+  const keys = Object.keys(details);
+  if (error.code === 'not_found' && keys.length === 1 && typeof details.id === 'string') return details.id;
+  if (error.code === 'memory_not_found' && keys.length === 2 && typeof details.id === 'string' && typeof details.project === 'string') return details.id;
+  return undefined;
+}
+async function executeWithPrefixOrigin<T>(origins: ReadonlyMap<string, PrefixOrigin>, execute: () => Promise<T>): Promise<T> {
+  try { return await execute(); }
+  catch (error: unknown) {
+    if (!(error instanceof PolylinedbError)) throw error;
+    const id = shorthandNotFoundId(error);
+    const origin = id === undefined ? undefined : origins.get(id);
+    if (origin === undefined) throw error;
+    const details = plainRecord(error.details);
+    if (details === undefined) throw error;
+    throw new PolylinedbError(error.code, error.message, error.status, { ...details, ...origin });
+  }
+}
 function invalid(message: string): never { throw new PolylinedbError('invalid_input', message, 400); }
 function parseArgument<T>(parser: (value: unknown) => T, value: unknown): T {
   try { return parser(value); }
@@ -231,7 +259,11 @@ async function main(argv: readonly string[]): Promise<void> {
     return;
   }
   const defaults = readRepositoryDefaults();
-  const prefix = parseArgument(parsePrefix, one('prefix') ?? defaults?.prefix ?? 'pd');
+  const explicitPrefix = one('prefix');
+  const prefixSource: PrefixSource = explicitPrefix !== undefined ? 'flag' : defaults !== undefined ? 'repository' : 'builtin';
+  const prefix = parseArgument(parsePrefix, explicitPrefix ?? defaults?.prefix ?? 'pd');
+  const prefixOrigin: PrefixOrigin = { prefix, prefix_source: prefixSource };
+  const shorthandOrigins = new Map<string, PrefixOrigin>();
   const dataRoot = join(process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
     ? process.env.XDG_DATA_HOME : join(homedir(), '.local', 'share'), 'polylinedb');
   const configPath = repositoryConfigPath();
@@ -323,7 +355,12 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   const raw: Record<string, unknown> = { op: command };
   if (command.startsWith('memory_')) {
-    const expandedMemory = (value: string) => parseMemoryId(/^(?:m)?[1-9][0-9]*$/.test(value) ? `${prefix}-m${value.replace(/^m/, '')}` : value);
+    const expandedMemory = (value: string, trackForNotFound = true) => {
+      const shorthand = /^(?:m)?[1-9][0-9]*$/.test(value);
+      const id = parseMemoryId(shorthand ? `${prefix}-m${value.replace(/^m/, '')}` : value);
+      if (shorthand && trackForNotFound) shorthandOrigins.set(id, prefixOrigin);
+      return id;
+    };
     raw.project = project;
     if (flags.has('with-revision')) raw.with_revision = true;
     if (needsOperand) raw[command === 'memory_search' ? 'query' : 'id'] = command === 'memory_search' ? operands[0] : expandedMemory(operands[0]);
@@ -333,19 +370,24 @@ async function main(argv: readonly string[]): Promise<void> {
     if (file !== undefined) raw.body = await readInput(file, 16384);
     for (const key of ['limit', 'expected', 'max-bytes']) { const value = one(key); if (value !== undefined) raw[key.replace('-', '_')] = integer(value); }
     const after = one('after');
-    if (after !== undefined) raw.after = expandedMemory(after);
+    if (after !== undefined) raw.after = expandedMemory(after, false);
     if (command === 'memory_create') { raw.prefix = prefix; raw.request_id = one('request-id') ?? randomUUID(); }
     const operation = parseOperation(raw);
-    if (selected.kind === 'cloud') process.stdout.write(JSON.stringify(await createCloudClient(selected).execute(operation)) + '\n');
+    if (selected.kind === 'cloud') process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation))) + '\n');
     else {
       if (actor === undefined) invalid('Local connection requires an actor');
       const store = openStore({ directory: selected.directory });
-      try { process.stdout.write(JSON.stringify(await executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })) + '\n'); }
+      try { process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') }))) + '\n'); }
       finally { store.close(); }
     }
     return;
   }
-  const expandedId = (value: string) => parseArgument(parseIssueId, /^[0-9]+(?:\.[0-9]+)*$/.test(value) ? `${prefix}-${value}` : value);
+  const expandedId = (value: string, trackForNotFound = true) => {
+    const shorthand = /^[0-9]+(?:\.[0-9]+)*$/.test(value);
+    const id = parseArgument(parseIssueId, shorthand ? `${prefix}-${value}` : value);
+    if (shorthand && trackForNotFound) shorthandOrigins.set(id, prefixOrigin);
+    return id;
+  };
   if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
   if (needsOperand) raw[command === 'search' ? 'query' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   if (one('body') !== undefined && one('body-file') !== undefined) invalid('Use either --body or --body-file');
@@ -357,7 +399,7 @@ async function main(argv: readonly string[]): Promise<void> {
   for (const name of ['tool', 'project', 'status', 'type']) if (one(name) !== undefined) raw[name] = one(name);
   for (const name of ['parent', 'after']) {
     const value = one(name);
-    if (value !== undefined) raw[name] = expandedId(value);
+    if (value !== undefined) raw[name] = expandedId(value, name === 'parent');
   }
   if (command === 'create') {
     raw.prefix = prefix;
@@ -393,12 +435,12 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   const operation = parseOperation(raw);
   if (selected.kind === 'cloud') {
-    process.stdout.write(JSON.stringify(await createCloudClient(selected).execute(operation)) + '\n');
+    process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation))) + '\n');
     return;
   }
   if (actor === undefined) invalid('Local connection requires an actor');
   const store = openStore({ directory: selected.directory });
-  try { process.stdout.write(JSON.stringify(await executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })) + '\n'); }
+  try { process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') }))) + '\n'); }
   finally { store.close(); }
 }
 export async function runCli(argv: readonly string[]): Promise<void> {

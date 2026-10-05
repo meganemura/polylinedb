@@ -16,7 +16,7 @@ import { memoryRow, memorySortKey } from "../records/persistence.ts";
 export type LocalStore = { db: SqlExecutor; exportSnapshot(): Snapshot; importSnapshot(snapshot: Snapshot): SnapshotImport; close(): void };
 
 type StoreLocation = { directory: string; cwd?: string };
-const fail = (message: string): never => { throw new PolylinedbError('invalid_data_directory', message, 400); };
+const fail = (message: string, details?: unknown): never => { throw new PolylinedbError('invalid_data_directory', message, 400, details); };
 
 function canonical(path: string): string {
   if (existsSync(path)) return realpathSync(path);
@@ -42,9 +42,9 @@ function approvedPath({ directory, cwd = process.cwd() }: StoreLocation): { dire
   const workDirectory = canonical(resolve(cwd));
   const destination = canonical(directory);
   const workRepository = repository(workDirectory);
-  if (inside(destination, workDirectory) || (workRepository && inside(destination, workRepository)) || repository(destination)) {
-    return fail('The data directory must be outside the working directory and Git repositories');
-  }
+  const repositoryBoundaryMessage = 'The data directory must be outside the working directory and Git repositories';
+  if (inside(destination, workDirectory)) return fail(repositoryBoundaryMessage, { rule: 'working_directory' });
+  if ((workRepository && inside(destination, workRepository)) || repository(destination)) return fail(repositoryBoundaryMessage, { rule: 'git_repository' });
   if (existsSync(destination) && !statSync(destination).isDirectory()) return fail('The data directory is not a directory');
   if (existsSync(destination) && (statSync(destination).mode & 0o077) !== 0) return fail('Use a private data directory with mode 0700');
   const database_path = join(destination, 'polylinedb.sqlite');
