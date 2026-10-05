@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { snapshotMigration, type Query } from './d1-snapshot-store.ts';
-import { canonicalSnapshot } from '../src/records/persistence.ts';
+import { canonicalSnapshot, SCHEMA_VERSION } from '../src/records/persistence.ts';
 
 export function parseTarget(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid target');
@@ -13,7 +13,7 @@ export function parseTarget(value: unknown) {
     || !('accountId' in value) || typeof value.accountId !== 'string' || !/^[a-f0-9]{32}$/.test(value.accountId)
     || !('databaseId' in value) || typeof value.databaseId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.databaseId)
     || !('snapshotSha256' in value) || typeof value.snapshotSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.snapshotSha256)
-    || !('schemaVersion' in value) || value.schemaVersion !== 3
+    || !('schemaVersion' in value) || value.schemaVersion !== SCHEMA_VERSION
     || Object.keys(value).sort().join(',') !== 'accountId,databaseId,profile,schemaVersion,snapshotSha256') throw new Error('Invalid fixed target fields');
   return Object.freeze({ profile: value.profile, accountId: value.accountId, databaseId: value.databaseId, snapshotSha256: value.snapshotSha256, schemaVersion: value.schemaVersion });
 }

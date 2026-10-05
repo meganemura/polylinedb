@@ -79,7 +79,7 @@ test('snapshot preserves memories, deletion receipts, and issued numbers', async
   await run({ op: 'memory_delete', project: 'project', id: 'pd-m1', expected: 1 });
   await run(creation({ title: 'Retain' }));
   await run({ op: 'memory_update', project: 'project', id: 'pd-m2', title: 'Retained', body: 'Confirmed', expected: 1 }, 'test:editor');
-  const snapshot = store.exportSnapshot(); assert.equal(snapshot.version, 3);
+  const snapshot = store.exportSnapshot(); assert.equal(snapshot.version, 4);
   const restoredLocation = { directory: join(root, 'restored'), cwd: join(root, 'work') };
   initializeStore(restoredLocation); const restored = openStore(restoredLocation);
   try {
@@ -115,8 +115,9 @@ test('schema upgrade is explicit and v2 snapshot conversion retains issue data',
   const request = parseOperation({ op: 'create', prefix: 'old', project: 'legacy', tool: 'tool', request_id: crypto.randomUUID(), body: 'Before upgrade' });
   await executeOperation(legacy, request, 'legacy:creator');
   await executeOperation(legacy, parseOperation({ op: 'comment', id: 'old-1', body: 'Original comment' }), 'legacy:commenter');
-  const edited = await executeOperation(legacy, parseOperation({ op: 'update', id: 'old-1', changes: [{ field: 'body', value: 'Edited before upgrade', expected: 1 }] }), 'legacy:editor');
-  assert('issue' in edited);
+  old.exec("UPDATE issues SET body = 'Edited before upgrade', body_v = 2, updated_by = 'legacy:editor' WHERE id = 'old-1'");
+  const shown = await executeOperation(legacy, parseOperation({ op: 'show', id: 'old-1' }), 'legacy:editor');
+  assert('issue' in shown); const edited = { issue: shown.issue };
   const oldComments = old.prepare('SELECT * FROM comments').all();
   const oldCounters = old.prepare('SELECT * FROM counters').all();
   const oldRequests = old.prepare('SELECT * FROM requests').all();

@@ -8,7 +8,7 @@ import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
 import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence.ts';
 import type { Snapshot } from '../src/records/persistence.ts';
 
-export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests'] as const;
+export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests'] as const;
 export type Table = typeof tables[number];
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;
@@ -20,6 +20,7 @@ export type MergePlan = { statements: Statement[]; expectedSnapshot: Snapshot; d
 const primaryKey: Record<Table, string> = {
   issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id', memories: 'id',
   memory_counters: 'prefix', memory_requests: 'request_id',
+  dependencies: 'dependent_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id',
 };
 const maximumJsonBytes = 400_000;
 const maximumSqlBytes = 100_000;
@@ -48,6 +49,7 @@ function canonicalColumns(): Record<Table, string[]> {
       memories: columnsFor(database, 'memories'),
       memory_counters: columnsFor(database, 'memory_counters'),
       memory_requests: columnsFor(database, 'memory_requests'),
+      dependencies: columnsFor(database, 'dependencies'), dependency_revisions: columnsFor(database, 'dependency_revisions'), dependency_requests: columnsFor(database, 'dependency_requests'),
     };
   } finally { database.close(); }
 }
@@ -86,7 +88,7 @@ function parseCollection(value: unknown, table: Table): Row[] {
 
 function parseRows(value: unknown): Rows {
   const input = plainRecord(value, 'Raw rows');
-  if (Object.keys(input).sort().join('\0') !== [...tables].sort().join('\0')) fail('Raw rows must contain all seven canonical collections');
+  if (Object.keys(input).sort().join('\0') !== [...tables].sort().join('\0')) fail('Raw rows must contain all canonical collections');
   return {
     issues: parseCollection(input.issues, 'issues'),
     comments: parseCollection(input.comments, 'comments'),
@@ -95,6 +97,7 @@ function parseRows(value: unknown): Rows {
     memories: parseCollection(input.memories, 'memories'),
     memory_counters: parseCollection(input.memory_counters, 'memory_counters'),
     memory_requests: parseCollection(input.memory_requests, 'memory_requests'),
+    dependencies: parseCollection(input.dependencies, 'dependencies'), dependency_revisions: parseCollection(input.dependency_revisions, 'dependency_revisions'), dependency_requests: parseCollection(input.dependency_requests, 'dependency_requests'),
   };
 }
 
@@ -138,10 +141,12 @@ function rowsFromSnapshot(snapshot: Snapshot): Rows {
     memories: snapshot.memories.map(memory => ({ ...memory, sort_key: memorySortKey(memory.id) })),
     memory_counters: snapshot.memory_counters.map(row => ({ ...row })),
     memory_requests: snapshot.memory_requests.map(row => ({ ...row })),
+    dependencies: snapshot.dependencies.map(row => ({ ...row })), dependency_revisions: snapshot.dependency_revisions.map(row => ({ ...row })), dependency_requests: snapshot.dependency_requests.map(row => ({ ...row })),
   };
 }
 
 function rowKey(row: Row, table: Table): string {
+  if (table === 'dependencies') return JSON.stringify([textField(row, 'dependent_id'), textField(row, 'blocker_id')]);
   const value = row[primaryKey[table]];
   if (typeof value !== 'string') fail(`${table} primary key must be text`);
   return value;
@@ -170,7 +175,7 @@ function assertCanonicalRows(actual: Rows, expected: Rows): void {
 function snapshotFromRows(rows: Rows): Snapshot {
   const snapshot = parseSnapshot({
     format: 'polylinedb.snapshot',
-    version: 3,
+    version: 4,
     issues: rows.issues.map(issueRow),
     comments: rows.comments.map(commentRow),
     counters: rows.counters,
@@ -178,6 +183,7 @@ function snapshotFromRows(rows: Rows): Snapshot {
     memories: rows.memories.map(memoryRow),
     memory_counters: rows.memory_counters,
     memory_requests: rows.memory_requests,
+    dependencies: rows.dependencies, dependency_revisions: rows.dependency_revisions, dependency_requests: rows.dependency_requests,
   });
   assertCanonicalRows(rows, rowsFromSnapshot(snapshot));
   return snapshot;
@@ -208,6 +214,7 @@ function assertDisjoint(source: Rows, destination: Rows): void {
 function compareBinaryText(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
 
 function orderedRows(rows: readonly Row[], table: Table): Row[] {
+  if (table === 'dependencies') return [...rows].sort((left, right) => compareBinaryText(issueSortKey(textField(left, 'dependent_id')), issueSortKey(textField(right, 'dependent_id'))) || compareBinaryText(issueSortKey(textField(left, 'blocker_id')), issueSortKey(textField(right, 'blocker_id'))));
   return [...rows].sort((left, right) => compareBinaryText(rowKey(left, table), rowKey(right, table)));
 }
 
@@ -258,9 +265,15 @@ function schemaGuard(): Statement {
 function destinationGuard(table: Table, chunk: { rows: Row[]; json: string }, lower: string | undefined, upper: string | undefined): Statement {
   const fieldList = columns[table].map(quoteIdentifier).join(', ');
   const jsonFields = columns[table].map(column => `json_extract(entry.value, '$.${column}') AS ${quoteIdentifier(column)}`).join(', ');
-  const key = quoteIdentifier(primaryKey[table]);
-  const conditions = [lower === undefined ? '' : ` AND ${key} > ?`, upper === undefined ? '' : ` AND ${key} <= ?`].join('');
-  const predicates = [lower, upper].filter((value): value is string => value !== undefined);
+  const key = table === 'dependencies' ? '((SELECT sort_key FROM issues WHERE id = dependent_id),(SELECT sort_key FROM issues WHERE id = blocker_id))' : quoteIdentifier(primaryKey[table]);
+  const placeholder = table === 'dependencies' ? '(?,?)' : '?';
+  const conditions = [lower === undefined ? '' : ` AND ${key} > ${placeholder}`, upper === undefined ? '' : ` AND ${key} <= ${placeholder}`].join('');
+  const predicates = [lower, upper].filter((value): value is string => value !== undefined).flatMap(value => {
+    if (table !== 'dependencies') return [value];
+    const tuple: unknown = JSON.parse(value);
+    if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[0] !== 'string' || typeof tuple[1] !== 'string') return fail('Invalid captured dependency tuple');
+    return [issueSortKey(tuple[0]), issueSortKey(tuple[1])];
+  });
   return checkedStatement({
     sql: `WITH captured AS (SELECT ${jsonFields} FROM json_each(?) AS entry), current_rows AS (SELECT ${fieldList} FROM ${quoteIdentifier(table)} WHERE 1${conditions}) INSERT INTO schema_version(version) SELECT 0 WHERE EXISTS (SELECT ${fieldList} FROM current_rows EXCEPT SELECT ${fieldList} FROM captured) OR EXISTS (SELECT ${fieldList} FROM captured EXCEPT SELECT ${fieldList} FROM current_rows)`,
     params: [chunk.json, ...predicates],
@@ -293,7 +306,7 @@ function sourceInsert(table: Table, chunk: { rows: Row[]; json: string }): State
   const fieldList = columns[table].map(quoteIdentifier).join(', ');
   const jsonFields = columns[table].map(column => `json_extract(entry.value, '$.${column}')`).join(', ');
   return checkedStatement({
-    sql: `INSERT INTO ${quoteIdentifier(table)}(${fieldList}) SELECT ${jsonFields} FROM json_each(?) AS entry`,
+    sql: `INSERT INTO ${quoteIdentifier(table)}(${fieldList}) SELECT ${jsonFields} FROM json_each(?) AS entry${table === 'dependency_revisions' ? ' WHERE 1 ON CONFLICT(dependent_id) DO UPDATE SET revision = excluded.revision WHERE dependency_revisions.revision = 1' : ''}`,
     params: [chunk.json],
   });
 }
@@ -316,6 +329,7 @@ function counts(rows: Rows): Record<Table, number> {
     memories: rows.memories.length,
     memory_counters: rows.memory_counters.length,
     memory_requests: rows.memory_requests.length,
+    dependencies: rows.dependencies.length, dependency_revisions: rows.dependency_revisions.length, dependency_requests: rows.dependency_requests.length,
   };
 }
 
@@ -333,6 +347,7 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
     memories: [...source.memories, ...destination.memories],
     memory_counters: [...source.memory_counters, ...destination.memory_counters],
     memory_requests: [...source.memory_requests, ...destination.memory_requests],
+    dependencies: [...source.dependencies, ...destination.dependencies], dependency_revisions: [...source.dependency_revisions, ...destination.dependency_revisions], dependency_requests: [...source.dependency_requests, ...destination.dependency_requests],
   };
   const expectedSnapshot = snapshotFromRows(merged);
   const canonical = canonicalSnapshot(expectedSnapshot);

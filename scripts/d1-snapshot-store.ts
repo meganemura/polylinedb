@@ -11,10 +11,11 @@ export type Statement = { sql: string; params: (string | number | null)[] };
 export type Query = (statement: Statement) => Promise<Record<string, unknown>[]>;
 const claimTable = 'polylinedb_snapshot_claim';
 const claimSql = `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)`;
-const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests'] as const;
+const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests'] as const;
 type Table = typeof tables[number];
 type Rows = Record<Table, Record<string, unknown>[]>;
-const key = { issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id', memories: 'id', memory_counters: 'prefix', memory_requests: 'request_id' };
+const key = { issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id', memories: 'id', memory_counters: 'prefix', memory_requests: 'request_id', dependencies: 'dependent_id,blocker_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id' };
+function rowKey(row: Record<string, unknown>, table: Table) { return table === 'dependencies' ? JSON.stringify([row.dependent_id, row.blocker_id]) : row[key[table]]; }
 const fail = (message: string): never => { throw new Error(message); };
 const querySql = (query: Query, sql: string, params: Statement['params'] = []) => query({ sql, params });
 const digest = (canonical: string) => createHash('sha256').update(canonical).digest('hex');
@@ -31,6 +32,7 @@ function expectedRows(input: unknown): { canonical: string; rows: Rows } {
         created_at: issue.created_at, created_by: issue.created_by, updated_at: issue.updated_at, updated_by: issue.updated_by };
     }), comments: snapshot.comments.map(row => ({ ...row })), counters: snapshot.counters.map(row => ({ ...row })), requests: snapshot.requests.map(row => ({ ...row })),
     memories: snapshot.memories.map(row => ({ ...row, sort_key: memorySortKey(row.id) })), memory_counters: snapshot.memory_counters.map(row => ({ ...row })), memory_requests: snapshot.memory_requests.map(row => ({ ...row })),
+    dependencies: snapshot.dependencies.map(row => ({ ...row })), dependency_revisions: snapshot.dependency_revisions.map(row => ({ ...row })), dependency_requests: snapshot.dependency_requests.map(row => ({ ...row })),
   } };
 }
 
@@ -55,9 +57,22 @@ async function checkSchema(query: Query): Promise<boolean> {
 }
 
 async function readRows(query: Query): Promise<Rows> {
-  const rows: Rows = { issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] };
+  const rows: Rows = { issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] };
   // One-row pages also bound responses when a valid body approaches the row limit.
   for (const table of tables) {
+    if (table === 'dependencies') {
+      let after: [string, string] | undefined;
+      for (;;) {
+        const page = await querySql(query, `SELECT dependencies.*, dependent.sort_key AS dependent_sort, blocker.sort_key AS blocker_sort FROM dependencies JOIN issues AS dependent ON dependent.id = dependent_id JOIN issues AS blocker ON blocker.id = blocker_id ${after === undefined ? '' : 'WHERE (dependent.sort_key,blocker.sort_key) > (?,?)'} ORDER BY dependent.sort_key,blocker.sort_key LIMIT 1`, after ?? []);
+        const row = page[0]; if (!row) break;
+        const dependentSort = row.dependent_sort; const blockerSort = row.blocker_sort;
+        if (page.length !== 1 || typeof dependentSort !== 'string' || typeof blockerSort !== 'string') return fail('Invalid dependency tuple page');
+        const next: [string, string] = [dependentSort, blockerSort];
+        if (after && (next[0] < after[0] || (next[0] === after[0] && next[1] <= after[1]))) fail('Dependency cursor did not advance');
+        after = next; rows.dependencies.push({ dependent_id: row.dependent_id, blocker_id: row.blocker_id });
+      }
+      continue;
+    }
     let after: string | undefined;
     for (;;) {
       const page = await querySql(query, `SELECT * FROM ${table}${after === undefined ? '' : ` WHERE ${key[table]} > ?`} ORDER BY ${key[table]} LIMIT 1`, after === undefined ? [] : [after]);
@@ -74,11 +89,16 @@ async function readRows(query: Query): Promise<Rows> {
   return rows;
 }
 
-function compareRows(expected: Rows, actual: Rows): boolean {
+function compareRows(expected: Rows, actual: Rows, allowBaselines = false): boolean {
   let complete = true;
   for (const table of tables) {
-    const byId = new Map(expected[table].map(row => [row[key[table]], ordered(row)]));
-    for (const row of actual[table]) if (byId.get(row[key[table]]) !== ordered(row)) fail(`Destination ${table} contains unexpected or differing rows`);
+    const byId = new Map(expected[table].map(row => [rowKey(row, table), row]));
+    for (const row of actual[table]) {
+      const expectedRow = byId.get(rowKey(row, table));
+      if (expectedRow && ordered(expectedRow) === ordered(row)) continue;
+      if (allowBaselines && table === 'dependency_revisions' && expectedRow && row.revision === 1) { complete = false; continue; }
+      fail(`Destination ${table} contains unexpected or differing rows`);
+    }
     if (actual[table].length !== expected[table].length) complete = false;
   }
   return complete;
@@ -97,7 +117,7 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     const claims = hasClaim ? await querySql(query, `SELECT singleton,sha256 FROM ${claimTable}`) : [];
     if (claims.length > 1 || (claims.length === 1 && (claims[0]?.singleton !== 1 || claims[0]?.sha256 !== sha256))) fail('Destination belongs to another snapshot');
     const actual = await readRows(query);
-    const complete = compareRows(rows, actual);
+    const complete = compareRows(rows, actual, claims.length === 1);
     const empty = tables.every(table => actual[table].length === 0);
     if (!empty && !complete && claims.length === 0) fail('Partial destination has no snapshot claim');
     return { state: complete ? 'identical' : empty ? 'empty' : 'resumable', sha256, counts };
@@ -106,9 +126,10 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     await inspect();
     const actual = await readRows(query);
     if (!compareRows(rows, actual)) fail('Destination snapshot is incomplete');
-    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 3,
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 4,
       issues: actual.issues.map(issueRow), comments: actual.comments.map(commentRow), counters: actual.counters, requests: actual.requests,
-      memories: actual.memories.map(memoryRow), memory_counters: actual.memory_counters, memory_requests: actual.memory_requests });
+      memories: actual.memories.map(memoryRow), memory_counters: actual.memory_counters, memory_requests: actual.memory_requests,
+      dependencies: actual.dependencies, dependency_revisions: actual.dependency_revisions, dependency_requests: actual.dependency_requests });
     if (canonicalSnapshot(snapshot) !== canonical) fail('Destination canonical snapshot differs');
     return { result: 'verified', sha256, counts, snapshot };
   };
@@ -126,7 +147,7 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
         if (value === null || typeof value === 'string' || typeof value === 'number') return value;
         return fail('Invalid snapshot SQL value');
       });
-      await querySql(query, `INSERT INTO ${table}(${columns.join(',')}) SELECT ${columns.map(() => '?').join(',')} WHERE EXISTS (SELECT 1 FROM ${claimTable} WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(${key[table]}) DO NOTHING`, [...params, sha256]);
+      await querySql(query, `INSERT INTO ${table}(${columns.join(',')}) SELECT ${columns.map(() => '?').join(',')} WHERE EXISTS (SELECT 1 FROM ${claimTable} WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(${key[table]}) ${table === 'dependency_revisions' ? 'DO UPDATE SET revision = excluded.revision WHERE dependency_revisions.revision = 1' : 'DO NOTHING'}`, [...params, sha256]);
     }
     return { ...await verify(), result: 'restored' };
   };

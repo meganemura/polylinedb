@@ -5,13 +5,16 @@ import type { Comment, Issue } from "./issues.ts";
 import { fields } from "./schema.ts";
 import { memoryRow, memorySortKey, parseMemoryId, parseMemoryOperation } from "./memories.ts";
 import type { Memory, MemoryCounter, MemoryRequest } from "./memories.ts";
+import { parseDependencyOperation } from './dependencies.ts';
+import type { Dependency, DependencyRevision, DependencyRequest } from './dependencies.ts';
 
 export type Counter = { scope: string; last_number: number };
 export type CreateRequest = { request_id: string; actor: string; payload: string; issue_id: string };
 type SnapshotV2 = { format: 'polylinedb.snapshot'; version: 2; issues: readonly Issue[]; comments: readonly Comment[];
   counters: readonly Counter[]; requests: readonly CreateRequest[] };
-export type Snapshot = Omit<SnapshotV2, 'version'> & { version: 3; memories: readonly Memory[]; memory_counters: readonly MemoryCounter[]; memory_requests: readonly MemoryRequest[] };
-export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; sha256: string };
+type SnapshotV3 = Omit<SnapshotV2, 'version'> & { version: 3; memories: readonly Memory[]; memory_counters: readonly MemoryCounter[]; memory_requests: readonly MemoryRequest[] };
+export type Snapshot = Omit<SnapshotV3, 'version'> & { version: 4; dependencies: readonly Dependency[]; dependency_revisions: readonly DependencyRevision[]; dependency_requests: readonly DependencyRequest[] };
+export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Expected an object');
@@ -90,9 +93,9 @@ function parseSnapshotV2(input: unknown): SnapshotV2 {
 function compareId(a: { id: string }, b: { id: string }): number { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }
 function compareText(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 0; }
 export function convertSnapshotV2(input: unknown): Snapshot {
-  return { ...parseSnapshotV2(input), version: 3, memories: [], memory_counters: [], memory_requests: [] };
+  return convertSnapshotV3({ ...parseSnapshotV2(input), version: 3, memories: [], memory_counters: [], memory_requests: [] });
 }
-export function parseSnapshot(input: unknown): Snapshot {
+function parseSnapshotV3(input: unknown): SnapshotV3 {
   const source = record(input, ['format', 'version', 'issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests']);
   if (source.version !== 3) return fail('Unsupported snapshot version; convert version 2 explicitly');
   const issueSnapshot = parseSnapshotV2({ format: source.format, version: 2, issues: source.issues, comments: source.comments, counters: source.counters, requests: source.requests });
@@ -137,6 +140,74 @@ export function parseSnapshot(input: unknown): Snapshot {
   } catch (error) {
     if (error instanceof PolylinedbError && error.code === 'invalid_snapshot') throw error;
     return fail(error instanceof Error ? error.message : 'Invalid memory snapshot');
+  }
+}
+export function convertSnapshotV3(input: unknown): Snapshot {
+  const snapshot = parseSnapshotV3(input);
+  return { ...snapshot, version: 4, dependencies: [], dependency_revisions: snapshot.issues.map(issue => ({ dependent_id: issue.id, revision: 1 })), dependency_requests: [] };
+}
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, ['format', 'version', 'issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests']);
+  if (source.version !== 4) return fail('Unsupported snapshot version; convert versions 2 and 3 explicitly');
+  const { dependencies: edges, dependency_revisions: revisions, dependency_requests: requests, ...legacy } = source;
+  const old = parseSnapshotV3({ ...legacy, version: 3 });
+  if (!Array.isArray(edges) || !Array.isArray(revisions) || !Array.isArray(requests)) return fail('Dependency collections must be arrays');
+  try {
+    const ids = new Set(old.issues.map(issue => issue.id));
+    const endpoint = (value: unknown) => { const id = parseIssueId(value); if (!ids.has(id)) return fail('Dependency endpoint does not exist'); return id; };
+    const positive = (value: unknown) => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) return fail('Invalid dependency revision'); return value; };
+    const dependency_revisions = revisions.map(value => {
+      const row = record(value, ['dependent_id', 'revision']);
+      return { dependent_id: endpoint(row.dependent_id), revision: positive(row.revision) };
+    }).sort((a, b) => compareText(issueSortKey(a.dependent_id), issueSortKey(b.dependent_id)));
+    const byId = new Map(dependency_revisions.map(row => [row.dependent_id, row.revision]));
+    if (byId.size !== dependency_revisions.length || byId.size !== ids.size) fail('Every issue must have one dependency revision');
+    const dependencies = edges.map(value => {
+      const row = record(value, ['dependent_id', 'blocker_id']);
+      return { dependent_id: endpoint(row.dependent_id), blocker_id: endpoint(row.blocker_id) };
+    }).sort((a, b) => compareText(issueSortKey(a.dependent_id), issueSortKey(b.dependent_id)) || compareText(issueSortKey(a.blocker_id), issueSortKey(b.blocker_id)));
+    const outgoing = new Map<string, Set<string>>();
+    const degree = new Map([...ids].map(id => [id, 0]));
+    for (const edge of dependencies) {
+      const next = outgoing.get(edge.dependent_id) ?? new Set<string>();
+      if (next.has(edge.blocker_id)) fail('Duplicate dependency tuple');
+      next.add(edge.blocker_id); outgoing.set(edge.dependent_id, next);
+      degree.set(edge.blocker_id, (degree.get(edge.blocker_id) ?? 0) + 1);
+    }
+    const queue = [...degree].filter(([, count]) => count === 0).map(([id]) => id);
+    for (let i = 0; i < queue.length; i++) {
+      const id = queue[i]; if (id === undefined) continue;
+      for (const blocker of outgoing.get(id) ?? []) {
+        const count = (degree.get(blocker) ?? 0) - 1; degree.set(blocker, count);
+        if (count === 0) queue.push(blocker);
+      }
+    }
+    if (queue.length !== ids.size) fail('Dependency graph contains a cycle');
+    const dependency_requests = requests.map((value): DependencyRequest => {
+      const row = record(value, ['request_id', 'actor', 'payload', 'dependent_id', 'blocker_id', 'result_revision', 'outcome', 'created_at']);
+      const request_id = parseRequestId(row.request_id); const dependent_id = endpoint(row.dependent_id); const blocker_id = endpoint(row.blocker_id);
+      const result_revision = positive(row.result_revision);
+      if (result_revision < 2 || result_revision > (byId.get(dependent_id) ?? 0)) fail('Dependency receipt exceeds the aggregate revision');
+      if (typeof row.actor !== 'string' || !row.actor.trim() || /\p{Cc}/u.test(row.actor) || new TextEncoder().encode(row.actor).length > 256 || typeof row.payload !== 'string') return fail('Invalid dependency receipt actor or payload');
+      timestamp(row.created_at); if (typeof row.created_at !== 'string') return fail('Invalid dependency timestamp');
+      const operation = parseDependencyOperation(JSON.parse(row.payload));
+      if ((operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') || operation.request_id !== request_id || operation.dependent_id !== dependent_id || operation.blocker_id !== blocker_id || operation.expected_revision + 1 !== result_revision || JSON.stringify(operation) !== row.payload) return fail('Invalid canonical dependency receipt');
+      const outcome = row.outcome;
+      if (outcome !== 'added' && outcome !== 'already_present' && outcome !== 'removed' && outcome !== 'already_absent') return fail('Invalid dependency receipt outcome');
+      if ((operation.op === 'dependency_add') !== (outcome === 'added' || outcome === 'already_present')) return fail('Dependency receipt outcome differs from the operation');
+      return { request_id, actor: row.actor, payload: row.payload, dependent_id, blocker_id, result_revision, outcome, created_at: row.created_at };
+    }).sort((a, b) => compareText(a.request_id, b.request_id));
+    if (new Set(dependency_requests.map(row => row.request_id)).size !== dependency_requests.length) fail('Duplicate dependency request ID');
+    const results = new Map<string, Set<number>>();
+    for (const row of dependency_requests) {
+      const seen = results.get(row.dependent_id) ?? new Set<number>();
+      if (seen.has(row.result_revision)) fail('Duplicate dependency receipt revision');
+      seen.add(row.result_revision); results.set(row.dependent_id, seen);
+    }
+    return { ...old, version: 4, dependencies, dependency_revisions, dependency_requests };
+  } catch (error) {
+    if (error instanceof PolylinedbError && error.code === 'invalid_snapshot') throw error;
+    return fail(error instanceof Error ? error.message : 'Invalid dependency snapshot');
   }
 }
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }

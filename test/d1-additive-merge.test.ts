@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { executeOperation, parseOperation } from "../src/records/issues.ts";
+import { executeOperation, parseOperation } from "../src/records/index.ts";
 import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories.ts";
 import { canonicalSnapshot } from "../src/records/snapshot.ts";
 import { initializeStore, openStore } from "../src/local-store/index.ts";
@@ -55,6 +55,7 @@ async function makeSource(directory: string, prefix = 'src', includeLiveMemory =
     const epic = await addIssue(fixture.store, { prefix, body: `${prefix} original`, type: 'epic' }, `${prefix}-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'update', id: epic.id, changes: [{ field: 'body', value: `${prefix} revised`, expected: 1 }] }), `${prefix}-editor`);
     await addIssue(fixture.store, { prefix, parent: epic.id, body: `${prefix} child` }, `${prefix}-child-author`);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'dependency_add', dependent_id: `${epic.id}.1`, blocker_id: epic.id, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
     await addComment(fixture.store, epic.id, `${prefix} comment`, `${prefix}-commenter`);
     const deletedMemory = await addMemory(fixture.store, prefix, `${prefix}-memory-author`);
     await executeMemoryOperation(fixture.store.db, parseMemoryOperation({ op: 'memory_delete', project: 'synthetic', id: deletedMemory.id, expected: 1 }), `${prefix}-memory-editor`);
@@ -96,6 +97,7 @@ function readRows(database: DatabaseSync): unknown {
     memories: database.prepare('SELECT * FROM memories').all(),
     memory_counters: database.prepare('SELECT * FROM memory_counters').all(),
     memory_requests: database.prepare('SELECT * FROM memory_requests').all(),
+    dependencies: database.prepare('SELECT * FROM dependencies').all(), dependency_revisions: database.prepare('SELECT * FROM dependency_revisions').all(), dependency_requests: database.prepare('SELECT * FROM dependency_requests').all(),
   };
 }
 
@@ -266,7 +268,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
     for (const table of tables) {
       const key = table === 'issues' || table === 'comments' || table === 'memories' ? 'id'
         : table === 'counters' ? 'scope'
-          : table === 'memory_counters' ? 'prefix' : 'request_id';
+          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : 'request_id';
       const quotedTable = `"${table}"`;
       const quotedKey = `"${key}"`;
       assert.throws(() => database.prepare(`INSERT INTO ${quotedTable} SELECT * FROM ${quotedTable} LIMIT 1`).all(), /Use cloud connection archive/, `${table} insert`);
@@ -274,7 +276,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
       assert.throws(() => database.prepare(`DELETE FROM ${quotedTable}`).all(), /Use cloud connection archive/, `${table} delete`);
     }
     const tableCount = database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get();
-    assert.equal(tableCount?.count, 10);
+    assert.equal(tableCount?.count, 13);
     for (const table of ['memory_store_identity', 'project_memory_revisions']) {
       assert.throws(() => database.exec(`INSERT INTO ${table} SELECT * FROM ${table} LIMIT 1`), /Use cloud connection archive/);
       assert.throws(() => database.exec(`DELETE FROM ${table}`), /Use cloud connection archive/);

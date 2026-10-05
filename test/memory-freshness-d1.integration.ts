@@ -26,7 +26,7 @@ try {
     assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, version);
     assert.equal((await database.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name = 'memory_store_identity'").first())?.n, 0);
     await database.batch(schemaUpgradeStatements(version).map(sql => database.prepare(sql)));
-    assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, 4);
+    assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, 5);
     assert.deepEqual(await run(request), issue);
     const revision = async () => {
       const context = await run({ op: 'memory_context', project: 'demo', with_revision: true });
