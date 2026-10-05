@@ -16,6 +16,17 @@ Install the CLI from npm:
 npm install --global polylinedb
 ```
 
+Version managers can switch Node when a repository selects another runtime. To keep `pd` on a supported Node version, place a wrapper earlier in `PATH`:
+
+```sh
+#!/bin/sh
+exec /opt/example/node-24.20.0/bin/node \
+  /opt/example/npm-global/lib/node_modules/polylinedb/dist/cli.js "$@"
+```
+
+Replace both example paths with the Node binary and installed package entry for your fixed Node version. The package must be installed under that Node version's global npm root.
+Run `pd --version` to check the installed package version and the Node runtime that launched it.
+
 Run these commands from your working project:
 
 ```sh
@@ -23,6 +34,7 @@ pd init --tool compiler --project parser --actor local:owner
 pd --actor local:owner create --tool compiler --project parser --body 'Handle empty input'
 pd list
 pd --help
+pd --version
 ```
 
 Inside Git, initialization saves defaults in Git metadata and creates an external store under the data root's `stores` directory.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reject unsupported Node runtimes before loading CLI operations and report package and Node versions with `pd --version`.
+- Document fixed-Node launch wrappers for installations managed by version managers.
 - Report valid Worker access configuration errors with safe CLI guidance.
 - Distinguish busy OAuth callback ports from denied loopback access.
 - Return `store_retired` when the CLI writes to a retired local store.

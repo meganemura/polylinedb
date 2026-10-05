@@ -1,7 +1,7 @@
 // Verifies the distributable through npm installation; source-tree imports cannot satisfy this check.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,18 +22,26 @@ function run(command: string, args: string[], cwd: string, expected = 0): string
   return result.stdout;
 }
 
+function invokeAtNodeVersion(nodeVersion: string, command: string, args: string[], cwd: string, commandEnv: NodeJS.ProcessEnv = env) {
+  const result = spawnSync(process.execPath, ['--import', runtimePreload, command, ...args], {
+    cwd, env: { ...commandEnv, PD_TEST_NODE_VERSION: nodeVersion }, encoding: 'utf8',
+  });
+  assert.ifError(result.error);
+  return result;
+}
+
 try {
   mkdirSync(env.HOME!);
   const packed = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts=false', '--foreground-scripts=false', '--pack-destination', root], project));
   assert.equal(packed.length, 1);
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
-  const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', "dist/records/issues.js",
+  const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/cli-commands.js', "dist/records/issues.js",
     "dist/records/schema.js", "dist/local-store/index.js", "dist/records/snapshot.js", "dist/workspace/local-config.js", "dist/workspace/connections.js", 'dist/workspace/index.js', "dist/records/issue-id.js",
     'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
     "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
-    'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md',
+    'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
     "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
@@ -47,6 +55,18 @@ try {
   assert.deepEqual(manifest.dependencies, { solarsql: '0.7.1' });
   assert.equal(manifest.engines.node, '^24.20.0 || >=26.7.0');
   assert.equal(manifest.bin.pd, 'dist/cli.js');
+  const malformedRoot = join(root, 'malformed-package');
+  const malformedDist = join(malformedRoot, 'dist');
+  mkdirSync(malformedDist, { recursive: true });
+  copyFileSync(join(installed, 'dist/cli.js'), join(malformedDist, 'cli.js'));
+  writeFileSync(join(malformedRoot, 'package.json'), JSON.stringify({
+    ...manifest,
+    engines: { node: '^24.20.0 || >=26.7.0 <27' },
+  }));
+  const malformedManifest = invokeAtNodeVersion(process.versions.node, join(malformedDist, 'cli.js'), ['--version'], root);
+  assert.equal(malformedManifest.status, 1, malformedManifest.stderr);
+  assert.equal(malformedManifest.stdout, '');
+  assert.equal(JSON.parse(malformedManifest.stderr).error.code, 'internal_error');
   const command = join(prefix, 'bin', 'pd');
   assert.equal(realpathSync(command), realpathSync(join(installed, 'dist', 'cli.js')));
   const workspace = join(root, 'work');
@@ -57,6 +77,11 @@ try {
     assert.equal(version.status, 0, version.stderr);
     assert.equal(version.stderr, '');
     assert.deepEqual(JSON.parse(version.stdout), { version: manifest.version, node: process.versions.node });
+  }
+  for (const nodeVersion of ['24.20.0', '24.99.99', '26.7.0', '27.0.0']) {
+    const version = invokeAtNodeVersion(nodeVersion, command, ['--version'], workspace);
+    assert.equal(version.status, 0, version.stderr);
+    assert.deepEqual(JSON.parse(version.stdout), { version: manifest.version, node: nodeVersion });
   }
   const bodyVersion = invokeAtNodeVersion(process.versions.node, command,
     ['create', '--tool', 'package-test', '--project', 'release', '--body', '--version'], workspace);
@@ -77,7 +102,7 @@ try {
     ['list'], ['context'], ['connection', 'list'],
     ['connection', 'add', 'home', '--data-dir', join(sideEffectRoot, 'connection-store')], ['auth', 'status'],
   ];
-  for (const nodeVersion of ['20.20.2', '24.18.0']) {
+  for (const nodeVersion of ['20.20.2', '24.18.0', '24.19.0', '25.0.0', '26.6.9', '24.20.0-rc.1']) {
     for (const args of unsupportedCommands) {
       const result = invokeAtNodeVersion(nodeVersion, command, args, workspace, unsupportedEnv);
       assert.equal(result.status, 1, result.stderr || result.stdout);

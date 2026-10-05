@@ -13,6 +13,7 @@ export default {
   ],
   declaredModules: [
     { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
+    { name: "cli-commands.ts", glob: "src/cli-commands.ts", surface: "cli-commands.ts" },
     { name: "cloud-client", glob: "src/cloud-client/**", surface: "index.ts" },
     { name: "cloudflare.config.ts", glob: "cloudflare.config.ts", surface: "cloudflare.config.ts" },
     { name: "scripts", glob: "scripts/**" },
@@ -25,6 +26,7 @@ export default {
   ],
   classify: [
     { glob: "src/cli.ts", tags: ["layer:entrypoint", "env:node"] },
+    { glob: "src/cli-commands.ts", tags: ["layer:entrypoint", "env:node"] },
     { glob: "src/cloud-client/**", tags: ["capability:cloud-client", "layer:adapter", "env:node"] },
     { glob: "cloudflare.config.ts", tags: ["layer:entrypoint"] },
     { glob: "scripts/**", tags: ["layer:entrypoint"] },
