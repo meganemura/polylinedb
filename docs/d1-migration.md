@@ -1,7 +1,7 @@
 # Restore a local snapshot into D1
 
-These instructions describe the unreleased source with schema 6 and snapshot 5.
-Published version 0.2.0 uses schema 5.
+These instructions describe version 0.3.0 with schema 6 and snapshot 5.
+Version 0.2.0 uses schema 5.
 
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.

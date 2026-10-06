@@ -1,7 +1,8 @@
 # Host lifecycle hooks
 
 The CLI can install a local user-scope memory hook for Claude Code, Codex, or Cursor.
-This adapter requires the unreleased CLI and a schema 4 store.
+Lifecycle adapters are available from version 0.2.0.
+Use a store upgraded to the schema required by the installed CLI.
 Cloud agents do not inherit these user settings.
 The hook runs the existing `pd memory context` command from the session workspace.
 It uses the connection, credentials, and project selected by the CLI.

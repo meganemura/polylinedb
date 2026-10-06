@@ -1,7 +1,7 @@
 # Move a shared local store to the cloud
 
-These instructions describe the unreleased source with schema 6 and snapshot 5.
-Published version 0.2.0 uses schema 5.
+These instructions describe version 0.3.0 with schema 6 and snapshot 5.
+Version 0.2.0 uses schema 5.
 
 This procedure adds a local store to an existing D1 store, then selects the cloud connection in your repositories.
 It preserves the records already in D1.

@@ -1,7 +1,7 @@
 # Coordinate issue ownership
 
-This guide describes the unreleased source with schema 6 and snapshot 5.
-Published version 0.2.0 uses schema 5 and does not provide claim commands.
+This guide describes version 0.3.0 with schema 6 and snapshot 5.
+Version 0.2.0 uses schema 5 and does not provide claim commands.
 Check the installed `pd --help` or MCP tool schemas before using ownership operations.
 
 Select the intended connection and actor before acquisition.

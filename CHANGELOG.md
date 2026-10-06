@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-06)
 
 - Distinguish denied authentication state access from a busy authentication lock without exposing filesystem paths.
 - Report signing-key outages with safe guidance and retain request UUIDs for explicit retries.
@@ -13,8 +13,8 @@
 
 ### Upgrade from 0.2.0
 
-These instructions apply to the unreleased changes. Published 0.2.0 does not provide claim commands.
-Stop writers and preserve a private backup before installing the next release.
+Version 0.3.0 uses schema 6 and snapshot 5. Version 0.2.0 does not provide claim commands.
+Stop writers and preserve a private backup before installing version 0.3.0.
 For a local connection, run `pd upgrade` after installation to move schema 5 to schema 6.
 The upgrade preserves existing records and leaves issues unclaimed.
 For D1, use the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-or-5-deployment) before deploying the matching Worker.

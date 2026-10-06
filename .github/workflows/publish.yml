@@ -7,6 +7,10 @@ on:
         description: Exact package version approved for publication
         required: true
         type: string
+      commit:
+        description: Full commit SHA approved for publication
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -34,6 +38,7 @@ jobs:
       - name: Check approved version
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+          APPROVED_COMMIT: ${{ inputs.commit }}
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -41,6 +46,8 @@ jobs:
           const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
           const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
           assert.match(process.env.RELEASE_VERSION, /^\d+\.\d+\.\d+$/);
+          assert.match(process.env.APPROVED_COMMIT, /^[0-9a-f]{40}$/);
+          assert.equal(process.env.GITHUB_SHA, process.env.APPROVED_COMMIT);
           assert.equal(manifest.name, 'polylinedb');
           assert.equal(manifest.version, process.env.RELEASE_VERSION);
           assert.equal(lock.version, manifest.version);

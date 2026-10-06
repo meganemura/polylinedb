@@ -61,8 +61,8 @@ Prerequisites form a separate acyclic graph. They can cross projects within the 
 See [issue prerequisites](prerequisites.md) for aggregate conflicts, immutable request receipts, and readiness semantics.
 Close and updates that request `in_progress` or `closed` accept `force: true` with a nonempty `reason` for an explicit exception.
 The reason becomes an attributed comment in the successful status transaction. Ordinary operation results retain their existing shapes.
-Unreleased schema 6 adds issue ownership while retaining all seven ordinary issue fields.
-Published version 0.2.0 uses schema 5.
+Version 0.3.0 uses schema 6 and adds issue ownership while retaining all seven ordinary issue fields.
+Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
 Once acquisition activates an issue, every requested status change requires a current unexpired proof at the write.
 A supplied proof also guards other field changes, including after restore removes the claim row.
@@ -201,7 +201,7 @@ Omit `--file` or use `--file -` to write JSON to standard output.
 
 Initialize the destination, then run `pd --actor IDENTITY import --file snapshot.json` to restore a snapshot.
 Import accepts at most 16 MiB of UTF-8 JSON and validates the complete snapshot before a write.
-The unreleased source snapshot has format `polylinedb.snapshot` and version `5`.
+The version 0.3.0 snapshot has format `polylinedb.snapshot` and version `5`.
 Its collections include issue, memory, prerequisite, and claim records with their counters and receipts.
 Claim records retain their source incarnation as history; restoration rotates destination authority.
 Every child must include its epic parent, and every comment must name an included issue.
@@ -215,8 +215,8 @@ Export uses one read transaction for a consistent snapshot.
 These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
 
-The unreleased physical schema version is 6, and its portable snapshot version is 5.
-Published version 0.2.0 uses schema 5 and snapshot 4.
+Version 0.3.0 uses physical schema 6 and portable snapshot 5.
+Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
 Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, or 5 store after making a private backup.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.

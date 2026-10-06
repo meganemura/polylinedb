@@ -68,9 +68,9 @@ A conflicting update fails as a whole.
 Read again and decide whether the proposed edit still applies.
 polylinedb does not retry with newer versions automatically.
 
-Unreleased schema 6 adds ownership claims without changing these seven ordinary issue fields.
-Published version 0.2.0 uses schema 5 and does not provide claim commands.
-For a supporting source build, coordinate ownership with an observed incarnation and caller session:
+Version 0.3.0 adds ownership claims with schema 6 without changing these seven ordinary issue fields.
+Version 0.2.0 uses schema 5 and does not provide claim commands.
+With a matching CLI and store, coordinate ownership with an observed incarnation and caller session:
 
 ```sh
 pd claim show ISSUE_ID
@@ -127,7 +127,7 @@ Keep `pd` available on the agent's PATH.
 The skill starts with `pd context` and retrieves project memory with `pd memory context --project PROJECT`.
 It repeats memory retrieval after context recovery and uses explicit project filters for shared stores.
 Skill discovery does not install lifecycle hooks. Use `pd agent install HOST` for a user-scope adapter.
-Lifecycle adapters and revision observations require the unreleased source version.
+Lifecycle adapters and revision observations are available from version 0.2.0.
 See [project memory](docs/memory.md) and [host lifecycle hooks](docs/host-hooks.md) for retrieval and host support.
 See [issue prerequisites](docs/prerequisites.md) for dependency revisions, safe retries, and ready/blocked worklists.
 It does not initialize a database during ordinary issue work.
