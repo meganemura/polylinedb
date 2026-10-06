@@ -8,7 +8,7 @@ The GitHub repository can remain private while the npm package is public.
 
 Version `0.0.1` is the initial version. Version `0.1.0` adds the verified local and cloud workflows.
 Version `0.2.0` adds prerequisites, memory freshness, and automatic host hooks.
-Version `0.3.0` adds session-owned issue claims and explicit human CLI output.
+Version `0.3.1` adds session-owned issue claims and explicit human CLI output.
 Database upgrades and Worker deployments require separate verification and approval.
 Verify local installation, persistence, and field conflicts with the installed package.
 Verify the deployed Worker, D1 persistence, Access policy, and cloud-agent OAuth reuse with the [cloud acceptance checks](cloud.md#verify-each-host-and-d1).
@@ -26,7 +26,7 @@ npm test
 npm run test:d1
 npm run test:worker
 npm audit
-npm run test:package -- /absolute/path/polylinedb-0.3.0.tgz
+npm run test:package -- /absolute/path/polylinedb-0.3.1.tgz
 ```
 
 The package check runs `npm pack`, including its `prepack` build.
@@ -55,6 +55,9 @@ Confirm the package name, version, MIT license, reviewed commit, and file list w
 The approved workflow builds its tarball from that commit and verifies it before publication.
 The `publish.yml` workflow uses npm trusted publishing through GitHub OIDC.
 The job requests `id-token: write`. It does not use an npm token or a local npm login.
+Configure the GitHub Environment `publish` with the owner as a required reviewer.
+Allow the owner to approve their own workflow runs.
+The publish job waits for this approval before it starts.
 Register the workflow once from an authenticated owner session:
 
 ```sh
@@ -62,14 +65,15 @@ npm trust github polylinedb --repo meganemura/polylinedb --file publish.yml --al
 npm trust list polylinedb
 ```
 
-After approval, push the reviewed commit to `main` and start the workflow with the exact version:
+Push the reviewed commit to `main` and start the workflow with the exact version:
 
 ```sh
-gh workflow run publish.yml --ref main -f version=0.3.0 -f commit=APPROVED_SHA
-npm view polylinedb@0.3.0 version dist.integrity --registry=https://registry.npmjs.org/
+gh workflow run publish.yml --ref main -f version=0.3.1 -f commit=APPROVED_SHA
+npm view polylinedb@0.3.1 version dist.integrity --registry=https://registry.npmjs.org/
 ```
 
 Replace `APPROVED_SHA` with the full reviewed commit SHA.
+Open the workflow run and review its commit and version before you approve the `publish` environment.
 The workflow checks its source commit and the requested version before tests.
 It compares the version with the manifest and lockfile.
 It builds and installs the tarball, publishes that same tarball, and compares its integrity with the registry.
