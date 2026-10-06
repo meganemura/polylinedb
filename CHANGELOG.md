@@ -8,6 +8,8 @@
 - Add session-owned issue claims with database deadlines, incarnation fencing, and immutable request receipts.
 - Require a current claim proof for status writes after claim activation, including close, reopen, and forced prerequisite overrides.
 - Preserve claim history through schema 6 upgrades, snapshot 5 restoration, and guarded store transfers.
+- Add explicit `--human` output for issue show, list, and search, with quiet terminal headings and safe text rendering.
+- Preserve memory freshness notices in human output; keep JSON as the default and disable styling for pipes and `NO_COLOR`.
 
 ### Upgrade from 0.2.0
 
