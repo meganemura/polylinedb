@@ -86,6 +86,8 @@ The CLI recognizes this code only in an HTTP 503 response.
 The response must contain an `error` object with exactly `code` and `message`.
 The message must be a string with at most 4,096 characters.
 The CLI discards that message and reports `Cloud Access is misconfigured. Check the Worker Access configuration.`
+The CLI also recognizes `jwks_unavailable` in an exact HTTP 503 error envelope.
+It reports a fixed message about unavailable signing keys.
 Other status codes, extra fields, and other 5xx error codes remain invalid responses.
 Failed create operations retain their request ID.
 
@@ -104,7 +106,7 @@ Keep these values out of the checkout, including ignored files.
 Run commands that change cloud resources only after you review the account and destination.
 If an agent runs those commands for you, give explicit approval for resource creation, schema writes, and deployment.
 
-The authentication, Access application creation, D1 creation, schema, and deployment commands below were exercised with `cf` version `1.0.0-beta.12`.
+The authentication, Access application creation, D1 creation, and deployment commands below were exercised with `cf` version `1.0.0-beta.12`.
 Check command support for your installed version with anonymous queries such as `cf cli search "create an Access application"`.
 Use the matching command's `--help` for flags.
 Repeat the connector acceptance checks below for your own account.
@@ -231,13 +233,16 @@ Replace `DATABASE_UUID` with the ID returned by the create command.
 Apply the schema only to this new, empty database:
 
 ```sh
-cf d1 query "$PD_D1_DATABASE_ID" --sql "$(node scripts/schema.ts)"
+node --input-type=module -e 'import { SCHEMA_STATEMENTS } from "./src/records/schema.ts"; process.stdout.write(JSON.stringify(SCHEMA_STATEMENTS.map(sql => ({ sql, params: [] }))) + "\n")' > schema-batch.json
+cf d1 query "$PD_D1_DATABASE_ID" --batch @schema-batch.json
+node --input-type=module -e 'import { SCHEMA_VERSION } from "./src/records/schema.ts"; console.log(SCHEMA_VERSION)'
 cf d1 query "$PD_D1_DATABASE_ID" --sql 'SELECT version FROM schema_version'
 ```
 
-The version query must return `3`.
-`scripts/schema.ts` emits the SQL owned by `src/records/schema.ts`.
-That SQL creates tables and the schema-version record.
+The database version must match `SCHEMA_VERSION` in this deployment copy.
+The JSON batch preserves each complete statement from `src/records/schema.ts`, including trigger bodies.
+Do not split the schema SQL at semicolons.
+The batch creates tables and the schema-version record.
 It is not safe to apply twice, and it does not upgrade an existing database.
 Local `pd init` initializes SQLite rather than D1.
 
@@ -261,18 +266,21 @@ If the owner has not signed in to Access, use this bootstrap sequence.
 This sequence is proposed and has not yet been exercised from a new account:
 
 1. Set `POLYLINEDB_ACCESS_ACTORS='[]'` and deploy using the build and inspection steps below.
-2. Open the protected Worker hostname in your own browser and sign in as the owner.
-3. Run the users-list command again and record the owner's Access user ID outside Git.
+2. Confirm that Access protects the complete Worker hostname. Open that hostname in your browser. Sign in as the owner.
+3. Run the users-list command again. Confirm that it returns the owner. Record the Access user ID outside Git.
 4. Set the actor allowlist to that candidate and repeat the build and deployment.
 5. Confirm the exact actor through the host connector before acceptance.
 
 The empty allowlist refuses application operations even after a successful Access sign-in.
+An origin `503` does not prove that Access registered the owner.
+The users-list result supplies the candidate subject before the Worker can authorize the `actor` tool.
 Keep the owner-only Access policy in place throughout bootstrap.
 
 An isolated deployment in an existing account verified this refusal after CLI OAuth login.
 The Worker returned `503` with `invalid_access_configuration` while the actor allowlist was empty.
 After the owner actor was configured and the Worker redeployed, the same CLI grant could read and write issues and memories.
-The CLI currently reports that bootstrap error as `cloud_invalid_response`; check the actor configuration before repeating login.
+The CLI reports `invalid_access_configuration`: `Cloud Access is misconfigured. Check the Worker Access configuration.`
+Check the actor configuration before repeating login.
 This check reused an existing Access user and identity provider. It does not verify first-user registration in a new account.
 
 Use `access:OWNER_SUBJECT` as the actor value:
