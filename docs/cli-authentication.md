@@ -73,6 +73,8 @@ Normal issue commands do not start an interactive login.
 When authorization expires or is revoked, they ask you to run `auth login` again.
 A failed repeat login preserves the previous grant until replacement succeeds.
 
+The Worker can return `jwks_unavailable` with HTTP 503 when Cloudflare Access signing keys cannot be loaded. The CLI uses fixed guidance for this error and does not retry automatically. If the error includes `request_id`, use the same ID when you retry the operation.
+
 ## Concurrent commands and recovery
 
 Connections with the same origin and configuration directory share credentials and an authentication lock.
