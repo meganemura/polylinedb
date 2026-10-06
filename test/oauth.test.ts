@@ -2,13 +2,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, realpath, chmod } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCloudAuth, OAuthError } from '../src/cloud-client/oauth.ts';
 import type { CredentialStore } from '../src/cloud-client/oauth.ts';
-import { credentialKey } from '../src/cloud-client/credential-session.ts';
+import { credentialKey, credentialTransaction } from '../src/cloud-client/credential-session.ts';
 const resource = 'https://issues.example';
 const issuer = 'https://identity.example';
 class MemoryStore implements CredentialStore {
@@ -19,6 +19,49 @@ class MemoryStore implements CredentialStore {
   async write(key: string, value: string) { if (this.failWrite) throw new Error('store unavailable'); this.entries.set(key, value); }
   async delete(key: string) { if (this.failDelete) throw new Error('store delete unavailable'); this.entries.delete(key); }
 }
+
+test('credential lock distinguishes denied writes from an existing lock', async t => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    t.skip('This permission fixture requires a non-root Unix process.');
+    return;
+  }
+  const deniedStateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-lock-denied-'));
+  t.after(async () => {
+    await chmod(deniedStateDirectory, 0o700);
+    await rm(deniedStateDirectory, { recursive: true, force: true });
+  });
+  await chmod(deniedStateDirectory, 0o500);
+  let deniedActionInvoked = false;
+  await assert.rejects(credentialTransaction({ stateDirectory: deniedStateDirectory, resource, lockTimeoutMs: 25 }, async () => {
+    deniedActionInvoked = true;
+    return 'unexpected success';
+  }), error => {
+    assert.ok(error instanceof OAuthError);
+    assert.equal(error.code, 'auth_state_access_denied');
+    assert.equal(error.message, 'Authentication state is not writable. Allow access to the authentication state directory and retry.');
+    assert.equal(error.message.includes(deniedStateDirectory), false);
+    return true;
+  });
+  assert.equal(deniedActionInvoked, false);
+
+  const occupiedStateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-lock-occupied-'));
+  t.after(() => rm(occupiedStateDirectory, { recursive: true, force: true }));
+  const namespace = await realpath(occupiedStateDirectory);
+  const lock = join(namespace, `${credentialKey(resource, namespace)}.lock`);
+  await mkdir(lock, { mode: 0o700 });
+  let busyActionInvoked = false;
+  await assert.rejects(credentialTransaction({ stateDirectory: occupiedStateDirectory, resource, lockTimeoutMs: 25 }, async () => {
+    busyActionInvoked = true;
+    return 'unexpected success';
+  }), error => {
+    assert.ok(error instanceof OAuthError);
+    assert.equal(error.code, 'auth_busy');
+    assert.equal(error.message.includes(occupiedStateDirectory), false);
+    return true;
+  });
+  assert.equal(busyActionInvoked, false);
+});
+
 async function fixture(t: test.TestContext, providerIssuer = issuer) {
   const issuer = providerIssuer;
   const stateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-'));

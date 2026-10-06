@@ -1,7 +1,7 @@
 // Verifies auth grammar, JSON output, and real OAuth wiring without live credentials or HTTPS traffic.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -78,6 +78,27 @@ test('auth backend errors stay safe and never expose child diagnostics', context
     assert.equal(result.stdout, '');
     assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'auth_store_unavailable',
       message: 'The OS credential store is unavailable or did not complete the operation.' } });
+  }
+});
+
+test('auth state write denial reports safe guidance without its path', context => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    context.skip('This permission fixture requires a non-root Unix process.');
+    return;
+  }
+  const { root, run } = fixture(context);
+  const stateDirectory = join(root, 'config', 'polylinedb', 'auth');
+  mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
+  chmodSync(stateDirectory, 0o500);
+  try {
+    const result = run(['auth', 'status', '--connection', 'cloud'], 1);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'auth_state_access_denied',
+      message: 'Authentication state is not writable. Allow access to the authentication state directory and retry.' } });
+    assert.equal(result.stderr.includes(root), false);
+    assert.equal(existsSync(join(root, 'synthetic-credential')), false);
+  } finally {
+    chmodSync(stateDirectory, 0o700);
   }
 });
 
