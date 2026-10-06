@@ -36,7 +36,11 @@ export async function credentialTransaction<T>(options: {
   for (;;) {
     try { await mkdir(lock, { mode: 0o700 }); break; }
     catch (error) {
-      if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw new OAuthError('auth_lock_failed', 'Could not acquire the authentication lock.');
+      const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      if (code === 'EACCES' || code === 'EPERM') {
+        throw new OAuthError('auth_state_access_denied', 'Authentication state is not writable. Allow access to the authentication state directory and retry.');
+      }
+      if (code !== 'EEXIST') throw new OAuthError('auth_lock_failed', 'Could not acquire the authentication lock.');
       if (Date.now() >= deadline) throw new OAuthError('auth_busy', 'Authentication is busy. If a prior process stopped, remove its lock directory after verifying that no authentication process is running.');
       await setTimeout(25);
     }

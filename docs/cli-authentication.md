@@ -77,7 +77,9 @@ A failed repeat login preserves the previous grant until replacement succeeds.
 
 Connections with the same origin and configuration directory share credentials and an authentication lock.
 Login, refresh, logout, and credential reads acquire that lock before reading the current entry.
-A waiting command stops after ten seconds with `auth_busy`.
+If lock creation returns `EACCES` or `EPERM`, the CLI reports `auth_state_access_denied`.
+Allow access to the authentication state directory, then retry the command.
+A command that finds an existing lock waits up to ten seconds, then returns `auth_busy`.
 The CLI does not steal a lock based on its age.
 
 Before spending a refresh token, the CLI saves a state that requires reauthorization.
