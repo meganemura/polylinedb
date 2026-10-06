@@ -97,7 +97,14 @@ try {
     for (const field of ['status', 'body']) {
       const changed = await read(db, `UPDATE issues SET ${field}=? WHERE id='pd-3' AND ${oldProof.sql} RETURNING id`, [field === 'status' ? 'closed' : 'changed', ...oldProof.params]); assert.deepEqual(changed, []);
     }
-    const fresh = await run(db, missing); assert.equal(fresh.generation, 1); assert.notEqual(fresh.incarnation, missingRow.incarnation);
+    const oldScopeRequest = { ...missing, incarnation: missingRow.incarnation };
+    await assert.rejects(run(db, oldScopeRequest), /claim_rejected/);
+    assert.deepEqual(await read(db, "SELECT * FROM issue_claims WHERE issue_id='pd-3'"), []);
+    assert.deepEqual(await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-3'"), []);
+    const currentIdentity = (await read(db, 'SELECT incarnation FROM memory_store_identity WHERE singleton=1'))[0];
+    assert.ok(currentIdentity);
+    const newScopeRequest = { ...acquire('pd-3'), incarnation: currentIdentity.incarnation };
+    const fresh = await run(db, newScopeRequest); assert.equal(fresh.generation, 1); assert.notEqual(fresh.incarnation, missingRow.incarnation);
     const protectedUpdate = async (issue: string, owner: ClaimProof | undefined, status: boolean, expected = 1) => {
       const guard = issueClaimGuard(issue, owner, status, actor);
       return read(db, `UPDATE issues SET body='changed',body_v=body_v+1${status ? ",status='closed',status_v=status_v+1" : ''} WHERE id=? AND body_v=?${status ? ' AND status_v=1' : ''} AND ${guard.sql} RETURNING body,status,body_v,status_v`, [issue, expected, ...guard.params]);
