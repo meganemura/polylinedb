@@ -14,6 +14,7 @@ export default {
   declaredModules: [
     { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
     { name: "cli-commands.ts", glob: "src/cli-commands.ts", surface: "cli-commands.ts" },
+    { name: "cli-human.ts", glob: "src/cli-human.ts", surface: "cli-human.ts" },
     { name: "cloud-client", glob: "src/cloud-client/**", surface: "index.ts" },
     { name: "cloudflare.config.ts", glob: "cloudflare.config.ts", surface: "cloudflare.config.ts" },
     { name: "scripts", glob: "scripts/**" },
@@ -27,6 +28,7 @@ export default {
   classify: [
     { glob: "src/cli.ts", tags: ["layer:entrypoint", "env:node"] },
     { glob: "src/cli-commands.ts", tags: ["layer:entrypoint", "env:node"] },
+    { glob: "src/cli-human.ts", tags: ["capability:cli-human", "layer:adapter", "env:portable"] },
     { glob: "src/cloud-client/**", tags: ["capability:cloud-client", "layer:adapter", "env:node"] },
     { glob: "cloudflare.config.ts", tags: ["layer:entrypoint"] },
     { glob: "scripts/**", tags: ["layer:entrypoint"] },
@@ -44,6 +46,7 @@ export default {
       { source: "env:worker", targetNamespace: "env", deny: ["node"], because: "The Worker must not load local configuration or credentials." },
       { source: "env:portable", targetNamespace: "pkg", deny: ["node"], because: "Record behavior must stay portable across storage runtimes." },
       { source: "env:worker", targetNamespace: "pkg", deny: ["node"], because: "Worker code must not load Node builtins." },
+      { source: "capability:cli-human", targetNamespace: "capability", allow: ["cli-human","records"], because: "Human output formats issue reads without depending on storage or credentials." },
       { source: "capability:local-store", targetNamespace: "capability", allow: ["local-store","records"], because: "local-store imports only the capability contracts it uses." },
       { source: "capability:workspace", targetNamespace: "capability", allow: ["workspace","records"], because: "workspace imports only the capability contracts it uses." },
       { source: "capability:host-hooks", targetNamespace: "capability", allow: ["host-hooks","records"], because: "host-hooks imports only the capability contracts it uses." },

@@ -40,6 +40,9 @@ const capabilityPointer = (name: string) => {
 };
 type Control = { name: string; path: string; statement: string; rule?: string; pointer?: string };
 const controls: Control[] = [
+  { name: 'human renderer cannot import cloud client', path: 'src/cli-human.ts', statement: "import { createCloudClient as proof } from './cloud-client/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('cli-human') },
+  { name: 'human renderer cannot import CLI commands', path: 'src/cli-human.ts', statement: "import { parseOperation as proof } from './cli-commands.ts'; void proof;", rule: 'tag-order', pointer: 'edges.order[0].sequence' },
+  { name: 'human renderer cannot bypass records public surface', path: 'src/cli-human.ts', statement: "import { parseOperation as proof } from './records/issues.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records') },
   { name: 'CLI public cloud actions', path: 'src/cli.ts', statement: "import { createCloudClient as proof } from './cloud-client/index.ts'; void proof;" },
   { name: 'private OAuth implementation', path: 'src/cli.ts', statement: "import { createCloudAuth as proof } from './cloud-client/oauth.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('cloud-client') },
   { name: 'Node to Worker', path: 'src/cli.ts', statement: `import { handleRequest as proof } from '${pathTo('src/cli.ts', worker)}'; void proof;`, rule: 'tag-boundary', pointer: 'edges.allowDeny[0].deny[0]' },
