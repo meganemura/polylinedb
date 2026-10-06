@@ -8,14 +8,17 @@ import { memoryRow, memorySortKey, parseMemoryId, parseMemoryOperation } from ".
 import type { Memory, MemoryCounter, MemoryRequest } from "./memories.ts";
 import { parseDependencyOperation } from './dependencies.ts';
 import type { Dependency, DependencyRevision, DependencyRequest } from './dependencies.ts';
+import { claimRow, claimRequestRow, parseClaimOperation } from './claims.ts';
+import type { Claim, ClaimRequest } from './claims.ts';
 
 export type Counter = { scope: string; last_number: number };
 export type CreateRequest = { request_id: string; actor: string; payload: string; issue_id: string };
 type SnapshotV2 = { format: 'polylinedb.snapshot'; version: 2; issues: readonly Issue[]; comments: readonly Comment[];
   counters: readonly Counter[]; requests: readonly CreateRequest[] };
 type SnapshotV3 = Omit<SnapshotV2, 'version'> & { version: 3; memories: readonly Memory[]; memory_counters: readonly MemoryCounter[]; memory_requests: readonly MemoryRequest[] };
-export type Snapshot = Omit<SnapshotV3, 'version'> & { version: 4; dependencies: readonly Dependency[]; dependency_revisions: readonly DependencyRevision[]; dependency_requests: readonly DependencyRequest[] };
-export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; sha256: string };
+type SnapshotV4 = Omit<SnapshotV3, 'version'> & { version: 4; dependencies: readonly Dependency[]; dependency_revisions: readonly DependencyRevision[]; dependency_requests: readonly DependencyRequest[] };
+export type Snapshot = Omit<SnapshotV4, 'version'> & { version: 5; issue_claims: readonly Claim[]; claim_requests: readonly ClaimRequest[] };
+export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Expected an object');
@@ -145,9 +148,9 @@ function parseSnapshotV3(input: unknown): SnapshotV3 {
 }
 export function convertSnapshotV3(input: unknown): Snapshot {
   const snapshot = parseSnapshotV3(input);
-  return { ...snapshot, version: 4, dependencies: [], dependency_revisions: snapshot.issues.map(issue => ({ dependent_id: issue.id, revision: 1 })), dependency_requests: [] };
+  return convertSnapshotV4({ ...snapshot, version: 4, dependencies: [], dependency_revisions: snapshot.issues.map(issue => ({ dependent_id: issue.id, revision: 1 })), dependency_requests: [] });
 }
-export function parseSnapshot(input: unknown): Snapshot {
+function parseSnapshotV4(input: unknown): SnapshotV4 {
   const source = record(input, ['format', 'version', 'issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests']);
   if (source.version !== 4) return fail('Unsupported snapshot version; convert versions 2 and 3 explicitly');
   const { dependencies: edges, dependency_revisions: revisions, dependency_requests: requests, ...legacy } = source;
@@ -209,6 +212,47 @@ export function parseSnapshot(input: unknown): Snapshot {
   } catch (error) {
     if (error instanceof PolylinedbError && error.code === 'invalid_snapshot') throw error;
     return fail(error instanceof Error ? error.message : 'Invalid dependency snapshot');
+  }
+}
+export function convertSnapshotV4(input: unknown): Snapshot {
+  return { ...parseSnapshotV4(input), version: 5, issue_claims: [], claim_requests: [] };
+}
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, ['format', 'version', 'issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests']);
+  if (source.version !== 5) return fail('Unsupported snapshot version; convert versions 2, 3 and 4 explicitly');
+  const { issue_claims: claims, claim_requests: requests, ...legacy } = source;
+  const old = parseSnapshotV4({ ...legacy, version: 4 });
+  if (!Array.isArray(claims) || !Array.isArray(requests)) return fail('Claim collections must be arrays');
+  try {
+    const ids = new Set(old.issues.map(issue => issue.id));
+    const claimKeys = ['issue_id', 'incarnation', 'session_id', 'generation', 'actor', 'agent_label', 'revision', 'acquired_at', 'changed_at', 'expires_at', 'released_at'];
+    const issue_claims = claims.map(value => claimRow(record(value, claimKeys))).sort((a, b) => compareText(issueSortKey(a.issue_id), issueSortKey(b.issue_id)));
+    const aggregates = new Map(issue_claims.map(claim => [claim.issue_id, claim]));
+    if (aggregates.size !== issue_claims.length || issue_claims.some(claim => !ids.has(claim.issue_id))) fail('Claim issue must exist and have one aggregate');
+    const claim_requests = requests.map(value => {
+      const row = claimRequestRow(record(value, [...claimKeys, 'request_id', 'payload', 'created_at', 'outcome']));
+      const aggregate = aggregates.get(row.issue_id);
+      if (!aggregate || row.generation > aggregate.generation || row.revision > aggregate.revision) return fail('Claim receipt exceeds the aggregate counters');
+      const operation = parseClaimOperation(JSON.parse(row.payload));
+      if (operation.op === 'claim_show' || operation.op === 'claim_list' || operation.request_id !== row.request_id || JSON.stringify(operation) !== row.payload) return fail('Invalid canonical claim request');
+      if (operation.op === 'claim_acquire') {
+        if (row.outcome !== 'acquired' || operation.issue_id !== row.issue_id || operation.incarnation !== row.incarnation || operation.session_id !== row.session_id || operation.agent_label !== row.agent_label || row.acquired_at !== row.changed_at || row.expires_at !== row.changed_at + operation.ttl) return fail('Claim acquisition receipt differs from the request');
+      } else {
+        const proof = operation.claim_proof;
+        if (proof.issue_id !== row.issue_id || proof.incarnation !== row.incarnation || proof.session_id !== row.session_id || proof.generation !== row.generation || operation.expected_revision + 1 !== row.revision || row.outcome !== (operation.op === 'claim_renew' ? 'renewed' : 'released') || (operation.op === 'claim_renew' && row.expires_at !== row.changed_at + operation.ttl)) return fail('Claim receipt differs from the request');
+      }
+      return row;
+    }).sort((a, b) => compareText(a.request_id, b.request_id));
+    if (new Set(claim_requests.map(row => row.request_id)).size !== claim_requests.length) fail('Duplicate claim request ID');
+    const revisions = new Set<string>();
+    for (const row of claim_requests) {
+      const key = JSON.stringify([row.issue_id, row.revision]);
+      if (revisions.has(key)) fail('Duplicate claim receipt revision'); revisions.add(key);
+    }
+    return { ...old, version: 5, issue_claims, claim_requests };
+  } catch (error) {
+    if (error instanceof PolylinedbError && error.code === 'invalid_snapshot') throw error;
+    return fail(error instanceof Error ? error.message : 'Invalid claim snapshot');
   }
 }
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }

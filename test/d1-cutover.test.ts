@@ -12,7 +12,7 @@ import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories.ts";
 import { addConnection } from "../src/workspace/connections.ts";
-import { rawToSnapshot, tables } from '../scripts/d1-additive-merge.ts';
+import { rawToSnapshot, tables, additiveMerge } from '../scripts/d1-additive-merge.ts';
 import { canonicalSnapshot } from "../src/records/snapshot.ts";
 const executable=fileURLToPath(new URL('../scripts/d1-cutover.ts',import.meta.url));
 const checkout=fileURLToPath(new URL('..',import.meta.url));
@@ -66,7 +66,7 @@ for(const mode of ['success','lost','cas','staged','stale']){
  const {database_path:cloudPath}=initializeStore(cloudLocation);const cloudStore=openStore(cloudLocation);
  await executeOperation(cloudStore.db,parseOperation({op:'create',prefix:'cloud',request_id:randomUUID(),tool:'review',project:'test',body:'Existing cloud record'}),'cloud-author');cloudStore.close();
  const cloud=new DatabaseSync(cloudPath);const baseline=Object.fromEntries(tables.map(t=>[t,cloud.prepare('SELECT * FROM '+t).all()]));cloud.close();
- const expected=Object.fromEntries(tables.map(t=>[t,[...before[t],...baseline[t]]]));
+ const expected=additiveMerge({source:before,destination:baseline}).expectedSnapshot;
  const configHome=join(root,'xdg');mkdirSync(configHome,{mode:0o700});
  addConnection('named-local',{kind:'local',data_dir:source},{...process.env,XDG_CONFIG_HOME:configHome});
  addConnection('cloud',{kind:'cloud',url:'https://test.invalid'},{...process.env,XDG_CONFIG_HOME:configHome});
@@ -94,9 +94,9 @@ for(const mode of ['success','lost','cas','staged','stale']){
   assert.equal(canonicalSnapshot(rawToSnapshot(unchangedCloud)),canonicalSnapshot(rawToSnapshot(baseline)));
   outcomes.push({mode,result:'VERIFIED'});continue;
  }
- const retired=new DatabaseSync(sourcePath);assert.equal(retired.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'polylinedb_retired_%'").get()?.n, 36);assert.throws(()=>retired.exec('UPDATE counters SET last_number=last_number'),/retired/);retired.close();
+ const retired=new DatabaseSync(sourcePath);assert.equal(retired.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'polylinedb_retired_%'").get()?.n, tables.length*3);assert.throws(()=>retired.exec('UPDATE counters SET last_number=last_number'),/retired/);retired.close();
  const remote=new DatabaseSync(cloudPath);const after=Object.fromEntries(tables.map(t=>[t,remote.prepare('SELECT * FROM '+t).all()]));remote.close();
- assert.equal(canonicalSnapshot(rawToSnapshot(after)),canonicalSnapshot(rawToSnapshot(expected)));
+ assert.equal(canonicalSnapshot(rawToSnapshot(after)),canonicalSnapshot(expected));
  const actual=JSON.parse(readFileSync(configPath,'utf8'));
  if(mode==='success'){
   assert.deepEqual(actual,{...config,connection:'cloud'});

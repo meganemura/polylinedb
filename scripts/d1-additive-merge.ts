@@ -8,7 +8,7 @@ import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
 import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence.ts';
 import type { Snapshot } from '../src/records/persistence.ts';
 
-export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests'] as const;
+export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'memory_store_identity', 'project_memory_revisions'] as const;
 export type Table = typeof tables[number];
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;
@@ -21,6 +21,7 @@ const primaryKey: Record<Table, string> = {
   issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id', memories: 'id',
   memory_counters: 'prefix', memory_requests: 'request_id',
   dependencies: 'dependent_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id',
+  issue_claims: 'issue_id', claim_requests: 'request_id', memory_store_identity: 'singleton', project_memory_revisions: 'project',
 };
 const maximumJsonBytes = 400_000;
 const maximumSqlBytes = 100_000;
@@ -50,6 +51,7 @@ function canonicalColumns(): Record<Table, string[]> {
       memory_counters: columnsFor(database, 'memory_counters'),
       memory_requests: columnsFor(database, 'memory_requests'),
       dependencies: columnsFor(database, 'dependencies'), dependency_revisions: columnsFor(database, 'dependency_revisions'), dependency_requests: columnsFor(database, 'dependency_requests'),
+      issue_claims: columnsFor(database, 'issue_claims'), claim_requests: columnsFor(database, 'claim_requests'), memory_store_identity: columnsFor(database, 'memory_store_identity'), project_memory_revisions: columnsFor(database, 'project_memory_revisions'),
     };
   } finally { database.close(); }
 }
@@ -98,6 +100,7 @@ function parseRows(value: unknown): Rows {
     memory_counters: parseCollection(input.memory_counters, 'memory_counters'),
     memory_requests: parseCollection(input.memory_requests, 'memory_requests'),
     dependencies: parseCollection(input.dependencies, 'dependencies'), dependency_revisions: parseCollection(input.dependency_revisions, 'dependency_revisions'), dependency_requests: parseCollection(input.dependency_requests, 'dependency_requests'),
+    issue_claims: parseCollection(input.issue_claims, 'issue_claims'), claim_requests: parseCollection(input.claim_requests, 'claim_requests'), memory_store_identity: parseCollection(input.memory_store_identity, 'memory_store_identity'), project_memory_revisions: parseCollection(input.project_memory_revisions, 'project_memory_revisions'),
   };
 }
 
@@ -132,7 +135,7 @@ function issueRowFromSnapshot(issue: Snapshot['issues'][number]): Row {
   return row;
 }
 
-function rowsFromSnapshot(snapshot: Snapshot): Rows {
+function rowsFromSnapshot(snapshot: Snapshot, metadata: Pick<Rows, 'memory_store_identity' | 'project_memory_revisions'>): Rows {
   return {
     issues: snapshot.issues.map(issueRowFromSnapshot),
     comments: snapshot.comments.map(row => ({ ...row })),
@@ -142,10 +145,12 @@ function rowsFromSnapshot(snapshot: Snapshot): Rows {
     memory_counters: snapshot.memory_counters.map(row => ({ ...row })),
     memory_requests: snapshot.memory_requests.map(row => ({ ...row })),
     dependencies: snapshot.dependencies.map(row => ({ ...row })), dependency_revisions: snapshot.dependency_revisions.map(row => ({ ...row })), dependency_requests: snapshot.dependency_requests.map(row => ({ ...row })),
+    issue_claims: snapshot.issue_claims.map(row => ({ ...row })), claim_requests: snapshot.claim_requests.map(row => ({ ...row })), ...metadata,
   };
 }
 
 function rowKey(row: Row, table: Table): string {
+  if (table === 'memory_store_identity') { if (row.singleton !== 1) return fail('Invalid store identity singleton'); return '1'; }
   if (table === 'dependencies') return JSON.stringify([textField(row, 'dependent_id'), textField(row, 'blocker_id')]);
   const value = row[primaryKey[table]];
   if (typeof value !== 'string') fail(`${table} primary key must be text`);
@@ -173,9 +178,16 @@ function assertCanonicalRows(actual: Rows, expected: Rows): void {
 }
 
 function snapshotFromRows(rows: Rows): Snapshot {
+  if (rows.memory_store_identity.length !== 1 || rows.memory_store_identity[0]?.singleton !== 1 || typeof rows.memory_store_identity[0]?.incarnation !== 'string' || !/^[a-f0-9]{32}$/.test(rows.memory_store_identity[0].incarnation)) fail('Invalid captured store incarnation');
+  const projects = new Set<string>();
+  for (const row of rows.project_memory_revisions) {
+    if (typeof row.project !== 'string' || !row.project || typeof row.revision !== 'number' || !Number.isSafeInteger(row.revision) || row.revision < 0 || projects.has(row.project)) fail('Invalid captured project memory revision');
+    projects.add(row.project);
+  }
+  for (const row of rows.memories) if (!projects.has(textField(row, 'project'))) fail('Memory project has no captured revision');
   const snapshot = parseSnapshot({
     format: 'polylinedb.snapshot',
-    version: 4,
+    version: 5,
     issues: rows.issues.map(issueRow),
     comments: rows.comments.map(commentRow),
     counters: rows.counters,
@@ -184,8 +196,9 @@ function snapshotFromRows(rows: Rows): Snapshot {
     memory_counters: rows.memory_counters,
     memory_requests: rows.memory_requests,
     dependencies: rows.dependencies, dependency_revisions: rows.dependency_revisions, dependency_requests: rows.dependency_requests,
+    issue_claims: rows.issue_claims, claim_requests: rows.claim_requests,
   });
-  assertCanonicalRows(rows, rowsFromSnapshot(snapshot));
+  assertCanonicalRows(rows, rowsFromSnapshot(snapshot, { memory_store_identity: rows.memory_store_identity, project_memory_revisions: rows.project_memory_revisions }));
   return snapshot;
 }
 
@@ -207,6 +220,7 @@ function assertDisjoint(source: Rows, destination: Rows): void {
     disjointValues(source[table].map(row => rowKey(row, table)), destination[table].map(row => rowKey(row, table)), 'Source and destination share a counter namespace');
   }
   for (const table of tables) {
+    if (table === 'memory_store_identity' || table === 'project_memory_revisions') continue;
     disjointValues(source[table].map(row => rowKey(row, table)), destination[table].map(row => rowKey(row, table)), `Source and destination share a ${table} key`);
   }
 }
@@ -314,6 +328,7 @@ function sourceInsert(table: Table, chunk: { rows: Row[]; json: string }): State
 function sourceInserts(rows: Rows): Statement[] {
   const statements: Statement[] = [];
   for (const table of tables) {
+    if (table === 'memory_store_identity' || table === 'project_memory_revisions') continue;
     const ordered = table === 'issues' ? issueInsertOrder(rows.issues) : orderedRows(rows[table], table);
     for (const chunk of serializedChunks(ordered)) statements.push(sourceInsert(table, chunk));
   }
@@ -330,6 +345,7 @@ function counts(rows: Rows): Record<Table, number> {
     memory_counters: rows.memory_counters.length,
     memory_requests: rows.memory_requests.length,
     dependencies: rows.dependencies.length, dependency_revisions: rows.dependency_revisions.length, dependency_requests: rows.dependency_requests.length,
+    issue_claims: rows.issue_claims.length, claim_requests: rows.claim_requests.length, memory_store_identity: rows.memory_store_identity.length, project_memory_revisions: rows.project_memory_revisions.length,
   };
 }
 
@@ -338,7 +354,13 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
   const destination = parseRows(input.destination);
   snapshotFromRows(source);
   snapshotFromRows(destination);
+  if (source.memory_store_identity[0]?.incarnation === destination.memory_store_identity[0]?.incarnation) fail('Source and destination store incarnations must differ');
   assertDisjoint(source, destination);
+  const memoryRevisions = new Map(destination.project_memory_revisions.map(row => [textField(row, 'project'), Number(row.revision)]));
+  for (const memory of source.memories) {
+    const project = textField(memory, 'project'); const revision = (memoryRevisions.get(project) ?? 0) + 1;
+    if (!Number.isSafeInteger(revision)) fail('Destination memory revision cannot increase'); memoryRevisions.set(project, revision);
+  }
   const merged: Rows = {
     issues: [...source.issues, ...destination.issues],
     comments: [...source.comments, ...destination.comments],
@@ -348,6 +370,9 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
     memory_counters: [...source.memory_counters, ...destination.memory_counters],
     memory_requests: [...source.memory_requests, ...destination.memory_requests],
     dependencies: [...source.dependencies, ...destination.dependencies], dependency_revisions: [...source.dependency_revisions, ...destination.dependency_revisions], dependency_requests: [...source.dependency_requests, ...destination.dependency_requests],
+    issue_claims: [...source.issue_claims, ...destination.issue_claims], claim_requests: [...source.claim_requests, ...destination.claim_requests],
+    memory_store_identity: destination.memory_store_identity,
+    project_memory_revisions: [...memoryRevisions].map(([project, revision]) => ({ project, revision })),
   };
   const expectedSnapshot = snapshotFromRows(merged);
   const canonical = canonicalSnapshot(expectedSnapshot);
@@ -356,7 +381,7 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
     statements,
     expectedSnapshot,
     digest: createHash('sha256').update(canonical).digest('hex'),
-    counts: { added: counts(source), total: counts(merged) },
+    counts: { added: { ...counts(source), memory_store_identity: 0, project_memory_revisions: merged.project_memory_revisions.length - destination.project_memory_revisions.length }, total: counts(merged) },
   };
 }
 
@@ -371,7 +396,7 @@ function retirementSql(table: Table | 'memory_store_identity' | 'project_memory_
 export function retireSource(database: DatabaseSync, connectionName: string): void {
   if (typeof connectionName !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(connectionName)) fail('Invalid cloud connection name');
   if (!database.isTransaction) fail('Source retirement requires a caller-owned transaction');
-  for (const table of [...tables, 'memory_store_identity', 'project_memory_revisions'] as const) for (const operation of ['INSERT', 'UPDATE', 'DELETE'] as const) {
+  for (const table of tables) for (const operation of ['INSERT', 'UPDATE', 'DELETE'] as const) {
     const sql = retirementSql(table, operation, connectionName);
     const triggerName = `polylinedb_retired_${table}_${operation.toLowerCase()}`;
     const existing = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(triggerName);

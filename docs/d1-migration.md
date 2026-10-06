@@ -1,10 +1,13 @@
 # Restore a local snapshot into D1
 
+These instructions describe the unreleased source with schema 6 and snapshot 5.
+Published version 0.2.0 uses schema 5.
+
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.
 
-The repository operator command restores snapshot v4 into a new D1 database.
-It preserves issues, comments, memories, prerequisites, counters, request receipts, versions, and audit fields.
+The repository operator command restores snapshot v5 into a new D1 database.
+It preserves issues, comments, memories, prerequisites, claims, counters, request receipts, versions, and audit fields.
 Ordinary `pd` commands can select SQLite or the authenticated cloud API. Snapshot maintenance remains an operator task.
 
 ## Prepare the transfer
@@ -27,7 +30,7 @@ Create a target file with mode 0600 outside Git checkouts. Environment-specific 
   "accountId": "ACCOUNT_ID",
   "databaseId": "DATABASE_UUID",
   "snapshotSha256": "CANONICAL_SNAPSHOT_SHA256",
-  "schemaVersion": 5
+  "schemaVersion": 6
 }
 ```
 
@@ -41,45 +44,51 @@ node scripts/d1-snapshot.ts verify --snapshot SNAPSHOT --target TARGET --output 
 ```
 
 The field order in the command is fixed. `inspect` reads the destination. `restore` writes the snapshot claim and missing rows.
-`verify` reads all ten collections and compares their canonical representation with the input.
+`verify` reads all twelve collections and compares their canonical representation with the input.
 Dependency edges use numeric dependent/blocker tuple pagination.
+Claim aggregates and receipts use bounded pages of 100 small records.
+Issues, comments, and memories retain one-record pages to bound large text responses.
 Its optional `--output` writes that verified remote snapshot to a new file with mode 0600.
 The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts.
 Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
 
-## Upgrade an existing schema 2, 3 or 4 deployment
+## Upgrade an existing schema 2, 3, 4 or 5 deployment
 
-The new Worker needs schema 5. The CLI's `upgrade` command applies only to local SQLite.
+The new Worker needs schema 6. The CLI's `upgrade` command applies only to local SQLite.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
 Record the account, database UUID, and Worker binding.
-Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, or `SCHEMA_V4_SQL` definition before a write.
+Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL` definition before a write.
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
 Run `pd snapshot convert --from 2 --file OLD --output NEW` for a v2 snapshot.
-For a v3 snapshot, use `--from 3` instead.
-Then use the new v4 digest and the normal restore procedure.
+For a v3 or v4 snapshot, use `--from 3` or `--from 4` instead.
+Then use the new v5 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
-For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, or `--upgrade-from 4`.
+For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, or `--upgrade-from 5`.
 Apply every statement in one approved D1 batch or transaction; do not send these statements through the public Worker API.
 The `schemaUpgradeStatements` export provides complete statements, including trigger bodies, for a D1 batch adapter.
 Do not split migration SQL at semicolons because trigger bodies contain semicolons.
 The batch checks the previous version and applies its required memory migrations.
-It creates dependency tables and triggers, seeds each issue at prerequisite revision 1, and sets schema version 5.
+Upgrades from versions 2 through 4 create dependency tables and seed each issue at prerequisite revision 1.
+Every supported upgrade adds empty claim collections and sets schema version 6.
 Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
 Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
 Verify that schema 2 upgrades create empty memory collections.
 Verify that schema 3 upgrades preserve their memories and seed one revision row per existing memory project.
 Check that `memory_store_identity` has exactly one valid incarnation.
-Verify that schema 4 upgrades preserve memory identity and project revision rows.
-Verify empty edge and dependency-request collections, and one baseline revision row per issue.
+Verify that schema 4 and 5 upgrades preserve memory identity and project revision rows.
+For schema 5, verify that graph edges, revisions, and receipt payload bytes remain unchanged.
+Verify that both claim collections remain empty after the upgrade.
 Deploy the new Worker only after those checks pass.
 If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
 
 The application does not perform this remote upgrade automatically. This procedure requires separate operator approval and live verification.
 For a raw database rollback, stop readers and writers, restore, rotate the incarnation, then resume traffic.
 See [the restore contract](adr/0005-memory-freshness.md#raw-database-restore) for the exact SQL and verification.
+This rotation also invalidates issue claim proofs.
+An arbitrary raw copy that retains the original incarnation cannot be detected by the application.
 
 ## Recovery
 
@@ -90,10 +99,17 @@ Issue insertion creates prerequisite baselines. Restore replaces those revision-
 Differing graph edges, receipts, or later revision values fail inspection.
 A request can commit before its response disappears; the next run reads the actual destination before it continues.
 The claim remains as provenance after success.
+The restore claim records its original incarnation and one new incarnation before it rotates the destination.
+Resume verifies that record and retains the same rotation target.
+It does not rotate again after a successful restore or overwrite claims acquired after restoration.
+Imported claim rows retain source incarnations as history, so source proofs cannot authorize destination writes.
+Historical request UUIDs still replay their original receipts.
+Snapshot validation rejects dangling claim receipts and receipt counters above their aggregate, across every incarnation.
 
 A retired historical local store rejects `pd upgrade` and retains its write guards.
-Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, or 4.
-That export converts the content to snapshot 4 with empty prerequisites and baseline revisions.
+Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, or 5.
+That export converts the content to snapshot 5 with empty claim collections.
+Schema 5 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
 It preserves creation payload strings and source attribution. Transfer it into a separately initialized destination.
 
 Create-request records retain their original actor. Replaying a local request through a different cloud actor returns `request_conflict`. New cloud operations use new request IDs.

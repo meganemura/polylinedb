@@ -7,10 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
-import { initializeStore, openStore, upgradeStore } from '../src/local-store/index.ts';
+import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import type { ClaimReceipt } from '../src/records/index.ts';
 import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
+import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence.ts';
 const request = () => crypto.randomUUID();
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-claim-'));
@@ -18,7 +19,7 @@ function fixture(t: test.TestContext) {
   const { database_path } = initializeStore(location); const store = openStore(location);
   t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
   const run = (value: unknown, actor = 'test:owner') => executeOperation(store.db, parseOperation(value), actor);
-  return { run, db: store.db, database_path };
+  return { run, db: store.db, store, database_path };
 }
 async function acquire(run: ReturnType<typeof fixture>['run'], issue_id: string, extra: Record<string, unknown> = {}) {
   const shown = await run({ op: 'claim_show', issue_id }); assert.ok('claim' in shown);
@@ -122,4 +123,56 @@ test('property: successful claims retain requested TTL and replay after a genera
       assert.deepEqual(await run(first.command), { claim_receipt: first.receipt });
     } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
   }, { testCases: 30 });
+});
+test('snapshot5 preserves claim history while restore rotates authority only once', async t => {
+  const source = fixture(t); const destination = fixture(t); await create(source.run);
+  const owner = await acquire(source.run, 'pd-1', { agent_label: 'Codex' });
+  await source.run({ op: 'claim_renew', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request(), ttl: 3600 });
+  await source.run({ op: 'claim_release', claim_proof: proof(owner.receipt), expected_revision: 2, request_id: request() });
+  const active = await acquire(source.run, 'pd-1');
+  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.version, 5); assert.equal(snapshot.issue_claims.length, 1); assert.equal(snapshot.claim_requests.length, 4);
+  const bytes = snapshot.claim_requests.map(row => row.payload);
+  destination.store.importSnapshot(snapshot); assert.equal(canonicalSnapshot(destination.store.exportSnapshot()), canonicalSnapshot(snapshot));
+  assert.deepEqual(destination.store.exportSnapshot().claim_requests.map(row => row.payload), bytes);
+  const imported = await destination.run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in imported); assert.equal(imported.claim.state, 'invalidated'); assert.notEqual(imported.claim.store_incarnation, owner.receipt.incarnation);
+  await assert.rejects(destination.run({ op: 'close', id: 'pd-1', expected: 1, claim_proof: proof(active.receipt) }), { code: 'claim_required' });
+  assert.deepEqual(await destination.run(owner.command), { claim_receipt: owner.receipt });
+  assert.equal(destination.store.importSnapshot(snapshot).result, 'already_present');
+  const resumed = await destination.run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in resumed); assert.equal(resumed.claim.store_incarnation, imported.claim.store_incarnation);
+  const current = await acquire(destination.run, 'pd-1'); assert.equal(current.receipt.generation, 3); assert.equal(current.receipt.revision, 5);
+  assert.throws(() => destination.store.importSnapshot(snapshot), { code: 'destination_not_empty' });
+  await destination.run({ op: 'close', id: 'pd-1', expected: 1, claim_proof: proof(current.receipt) });
+});
+test('snapshot claim closure rejects dangling and future receipts across all incarnations before import', async t => {
+  const source = fixture(t); const destination = fixture(t); await create(source.run); await acquire(source.run, 'pd-1');
+  const snapshot = source.store.exportSnapshot(); const claim = snapshot.issue_claims[0]; const receipt = snapshot.claim_requests[0]; assert.ok(claim); assert.ok(receipt);
+  for (const input of [
+    { ...snapshot, issue_claims: [] },
+    { ...snapshot, issue_claims: [{ ...claim, issue_id: 'pd-999' }] },
+    { ...snapshot, claim_requests: [{ ...receipt, revision: claim.revision + 1, incarnation: 'f'.repeat(32) }] },
+    { ...snapshot, claim_requests: [{ ...receipt, generation: claim.generation + 1 }] },
+  ]) { assert.throws(() => parseSnapshot(input), { code: 'invalid_snapshot' }); assert.throws(() => destination.store.importSnapshot(input), { code: 'invalid_snapshot' }); }
+  assert.equal(destination.store.exportSnapshot().issues.length, 0); assert.equal(destination.store.exportSnapshot().claim_requests.length, 0);
+});
+test('snapshot4 conversion is explicit and preserves original creation payload bytes', async t => {
+  const source = fixture(t); await create(source.run);
+  const { issue_claims: _, claim_requests: __, ...old } = source.store.exportSnapshot(); const legacy = { ...old, version: 4 };
+  assert.throws(() => parseSnapshot(legacy), { code: 'invalid_snapshot' });
+  const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 5); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);
+});
+test('historical schema5 export retains graph records and canonical retirement guards without writes', t => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-history5-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, 'store'); mkdirSync(directory, { mode: 0o700 }); const path = join(directory, 'polylinedb.sqlite');
+  const database = new DatabaseSync(path); database.exec(SCHEMA_V5_SQL);
+  for (const id of ['pd-1', 'pd-2']) database.prepare("INSERT INTO issues(id,sort_key,tool,project,body,status,type,priority,labels_json,created_at,created_by,updated_at,updated_by) VALUES (?,?, 'pd','test','History','open','task',2,'[]','2020-01-01T00:00:00Z','old','2020-01-01T00:00:00Z','old')").run(id, `pd-${id.slice(3).padStart(16, '0')}`);
+  database.exec("INSERT INTO counters VALUES ('pd',2); INSERT INTO dependencies VALUES ('pd-1','pd-2'); UPDATE dependency_revisions SET revision=2 WHERE dependent_id='pd-1'");
+  const tables = database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name<>'schema_version'").all();
+  for (const row of tables) for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+    if (typeof row.name !== 'string') throw new Error('Invalid table');
+    database.exec(`CREATE TRIGGER "polylinedb_retired_${row.name}_${operation.toLowerCase()}" BEFORE ${operation} ON "${row.name}" BEGIN SELECT RAISE(ABORT, 'This local database is retired. Use cloud connection archive.'); END`);
+  }
+  const before = database.prepare('SELECT * FROM memory_store_identity').get(); database.close(); chmodSync(path, 0o600);
+  const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 5); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
+  const after = new DatabaseSync(path, { readOnly: true }); try { assert.deepEqual(after.prepare('SELECT * FROM memory_store_identity').get(), before); assert.equal(after.prepare('SELECT version FROM schema_version').get()?.version, 5); } finally { after.close(); }
+  assert.throws(() => upgradeStore({ directory, cwd: join(root, 'work') }), { code: 'store_retired' });
 });

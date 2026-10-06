@@ -1,19 +1,28 @@
 # Move a shared local store to the cloud
 
+These instructions describe the unreleased source with schema 6 and snapshot 5.
+Published version 0.2.0 uses schema 5.
+
 This procedure adds a local store to an existing D1 store, then selects the cloud connection in your repositories.
 It preserves the records already in D1.
 Use the [snapshot restoration procedure](d1-migration.md) when you need to restore into a new, unbound database.
 
 The operator requires disjoint IDs and counter namespaces across both stores.
 It stops on a conflict instead of choosing one version, renaming IDs, or replacing records.
-The transfer preserves issues, comments, memories, counters, creation receipts, versions, timestamps, and attribution.
+The transfer preserves issues, comments, memories, claims, counters, creation receipts, versions, timestamps, and attribution.
 It also preserves receipts for deleted memories.
+Claim mutation receipts retain their original payload bytes and results.
+The source and destination must have different store incarnations, including when their issue namespaces are disjoint.
+The operator refuses the same incarnation before it prepares any database write.
+It preserves destination identity and existing destination owners, and imported claim rows retain invalidated source authority as history.
+The merge batch guards the captured destination identity and project memory revisions before it inserts source rows.
+Memory insertion advances destination project revisions through their existing triggers.
 
 ## Prepare the connection and repositories
 
 Use the supported Node version, an installed `pd`, and an authenticated `cf` profile.
 Run the operator from a source checkout of polylinedb.
-The Worker and both stores must already use canonical schema 5.
+The Worker and both stores must already use canonical schema 6.
 The additive operator refuses additional application tables, including an existing `polylinedb_snapshot_claim` restoration table.
 Use the separate restoration procedure or review that provenance before preparing a different operator.
 The operator does not deploy a Worker, upgrade schemas, or change Access policies.

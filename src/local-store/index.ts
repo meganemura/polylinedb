@@ -8,7 +8,8 @@ import { commentRow, issueRow } from "../records/persistence.ts";
 import { PolylinedbError } from "../records/index.ts";
 import type { SqlExecutor, SqlStatement } from "../records/persistence.ts";
 import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3 } from "../records/persistence.ts";
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4 } from "../records/persistence.ts";
+import { claimRow, claimRequestRow } from '../records/persistence.ts';
 import type { Snapshot, SnapshotImport } from "../records/persistence.ts";
 import { issueSortKey } from "../records/persistence.ts";
 import { memoryRow, memorySortKey } from "../records/persistence.ts";
@@ -85,7 +86,7 @@ function connect(path: string): DatabaseSync {
 }
 
 const retiredTables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests',
-  'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests'] as const;
+  'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests'] as const;
 const retiredOperations = ['INSERT', 'UPDATE', 'DELETE'] as const;
 function retiredConnection(database: DatabaseSync, error: unknown): string | undefined {
   if (!database.isTransaction || !(error instanceof Error) || !('code' in error) || error.code !== 'ERR_SQLITE_ERROR' ||
@@ -98,7 +99,7 @@ function retiredConnection(database: DatabaseSync, error: unknown): string | und
     rows = database.prepare("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name GLOB 'polylinedb_retired_*'").all();
   } catch { return undefined; }
   const version = database.prepare('SELECT version FROM schema_version').get()?.version;
-  const tables = version === 2 ? retiredTables.slice(0, 4) : version === 3 ? retiredTables.slice(0, 7) : version === 4 ? retiredTables.slice(0, 9) : retiredTables;
+  const tables = version === 2 ? retiredTables.slice(0, 4) : version === 3 ? retiredTables.slice(0, 7) : version === 4 ? retiredTables.slice(0, 9) : version === 5 ? retiredTables.slice(0, 12) : retiredTables;
   if (rows.length !== tables.length * retiredOperations.length) return undefined;
   const actual = new Map<string, { table: string; sql: string }>();
   for (const row of rows) {
@@ -193,7 +194,7 @@ export function openStore(location: StoreLocation): LocalStore {
     },
   };
   const readSnapshot = (): Snapshot => parseSnapshot({
-    format: 'polylinedb.snapshot', version: 4,
+    format: 'polylinedb.snapshot', version: 5,
     issues: database.prepare('SELECT * FROM issues').all().map(row => {
       const issue = issueRow(row);
       const split = issue.id.lastIndexOf('.');
@@ -214,6 +215,8 @@ export function openStore(location: StoreLocation): LocalStore {
     dependencies: database.prepare('SELECT dependent_id,blocker_id FROM dependencies').all(),
     dependency_revisions: database.prepare('SELECT dependent_id,revision FROM dependency_revisions').all(),
     dependency_requests: database.prepare('SELECT * FROM dependency_requests').all(),
+    issue_claims: database.prepare('SELECT * FROM issue_claims').all().map(claimRow),
+    claim_requests: database.prepare('SELECT * FROM claim_requests').all().map(claimRequestRow),
   });
   return {
     db,
@@ -225,7 +228,7 @@ export function openStore(location: StoreLocation): LocalStore {
     importSnapshot(input) {
       const snapshot = parseSnapshot(input);
       const canonical = canonicalSnapshot(snapshot);
-      const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, memories: snapshot.memories.length, dependencies: snapshot.dependencies.length, dependency_revisions: snapshot.dependency_revisions.length, dependency_requests: snapshot.dependency_requests.length, sha256: createHash('sha256').update(canonical).digest('hex') };
+      const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, memories: snapshot.memories.length, dependencies: snapshot.dependencies.length, dependency_revisions: snapshot.dependency_revisions.length, dependency_requests: snapshot.dependency_requests.length, issue_claims: snapshot.issue_claims.length, claim_requests: snapshot.claim_requests.length, sha256: createHash('sha256').update(canonical).digest('hex') };
       database.exec('BEGIN IMMEDIATE');
       try {
         const existing = readSnapshot();
@@ -233,7 +236,7 @@ export function openStore(location: StoreLocation): LocalStore {
           database.exec('COMMIT');
           return { result: 'already_present', ...summary };
         }
-        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length || existing.dependencies.length || existing.dependency_revisions.length || existing.dependency_requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
+        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length || existing.dependencies.length || existing.dependency_revisions.length || existing.dependency_requests.length || existing.issue_claims.length || existing.claim_requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
         database.exec(ROTATE_MEMORY_IDENTITY_SQL);
         const columns = ['id', 'parent_id', 'sort_key', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by'];
         const insertIssue = database.prepare(`INSERT INTO issues (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
@@ -260,6 +263,10 @@ export function openStore(location: StoreLocation): LocalStore {
         for (const row of snapshot.dependency_revisions) updateRevision.run(row.revision, row.dependent_id);
         const insertDependencyRequest = database.prepare('INSERT INTO dependency_requests(request_id,actor,payload,dependent_id,blocker_id,result_revision,outcome,created_at) VALUES (?,?,?,?,?,?,?,?)');
         for (const row of snapshot.dependency_requests) insertDependencyRequest.run(row.request_id, row.actor, row.payload, row.dependent_id, row.blocker_id, row.result_revision, row.outcome, row.created_at);
+        for (const table of ['issue_claims', 'claim_requests'] as const) for (const row of snapshot[table]) {
+          const columns = Object.keys(row); const values = Object.values(row);
+          database.prepare(`INSERT INTO ${table}(${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...values);
+        }
         if (canonicalSnapshot(readSnapshot()) !== canonical) throw new PolylinedbError('invalid_store', 'Restored snapshot does not match the input', 500);
         database.exec('COMMIT');
         return { result: 'imported', ...summary };
@@ -278,8 +285,8 @@ export function exportHistoricalSnapshot(location: StoreLocation): Snapshot {
     database.exec('BEGIN');
     const rows = database.prepare('SELECT version FROM schema_version').all();
     const version = rows[0]?.version;
-    if (rows.length !== 1 || (version !== 2 && version !== 3 && version !== 4)) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3 or 4', 409);
-    reference.exec(version === 2 ? SCHEMA_V2_SQL : version === 3 ? SCHEMA_V3_SQL : SCHEMA_V4_SQL);
+    if (rows.length !== 1 || (version !== 2 && version !== 3 && version !== 4 && version !== 5)) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3, 4 or 5', 409);
+    reference.exec(version === 2 ? SCHEMA_V2_SQL : version === 3 ? SCHEMA_V3_SQL : version === 4 ? SCHEMA_V4_SQL : SCHEMA_V5_SQL);
     const guards = database.prepare("SELECT name FROM sqlite_master WHERE name GLOB 'polylinedb_retired_*'").all();
     if (guards.length && historicalRetirement(database) === undefined) throw new PolylinedbError('invalid_store', 'Historical retirement guards differ from the canonical guards', 409);
     const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT GLOB 'polylinedb_retired_*' ORDER BY name";
@@ -296,6 +303,9 @@ export function exportHistoricalSnapshot(location: StoreLocation): Snapshot {
         if (row.sort_key !== memorySortKey(memory.id)) throw new PolylinedbError('invalid_store', 'Historical memory ordering differs', 500);
         return memory;
       }), memory_counters: database.prepare('SELECT * FROM memory_counters').all(), memory_requests: database.prepare('SELECT * FROM memory_requests').all() });
-    database.exec('COMMIT'); return converted;
+    const { issue_claims: _, claim_requests: __, ...legacyConverted } = converted;
+    const complete = version === 5 ? convertSnapshotV4({ ...legacyConverted, version: 4,
+      dependencies: database.prepare('SELECT * FROM dependencies').all(), dependency_revisions: database.prepare('SELECT * FROM dependency_revisions').all(), dependency_requests: database.prepare('SELECT * FROM dependency_requests').all() }) : converted;
+    database.exec('COMMIT'); return complete;
   } finally { reference.close(); database.close(); }
 }

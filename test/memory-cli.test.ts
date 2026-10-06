@@ -51,5 +51,5 @@ test('CLI retrieves a prior session fact, detects conflicts, and preserves it th
   const converted = spawnSync(process.execPath, [source, 'snapshot', 'convert', '--file', v2], { cwd, env, encoding: 'utf8' });
   assert.equal(converted.status, 0, converted.stderr);
   assert.deepEqual(JSON.parse(converted.stdout).memories, []);
-  assert.equal(JSON.parse(converted.stdout).version, 4);
+  assert.equal(JSON.parse(converted.stdout).version, 5);
 });

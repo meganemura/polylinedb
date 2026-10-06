@@ -57,6 +57,9 @@ async function makeSource(directory: string, prefix = 'src', includeLiveMemory =
     await addIssue(fixture.store, { prefix, parent: epic.id, body: `${prefix} child` }, `${prefix}-child-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'dependency_add', dependent_id: `${epic.id}.1`, blocker_id: epic.id, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
     await addComment(fixture.store, epic.id, `${prefix} comment`, `${prefix}-commenter`);
+    const claim = await executeOperation(fixture.store.db, parseOperation({ op: 'claim_show', issue_id: epic.id }), `${prefix}-author`);
+    assert.ok('claim' in claim);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'claim_acquire', issue_id: epic.id, incarnation: claim.claim.store_incarnation, session_id: randomUUID(), request_id: randomUUID(), agent_label: 'Codex' }), `${prefix}-author`);
     const deletedMemory = await addMemory(fixture.store, prefix, `${prefix}-memory-author`);
     await executeMemoryOperation(fixture.store.db, parseMemoryOperation({ op: 'memory_delete', project: 'synthetic', id: deletedMemory.id, expected: 1 }), `${prefix}-memory-editor`);
     if (includeLiveMemory) await addMemory(fixture.store, `${prefix}live`, `${prefix}-live-memory-author`);
@@ -69,6 +72,8 @@ async function makeDestination(directory: string, prefix = 'dst', includeDeleted
   try {
     const issue = await addIssue(fixture.store, { prefix, body: `${prefix} original` }, `${prefix}-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'close', id: issue.id, expected: 1 }), `${prefix}-closer`);
+    const claim = await executeOperation(fixture.store.db, parseOperation({ op: 'claim_show', issue_id: issue.id }), `${prefix}-author`); assert.ok('claim' in claim);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'claim_acquire', issue_id: issue.id, incarnation: claim.claim.store_incarnation, session_id: randomUUID(), request_id: randomUUID(), agent_label: 'Cursor' }), `${prefix}-author`);
     await addComment(fixture.store, issue.id, `${prefix} comment`, `${prefix}-commenter`);
     const memory = await addMemory(fixture.store, memoryPrefix, `${prefix}-memory-author`);
     if (includeDeletedMemory) {
@@ -89,16 +94,7 @@ async function makeLargeStore(directory: string, name: string, prefix: string): 
 }
 
 function readRows(database: DatabaseSync): unknown {
-  return {
-    issues: database.prepare('SELECT * FROM issues').all(),
-    comments: database.prepare('SELECT * FROM comments').all(),
-    counters: database.prepare('SELECT * FROM counters').all(),
-    requests: database.prepare('SELECT * FROM requests').all(),
-    memories: database.prepare('SELECT * FROM memories').all(),
-    memory_counters: database.prepare('SELECT * FROM memory_counters').all(),
-    memory_requests: database.prepare('SELECT * FROM memory_requests').all(),
-    dependencies: database.prepare('SELECT * FROM dependencies').all(), dependency_revisions: database.prepare('SELECT * FROM dependency_revisions').all(), dependency_requests: database.prepare('SELECT * FROM dependency_requests').all(),
-  };
+  return Object.fromEntries(tables.map(table => [table, database.prepare(`SELECT * FROM ${table}`).all()]));
 }
 
 function openDatabase(databasePath: string): DatabaseSync {
@@ -178,6 +174,29 @@ test('destination row changes fail the first guarded batch and retain all pre-ba
     sourceDatabase.close();
     destinationDatabase.close();
   }
+});
+test('same-incarnation merge refuses planning and destination metadata races roll back every source row', async context => {
+  const directory = mkdtempSync(join(tmpdir(), 'pd-additive-metadata-')); context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = openDatabase(await makeSource(directory, 'source', true)); const destination = openDatabase(await makeDestination(directory, 'dest'));
+  try {
+    const originalIdentity = destination.prepare('SELECT incarnation FROM memory_store_identity').get()?.incarnation;
+    const sourceIdentity = source.prepare('SELECT incarnation FROM memory_store_identity').get()?.incarnation; assert.equal(typeof sourceIdentity, 'string'); assert.equal(typeof originalIdentity, 'string');
+    if (typeof sourceIdentity !== 'string' || typeof originalIdentity !== 'string') throw new Error('Invalid fixture identity');
+    destination.prepare('UPDATE memory_store_identity SET incarnation=?').run(sourceIdentity);
+    const same = readRows(destination); assert.throws(() => additiveMerge({ source: readRows(source), destination: same }), /incarnations must differ/); assert.deepEqual(readRows(destination), same);
+    destination.prepare('UPDATE memory_store_identity SET incarnation=?').run(originalIdentity);
+    for (const change of ["UPDATE memory_store_identity SET incarnation=lower(hex(randomblob(16)))", 'UPDATE project_memory_revisions SET revision=revision+1']) {
+      const plan = additiveMerge({ source: readRows(source), destination: readRows(destination) });
+      destination.exec(change); const changed = readRows(destination);
+      assert.throws(() => executePlan(destination, plan.statements), /CHECK constraint failed/); assert.deepEqual(readRows(destination), changed);
+    }
+    const owner = destination.prepare("SELECT * FROM issue_claims WHERE issue_id='dest-1'").get(); assert.ok(owner);
+    destination.prepare('UPDATE memory_store_identity SET incarnation=?').run(owner.incarnation);
+    const plan = additiveMerge({ source: readRows(source), destination: readRows(destination) }); executePlan(destination, plan.statements);
+    assert.deepEqual(destination.prepare("SELECT * FROM issue_claims WHERE issue_id='dest-1'").get(), owner);
+    assert.equal(destination.prepare('SELECT incarnation FROM memory_store_identity').get()?.incarnation, owner.incarnation);
+    assert.equal(destination.prepare("SELECT count(*) AS count FROM issue_claims AS claim JOIN memory_store_identity AS identity ON singleton=1 WHERE claim.issue_id='source-1' AND claim.incarnation<>identity.incarnation").get()?.count, 1);
+  } finally { source.close(); destination.close(); }
 });
 
 test('raw rows reject derived keys that do not match their canonical IDs', async context => {
@@ -261,6 +280,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
     database.exec('BEGIN IMMEDIATE');
     retireSource(database, 'archive');
     database.exec('COMMIT');
+    assert.equal(database.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE type='trigger' AND name GLOB 'polylinedb_retired_*'").get()?.count, tables.length * 3);
     database.exec('BEGIN IMMEDIATE');
     retireSource(database, 'archive');
     database.exec('COMMIT');
@@ -268,7 +288,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
     for (const table of tables) {
       const key = table === 'issues' || table === 'comments' || table === 'memories' ? 'id'
         : table === 'counters' ? 'scope'
-          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : 'request_id';
+          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : table === 'issue_claims' ? 'issue_id' : table === 'memory_store_identity' ? 'singleton' : table === 'project_memory_revisions' ? 'project' : 'request_id';
       const quotedTable = `"${table}"`;
       const quotedKey = `"${key}"`;
       assert.throws(() => database.prepare(`INSERT INTO ${quotedTable} SELECT * FROM ${quotedTable} LIMIT 1`).all(), /Use cloud connection archive/, `${table} insert`);
@@ -276,7 +296,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
       assert.throws(() => database.prepare(`DELETE FROM ${quotedTable}`).all(), /Use cloud connection archive/, `${table} delete`);
     }
     const tableCount = database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get();
-    assert.equal(tableCount?.count, 13);
+    assert.equal(tableCount?.count, tables.length + 1);
     for (const table of ['memory_store_identity', 'project_memory_revisions']) {
       assert.throws(() => database.exec(`INSERT INTO ${table} SELECT * FROM ${table} LIMIT 1`), /Use cloud connection archive/);
       assert.throws(() => database.exec(`DELETE FROM ${table}`), /Use cloud connection archive/);

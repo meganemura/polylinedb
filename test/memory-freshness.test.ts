@@ -94,7 +94,7 @@ test('issue observation scope, replay receipts, opted-out JSON and advisory fail
   const plainContext = await f.run({ op: 'memory_context', project: 'demo' }); assert.deepEqual(Object.keys(plainContext), ['project', 'store', 'memories', 'limits', 'omitted', 'next_cursor', 'notices']);
   await f.run(f.memory()); const newToken = await f.revision();
   const replay = await f.run({ ...request, observed_memory_revision: newToken }); assert('issue' in replay); assert.deepEqual(replay.issue, created.issue);
-  const snapshot = f.store.exportSnapshot(); assert.equal(snapshot.version, 4); assert.equal(snapshot.requests[0]?.payload.includes('observed_memory_revision'), false);
+  const snapshot = f.store.exportSnapshot(); assert.equal(snapshot.version, 5); assert.equal(snapshot.requests[0]?.payload.includes('observed_memory_revision'), false);
   assert.deepEqual(freshness(await f.check(newToken, { project: 'other' })), { status: 'stale', project: 'other', reason: 'project_changed' });
   assert.deepEqual(freshness(await f.run({ op: 'list', observed_memory_revision: newToken })), { status: 'current', project: 'demo' });
   const moved = await f.run({ op: 'update', id: created.issue.id, changes: [{ field: 'project', value: 'other', expected: 1 }], observed_memory_revision: newToken });
