@@ -64,6 +64,22 @@ See [ownership design](adr/0009-issue-ownership.md) for database time, cumulativ
 Mutations are never automatically retried with fresh versions.
 After an uncertain network result, read the issue before deciding what to do next.
 
+## Operation policy
+
+The `Operation` union has one typed policy row per operation.
+Each row records local read or write access and the current MCP hints.
+A new operation without a policy row fails type checking.
+The MCP list handler fails if a schema key has no policy row.
+
+The CLI requires an actor from a flag, environment variable, or repository default before it parses a mutation payload.
+It maps `ready` and `blocked` to `dependency_worklist` for this check.
+The `import` and `upgrade` commands stay in the CLI because they are outside `Operation`.
+The CLI keeps its existing unknown-command error.
+
+MCP hints remain separate from local access rules.
+The service keeps its current conservative values, including `readOnlyHint: false` for dependency reads.
+The policy always sets `openWorldHint` to `false`.
+
 ## Identity
 
 Local actors provide attribution for a database protected by local filesystem permissions.

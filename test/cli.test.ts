@@ -181,6 +181,36 @@ test('CLI rejects claim flags and malformed proof before opening storage', t => 
   ]) assert.equal(run(args, { status: 2 }).error.code, 'invalid_input');
   assert.equal(existsSync(directory), false);
 });
+test('CLI requires an explicit actor before parsing mutation payloads or opening storage', t => {
+  const { run, directory } = fixture(t);
+  assert.deepEqual(run(['comment'], { actor: false, status: 2 }).error, {
+    code: 'invalid_input', message: 'Invalid arguments for comment',
+  });
+  assert.equal(existsSync(directory), false);
+  const mutations = [
+    ['create'], ['comment', 'pd-1'], ['update', 'pd-1'], ['close', 'pd-1'], ['reopen', 'pd-1'],
+    ['memory', 'create'], ['memory', 'update', 'pd-m1'], ['memory', 'delete', 'pd-m1'],
+    ['dependency', 'add'], ['dependency', 'remove'],
+    ['claim', 'acquire', 'pd-1'], ['claim', 'renew'], ['claim', 'release'],
+    ['import'], ['upgrade'],
+  ];
+  for (const args of mutations) {
+    assert.deepEqual(run(args, { actor: false, status: 2 }).error, {
+      code: 'invalid_input', message: 'An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required',
+    });
+    assert.equal(existsSync(directory), false);
+  }
+});
+test('CLI ready and blocked retain local reader fallback, and unknown commands reach command validation', t => {
+  const { run } = fixture(t);
+  run(['init'], { actor: false });
+  run(['create', '--tool', 'test', '--project', 'test', '--body', 'Ready issue']);
+  assert.deepEqual(run(['ready'], { actor: false }).issues.map((issue: { id: string }) => issue.id), ['pd-1']);
+  assert.deepEqual(run(['blocked'], { actor: false }).issues, []);
+  assert.deepEqual(run(['not_an_operation'], { actor: false, status: 2 }).error, {
+    code: 'invalid_input', message: 'Unknown command',
+  });
+});
 for (const command of ['acquire', 'renew', 'release']) test(`CLI local claim ${command} requires an explicit actor and preserves both claim tables on rejection`, t => {
   const { run, directory } = fixture(t); run(['init'], { actor: false }); run(['create', '--tool', 'test', '--project', 'test', '--body', 'Actor admission']);
   const incarnation = run(['claim', 'show', '1'], { actor: false }).claim.store_incarnation;

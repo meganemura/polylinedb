@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { PolylinedbError } from './records/index.ts';
-import { executeOperation, parseOperation } from './records/index.ts';
+import { executeOperation, parseOperation, requiresExplicitLocalActor } from './records/index.ts';
 import type { Operation, OperationResult } from './records/index.ts';
 import { parseMemoryId } from './records/index.ts';
 import { renderHumanIssueRead } from './cli-human.ts';
@@ -375,7 +375,9 @@ async function main(argv: readonly string[]): Promise<void> {
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
   }
-  if (selected.kind === 'local' && ['create', 'comment', 'update', 'close', 'reopen', 'import', 'upgrade', 'memory_create', 'memory_update', 'memory_delete', 'dependency_add', 'dependency_remove', 'claim_acquire', 'claim_renew', 'claim_release'].includes(command) && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
+  const policyName = command === 'ready' || command === 'blocked' ? 'dependency_worklist' : command;
+  if (selected.kind === 'local' && (command === 'import' || command === 'upgrade' || requiresExplicitLocalActor(policyName))
+    && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
   if (command === 'upgrade') {
     if (selected.kind !== 'local') invalid('Use the documented operator procedure to upgrade D1');
     process.stdout.write(JSON.stringify(upgradeStore({ directory: selected.directory })) + '\n');

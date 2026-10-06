@@ -2,7 +2,7 @@
 import { AccessError, createAccessVerifier, type AccessSettings } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { PolylinedbError } from "../records/index.ts";
-import { executeOperation, operationSchemas, parseOperation } from "../records/index.ts";
+import { executeOperation, mcpAnnotationsFor, operationSchemas, parseOperation } from "../records/index.ts";
 
 export type Environment = AccessSettings & {
   DB: D1DatabaseLike;
@@ -161,9 +161,7 @@ async function mcp(request: Request, env: Environment, actor: string): Promise<R
       if (params.cursor !== undefined) return rpcError(id, -32602, 'Tool-list cursors are not supported.');
       return result({ tools: Object.entries(operationSchemas).map(([name, inputSchema]) => ({
         name, description: descriptions[name], inputSchema,
-          annotations: { readOnlyHint: ['show', 'list', 'search', 'actor', 'memory_show', 'memory_list', 'memory_search', 'memory_context', 'claim_show', 'claim_list'].includes(name),
-          destructiveHint: ['update', 'close', 'reopen', 'memory_update', 'memory_delete', 'claim_release'].includes(name),
-          idempotentHint: ['show', 'list', 'search', 'actor', 'memory_show', 'memory_list', 'memory_search', 'memory_context', 'claim_show', 'claim_list', 'claim_acquire', 'claim_renew', 'claim_release'].includes(name), openWorldHint: false },
+          annotations: mcpAnnotationsFor(name),
       })) });
     case 'tools/call': {
       if (typeof params.name !== 'string' || !Object.hasOwn(operationSchemas, params.name)) return rpcError(id, -32602, 'Unknown tool.');
