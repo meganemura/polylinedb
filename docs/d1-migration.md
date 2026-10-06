@@ -128,7 +128,12 @@ The importer checks supported output envelopes and every statement success value
 These checks used the operator's D1 REST access. Deployed Worker bindings and OAuth require separate acceptance checks.
 Workerd tests use the real D1 binding directly and do not prove production authentication.
 
-D1 permits 100 bound parameters and 100,000 SQL bytes per statement. The whole API batch has a 30-second deadline. Bound values keep large UTF-8 bodies outside SQL text. The operator limits encoded rows to 1,900,000 bytes and reads one row per page. This favors bounded requests over transfer speed. See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
+D1 permits 100 bound parameters and 100,000 SQL bytes per statement.
+The whole API batch has a 30-second deadline.
+Bound values keep large UTF-8 bodies outside SQL text.
+The operator limits encoded rows to 1,900,000 bytes.
+It reads large issue, comment, and memory records in one-record pages and small claim records in pages of at most 100.
+See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
 ## Verification
 

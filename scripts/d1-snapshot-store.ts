@@ -60,7 +60,7 @@ async function checkSchema(query: Query): Promise<boolean> {
 
 async function readRows(query: Query): Promise<Rows> {
   const rows: Rows = { issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [], issue_claims: [], claim_requests: [] };
-  // One-row pages also bound responses when a valid body approaches the row limit.
+  // Large text records use one-row pages because a valid body can approach the response limit.
   for (const table of tables) {
     if (table === 'dependencies') {
       let after: [string, string] | undefined;
@@ -125,6 +125,10 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     }
     const actual = await readRows(query);
     const complete = compareRows(rows, actual, claims.length === 1);
+    if (complete && claims.length === 1) {
+      const identity = (await querySql(query, 'SELECT incarnation FROM memory_store_identity WHERE singleton=1'))[0];
+      if (identity?.incarnation !== claims[0]?.incarnation) fail('Completed restore incarnation differs from the recorded target');
+    }
     const empty = tables.every(table => actual[table].length === 0);
     if (!empty && !complete && claims.length === 0) fail('Partial destination has no snapshot claim');
     return { state: complete ? 'identical' : empty ? 'empty' : 'resumable', sha256, counts };
@@ -139,6 +143,12 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
       dependencies: actual.dependencies, dependency_revisions: actual.dependency_revisions, dependency_requests: actual.dependency_requests,
       issue_claims: actual.issue_claims.map(claimRow), claim_requests: actual.claim_requests.map(claimRequestRow) });
     if (canonicalSnapshot(snapshot) !== canonical) fail('Destination canonical snapshot differs');
+    const hasClaim = await checkSchema(query);
+    if (hasClaim) {
+      const target = (await querySql(query, `SELECT incarnation FROM ${claimTable} WHERE singleton=1 AND sha256=?`, [sha256]))[0];
+      const identity = (await querySql(query, 'SELECT incarnation FROM memory_store_identity WHERE singleton=1'))[0];
+      if (!target || identity?.incarnation !== target.incarnation) fail('Verified restore incarnation differs from the recorded target');
+    }
     return { result: 'verified', sha256, counts, snapshot };
   };
   const restore = async () => {

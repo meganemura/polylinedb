@@ -90,6 +90,11 @@ try {
     assert.equal((await query({ sql: 'SELECT incarnation FROM memory_store_identity WHERE singleton=1', params: [] }))[0]?.incarnation, restoredIdentity);
   }
   const restored = await migration.verify();
+  const provenance = (await query({ sql: 'SELECT original_incarnation,incarnation FROM polylinedb_snapshot_claim WHERE singleton=1', params: [] }))[0]; assert.ok(provenance);
+  await query({ sql: 'UPDATE memory_store_identity SET incarnation=? WHERE singleton=1', params: [String(provenance.original_incarnation)] });
+  await assert.rejects(migration.verify(), /incarnation/); await assert.rejects(migration.restore(), /incarnation/);
+  assert.equal((await query({ sql: 'SELECT incarnation FROM memory_store_identity WHERE singleton=1', params: [] }))[0]?.incarnation, provenance.original_incarnation);
+  await query({ sql: 'UPDATE memory_store_identity SET incarnation=? WHERE singleton=1', params: [String(provenance.incarnation)] });
   const roundtripLocation = { directory: join(root, 'roundtrip') };
   initializeStore(roundtripLocation);
   const roundtrip = openStore(roundtripLocation);
