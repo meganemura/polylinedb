@@ -67,7 +67,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     assert.equal((await init.json()).result.protocolVersion, '2025-11-25');
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const names = (await listed.json()).result.tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update']);
+    assert.deepEqual(names, ['actor', 'claim_acquire', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update']);
     const updated = await request('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
       name: 'update', arguments: { id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] },
     } });

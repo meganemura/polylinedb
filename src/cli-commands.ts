@@ -42,9 +42,9 @@ Commands:
   agent install HOST            Install a user-scope lifecycle hook.
   agent remove HOST             Remove the owned lifecycle hook.
   agent context HOST            Read hook input and return host context JSON.
-  upgrade                       Explicitly upgrade a local schema 2, 3 or 4 store to schema 5.
-  snapshot convert --from 2|3 --file PATH|- [--output PATH|-]
-                                Convert an older snapshot to v4 without touching a store.
+  upgrade                       Explicitly upgrade a local schema 2, 3, 4 or 5 store to schema 6.
+  snapshot convert --from 2|3|4 --file PATH|- [--output PATH|-]
+                                Convert an older snapshot to v5 without touching a store.
   export [--file PATH|-] [--historical]
                                 Export a local snapshot. Historical export recovers old retired stores read-only.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
@@ -61,6 +61,12 @@ Commands:
          --expect FIELD=VERSION [--expect FIELD=VERSION ...]
   close ID --expected VERSION [--force --reason TEXT]
   reopen ID --expected VERSION
+  claim show ID                 Inspect ownership and the current store incarnation.
+  claim list [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
+  claim acquire ID --incarnation HEX --session-id UUID [--ttl 30..3600]
+        [--agent-label TEXT] [--request-id UUID]
+  claim renew --claim-proof JSON --expected-revision N [--ttl 30..3600] [--request-id UUID]
+  claim release --claim-proof JSON --expected-revision N [--request-id UUID]
   dependency list ID [--after ID] [--limit 1..100]
   dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
   dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]
@@ -90,6 +96,13 @@ Cloud commands use OAuth. Run auth login once; tokens stay in the OS credential 
 Each update field requires its own expected version from show. Conflicts require rereading.
 Start and close require resolved prerequisites. An explicit --force --reason records an attributed exception comment.
 Update accepts the same override when it sets status to in_progress or closed.
+Update, close and reopen accept --claim-proof JSON. A supplied proof always asserts current ownership.
+Claimed issues require an unexpired proof for every requested status change, including unchanged status values.
+Force overrides prerequisites only. Closed issues remain claimable. Acquisition does not change status.
+Claim acquisition can read POLYLINEDB_SESSION_ID when --session-id is omitted. Keep one UUID per caller session.
+Claims require the observed store incarnation. Claim timestamps use database Unix seconds, not agent liveness.
+TTL defaults to 300 seconds. Agent labels are nullable acquisition metadata, bounded at 64 UTF-8 bytes.
+Retain the claim request UUID, incarnation, session and payload for retries. No automatic retry or reacquisition occurs.
 Ready and blocked accept FILTERS except --status. Worklists observe current state; they do not claim work.
 Dependency mutations use a separate aggregate revision. Reuse the request UUID and identical payload on retry.
 The prefix defaults to repository settings, otherwise pd. It matches [a-z][a-z0-9]{0,15}.
@@ -109,6 +122,9 @@ const commandFlags: Record<string, readonly string[]> = {
   auth: [],
   upgrade: [], snapshot_convert: ['file', 'output', 'from'],
   dependency_list: ['after', 'limit'], dependency_add: ['dependent', 'blocker', 'expected-revision', 'request-id'], dependency_remove: ['dependent', 'blocker', 'expected-revision', 'request-id'],
+  claim_show: [], claim_list: ['tool', 'project', 'after', 'limit'],
+  claim_acquire: ['incarnation', 'session-id', 'ttl', 'agent-label', 'request-id'],
+  claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
   ready: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'], blocked: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'],
   memory_create: ['project', 'title', 'body', 'body-file', 'request-id'],
   memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
@@ -119,8 +135,8 @@ const commandFlags: Record<string, readonly string[]> = {
   init: ['stealth', 'tool', 'project'], context: [], export: ['file', 'historical'], import: ['file'], actor: [], show: [],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
   comment: ['body', 'body-file'],
-  update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason'],
-  close: ['expected', 'force', 'reason'], reopen: ['expected'],
+  update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'claim-proof'],
+  close: ['expected', 'force', 'reason', 'claim-proof'], reopen: ['expected', 'claim-proof'],
   list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
@@ -203,14 +219,14 @@ async function main(argv: readonly string[]): Promise<void> {
     flags.set(name, [...previous, value]);
   }
   const [first, ...rest] = positionals;
-  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency';
+  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency' || first === 'claim';
   const command = nested ? `${first}_${rest[0] ?? ''}` : first;
   const operands = nested ? rest.slice(1) : rest;
   if (!command || !Object.hasOwn(commandFlags, command)) invalid('Unknown command');
   for (const name of flags.keys()) {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
-  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list'].includes(command);
+  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list', 'claim_show', 'claim_acquire'].includes(command);
   if (!['connection', 'auth'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
@@ -408,7 +424,22 @@ async function main(argv: readonly string[]): Promise<void> {
     return id;
   };
   if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
-  if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
+  if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : command === 'claim_show' || command === 'claim_acquire' ? 'issue_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
+  const proof = one('claim-proof');
+  if (proof !== undefined) {
+    if (new TextEncoder().encode(proof).length > 1024) invalid('Claim proof exceeds 1024 UTF-8 bytes');
+    try { raw.claim_proof = JSON.parse(proof); } catch { invalid('Claim proof must contain valid JSON'); }
+  }
+  if (command === 'claim_acquire') {
+    raw.incarnation = one('incarnation'); raw.session_id = one('session-id') ?? process.env.POLYLINEDB_SESSION_ID;
+    if (one('agent-label') !== undefined) raw.agent_label = one('agent-label');
+    raw.request_id = one('request-id') ?? randomUUID();
+  }
+  if (command === 'claim_renew' || command === 'claim_release') {
+    raw.request_id = one('request-id') ?? randomUUID(); const expected = one('expected-revision');
+    if (expected !== undefined) raw.expected_revision = integer(expected);
+  }
+  const ttl = one('ttl'); if (ttl !== undefined) raw.ttl = integer(ttl);
   if (command === 'ready' || command === 'blocked') { raw.op = 'dependency_worklist'; raw.state = command; }
   if (command === 'dependency_add' || command === 'dependency_remove') {
     const dependent = one('dependent'); const blocker = one('blocker'); const expected = one('expected-revision');

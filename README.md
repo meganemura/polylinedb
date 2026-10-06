@@ -66,6 +66,26 @@ A conflicting update fails as a whole.
 Read again and decide whether the proposed edit still applies.
 polylinedb does not retry with newer versions automatically.
 
+Unreleased schema 6 adds ownership claims without changing these seven ordinary issue fields.
+Published version 0.2.0 uses schema 5 and does not provide claim commands.
+For a supporting source build, coordinate ownership with an observed incarnation and caller session:
+
+```sh
+pd claim show ISSUE_ID
+pd --actor local:owner claim acquire ISSUE_ID --incarnation OBSERVED_HEX \
+  --session-id SESSION_UUID --request-id REQUEST_UUID --agent-label Codex
+pd show ISSUE_ID
+pd --actor local:owner update ISSUE_ID --status in_progress --expect status=STATUS_VERSION --claim-proof "$PROOF_JSON"
+pd --actor local:owner claim renew --claim-proof "$PROOF_JSON" --expected-revision CLAIM_REVISION --request-id RENEW_REQUEST_UUID
+pd --actor local:owner claim release --claim-proof "$PROOF_JSON" --expected-revision CLAIM_REVISION --request-id RELEASE_REQUEST_UUID
+```
+
+Replace placeholders with observed values and retained lowercase UUIDs.
+`PROOF_JSON` contains the receipt's `issue_id`, `incarnation`, `session_id`, and `generation` only.
+Read field and claim revisions before each new mutation.
+After a claim lifecycle starts, status writes require a current proof, and force overrides prerequisites only.
+See [ownership coordination](docs/claims.md) for deadlines, inspection, handoff, and retry rules.
+
 Create an epic with `--type epic`, then create children with `--parent EPIC_ID`.
 A root ID looks like `pd-1`; its first child is `pd-1.1`.
 Numbers continue from 99 to 100 without a fixed digit count.

@@ -9,7 +9,7 @@ import { SCHEMA_SQL } from "../src/records/schema.ts";
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
-import { parseOperation } from "../src/records/issues.ts"; import { PolylinedbError } from "../src/records/errors.ts";
+import { parseOperation } from "../src/records/index.ts"; import { PolylinedbError } from "../src/records/errors.ts";
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
   publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -121,6 +121,17 @@ test('cloud transport runs every operation against signed Worker requests throug
       assert.equal(listed.next_cursor, null);
     }
     await assert.rejects(run({ op: 'show', id: 'pd-999' }), { code: 'not_found', details: { id: 'pd-999' } });
+    const inspection = await run({ op: 'claim_show', issue_id: id }); assert.ok('claim' in inspection);
+    const claimCommand = { op: 'claim_acquire', issue_id: id, incarnation: inspection.claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
+    const owner = await run(claimCommand); assert.ok('claim_receipt' in owner);
+    const claim_proof = { issue_id: id, incarnation: owner.claim_receipt.incarnation, session_id: owner.claim_receipt.session_id, generation: owner.claim_receipt.generation };
+    await assert.rejects(run({ op: 'close', id, expected: 3, force: true, reason: 'Exception' }), { code: 'claim_required' });
+    await run({ op: 'close', id, expected: 3, claim_proof });
+    await run({ op: 'claim_renew', claim_proof, expected_revision: 1, request_id: crypto.randomUUID(), ttl: 30 });
+    assert.deepEqual(await run(claimCommand), owner);
+    await assert.rejects(run({ ...claimCommand, session_id: crypto.randomUUID() }), { code: 'claim_request_conflict' });
+    await run({ op: 'claim_release', claim_proof, expected_revision: 2, request_id: crypto.randomUUID() });
+    const history = await run({ op: 'claim_list', project: 'cloud' }); assert.ok('claims' in history); assert.equal(history.claims[0]?.state, 'released');
   } finally { server.close(); await once(server, 'close'); sqlite.close(); }
 });
 
@@ -203,6 +214,28 @@ test('transport never retries and keeps create request IDs available after uncer
     });
     assert.equal(calls, 1);
   }
+});
+test('claim cloud decoding rejects malformed authority, state and receipt variants and retains uncertain UUIDs', async () => {
+  const { sqlite, env } = fixture(); const token = await assertion();
+  const run = (value: unknown) => executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation(value), authorize: async () => 'synthetic', fetch: async (_url, options) => handleRequest(new Request('https://issues.example/v1/operations', { ...options, headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token } }), env, authenticate) });
+  try {
+    const created = await run({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'cloud', body: 'Claim' }); assert.ok('issue' in created);
+    const inspection = await run({ op: 'claim_show', issue_id: created.issue.id }); assert.ok('claim' in inspection);
+    const acquire = parseOperation({ op: 'claim_acquire', issue_id: created.issue.id, incarnation: inspection.claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' });
+    if (acquire.op !== 'claim_acquire') throw new Error('Invalid acquire');
+    const accepted = await run(acquire); assert.ok('claim_receipt' in accepted); const receipt = accepted.claim_receipt;
+    for (const change of [{ issue_id: 'pd-999' }, { incarnation: 'f'.repeat(32) }, { session_id: crypto.randomUUID() }, { generation: 0 }, { revision: Number.MAX_SAFE_INTEGER + 1 }, { agent_label: 'Other' }, { agent_label: 'あ'.repeat(22) }, { expires_at: receipt.expires_at + 1 }, { acquired_at: receipt.acquired_at + 1 }, { outcome: 'released' }, { released_at: receipt.changed_at }, { actor: '' }, { extra: true }]) {
+      await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: acquire, authorize: async () => 'synthetic', fetch: async () => Response.json({ claim_receipt: { ...receipt, ...change } }) }), { code: 'cloud_invalid_response', details: { request_id: acquire.request_id } });
+    }
+    const shown = await run({ op: 'claim_show', issue_id: created.issue.id }); assert.ok('claim' in shown);
+    for (const change of [{ state: 'released' }, { observed_at: -1 }, { lease: { ...shown.claim.lease, issue_id: 'pd-999' } }, { extra: true }]) await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation({ op: 'claim_show', issue_id: created.issue.id }), authorize: async () => 'synthetic', fetch: async () => Response.json({ claim: { ...shown.claim, ...change } }) }), { code: 'cloud_invalid_response' });
+    await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation({ op: 'claim_list', limit: 1 }), authorize: async () => 'synthetic', fetch: async () => Response.json({ claims: [shown.claim], next_cursor: 'pd-999' }) }), { code: 'cloud_invalid_response' });
+    const claim_proof = { issue_id: receipt.issue_id, incarnation: receipt.incarnation, session_id: receipt.session_id, generation: receipt.generation };
+    for (const command of [acquire, parseOperation({ op: 'claim_renew', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() }), parseOperation({ op: 'claim_release', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() })]) {
+      if (!('request_id' in command)) throw new Error('Missing request UUID'); let dispatched = 0;
+      await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: command, authorize: async () => 'synthetic', fetch: async () => { dispatched++; throw new Error('Response lost'); } }), { code: 'cloud_unavailable', details: { request_id: command.request_id } }); assert.equal(dispatched, 1);
+    }
+  } finally { sqlite.close(); }
 });
 
 test('response boundary rejects HTML, redirects, missing fields, oversized bodies and unsafe error details', async () => {

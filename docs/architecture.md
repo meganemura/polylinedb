@@ -56,6 +56,11 @@ Comments append independently and do not change issue field versions.
 Each memory has one version for its title and body. Updates and deletion require that observed version.
 Memory IDs use separate persistent counters, and creation receipts survive memory deletion.
 The shared operation dispatcher exposes issue and memory operations to CLI, HTTP, and MCP.
+The claim module owns separate ownership aggregates and immutable successful mutation receipts.
+Issue status writes compose the ownership predicate with field CAS inside their conditional SQL update.
+Session identity, request identity, and the authenticated actor have distinct roles.
+Store incarnation binds every proof to the current authority and invalidates imported claim history after restoration.
+See [ownership design](adr/0009-issue-ownership.md) for database time, cumulative counters, retry admission, and rollback guarantees.
 Mutations are never automatically retried with fresh versions.
 After an uncertain network result, read the issue before deciding what to do next.
 

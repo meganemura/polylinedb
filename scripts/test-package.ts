@@ -14,6 +14,7 @@ const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${dirname(process.execPa
 delete env.POLYLINEDB_ACTOR;
 delete env.POLYLINEDB_DATA_DIR;
 delete env.POLYLINEDB_CONNECTION;
+delete env.POLYLINEDB_SESSION_ID;
 
 function run(command: string, args: string[], cwd: string, expected = 0): string {
   const result = spawnSync(command, args, { cwd, env, encoding: 'utf8' });
@@ -42,12 +43,15 @@ try {
     "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
     'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
-    "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md'].sort();
+    "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md',
+    'dist/records/errors.js', 'dist/records/claims.js', 'dist/records/claims-sql.js', 'dist/records/schema-v5.js', 'docs/claims.md', 'docs/adr/0009-issue-ownership.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
-  run('npm', ['install', '--prefix', join(root, 'dependency-cache'), '--ignore-scripts', '--omit=dev', '--package-lock=false', 'solarsql@0.7.1'], root);
-  run('npm', ['install', '--global', '--prefix', prefix, '--ignore-scripts', '--omit=dev', '--offline', tarball], root);
+  const dependencyPack = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', root, join(project, 'node_modules', 'solarsql')], root));
+  assert.equal(dependencyPack[0].name, 'solarsql'); assert.equal(dependencyPack[0].version, '0.7.1');
+  const dependencyTarball = join(root, dependencyPack[0].filename);
+  run('npm', ['install', '--global', '--prefix', prefix, '--ignore-scripts', '--omit=dev', '--offline', tarball, dependencyTarball], root);
   const installed = join(prefix, 'lib', 'node_modules', 'polylinedb');
   const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
   assert.equal(manifest.license, 'MIT');
@@ -170,6 +174,22 @@ try {
   const removal = JSON.parse(restored(['dependency', 'remove', '--dependent', issue.id, '--blocker', blocker.id, '--expected-revision', '2']));
   assert.equal(removal.dependency.outcome, 'removed'); assert.deepEqual(JSON.parse(restored(dependencyArgs)), dependency);
   assert.equal(JSON.parse(restored(['show', issue.id])).comments[0].body, 'Works from npm');
+  const claim = JSON.parse(restored(['claim', 'show', issue.id])).claim;
+  const sessionId = crypto.randomUUID(); const claimRequestId = crypto.randomUUID();
+  const acquireArgs = ['claim', 'acquire', issue.id, '--incarnation', claim.store_incarnation, '--session-id', sessionId, '--request-id', claimRequestId, '--agent-label', 'Codex'];
+  const owner = JSON.parse(restored(acquireArgs)); const lease = owner.claim_receipt;
+  const proof = JSON.stringify({ issue_id: lease.issue_id, incarnation: lease.incarnation, session_id: lease.session_id, generation: lease.generation });
+  assert.equal(JSON.parse(restored(['claim', 'list', '--project', 'release'])).claims[0].state, 'active');
+  restored(['close', issue.id, '--expected', '4'], 4);
+  assert.equal(JSON.parse(restored(['close', issue.id, '--expected', '4', '--claim-proof', proof])).issue.status, 'closed');
+  assert.equal(JSON.parse(restored(['claim', 'renew', '--claim-proof', proof, '--expected-revision', '1', '--ttl', '30'])).claim_receipt.revision, 2);
+  assert.deepEqual(JSON.parse(restored(acquireArgs)), owner);
+  assert.equal(JSON.parse(restored(['claim', 'release', '--claim-proof', proof, '--expected-revision', '2'])).claim_receipt.outcome, 'released');
+  restored(['reopen', issue.id, '--expected', '5', '--claim-proof', proof], 4);
+  const reacquired = JSON.parse(restored(['claim', 'acquire', issue.id, '--incarnation', claim.store_incarnation, '--session-id', crypto.randomUUID()])).claim_receipt;
+  const newProof = JSON.stringify({ issue_id: reacquired.issue_id, incarnation: reacquired.incarnation, session_id: reacquired.session_id, generation: reacquired.generation });
+  assert.equal(JSON.parse(restored(['reopen', issue.id, '--expected', '5', '--claim-proof', newProof])).issue.status, 'open');
+  assert.match(skill, /pd claim acquire/);
   assert.equal(JSON.parse(restored(['memory', 'show', '1', '--project', 'release'])).memory.version, 2);
   assert.equal(JSON.parse(restored(memoryCreation)).memory.body, 'Verified through the installed CLI.');
   assert.equal(JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'release', '--body', 'After restoration'])).issue.id, 'pd-3');

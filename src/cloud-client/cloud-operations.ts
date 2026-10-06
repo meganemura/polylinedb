@@ -93,7 +93,9 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         const proof = operation.claim_proof;
         if (parsed.issue_id !== proof.issue_id || parsed.incarnation !== proof.incarnation || parsed.session_id !== proof.session_id || parsed.generation !== proof.generation || parsed.revision !== operation.expected_revision + 1 || (operation.op === 'claim_renew' && parsed.expires_at !== parsed.changed_at + operation.ttl)) return invalid();
       }
-      return { claim_receipt: { ...parsed, outcome: expected } };
+      if (expected === 'released' && parsed.released_at !== null) return { claim_receipt: { ...parsed, outcome: expected, released_at: parsed.released_at } };
+      if (expected !== 'released' && parsed.released_at === null) return { claim_receipt: { ...parsed, outcome: expected, released_at: null } };
+      return invalid();
     }
     case 'dependency_add': case 'dependency_remove': {
       const row = exact(exact(value, ['dependency']).dependency, ['dependent_id', 'blocker_id', 'revision', 'outcome']);
@@ -200,7 +202,11 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       if (current.issue_id !== (operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id)) return invalid();
       return { current };
     }
-    case 'claim_required': return { issue: issue(exact(value, ['issue']).issue) };
+    case 'claim_required': {
+      if (operation.op !== 'update' && operation.op !== 'close' && operation.op !== 'reopen') return invalid();
+      const current = issue(exact(value, ['issue']).issue); if (current.id !== operation.id) return invalid();
+      return { issue: current };
+    }
     case 'dependency_conflict': {
       if (operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') return invalid();
       const row = exact(value, ['expected_revision', 'current']);

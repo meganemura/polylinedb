@@ -71,6 +71,7 @@ If authentication is required, ask the user to complete `pd --connection NAME au
 Keep credentials and authorization URLs out of issue bodies, comments, and shared logs.
 Do not switch to local storage to bypass a cloud failure.
 Repository project and tool defaults apply to creation. They do not filter list or search.
+
 With a shared store, use the task's project explicitly:
 
 ```sh
@@ -92,6 +93,57 @@ Read `pd dependency list ID` before adding or removing prerequisites with its se
 Dependency mutations require named `--dependent` and `--blocker` endpoints. Retain one request UUID and payload for each logical mutation.
 An ordinary start or close rejects active prerequisites. An explicit force requires a reason that becomes an attributed comment.
 An `in_progress` status records progress; it does not establish exclusive ownership.
+
+## Coordinate issue ownership when supported
+
+Claim commands belong to the unreleased schema 6 source; published version 0.2.0 uses schema 5.
+Check installed `pd --help` for `claim show`, `claim acquire`, and `--claim-proof` before using them.
+For MCP, inspect the claim tools and proof schemas first.
+When ownership is unavailable, report that status is cooperative and `in_progress` does not reserve work.
+
+Keep one lowercase session UUID for this caller session, separate from the request UUID for each logical claim mutation.
+For acquisition, pass `--session-id` or set `POLYLINEDB_SESSION_ID` for that run.
+Do not persist a shared session UUID in repository or user defaults.
+Read `pd claim show ISSUE_ID` and retain its current `store_incarnation` before acquisition.
+
+```sh
+pd claim acquire ISSUE_ID --incarnation OBSERVED_HEX --session-id SESSION_UUID \
+  --agent-label Codex --request-id REQUEST_UUID
+```
+
+Replace placeholders with the observed incarnation and retained UUIDs.
+Acquisition leaves issue status unchanged and elects one winner among concurrent sessions.
+It can acquire a closed issue so an owner can reopen it.
+The optional label is acquisition metadata, at most 64 UTF-8 bytes, and grants no authority.
+
+Retain only `issue_id`, `incarnation`, `session_id`, and `generation` from the receipt as proof JSON.
+Read issue field versions separately before updates.
+Pass `--claim-proof JSON` to status updates, close, and reopen after the claim lifecycle starts.
+An explicit proof also guards body-only changes, including when rollback removed a claim row.
+Proofless other-field edits and comments retain their existing cooperative contracts.
+Force overrides prerequisites only and cannot bypass ownership.
+
+Read the current claim revision before renew or release:
+
+```sh
+pd claim renew --claim-proof "$PROOF_JSON" --expected-revision CLAIM_REVISION \
+  --ttl 300 --request-id RENEW_REQUEST_UUID
+pd claim release --claim-proof "$PROOF_JSON" --expected-revision CLAIM_REVISION \
+  --request-id RELEASE_REQUEST_UUID
+```
+
+TTL defaults to 300 seconds and accepts integers from 30 through 3600.
+Database timestamps use Unix seconds, and equality with the deadline means expiry.
+Inspection states describe permission and history, rather than agent liveness.
+Release or expiry requires a new acquisition before protected status work.
+Use release followed by acquisition for handoff.
+
+After uncertain completion, retain the original UUID, actor, session, incarnation, and payload for an explicit retry.
+Successful retries return their original immutable receipt, including after later changes or restore.
+Read current ownership before more work; an old receipt does not certify current authority.
+Never silently refresh a revision, replace the incarnation, or reacquire.
+If rollback removed an old receipt, its old incarnation is rejected.
+Observe the current incarnation and choose a new UUID only for a deliberate new acquisition.
 
 ## Record progress
 

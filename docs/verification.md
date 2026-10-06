@@ -45,6 +45,8 @@ The properties cover numeric ID ordering and uniqueness, independent field versi
 They also reject duplicate snapshot IDs and unsupported snapshot versions.
 The operation sequences run against real SQLite stores.
 The D1 fixtures check the shared behavior separately with workerd.
+Lease properties use 30 generated TTL pairs against real SQLite and verify immutable acquisition replay after renewal.
+The D1 suite also checks concurrent claim admission, status fencing, receipt replay, rollback, and incarnation changes.
 Generated properties have not been run against a deployed D1 store.
 
 Hegel stores minimized failures in the ignored `.hegel` directory.

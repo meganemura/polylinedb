@@ -189,6 +189,25 @@ try {
   assert.deepEqual((await http({ op: 'dependency_list', dependent_id: id })).blockers, []);
   const staleGraph = await http({ op: 'dependency_add', ...graphRequest, request_id: crypto.randomUUID() }, 409);
   assert.equal(record(staleGraph.error).code, 'dependency_conflict'); assert.equal(record(record(record(staleGraph.error).details).current).revision, 3);
+  const claimTools: Record<string, unknown>[] = listed.tools.map(record);
+  for (const name of ['claim_show', 'claim_list', 'claim_acquire', 'claim_renew', 'claim_release']) {
+    const tool = claimTools.find(candidate => candidate.name === name); assert.ok(tool); assert.equal(typeof tool.description, 'string');
+    assert.equal(record(tool.inputSchema).additionalProperties, false); assert.equal(record(tool.annotations).readOnlyHint, name === 'claim_show' || name === 'claim_list');
+    assert.equal(record(tool.annotations).idempotentHint, true);
+  }
+  const observed = await rpc('tools/call', { name: 'claim_show', arguments: { issue_id: id } }); assert.equal(observed.isError, false);
+  const currentClaim = record(record(observed.structuredContent).claim); assert.equal(currentClaim.state, 'never_claimed');
+  const claimArgs = { issue_id: id, incarnation: currentClaim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
+  const claimOwner = await rpc('tools/call', { name: 'claim_acquire', arguments: claimArgs }); assert.equal(claimOwner.isError, false); const lease = record(record(claimOwner.structuredContent).claim_receipt);
+  const claim_proof = { issue_id: id, incarnation: lease.incarnation, session_id: lease.session_id, generation: lease.generation };
+  assert.equal(record((await http({ op: 'reopen', id, expected: 2 }, 409)).error).code, 'claim_required');
+  const reopened = await rpc('tools/call', { name: 'reopen', arguments: { id, expected: 2, claim_proof } }); assert.equal(reopened.isError, false);
+  const renewed = await http({ op: 'claim_renew', claim_proof, expected_revision: 1, request_id: crypto.randomUUID(), ttl: 30 }); assert.equal(record(renewed.claim_receipt).revision, 2);
+  const replayed = await rpc('tools/call', { name: 'claim_acquire', arguments: claimArgs }); assert.deepEqual(replayed.structuredContent, claimOwner.structuredContent);
+  const released = await rpc('tools/call', { name: 'claim_release', arguments: { claim_proof, expected_revision: 2, request_id: crypto.randomUUID() } }); assert.equal(released.isError, false);
+  const listedClaims = await http({ op: 'claim_list', project: 'parser' }); assert.ok(Array.isArray(listedClaims.claims)); assert.equal(record(listedClaims.claims[0]).state, 'released');
+  const claimDenied = await rpc('tools/call', { name: 'close', arguments: { id, expected: 3, force: true, reason: 'Exception', claim_proof } }); assert.equal(claimDenied.isError, true); assert.equal(record(record(claimDenied.structuredContent).error).code, 'claim_required');
+  const invalidProof = await rpc('tools/call', { name: 'claim_acquire', arguments: { ...claimArgs, clock: 0 } }); assert.equal(invalidProof.isError, true); assert.equal(record(record(invalidProof.structuredContent).error).code, 'invalid_input');
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
@@ -196,5 +215,6 @@ try {
       'MCP update', 'HTTP and MCP stale conflicts', 'D1 atomicity and persisted audit identity', 'JWKS cache',
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
+      'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

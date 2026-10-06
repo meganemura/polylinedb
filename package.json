@@ -15,7 +15,7 @@
     "build:worker": "npm run check:sql && cf build",
     "dev:worker": "cf dev --local",
     "typecheck": "npm run check:sql && tsc --noEmit",
-    "test:d1": "node test/d1.integration.ts && node test/d1-snapshot.integration.ts && node test/memory-freshness-d1.integration.ts && node test/dependencies-d1.integration.ts",
+    "test:d1": "node test/d1.integration.ts && node test/d1-snapshot.integration.ts && node test/memory-freshness-d1.integration.ts && node test/dependencies-d1.integration.ts && node test/claims-sql.integration.ts",
     "schema": "node scripts/schema.ts",
     "test:worker": "npm run build:worker && node test/worker.integration.ts",
     "build:cli": "npm run check:sql && tsc -p tsconfig.cli.json",
@@ -24,7 +24,7 @@
     "generate:sql": "node scripts/solarsql.ts",
     "check:sql": "node scripts/solarsql.ts --check",
     "check:architecture": "node scripts/check-architecture.ts",
-    "test:properties": "node --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts",
+    "test:properties": "node --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts test/claims.test.ts",
     "test:mutation": "stryker run"
   },
   "devDependencies": {
@@ -69,7 +69,11 @@
     "dist/records/index.js",
     "dist/records/persistence.js",
     "dist/workspace/index.js",
-    "dist/records/dependencies.js"
+    "dist/records/dependencies.js",
+    "dist/records/errors.js",
+    "dist/records/claims.js",
+    "dist/records/claims-sql.js",
+    "dist/records/schema-v5.js"
   ],
   "publishConfig": {
     "access": "public",

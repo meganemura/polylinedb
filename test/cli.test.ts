@@ -17,6 +17,7 @@ function isolatedEnvironment(cwd: string): NodeJS.ProcessEnv {
   delete env.POLYLINEDB_ACTOR;
   delete env.POLYLINEDB_DATA_DIR;
   delete env.POLYLINEDB_CONNECTION;
+  delete env.POLYLINEDB_SESSION_ID;
   return env;
 }
 function fixture(t: TestContext) {
@@ -25,8 +26,8 @@ function fixture(t: TestContext) {
   const directory = join(root, 'store');
   mkdirSync(cwd);
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  function run(args: string[], options: { status?: number; input?: string; actor?: boolean } = {}) {
-    const env = isolatedEnvironment(cwd);
+  function run(args: string[], options: { status?: number; input?: string; actor?: boolean; env?: NodeJS.ProcessEnv } = {}) {
+    const env = { ...isolatedEnvironment(cwd), ...options.env };
     const result = spawnSync(process.execPath, [executable, '--data-dir', directory, ...(options.actor === false ? [] : ['--actor', 'local:test']), ...args], {
       cwd, encoding: 'utf8', input: options.input,
       env,
@@ -84,6 +85,37 @@ test('CLI persists issues, exposes conflicts, and appends comments', t => {
   assert.deepEqual(run(['show', 'pd-51'], { status: 3 }).error, {
     code: 'not_found', message: 'Issue was not found', details: { id: 'pd-51' },
   });
+});
+test('CLI claim sessions, observed incarnation, proof JSON, CAS and immutable retries agree', t => {
+  const { run } = fixture(t); run(['init']); run(['create', '--tool', 'test', '--project', 'test', '--body', 'Claim']);
+  const inspected = run(['claim', 'show', '1']).claim; assert.equal(inspected.state, 'never_claimed');
+  const session = crypto.randomUUID(); const request = crypto.randomUUID();
+  const args = ['claim', 'acquire', '1', '--incarnation', inspected.store_incarnation, '--request-id', request, '--agent-label', 'Codex'];
+  const acquired = run(args, { env: { POLYLINEDB_SESSION_ID: session } }); const receipt = acquired.claim_receipt; assert.equal(receipt.session_id, session); assert.equal(receipt.agent_label, 'Codex'); assert.equal(receipt.expires_at - receipt.changed_at, 300);
+  const proof = JSON.stringify({ issue_id: receipt.issue_id, incarnation: receipt.incarnation, session_id: receipt.session_id, generation: receipt.generation });
+  assert.equal(run(['close', '1', '--expected', '1', '--force', '--reason', 'Exception'], { status: 4 }).error.code, 'claim_required');
+  assert.equal(run(['update', '1', '--body', 'Changed', '--status', 'in_progress', '--expect', 'body=1', '--expect', 'status=1', '--claim-proof', proof]).issue.versions.status, 2);
+  assert.equal(run(['claim', 'renew', '--claim-proof', proof, '--expected-revision', '1', '--ttl', '30']).claim_receipt.revision, 2);
+  assert.deepEqual(run([...args, '--session-id', session]), acquired);
+  assert.equal(run(['claim', 'release', '--claim-proof', proof, '--expected-revision', '2']).claim_receipt.outcome, 'released');
+  assert.equal(run(['claim', 'show', 'pd-1']).claim.state, 'released');
+  assert.equal(run(['claim', 'list', '--project', 'test']).claims[0].lease.agent_label, 'Codex');
+  assert.equal(run(['close', '1', '--expected', '2', '--claim-proof', proof], { status: 4 }).error.code, 'claim_required');
+  const second = run(['claim', 'acquire', '1', '--incarnation', inspected.store_incarnation, '--session-id', crypto.randomUUID()]).claim_receipt;
+  const secondProof = JSON.stringify({ issue_id: second.issue_id, incarnation: second.incarnation, session_id: second.session_id, generation: second.generation });
+  assert.equal(second.generation, 2); assert.equal(second.revision, 4);
+  assert.equal(run(['close', '1', '--expected', '2', '--claim-proof', secondProof]).issue.status, 'closed');
+  assert.equal(run(['reopen', '1', '--expected', '3', '--claim-proof', secondProof]).issue.status, 'open');
+});
+test('CLI rejects claim flags and malformed proof before opening storage', t => {
+  const { run, directory } = fixture(t);
+  for (const args of [
+    ['init', '--session-id', crypto.randomUUID()], ['claim', 'show', '1', '--ttl', '30'],
+    ['claim', 'acquire', '1', '--incarnation', 'f'.repeat(32)],
+    ['claim', 'renew', '--claim-proof', '{', '--expected-revision', '1'],
+    ['close', '1', '--expected', '1', '--claim-proof', '{}'], ['claim', 'unknown'],
+  ]) assert.equal(run(args, { status: 2 }).error.code, 'invalid_input');
+  assert.equal(existsSync(directory), false);
 });
 
 test('CLI rejects invalid arguments before creating storage and actor requires no store', t => {

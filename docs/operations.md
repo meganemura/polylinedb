@@ -47,6 +47,11 @@ An agent's name is not the affected tool merely because that agent created the i
 | `dependency_list` | `dependent_id`; optional `after`, `limit` | `{ "dependent_id": ..., "revision": ..., "blockers": [...], "next_cursor": ... }` |
 | `dependency_add`, `dependency_remove` | `dependent_id`, `blocker_id`, `expected_revision`, `request_id` | `{ "dependency": { "dependent_id": ..., "blocker_id": ..., "revision": ..., "outcome": ... } }` |
 | `dependency_worklist` | `state: "ready"` or `"blocked"`; optional issue filters except `status` | Same as list |
+| `claim_show` | `issue_id` | `{ "claim": ... }` |
+| `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
+| `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ... }` |
+| `claim_renew` | `claim_proof`, `expected_revision`, `request_id`; optional `ttl` | Same as claim acquire |
+| `claim_release` | `claim_proof`, `expected_revision`, `request_id` | Same as claim acquire |
 
 Unknown arguments are rejected.
 The cloud actor comes from authentication, so requests cannot supply an actor.
@@ -56,6 +61,15 @@ Prerequisites form a separate acyclic graph. They can cross projects within the 
 See [issue prerequisites](prerequisites.md) for aggregate conflicts, immutable request receipts, and readiness semantics.
 Close and updates that request `in_progress` or `closed` accept `force: true` with a nonempty `reason` for an explicit exception.
 The reason becomes an attributed comment in the successful status transaction. Ordinary operation results retain their existing shapes.
+Unreleased schema 6 adds issue ownership while retaining all seven ordinary issue fields.
+Published version 0.2.0 uses schema 5.
+`update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
+Once acquisition activates an issue, every requested status change requires a current unexpired proof at the write.
+A supplied proof also guards other field changes, including after restore removes the claim row.
+Proofless other-field edits and comments retain their existing cooperative contracts.
+Force bypasses prerequisites only.
+Claim timestamps use safe integer Unix seconds; the ordinary issue timestamps remain ISO strings.
+See [ownership operations](claims.md) for inspection states, bounded TTL, session identity, and immutable retry behavior.
 
 `prefix` has 1 through 16 lowercase ASCII letters or digits and starts with a letter.
 Each store maintains a separate root counter per prefix and a child counter per parent ID.
@@ -170,14 +184,15 @@ Keep each repository in a dedicated store when list should show only that reposi
 
 ## Local snapshots
 
-`pd export --file snapshot.json` exports issues, comments, memories, versions, audit metadata, counters, and creation requests.
+`pd export --file snapshot.json` exports issues, comments, memories, prerequisites, claims, versions, audit metadata, counters, and request receipts.
 The output file has mode 0600; an existing file causes an error.
 Omit `--file` or use `--file -` to write JSON to standard output.
 
 Initialize the destination, then run `pd --actor IDENTITY import --file snapshot.json` to restore a snapshot.
 Import accepts at most 16 MiB of UTF-8 JSON and validates the complete snapshot before a write.
-The snapshot has format `polylinedb.snapshot` and version `3`.
-Its arrays are `issues`, `comments`, `counters`, `requests`, `memories`, `memory_counters`, and `memory_requests`.
+The unreleased source snapshot has format `polylinedb.snapshot` and version `5`.
+Its collections include issue, memory, prerequisite, and claim records with their counters and receipts.
+Claim records retain their source incarnation as history; restoration rotates destination authority.
 Every child must include its epic parent, and every comment must name an included issue.
 Import preserves IDs, versions, timestamps, and actors in the snapshot.
 The command actor does not replace historical actors.
@@ -189,11 +204,12 @@ Export uses one read transaction for a consistent snapshot.
 These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
 
-The physical schema version is 5. The portable snapshot version is 4.
+The unreleased physical schema version is 6, and its portable snapshot version is 5.
+Published version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, or 4 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, or 5 store after making a private backup.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3 snapshot, use `--from 3` instead.
+For a v3 or v4 snapshot, use `--from 3` or `--from 4` instead.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.

@@ -7,8 +7,8 @@ import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor } from './issues.ts';
 
 export type Claim = ClaimProof & { actor: string; agent_label: string | null; revision: number; acquired_at: number; changed_at: number; expires_at: number; released_at: number | null };
-export type ClaimRequest = Claim & { request_id: string; payload: string; created_at: number; outcome: 'acquired' | 'renewed' | 'released' };
-export type ClaimReceipt = Claim & { outcome: ClaimRequest['outcome'] };
+export type ClaimReceipt = Omit<Claim, 'released_at'> & ({ outcome: 'released'; released_at: number } | { outcome: 'acquired' | 'renewed'; released_at: null });
+export type ClaimRequest = ClaimReceipt & { request_id: string; payload: string; created_at: number };
 export type ClaimState = 'never_claimed' | 'active' | 'released' | 'expired' | 'invalidated';
 export type ClaimInspection = { issue_id: string; store_incarnation: string; observed_at: number; state: ClaimState; lease: Claim | null };
 export type ClaimOperation = ClaimMutation | { op: 'claim_show'; issue_id: string }
@@ -86,7 +86,12 @@ export function claimRequestRow(row: Record<string, unknown>): ClaimRequest {
   const outcome = row.outcome;
   if (outcome !== 'acquired' && outcome !== 'renewed' && outcome !== 'released') throw new PolylinedbError('invalid_store', 'Invalid claim outcome', 500);
   if ((outcome === 'released') !== (claim.released_at !== null) || row.created_at !== claim.changed_at || typeof row.payload !== 'string') throw new PolylinedbError('invalid_store', 'Invalid claim receipt', 500);
-  try { JSON.parse(row.payload); return { ...claim, request_id: parseRequestId(row.request_id), payload: row.payload, created_at: claim.changed_at, outcome }; }
+  try {
+    JSON.parse(row.payload); const request = { ...claim, request_id: parseRequestId(row.request_id), payload: row.payload, created_at: claim.changed_at };
+    if (outcome === 'released' && claim.released_at !== null) return { ...request, outcome, released_at: claim.released_at };
+    if ((outcome === 'acquired' || outcome === 'renewed') && claim.released_at === null) return { ...request, outcome, released_at: null };
+    throw new Error('Invalid released receipt');
+  }
   catch { throw new PolylinedbError('invalid_store', 'Invalid claim receipt payload or ID', 500); }
 }
 function inspection(row: Record<string, unknown>): ClaimInspection {

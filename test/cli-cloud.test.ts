@@ -23,7 +23,7 @@ function fixture(context: test.TestContext) {
   const log = join(root, 'requests.jsonl');
   const trace = join(root, 'credential-outcomes.jsonl');
   const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'local-data'),
-    POLYLINEDB_CONNECTION: undefined, POLYLINEDB_DATA_DIR: undefined, POLYLINEDB_ACTOR: 'local:dormant',
+    POLYLINEDB_CONNECTION: undefined, POLYLINEDB_DATA_DIR: undefined, POLYLINEDB_ACTOR: 'local:dormant', POLYLINEDB_SESSION_ID: undefined,
     PD_AUTH_FIXTURE_STATE: credential, PD_AUTH_FIXTURE_MODE: 'normal', PD_AUTH_FIXTURE_TRACE: trace,
     PD_CLOUD_FIXTURE_STORE: join(root, 'remote-domain-store'),
     PD_CLOUD_FIXTURE_LOG: log, PD_CLOUD_FIXTURE_MODE: 'normal' };
@@ -102,6 +102,24 @@ test('cloud CLI executes all nine operations with defaults, actor ownership, bod
   assert.equal(run(['show', '1']).issue.body, 'Edited issue');
   assert.deepEqual([...new Set(requests().map(request => request.op))].sort(),
     ['actor', 'close', 'comment', 'create', 'list', 'reopen', 'search', 'show', 'update']);
+  assert.equal(existsSync(join(root, 'local-data')), false);
+});
+test('cloud CLI claim flags recover original receipts after every ambiguous mutation', context => {
+  const { root, run, requests } = fixture(context); run(['create', '--body', 'Cloud claim']);
+  const inspected = run(['claim', 'show', '1']).claim; const session = crypto.randomUUID(); const acquireRequest = crypto.randomUUID();
+  const acquisition = ['claim', 'acquire', '1', '--incarnation', inspected.store_incarnation, '--session-id', session, '--request-id', acquireRequest, '--agent-label', 'Codex'];
+  const before = requests().length; const lost = run(acquisition, { mode: 'ambiguous', status: 1 }); assert.equal(lost.error.code, 'cloud_unavailable'); assert.deepEqual(lost.error.details, { request_id: acquireRequest }); assert.equal(requests().length, before + 1);
+  const acquired = run(acquisition); const receipt = acquired.claim_receipt; assert.equal(receipt.actor, 'oauth:synthetic-owner'); assert.equal(receipt.session_id, session);
+  const proof = JSON.stringify({ issue_id: receipt.issue_id, incarnation: receipt.incarnation, session_id: receipt.session_id, generation: receipt.generation });
+  assert.equal(run(['close', '1', '--expected', '1'], { status: 4 }).error.code, 'claim_required');
+  assert.equal(run(['close', '1', '--expected', '1', '--claim-proof', proof]).issue.status, 'closed');
+  const renewalRequest = crypto.randomUUID(); const renewal = ['claim', 'renew', '--claim-proof', proof, '--expected-revision', '1', '--request-id', renewalRequest];
+  assert.deepEqual(run(renewal, { mode: 'ambiguous', status: 1 }).error.details, { request_id: renewalRequest }); assert.equal(run(renewal).claim_receipt.revision, 2);
+  const releaseRequest = crypto.randomUUID(); const release = ['claim', 'release', '--claim-proof', proof, '--expected-revision', '2', '--request-id', releaseRequest];
+  assert.deepEqual(run(release, { mode: 'ambiguous', status: 1 }).error.details, { request_id: releaseRequest }); assert.equal(run(release).claim_receipt.outcome, 'released');
+  assert.deepEqual(run(acquisition), acquired); assert.equal(run(['claim', 'list', '--project', 'sample']).claims[0].state, 'released');
+  const after = requests().length;
+  assert.equal(run(['claim', 'renew', '--claim-proof', '{}', '--expected-revision', '1'], { auth: 'unexpected', status: 2 }).error.code, 'invalid_input'); assert.equal(requests().length, after);
   assert.equal(existsSync(join(root, 'local-data')), false);
 });
 

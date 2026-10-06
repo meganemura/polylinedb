@@ -22,6 +22,11 @@ const descriptions: Record<string, string> = {
   close: 'Set status to closed using its observed version. Does not close children.',
   reopen: 'Set status to open using its observed version.',
   actor: 'Return the authenticated actor for this connection.',
+  claim_show: 'Inspect claim history, database time, and the current store incarnation. This observation does not certify agent liveness.',
+  claim_list: 'List claim inspections with tool/project filters and numeric issue pagination, including never-claimed issues.',
+  claim_acquire: 'Acquire one available issue using the observed incarnation and caller session UUID. Retain the request UUID and payload for retries.',
+  claim_renew: 'Renew an unexpired claim using its proof and observed revision. Retries return the original receipt.',
+  claim_release: 'Release a current claim using its proof and observed revision. Release does not change the issue status.',
   dependency_list: 'Read a dependent issue prerequisite revision and a bounded page of blockers. Closed blockers remain attached.',
   dependency_add: 'Add dependent to blocker prerequisite with the observed aggregate revision. Retain the request UUID and payload for retries.',
   dependency_remove: 'Remove a prerequisite with the observed aggregate revision. A retry returns its original immutable receipt.',
@@ -150,15 +155,15 @@ async function mcp(request: Request, env: Environment, actor: string): Promise<R
         return rpcError(id, -32602, 'Initialize requires protocolVersion, capabilities, and clientInfo.');
       }
       return result({ protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'polylinedb', version: '0.2.0' },
-        instructions: 'Read field versions before updates. Conflicts require a new read and a deliberate edit. Never put credentials in tool arguments.' });
+        instructions: 'Read field versions before updates. Read ownership before claimed status work and retain the session UUID. Conflicts require a deliberate new decision. Never put credentials in tool arguments.' });
     case 'ping': return result({});
     case 'tools/list':
       if (params.cursor !== undefined) return rpcError(id, -32602, 'Tool-list cursors are not supported.');
       return result({ tools: Object.entries(operationSchemas).map(([name, inputSchema]) => ({
         name, description: descriptions[name], inputSchema,
-          annotations: { readOnlyHint: ['show', 'list', 'search', 'actor', 'memory_show', 'memory_list', 'memory_search', 'memory_context'].includes(name),
-          destructiveHint: ['update', 'close', 'reopen', 'memory_update', 'memory_delete'].includes(name),
-          idempotentHint: ['show', 'list', 'search', 'actor', 'memory_show', 'memory_list', 'memory_search', 'memory_context'].includes(name), openWorldHint: false },
+          annotations: { readOnlyHint: ['show', 'list', 'search', 'actor', 'memory_show', 'memory_list', 'memory_search', 'memory_context', 'claim_show', 'claim_list'].includes(name),
+          destructiveHint: ['update', 'close', 'reopen', 'memory_update', 'memory_delete', 'claim_release'].includes(name),
+          idempotentHint: ['show', 'list', 'search', 'actor', 'memory_show', 'memory_list', 'memory_search', 'memory_context', 'claim_show', 'claim_list', 'claim_acquire', 'claim_renew', 'claim_release'].includes(name), openWorldHint: false },
       })) });
     case 'tools/call': {
       if (typeof params.name !== 'string' || !Object.hasOwn(operationSchemas, params.name)) return rpcError(id, -32602, 'Unknown tool.');
