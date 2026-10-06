@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { snapshotMigration } from '../scripts/d1-snapshot-store.ts';
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
@@ -175,4 +177,18 @@ test('historical schema5 export retains graph records and canonical retirement g
   const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 5); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
   const after = new DatabaseSync(path, { readOnly: true }); try { assert.deepEqual(after.prepare('SELECT * FROM memory_store_identity').get(), before); assert.equal(after.prepare('SELECT version FROM schema_version').get()?.version, 5); } finally { after.close(); }
   assert.throws(() => upgradeStore({ directory, cwd: join(root, 'work') }), { code: 'store_retired' });
+});
+test('completed D1 restore requires its recorded target incarnation for verify and replay', async t => {
+  const source = fixture(t); await create(source.run); const snapshot = source.store.exportSnapshot();
+  const database = new DatabaseSync(':memory:'); database.exec(SCHEMA_SQL); t.after(() => database.close());
+  const migration = snapshotMigration(async ({ sql, params }) => database.prepare(sql).all(...params), snapshot, createHash('sha256').update(canonicalSnapshot(snapshot)).digest('hex'));
+  await migration.restore();
+  const provenance = database.prepare('SELECT original_incarnation,incarnation FROM polylinedb_snapshot_claim').get(); assert.ok(provenance); assert.equal(typeof provenance.original_incarnation, 'string');
+  if (typeof provenance.original_incarnation !== 'string') throw new Error('Invalid provenance');
+  database.prepare('UPDATE memory_store_identity SET incarnation=? WHERE singleton=1').run(provenance.original_incarnation);
+  const rows = database.prepare('SELECT * FROM issues').all();
+  await assert.rejects(migration.verify(), /incarnation/);
+  await assert.rejects(migration.restore(), /incarnation/);
+  assert.deepEqual(database.prepare('SELECT * FROM issues').all(), rows);
+  assert.equal(database.prepare('SELECT incarnation FROM memory_store_identity').get()?.incarnation, provenance.original_incarnation);
 });
