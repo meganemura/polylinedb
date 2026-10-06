@@ -117,6 +117,23 @@ test('CLI rejects claim flags and malformed proof before opening storage', t => 
   ]) assert.equal(run(args, { status: 2 }).error.code, 'invalid_input');
   assert.equal(existsSync(directory), false);
 });
+for (const command of ['acquire', 'renew', 'release']) test(`CLI local claim ${command} requires an explicit actor and preserves both claim tables on rejection`, t => {
+  const { run, directory } = fixture(t); run(['init'], { actor: false }); run(['create', '--tool', 'test', '--project', 'test', '--body', 'Actor admission']);
+  const incarnation = run(['claim', 'show', '1'], { actor: false }).claim.store_incarnation;
+  const acquire = ['claim', 'acquire', '1', '--incarnation', incarnation, '--session-id', crypto.randomUUID()];
+  let args = acquire;
+  if (command !== 'acquire') {
+    const owner = run(acquire, { actor: false, env: { POLYLINEDB_ACTOR: 'local:reader' } }).claim_receipt;
+    const proof = JSON.stringify({ issue_id: owner.issue_id, incarnation: owner.incarnation, session_id: owner.session_id, generation: owner.generation });
+    args = ['claim', command, '--claim-proof', proof, '--expected-revision', '1'];
+  }
+  const database = new DatabaseSync(join(directory, 'polylinedb.sqlite'));
+  try {
+    const before = ['issue_claims', 'claim_requests'].map(table => database.prepare(`SELECT * FROM ${table}`).all());
+    const rejected = run(args, { actor: false, status: 2 }); assert.equal(rejected.error.code, 'invalid_input'); assert.match(rejected.error.message, /explicit.*actor/);
+    assert.deepEqual(['issue_claims', 'claim_requests'].map(table => database.prepare(`SELECT * FROM ${table}`).all()), before);
+  } finally { database.close(); }
+});
 
 test('CLI rejects invalid arguments before creating storage and actor requires no store', t => {
   const { run, root, cwd } = fixture(t);
