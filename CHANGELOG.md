@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Distinguish denied authentication state access from a busy authentication lock without exposing filesystem paths.
+- Report signing-key outages with safe guidance and retain request UUIDs for explicit retries.
+- Preserve complete trigger definitions in cloud setup batches and compare the database version with the deployment source.
+
 ## 0.2.0 (2026-10-05)
 
 - Add prerequisite graphs with aggregate CAS, immutable mutation receipts, and ready/blocked worklists.
