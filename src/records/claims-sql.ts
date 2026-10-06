@@ -3,7 +3,7 @@ import type { SqlStatement } from './issues.ts';
 
 export type ClaimProof = { issue_id: string; incarnation: string; session_id: string; generation: number };
 export type ClaimMutation =
-  | { op: 'claim_acquire'; issue_id: string; session_id: string; request_id: string; ttl: number; agent_label: string | null }
+  | { op: 'claim_acquire'; issue_id: string; incarnation: string; session_id: string; request_id: string; ttl: number; agent_label: string | null }
   | { op: 'claim_renew'; claim_proof: ClaimProof; expected_revision: number; request_id: string; ttl: number }
   | { op: 'claim_release'; claim_proof: ClaimProof; expected_revision: number; request_id: string };
 const counter = "INTEGER NOT NULL CHECK(typeof(%s) = 'integer' AND %s BETWEEN 1 AND 9007199254740991)";
@@ -52,10 +52,10 @@ export function claimMutationStatements(command: ClaimMutation, actor: string): 
     admission = { sql: `INSERT INTO claim_requests(${columns})
       SELECT ?,?,?,issues.id,identity.incarnation,?,?,COALESCE(claim.generation,0)+1,COALESCE(claim.revision,0)+1,unixepoch()+?,NULL,unixepoch(),'acquired'
       FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id = issues.id
-      WHERE issues.id = ? AND identity.singleton = 1
+      WHERE issues.id = ? AND identity.singleton = 1 AND identity.incarnation = ?
       AND (claim.issue_id IS NULL OR claim.incarnation <> identity.incarnation OR claim.released_at IS NOT NULL OR claim.expires_at <= unixepoch())
       AND COALESCE(claim.generation,0) < 9007199254740991 AND COALESCE(claim.revision,0) < 9007199254740991`,
-    params: [command.request_id, actor, payload, command.session_id, command.agent_label, command.ttl, issue] };
+    params: [command.request_id, actor, payload, command.session_id, command.agent_label, command.ttl, issue, command.incarnation] };
   } else {
     const proof = claimProofPredicate(command.claim_proof, actor);
     admission = { sql: `INSERT INTO claim_requests(${columns})

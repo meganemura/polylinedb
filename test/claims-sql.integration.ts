@@ -30,7 +30,6 @@ const d1: Backend = { async batch(statements) { return (await database.batch(sta
 const sql = (text: string, params: SqlStatement['params'] = []): SqlStatement => ({ sql: text, params });
 const actor = 'test:owner';
 const session = () => crypto.randomUUID();
-const acquire = (issue_id: string, session_id = session()): ClaimMutation => ({ op: 'claim_acquire', issue_id, session_id, request_id: crypto.randomUUID(), ttl: 300, agent_label: 'Codex' });
 function proof(row: Row): ClaimProof {
   assert.equal(typeof row.issue_id, 'string'); assert.equal(typeof row.incarnation, 'string'); assert.equal(typeof row.session_id, 'string'); assert.equal(typeof row.generation, 'number');
   if (typeof row.issue_id !== 'string' || typeof row.incarnation !== 'string' || typeof row.session_id !== 'string' || typeof row.generation !== 'number') throw new Error('Invalid receipt');
@@ -49,6 +48,11 @@ async function run(db: Backend, command: ClaimMutation, identity = actor): Promi
   }
 }
 async function read(db: Backend, query: string, params: SqlStatement['params'] = []) { return (await db.batch([sql(query, params)]))[0] ?? []; }
+async function observeIncarnation(db: Backend): Promise<string> {
+  const row = (await read(db, 'SELECT incarnation FROM memory_store_identity WHERE singleton=1'))[0];
+  if (!row || typeof row.incarnation !== 'string' || !/^[a-f0-9]{32}$/.test(row.incarnation)) throw new Error('Invalid incarnation');
+  return row.incarnation;
+}
 async function raceSqlite(commands: readonly ClaimMutation[]) {
   const results = await Promise.all(commands.map(command => new Promise<boolean>((resolve, reject) => {
     const worker = new Worker(`const { parentPort, workerData } = require('node:worker_threads'); const {DatabaseSync}=require('node:sqlite'); const db=new DatabaseSync(workerData.path); db.exec('PRAGMA busy_timeout=10000; PRAGMA foreign_keys=ON'); try { db.exec('BEGIN IMMEDIATE'); let result; for (const s of workerData.statements) result=db.prepare(s.sql).all(...s.params); db.exec('COMMIT'); parentPort.postMessage(result.length===1); } catch(e) { db.exec('ROLLBACK'); parentPort.postMessage(false); } finally {db.close();}`, { eval: true, workerData: { path, statements: claimMutationStatements(command, actor) } });
@@ -59,6 +63,8 @@ async function raceSqlite(commands: readonly ClaimMutation[]) {
 try {
   for (const [name, db] of [['SQLite', sqlite], ['D1', d1]] as const) {
     await db.batch([...SCHEMA_STATEMENTS, ...CLAIM_STATEMENTS].map(statement => sql(statement)));
+    let observedIncarnation = await observeIncarnation(db);
+    const acquire = (issue_id: string, session_id = session()): ClaimMutation => ({ op: 'claim_acquire', issue_id, incarnation: observedIncarnation, session_id, request_id: crypto.randomUUID(), ttl: 300, agent_label: 'Codex' });
     for (let index = 1; index <= 10; index++) await db.batch([sql(`INSERT INTO issues(id,sort_key,parent_id,tool,project,body,status,type,priority,labels_json,created_at,created_by,updated_at,updated_by) VALUES (?, ?,NULL,'test','test','Issue','open','task',2,'[]','test','test','test','test')`, [`pd-${index}`, `test-${index}`])]);
     const competitors = [acquire('pd-1'), acquire('pd-1')];
     if (name === 'SQLite') assert.equal((await raceSqlite(competitors)).filter(Boolean).length, 1);
@@ -90,6 +96,12 @@ try {
     await db.batch([sql("UPDATE memory_store_identity SET incarnation=lower(hex(randomblob(16)))")]);
     assert.deepEqual(await run(db, repeated), first);
     await assert.rejects(run(db, { op: 'claim_renew', claim_proof: proof(afterExpiry), expected_revision: 5, request_id: crypto.randomUUID(), ttl: 300 }), /claim_rejected/);
+    const beforeOldScope = await read(db, "SELECT * FROM issue_claims WHERE issue_id='pd-2'");
+    const receiptsBeforeOldScope = await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-2' ORDER BY revision");
+    await assert.rejects(run(db, acquire('pd-2')), /claim_rejected/);
+    assert.deepEqual(await read(db, "SELECT * FROM issue_claims WHERE issue_id='pd-2'"), beforeOldScope);
+    assert.deepEqual(await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-2' ORDER BY revision"), receiptsBeforeOldScope);
+    observedIncarnation = await observeIncarnation(db);
     const afterRotation = await run(db, acquire('pd-2')); assert.equal(afterRotation.generation, 4); assert.equal(afterRotation.revision, 6);
     const missing = acquire('pd-3'); const missingRow = await run(db, missing);
     await db.batch([sql("DELETE FROM claim_requests WHERE issue_id='pd-3'"), sql("DELETE FROM issue_claims WHERE issue_id='pd-3'"), sql("UPDATE memory_store_identity SET incarnation=lower(hex(randomblob(16)))")]);
@@ -97,14 +109,18 @@ try {
     for (const field of ['status', 'body']) {
       const changed = await read(db, `UPDATE issues SET ${field}=? WHERE id='pd-3' AND ${oldProof.sql} RETURNING id`, [field === 'status' ? 'closed' : 'changed', ...oldProof.params]); assert.deepEqual(changed, []);
     }
-    const oldScopeRequest = { ...missing, incarnation: missingRow.incarnation };
-    await assert.rejects(run(db, oldScopeRequest), /claim_rejected/);
+    await assert.rejects(run(db, missing), /claim_rejected/);
     assert.deepEqual(await read(db, "SELECT * FROM issue_claims WHERE issue_id='pd-3'"), []);
     assert.deepEqual(await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-3'"), []);
-    const currentIdentity = (await read(db, 'SELECT incarnation FROM memory_store_identity WHERE singleton=1'))[0];
-    assert.ok(currentIdentity);
-    const newScopeRequest = { ...acquire('pd-3'), incarnation: currentIdentity.incarnation };
+    observedIncarnation = await observeIncarnation(db);
+    const newScopeRequest = acquire('pd-3');
+    assert.notEqual(newScopeRequest.request_id, missing.request_id);
     const fresh = await run(db, newScopeRequest); assert.equal(fresh.generation, 1); assert.notEqual(fresh.incarnation, missingRow.incarnation);
+    if (newScopeRequest.op !== 'claim_acquire') throw new Error('Invalid acquire');
+    assert.deepEqual(await read(db, "SELECT issue_id,incarnation,actor,session_id,agent_label,generation,revision,released_at FROM issue_claims WHERE issue_id='pd-3'"), [
+      { issue_id: 'pd-3', incarnation: observedIncarnation, actor, session_id: newScopeRequest.session_id, agent_label: 'Codex', generation: 1, revision: 1, released_at: null },
+    ]);
+    assert.equal((await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-3'"))[0]?.request_id, newScopeRequest.request_id);
     const protectedUpdate = async (issue: string, owner: ClaimProof | undefined, status: boolean, expected = 1) => {
       const guard = issueClaimGuard(issue, owner, status, actor);
       return read(db, `UPDATE issues SET body='changed',body_v=body_v+1${status ? ",status='closed',status_v=status_v+1" : ''} WHERE id=? AND body_v=?${status ? ' AND status_v=1' : ''} AND ${guard.sql} RETURNING body,status,body_v,status_v`, [issue, expected, ...guard.params]);
@@ -128,6 +144,6 @@ try {
     await db.batch([sql("UPDATE issue_claims SET generation=9007199254740991,revision=9007199254740991,released_at=unixepoch() WHERE issue_id='pd-5'")]);
     await assert.rejects(run(db, acquire('pd-5')), /claim_rejected/); assert.deepEqual(await run(db, maxRequest), beforeMax);
     assert.equal((await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-5'")).length, 1);
-    process.stdout.write(`PASS ${name}: concurrent acquisition and UUID admission, original receipt history, actor/session/payload conflicts, CAS, equality expiry, rotation, missing history, rollback sentinel, MAX counters, old proof with no claim row\n`);
+    process.stdout.write(`PASS ${name}: concurrent acquisition and UUID admission, original receipt history, actor/session/payload conflicts, CAS, equality expiry, caller incarnation fencing, missing old receipt rejection, rollback sentinel, MAX counters, old proof with no claim row\n`);
   }
 } finally { await sqlite.dispose(); await d1.dispose(); rmSync(directory, { recursive: true, force: true }); }
