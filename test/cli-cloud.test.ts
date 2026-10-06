@@ -163,6 +163,35 @@ test('cloud CLI reports valid 503 access configuration errors with fixed guidanc
   assert.equal(JSON.stringify(createFailure).includes('synthetic-private-token'), false);
 });
 
+test('cloud CLI reports unavailable signing keys with fixed guidance and one attempt', context => {
+  const { run, requests } = fixture(context);
+  const actorStart = requests().length;
+  const actorFailure = run(['actor'], { mode: 'jwks-unavailable', status: 1 }).error;
+  assert.deepEqual(actorFailure, { code: 'jwks_unavailable',
+    message: 'Cloud signing keys are temporarily unavailable. Retry later with the same request ID when one was returned.' });
+  assert.equal(requests().length, actorStart + 1);
+  const createStart = requests().length;
+  const createFailure = run(['create', '--body', 'Unavailable signing keys'], { mode: 'jwks-unavailable', status: 1 }).error;
+  const requestId = requests()[createStart].request_id;
+  assert.match(requestId ?? '', /^[a-f0-9-]{36}$/);
+  assert.deepEqual(createFailure, { code: 'jwks_unavailable',
+    message: 'Cloud signing keys are temporarily unavailable. Retry later with the same request ID when one was returned.',
+    details: { request_id: requestId } });
+  assert.equal(requests().length, createStart + 1);
+});
+
+test('cloud CLI rejects malformed JWKS 503 envelopes and unsupported 502 responses', context => {
+  const { run, requests } = fixture(context);
+  for (const mode of ['jwks-unavailable-wrong-code', 'jwks-unavailable-extra-error-field', 'jwks-unavailable-extra-envelope-field',
+    'jwks-unavailable-wrong-status-502', 'jwks-unavailable-long-message', 'jwks-unavailable-non-string-message']) {
+    const before = requests().length;
+    const result = run(['actor'], { mode, status: 1 });
+    assert.deepEqual(result.error, { code: 'cloud_invalid_response', message: 'The cloud returned an invalid operation response.' }, mode);
+    assert.equal(requests().length, before + 1, mode);
+    assert.equal(JSON.stringify(result).includes('synthetic-private-token'), false, mode);
+  }
+});
+
 test('cloud CLI rejects invalid 503 access configuration envelopes and status codes', context => {
   const { run } = fixture(context);
   for (const mode of ['access-configuration-wrong-code', 'access-configuration-extra-error-field', 'access-configuration-extra-envelope-field',

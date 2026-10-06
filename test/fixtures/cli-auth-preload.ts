@@ -69,9 +69,11 @@ globalThis.fetch = async (input, init) => {
     const mode = process.env.PD_CLOUD_FIXTURE_MODE;
     if (mode === '401' || mode === '403') return new Response(null, { status: Number(mode) });
     if (mode === 'network') throw new Error('synthetic-private-token');
-    if (mode?.startsWith('access-configuration')) {
-      const variant = mode.slice('access-configuration'.length).replace(/^-/, '');
-      const error: Record<string, unknown> = { code: 'invalid_access_configuration', message: 'synthetic-private-token' };
+    const accessErrorPrefix = mode?.startsWith('jwks-unavailable') ? 'jwks-unavailable'
+      : mode?.startsWith('access-configuration') ? 'access-configuration' : undefined;
+    if (accessErrorPrefix) {
+      const variant = mode?.slice(accessErrorPrefix.length).replace(/^-/, '') ?? '';
+      const error: Record<string, unknown> = { code: accessErrorPrefix === 'jwks-unavailable' ? 'jwks_unavailable' : 'invalid_access_configuration', message: 'synthetic-private-token' };
       const body: Record<string, unknown> = { error };
       let status = 503;
       if (variant === 'wrong-code') error.code = 'unexpected_error';

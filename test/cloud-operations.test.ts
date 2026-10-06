@@ -218,3 +218,50 @@ test('response boundary rejects HTML, redirects, missing fields, oversized bodie
   }
   await assert.rejects(executeCloudOperation({ origin: 'http://127.0.0.1', operation: { op: 'actor' }, authorize: async () => 'secret' }), { code: 'invalid_configuration' });
 });
+
+test('transport reports unavailable signing keys with fixed guidance and retains the create request ID', async () => {
+  const requestId = crypto.randomUUID();
+  const operation = parseOperation({ op: 'create', prefix: 'pd', request_id: requestId, tool: 'test', project: 'cloud', body: 'sample' });
+  let requests = 0;
+  let sentOperation: unknown;
+  await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation, authorize: async () => 'synthetic-secret',
+    fetch: async (_url, init) => {
+      requests += 1;
+      sentOperation = JSON.parse(String(init?.body));
+      return Response.json({ error: { code: 'jwks_unavailable', message: 'Authentication unavailable' } }, { status: 503 });
+    } }), error => {
+      assert.ok(error instanceof PolylinedbError);
+      assert.equal(error.code, 'jwks_unavailable');
+      assert.equal(error.message, 'Cloud signing keys are temporarily unavailable. Retry later with the same request ID when one was returned.');
+      assert.equal(error.status, 503);
+      assert.deepEqual(error.details, { request_id: requestId });
+      return true;
+    });
+  assert.equal(requests, 1);
+  assert.deepEqual(sentOperation, operation);
+});
+
+test('transport rejects malformed JWKS errors and JWKS codes under other statuses', async () => {
+  const exact = { error: { code: 'jwks_unavailable', message: 'Authentication unavailable' } };
+  const invalidResponses = [
+    { status: 503, body: { ...exact, request_id: 'unexpected' } },
+    { status: 503, body: { error: { ...exact.error, details: {} } } },
+    { status: 503, body: { error: { ...exact.error, message: 'x'.repeat(4097) } } },
+    { status: 503, body: { error: { ...exact.error, message: 42 } } },
+    { status: 502, body: exact },
+    ...[400, 404, 409].map(status => ({ status, body: exact })),
+  ];
+  for (const { status, body } of invalidResponses) {
+    await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: { op: 'actor' }, authorize: async () => 'secret',
+      fetch: async () => Response.json(body, { status }) }), error => {
+      assert.ok(error instanceof PolylinedbError);
+      assert.equal(error.code, 'cloud_invalid_response', `${status} ${JSON.stringify(body)}`);
+      assert.equal(error.status, 502);
+      return true;
+    });
+  }
+  for (const [status, code] of [[401, 'auth_required'], [403, 'denied']] satisfies [number, string][]) {
+    await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: { op: 'actor' }, authorize: async () => 'secret',
+      fetch: async () => Response.json(exact, { status }) }), { code, status });
+  }
+});
