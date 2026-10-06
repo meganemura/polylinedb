@@ -3,6 +3,10 @@ import { parseIssueId, issueSortKey, parsePrefix, parseRequestId } from "./issue
 import { fields, issueTypes, statuses } from "./schema.ts";
 import type { Database } from 'solarsql';
 import { issueQueries } from "./issue-queries.ts";
+import { PolylinedbError } from './errors.ts';
+import { claimProofSchema, parseClaimProof } from './claims.ts';
+import { issueClaimGuard } from './claims-sql.ts';
+import type { ClaimProof } from './claims-sql.ts';
 
 export type Status = typeof statuses[number];
 export type IssueType = typeof issueTypes[number];
@@ -21,9 +25,9 @@ export type Operation =
   | ({ op: 'list' } & Filters)
   | ({ op: 'search'; query: string } & Filters)
   | { op: 'comment'; id: string; body: string }
-  | ({ op: 'update'; id: string; changes: [Change, ...Change[]] } & StatusOverride)
-  | ({ op: 'close'; id: string; expected: number } & StatusOverride)
-  | { op: 'reopen'; id: string; expected: number }
+  | ({ op: 'update'; id: string; changes: [Change, ...Change[]]; claim_proof?: ClaimProof } & StatusOverride)
+  | ({ op: 'close'; id: string; expected: number; claim_proof?: ClaimProof } & StatusOverride)
+  | { op: 'reopen'; id: string; expected: number; claim_proof?: ClaimProof }
   | { op: 'actor' };
 export type Issue = Values & { id: string; versions: Record<Field, number>;
   created_at: string; created_by: string; updated_at: string; updated_by: string };
@@ -35,19 +39,6 @@ export type SqlExecutor = {
   reads: Pick<Database, 'all'>;
   batch(statements: readonly SqlStatement[]): Promise<readonly { rows: readonly Record<string, unknown>[] }[]>;
 };
-
-export class PolylinedbError extends Error {
-  code: string;
-  status: number;
-  details?: unknown;
-  constructor(code: string, message: string, status = 400, details?: unknown) {
-    super(message);
-    this.name = 'PolylinedbError';
-    this.code = code;
-    this.status = status;
-    this.details = details;
-  }
-}
 
 const invalid = (message: string): never => { throw new PolylinedbError('invalid_input', message); };
 function object(value: unknown, context: string): Record<string, unknown> {
@@ -117,9 +108,9 @@ export const operationSchemas = {
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
     oneOf: fields.map((field) => objectSchema({ field: { const: field }, value: fieldRegistry[field].schema, expected: versionSchema }, ['field', 'value', 'expected']))
-  } }, force: { const: true }, reason: bodySchema }, ['id', 'changes']),
-  close: objectSchema({ id: idSchema, expected: versionSchema, force: { const: true }, reason: bodySchema }, ['id', 'expected']),
-  reopen: objectSchema({ id: idSchema, expected: versionSchema }, ['id', 'expected']),
+  } }, force: { const: true }, reason: bodySchema, claim_proof: claimProofSchema }, ['id', 'changes']),
+  close: objectSchema({ id: idSchema, expected: versionSchema, force: { const: true }, reason: bodySchema, claim_proof: claimProofSchema }, ['id', 'expected']),
+  reopen: objectSchema({ id: idSchema, expected: versionSchema, claim_proof: claimProofSchema }, ['id', 'expected']),
   actor: objectSchema({}),
 };
 
@@ -167,8 +158,8 @@ export function parseOperation(value: unknown): Operation {
     case 'list': return { op, ...parseFilters(input) };
     case 'search': return { op, ...parseFilters(input), query: text(input.query, 'query') };
     case 'comment': return { op, id: id(input.id), body: text(input.body, 'body') };
-    case 'close': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...parseOverride(input) };
-    case 'reopen': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER) };
+    case 'close': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...parseOverride(input), ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
+    case 'reopen': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
     case 'create': {
       const parent = input.parent === undefined ? undefined : id(input.parent, 'parent');
       if (parent?.split('.').length === 8) invalid('An issue cannot have more than eight number segments');
@@ -189,7 +180,7 @@ export function parseOperation(value: unknown): Operation {
       if (new Set(changes.map((change) => change.field)).size !== changes.length) invalid('changes must not repeat a field');
       const override = parseOverride(input);
       if (override.force && !changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'))) return invalid('force applies only to start or close');
-      return { op, id: id(input.id), changes: [first, ...rest], ...override };
+      return { op, id: id(input.id), changes: [first, ...rest], ...override, ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
     }
   }
 }
@@ -225,11 +216,13 @@ const observation = (issueId: string): SqlStatement => ({ sql: `SELECT issues.*,
   EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children
   FROM issues WHERE id = ?`, params: [issueId] });
 
-async function update(db: SqlExecutor, issueId: string, changes: readonly Change[], actor: string, override: StatusOverride = {}): Promise<OperationResult> {
+async function update(db: SqlExecutor, issueId: string, changes: readonly Change[], actor: string, override: StatusOverride = {}, proof?: ClaimProof): Promise<OperationResult> {
   const assignments: string[] = [];
   const conditions = ['id = ?'];
   const params: (string | number | null)[] = [];
   const guards: (string | number | null)[] = [issueId];
+  const ownership = issueClaimGuard(issueId, proof, changes.some(change => change.field === 'status'), actor);
+  conditions.push(ownership.sql); guards.push(...ownership.params);
   const guardedStatus = changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'));
   if (guardedStatus && !override.force) conditions.push("NOT EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed')");
   for (const change of changes) {
@@ -242,7 +235,8 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   assignments.push('updated_by = ?', 'updated_at = ?');
   params.push(actor, new Date().toISOString(), ...guards);
   const result = await db.batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
-    ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId)]);
+    ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId),
+    { sql: `SELECT ${ownership.sql} AS ownership_allowed`, params: ownership.params }]);
   const changed = rowsAt(result, 0)[0];
   if (changed) return { issue: issueRow(changed) };
   const observed = rowsAt(result, override.force ? 2 : 1)[0];
@@ -251,6 +245,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   const conflicts = changes.filter((change) => issue.versions[change.field] !== change.expected)
     .map((change) => ({ field: change.field, expected: change.expected, actual: issue.versions[change.field], current: issue[change.field] }));
   if (conflicts.length) throw new PolylinedbError('conflict', 'Read the current issue before deciding on a new update', 409, { issue, fields: conflicts });
+  if (rowsAt(result, override.force ? 3 : 2)[0]?.ownership_allowed !== 1) throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue });
   if (guardedStatus && !override.force && observed.has_active_blockers === 1) throw new PolylinedbError('dependency_blocked', 'The issue has active prerequisites', 409, { issue });
   const exhausted = changes.find((change) => issue.versions[change.field] === Number.MAX_SAFE_INTEGER);
   if (exhausted) throw new PolylinedbError('version_exhausted', 'The field version cannot increase', 409, { field: exhausted.field, issue });
@@ -313,9 +308,9 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
       if (!row) return notFound(operation.id);
       return { comment: commentRow(row) };
     }
-    case 'close': return update(db, operation.id, [{ field: 'status', value: 'closed', expected: operation.expected }], actor, operation);
-    case 'reopen': return update(db, operation.id, [{ field: 'status', value: 'open', expected: operation.expected }], actor);
-    case 'update': return update(db, operation.id, operation.changes, actor, operation);
+    case 'close': return update(db, operation.id, [{ field: 'status', value: 'closed', expected: operation.expected }], actor, operation, operation.claim_proof);
+    case 'reopen': return update(db, operation.id, [{ field: 'status', value: 'open', expected: operation.expected }], actor, {}, operation.claim_proof);
+    case 'update': return update(db, operation.id, operation.changes, actor, operation, operation.claim_proof);
     case 'list': case 'search': {
       const query = operation.tool === undefined ? issueQueries.list
         : operation.project === undefined ? issueQueries.listByTool

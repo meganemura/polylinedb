@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { PolylinedbError, executeOperation, parseOperation } from "../src/records/issues.ts";
+import { executeOperation, parseOperation } from "../src/records/issues.ts"; import { PolylinedbError } from "../src/records/errors.ts";
 import type { Issue, SqlExecutor } from "../src/records/issues.ts";
 import { initializeStore, openStore } from "../src/local-store/index.ts";
 import * as hegel from '@hegeldev/hegel';

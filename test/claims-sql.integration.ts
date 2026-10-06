@@ -9,6 +9,10 @@ import { SCHEMA_STATEMENTS } from '../src/records/schema.ts';
 import { CLAIM_STATEMENTS, claimMutationStatements, claimProofPredicate, issueClaimGuard } from '../src/records/claims-sql.ts';
 import type { ClaimMutation, ClaimProof } from '../src/records/claims-sql.ts';
 import type { SqlStatement } from '../src/records/issues.ts';
+import type { SqlExecutor } from '../src/records/issues.ts';
+import { node } from 'solarsql/node';
+import { d1Executor } from '../src/service/d1.ts';
+import { executeOperation, parseOperation } from '../src/records/index.ts';
 
 type Row = Record<string, unknown>;
 type Backend = { batch(statements: readonly SqlStatement[]): Promise<readonly Row[][]>; dispose(): Promise<void> };
@@ -62,7 +66,7 @@ async function raceSqlite(commands: readonly ClaimMutation[]) {
 }
 try {
   for (const [name, db] of [['SQLite', sqlite], ['D1', d1]] as const) {
-    await db.batch([...SCHEMA_STATEMENTS, ...CLAIM_STATEMENTS].map(statement => sql(statement)));
+    await db.batch(SCHEMA_STATEMENTS.map(statement => sql(statement)));
     let observedIncarnation = await observeIncarnation(db);
     const acquire = (issue_id: string, session_id = session()): ClaimMutation => ({ op: 'claim_acquire', issue_id, incarnation: observedIncarnation, session_id, request_id: crypto.randomUUID(), ttl: 300, agent_label: 'Codex' });
     for (let index = 1; index <= 10; index++) await db.batch([sql(`INSERT INTO issues(id,sort_key,parent_id,tool,project,body,status,type,priority,labels_json,created_at,created_by,updated_at,updated_by) VALUES (?, ?,NULL,'test','test','Issue','open','task',2,'[]','test','test','test','test')`, [`pd-${index}`, `test-${index}`])]);
@@ -87,7 +91,7 @@ try {
     if (repeated.op !== 'claim_acquire') throw new Error('Invalid command');
     await assert.rejects(run(db, { ...repeated, session_id: session() }), /claim_request_conflict/);
     await assert.rejects(run(db, { ...repeated, issue_id: 'pd-999', ttl: 3600 }), /claim_request_conflict/);
-    await db.batch([sql("UPDATE issue_claims SET expires_at=unixepoch() WHERE issue_id='pd-2'")]);
+    await db.batch([sql("UPDATE issue_claims SET acquired_at=MIN(acquired_at,unixepoch()-1),expires_at=unixepoch() WHERE issue_id='pd-2'")]);
     const staleProof = proof(reacquired);
     const expired: ClaimMutation = { op: 'claim_release', claim_proof: staleProof, expected_revision: 4, request_id: crypto.randomUUID() };
     await assert.rejects(run(db, expired), /claim_rejected/);
@@ -104,7 +108,9 @@ try {
     observedIncarnation = await observeIncarnation(db);
     const afterRotation = await run(db, acquire('pd-2')); assert.equal(afterRotation.generation, 4); assert.equal(afterRotation.revision, 6);
     const missing = acquire('pd-3'); const missingRow = await run(db, missing);
-    await db.batch([sql("DELETE FROM claim_requests WHERE issue_id='pd-3'"), sql("DELETE FROM issue_claims WHERE issue_id='pd-3'"), sql("UPDATE memory_store_identity SET incarnation=lower(hex(randomblob(16)))")]);
+    await assert.rejects(db.batch([sql("UPDATE claim_requests SET actor='other' WHERE issue_id='pd-3'")]), /claim_receipt_immutable/);
+    await assert.rejects(db.batch([sql("DELETE FROM claim_requests WHERE issue_id='pd-3'")]), /claim_receipt_immutable/);
+    await db.batch([sql('DROP TRIGGER claim_requests_immutable_delete'), sql("DELETE FROM claim_requests WHERE issue_id='pd-3'"), sql("DELETE FROM issue_claims WHERE issue_id='pd-3'"), sql("UPDATE memory_store_identity SET incarnation=lower(hex(randomblob(16)))"), ...CLAIM_STATEMENTS.filter(statement => statement.startsWith('CREATE TRIGGER claim_requests_immutable_delete')).map(statement => sql(statement))]);
     const oldProof = claimProofPredicate(proof(missingRow), actor);
     for (const field of ['status', 'body']) {
       const changed = await read(db, `UPDATE issues SET ${field}=? WHERE id='pd-3' AND ${oldProof.sql} RETURNING id`, [field === 'status' ? 'closed' : 'changed', ...oldProof.params]); assert.deepEqual(changed, []);
@@ -144,6 +150,23 @@ try {
     await db.batch([sql("UPDATE issue_claims SET generation=9007199254740991,revision=9007199254740991,released_at=unixepoch() WHERE issue_id='pd-5'")]);
     await assert.rejects(run(db, acquire('pd-5')), /claim_rejected/); assert.deepEqual(await run(db, maxRequest), beforeMax);
     assert.equal((await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-5'")).length, 1);
+    const executor: SqlExecutor = name === 'D1' ? d1Executor(database) : { reads: node(local), async batch(statements) { return (await db.batch(statements)).map(rows => ({ rows })); } };
+    const product = (value: unknown, identity = actor) => executeOperation(executor, parseOperation(value), identity);
+    const inspection = await product({ op: 'claim_show', issue_id: 'pd-7' }); assert.ok('claim' in inspection); assert.equal(inspection.claim.state, 'never_claimed');
+    const acquireCommand = { op: 'claim_acquire', issue_id: 'pd-7', incarnation: inspection.claim.store_incarnation, session_id: session(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
+    const acquired = await product(acquireCommand); assert.ok('claim_receipt' in acquired);
+    const productProof = proof(acquired.claim_receipt);
+    await assert.rejects(product({ op: 'close', id: 'pd-7', expected: 1, force: true, reason: 'Exception' }), { code: 'claim_required' });
+    await product({ op: 'close', id: 'pd-7', expected: 1, claim_proof: productProof });
+    await product({ op: 'claim_renew', claim_proof: productProof, expected_revision: 1, request_id: crypto.randomUUID(), ttl: 3600 });
+    assert.deepEqual(await product(acquireCommand), acquired);
+    await assert.rejects(product(acquireCommand, 'other'), { code: 'claim_request_conflict' });
+    await product({ op: 'claim_release', claim_proof: productProof, expected_revision: 2, request_id: crypto.randomUUID() });
+    await assert.rejects(product({ op: 'reopen', id: 'pd-7', expected: 2, claim_proof: productProof }), { code: 'claim_required' });
+    const closedOwner = await product({ ...acquireCommand, request_id: crypto.randomUUID(), session_id: session() }); assert.ok('claim_receipt' in closedOwner);
+    await product({ op: 'reopen', id: 'pd-7', expected: 2, claim_proof: proof(closedOwner.claim_receipt) });
+    const finalIssue = await product({ op: 'show', id: 'pd-7' }); assert.ok('issue' in finalIssue); assert.equal(finalIssue.issue.status, 'open'); assert.equal(finalIssue.issue.versions.status, 3);
+    process.stdout.write(`PASS ${name} product: strict claim parser, generated inspection, immutable replay classification, closed acquisition, close/reopen fencing, force denial\n`);
     process.stdout.write(`PASS ${name}: concurrent acquisition and UUID admission, original receipt history, actor/session/payload conflicts, CAS, equality expiry, caller incarnation fencing, missing old receipt rejection, rollback sentinel, MAX counters, old proof with no claim row\n`);
   }
 } finally { await sqlite.dispose(); await d1.dispose(); rmSync(directory, { recursive: true, force: true }); }

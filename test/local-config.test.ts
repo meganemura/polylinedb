@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readRepositoryDefaults, repositoryConfigPath, writeRepositoryDefaults } from "../src/workspace/local-config.ts";
 import type { RepositoryDefaults } from "../src/workspace/local-config.ts";
-import { PolylinedbError } from "../src/records/issues.ts";
+import { PolylinedbError } from "../src/records/errors.ts";
 
 function fixture(context: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-config-'));

@@ -1,6 +1,7 @@
 // Owns prerequisite graphs and immutable mutation receipts; issue fields remain a separate aggregate.
 import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
-import { parseOperation as parseIssue, issueRow, PolylinedbError } from './issues.ts';
+import { parseOperation as parseIssue, issueRow } from './issues.ts';
+import { PolylinedbError } from './errors.ts';
 import type { Operation as IssueOperation, Issue, SqlExecutor, SqlStatement, Status } from './issues.ts';
 import { issueQueries } from './issue-queries.ts';
 

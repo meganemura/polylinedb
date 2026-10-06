@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { commentRow, issueRow } from "../records/persistence.ts";
 import { PolylinedbError } from "../records/index.ts";
 import type { SqlExecutor, SqlStatement } from "../records/persistence.ts";
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
 import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3 } from "../records/persistence.ts";
 import type { Snapshot, SnapshotImport } from "../records/persistence.ts";
 import { issueSortKey } from "../records/persistence.ts";
@@ -65,7 +65,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   if (rows.length !== 1 || rows[0]?.version !== SCHEMA_VERSION) {
     throw new PolylinedbError('unsupported_schema', 'Database schema version is unsupported', 409, { supported: SCHEMA_VERSION, actual: rows.map((row) => row.version) });
   }
-  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests'].some(name => !tables.some(table => table.name === name))) {
+  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests'].some(name => !tables.some(table => table.name === name))) {
     throw new PolylinedbError('invalid_store', 'Database schema is incomplete', 500);
   }
   return 'current';
@@ -164,9 +164,9 @@ export function upgradeStore(location: StoreLocation): { result: 'upgraded' | 'a
         database.exec('COMMIT');
         return { result: 'already_current', version: SCHEMA_VERSION, database_path };
       }
-      if (versions.length !== 1 || (versions[0]?.version !== 2 && versions[0]?.version !== 3 && versions[0]?.version !== 4)) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3 and 4 can be upgraded', 409);
+      if (versions.length !== 1 || (versions[0]?.version !== 2 && versions[0]?.version !== 3 && versions[0]?.version !== 4 && versions[0]?.version !== 5)) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3, 4 and 5 can be upgraded', 409);
       const previous = versions[0].version;
-      reference.exec(previous === 2 ? SCHEMA_V2_SQL : previous === 3 ? SCHEMA_V3_SQL : SCHEMA_V4_SQL);
+      reference.exec(previous === 2 ? SCHEMA_V2_SQL : previous === 3 ? SCHEMA_V3_SQL : previous === 4 ? SCHEMA_V4_SQL : SCHEMA_V5_SQL);
       const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
       if (JSON.stringify(database.prepare(sql).all()) !== JSON.stringify(reference.prepare(sql).all())) throw new PolylinedbError('invalid_store', `Upgrade requires the canonical schema ${previous}`, 409);
       database.exec(schemaUpgradeStatements(previous).join(';\n') + ';');

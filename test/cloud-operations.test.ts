@@ -9,7 +9,7 @@ import { SCHEMA_SQL } from "../src/records/schema.ts";
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
-import { parseOperation, PolylinedbError } from "../src/records/issues.ts";
+import { parseOperation } from "../src/records/issues.ts"; import { PolylinedbError } from "../src/records/errors.ts";
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
   publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);

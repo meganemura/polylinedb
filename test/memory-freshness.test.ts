@@ -178,7 +178,7 @@ test('schema 2 and 3 upgrades retain content, reject altered schemas, and roll b
     db.exec('ROLLBACK'); assert.equal(db.prepare('SELECT version FROM schema_version').get()?.version, version);
     assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name = 'memory_store_identity'").get()?.n, 0);
     db.close(); chmodSync(path, 0o600);
-    const location = { directory, cwd: join(root, 'work') }; assert.equal(upgradeStore(location).version, 5); assert.equal(upgradeStore(location).result, 'already_current');
+    const location = { directory, cwd: join(root, 'work') }; assert.equal(upgradeStore(location).version, 6); assert.equal(upgradeStore(location).result, 'already_current');
     const store = openStore(location);
     try {
       const output = await executeOperation(store.db, parseOperation({ op: 'memory_context', project: 'empty', with_revision: true }), 'reader', { kind: 'local', database_path: path }); assert('memory_revision' in output);

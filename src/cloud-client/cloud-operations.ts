@@ -8,6 +8,9 @@ import type { Memory, MemoryContext } from '../records/index.ts';
 import { fields } from '../records/persistence.ts';
 import { parseIssueId } from '../records/index.ts';
 import { statuses } from '../records/persistence.ts';
+import { claimRow } from '../records/persistence.ts';
+import { parseIncarnation } from '../records/index.ts';
+import type { Claim, ClaimInspection } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;
@@ -31,6 +34,18 @@ function issue(value: unknown): Issue {
 function memory(value: unknown): Memory {
   return memoryRow(exact(value, ['id', 'project', 'title', 'body', 'version', 'created_at', 'created_by', 'updated_at', 'updated_by']));
 }
+const claimKeys = ['issue_id', 'incarnation', 'session_id', 'generation', 'actor', 'agent_label', 'revision', 'acquired_at', 'changed_at', 'expires_at', 'released_at'];
+function claim(value: unknown): Claim { return claimRow(exact(value, claimKeys)); }
+function claimInspection(value: unknown): ClaimInspection {
+  const row = exact(value, ['issue_id', 'store_incarnation', 'observed_at', 'state', 'lease']);
+  const issue_id = parseIssueId(row.issue_id); const store_incarnation = parseIncarnation(row.store_incarnation);
+  if (typeof row.observed_at !== 'number' || !Number.isSafeInteger(row.observed_at) || row.observed_at < 0) return invalid();
+  const lease = row.lease === null ? null : claim(row.lease);
+  if (lease && lease.issue_id !== issue_id) return invalid();
+  const state = lease === null ? 'never_claimed' : lease.incarnation !== store_incarnation ? 'invalidated' : lease.released_at !== null ? 'released' : lease.expires_at <= row.observed_at ? 'expired' : 'active';
+  if (row.state !== state) return invalid();
+  return { issue_id, store_incarnation, observed_at: row.observed_at, state, lease };
+}
 function result(operation: Operation, value: unknown): OperationResult {
   if ('observed_memory_revision' in operation && operation.observed_memory_revision !== undefined) {
     const row = object(value);
@@ -52,6 +67,34 @@ function result(operation: Operation, value: unknown): OperationResult {
 }
 function basicResult(operation: Operation, value: unknown): OperationResult {
   switch (operation.op) {
+    case 'claim_show': {
+      const current = claimInspection(exact(value, ['claim']).claim);
+      if (current.issue_id !== operation.issue_id) return invalid();
+      return { claim: current };
+    }
+    case 'claim_list': {
+      const row = exact(value, ['claims', 'next_cursor']);
+      if (!Array.isArray(row.claims) || row.claims.length > operation.limit) return invalid();
+      const claims = row.claims.map(claimInspection);
+      let previous = operation.after === undefined ? '' : issueSortKey(operation.after);
+      for (const current of claims) { const sort = issueSortKey(current.issue_id); if (sort <= previous) return invalid(); previous = sort; }
+      const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
+      if (next_cursor !== null && (claims.length !== operation.limit || next_cursor !== claims.at(-1)?.issue_id)) return invalid();
+      return { claims, next_cursor };
+    }
+    case 'claim_acquire': case 'claim_renew': case 'claim_release': {
+      const row = exact(exact(value, ['claim_receipt']).claim_receipt, [...claimKeys, 'outcome']);
+      const { outcome, ...owner } = row; const parsed = claim(owner);
+      const expected = operation.op === 'claim_acquire' ? 'acquired' : operation.op === 'claim_renew' ? 'renewed' : 'released';
+      if (outcome !== expected || (outcome === 'released') !== (parsed.released_at !== null)) return invalid();
+      if (operation.op === 'claim_acquire') {
+        if (parsed.issue_id !== operation.issue_id || parsed.incarnation !== operation.incarnation || parsed.session_id !== operation.session_id || parsed.agent_label !== operation.agent_label || parsed.expires_at !== parsed.changed_at + operation.ttl || parsed.acquired_at !== parsed.changed_at) return invalid();
+      } else {
+        const proof = operation.claim_proof;
+        if (parsed.issue_id !== proof.issue_id || parsed.incarnation !== proof.incarnation || parsed.session_id !== proof.session_id || parsed.generation !== proof.generation || parsed.revision !== operation.expected_revision + 1 || (operation.op === 'claim_renew' && parsed.expires_at !== parsed.changed_at + operation.ttl)) return invalid();
+      }
+      return { claim_receipt: { ...parsed, outcome: expected } };
+    }
     case 'dependency_add': case 'dependency_remove': {
       const row = exact(exact(value, ['dependency']).dependency, ['dependent_id', 'blocker_id', 'revision', 'outcome']);
       if (row.dependent_id !== operation.dependent_id || row.blocker_id !== operation.blocker_id || row.revision !== operation.expected_revision + 1) return invalid();
@@ -151,6 +194,13 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
 function errorDetails(operation: Operation, code: string, value: unknown): unknown {
   if (value === undefined) return undefined;
   switch (code) {
+    case 'claim_conflict': {
+      if (operation.op !== 'claim_acquire' && operation.op !== 'claim_renew' && operation.op !== 'claim_release') return invalid();
+      const current = claimInspection(exact(value, ['current']).current);
+      if (current.issue_id !== (operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id)) return invalid();
+      return { current };
+    }
+    case 'claim_required': return { issue: issue(exact(value, ['issue']).issue) };
     case 'dependency_conflict': {
       if (operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') return invalid();
       const row = exact(value, ['expected_revision', 'current']);
@@ -281,10 +331,10 @@ export async function executeCloudOperation(input: {
     } catch { return invalid(); }
   } catch (error) {
     if (error instanceof PolylinedbError) {
-      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove') && error.status >= 500) error.details = { request_id: input.operation.request_id };
+      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
       throw error;
     }
-    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' ? { request_id: input.operation.request_id } : undefined;
+    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release' ? { request_id: input.operation.request_id } : undefined;
     throw new PolylinedbError('cloud_unavailable', 'The cloud operation did not return a valid result. Its outcome may be unknown.', 503, details);
   } finally {
     clearTimeout(timer);
