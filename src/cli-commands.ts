@@ -7,7 +7,9 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { PolylinedbError } from './records/index.ts';
 import { executeOperation, parseOperation } from './records/index.ts';
+import type { Operation, OperationResult } from './records/index.ts';
 import { parseMemoryId } from './records/index.ts';
+import { renderHumanIssueRead } from './cli-human.ts';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from "./local-store/index.ts";
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
@@ -19,7 +21,9 @@ import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from 
 
 const help = `polylinedb (polyline database) stores personal issues through local or cloud connections.
 Usage: pd [--connection NAME | --data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--prefix PREFIX] COMMAND [OPTIONS]
-All commands return JSON. --json is accepted anywhere. Help returns text.
+Commands return JSON by default. --json is accepted before --. Help returns text.
+Use --human for successful show, list and search reads. It conflicts with --json.
+Human output stays plain on pipes. Color applies only to fixed headings on a TTY without NO_COLOR or TERM=dumb.
 pd --version [--json] reports the installed package and running Node versions as JSON.
 Use -- before a positional query that starts with a dash.
 An option consumes its value, so --body --help stores the text --help.
@@ -170,6 +174,22 @@ async function executeWithPrefixOrigin<T>(origins: ReadonlyMap<string, PrefixOri
   }
 }
 function invalid(message: string): never { throw new PolylinedbError('invalid_input', message, 400); }
+function writeOperationResult(operation: Operation, result: OperationResult, human: boolean): void {
+  if (!human) {
+    process.stdout.write(JSON.stringify(result) + '\n');
+    return;
+  }
+  const terminal = { stdoutIsTTY: process.stdout.isTTY, env: process.env };
+  if (operation.op === 'show' && 'issue' in result && 'comments' in result) {
+    process.stdout.write(renderHumanIssueRead({ command: 'show', result }, terminal) + '\n');
+    return;
+  }
+  if ((operation.op === 'list' || operation.op === 'search') && 'issues' in result && 'next_cursor' in result) {
+    process.stdout.write(renderHumanIssueRead({ command: operation.op, result }, terminal) + '\n');
+    return;
+  }
+  throw new Error('Issue read returned an unexpected result shape');
+}
 function parseArgument<T>(parser: (value: unknown) => T, value: unknown): T {
   try { return parser(value); }
   catch (error) { return invalid(error instanceof Error ? error.message : 'Invalid argument'); }
@@ -202,12 +222,19 @@ async function main(argv: readonly string[]): Promise<void> {
   const flags = new Map<string, string[]>();
   const positionals: string[] = [];
   let optionsEnded = false;
+  let human = false;
+  let jsonRequested = false;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (optionsEnded) { positionals.push(arg); continue; }
     if (arg === '--') { optionsEnded = true; continue; }
     if (arg === '--help' || arg === '-h') { process.stdout.write(help); return; }
-    if (arg === '--json') continue;
+    if (arg === '--json') { jsonRequested = true; continue; }
+    if (arg === '--human') {
+      if (human) invalid('Duplicate flag --human');
+      human = true;
+      continue;
+    }
     if (!arg.startsWith('-')) { positionals.push(arg); continue; }
     if (!arg.startsWith('--')) invalid(`Unknown flag ${arg}`);
     const name = arg.slice(2);
@@ -223,6 +250,8 @@ async function main(argv: readonly string[]): Promise<void> {
   const command = nested ? `${first}_${rest[0] ?? ''}` : first;
   const operands = nested ? rest.slice(1) : rest;
   if (!command || !Object.hasOwn(commandFlags, command)) invalid('Unknown command');
+  if (human && jsonRequested) invalid('--human conflicts with --json');
+  if (human && !['show', 'list', 'search'].includes(command)) invalid('--human supports only show, list, and search');
   for (const name of flags.keys()) {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
@@ -408,11 +437,13 @@ async function main(argv: readonly string[]): Promise<void> {
     if (after !== undefined) raw.after = expandedMemory(after, false);
     if (command === 'memory_create') { raw.prefix = prefix; raw.request_id = one('request-id') ?? randomUUID(); }
     const operation = parseOperation(raw);
-    if (selected.kind === 'cloud') process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation))) + '\n');
+    if (selected.kind === 'cloud') writeOperationResult(operation,
+      await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation)), human);
     else {
       if (actor === undefined) invalid('Local connection requires an actor');
       const store = openStore({ directory: selected.directory });
-      try { process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') }))) + '\n'); }
+      try { writeOperationResult(operation,
+        await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })), human); }
       finally { store.close(); }
     }
     return;
@@ -495,12 +526,14 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   const operation = parseOperation(raw);
   if (selected.kind === 'cloud') {
-    process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation))) + '\n');
+    writeOperationResult(operation,
+      await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation)), human);
     return;
   }
   if (actor === undefined) invalid('Local connection requires an actor');
   const store = openStore({ directory: selected.directory });
-  try { process.stdout.write(JSON.stringify(await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') }))) + '\n'); }
+  try { writeOperationResult(operation,
+    await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })), human); }
   finally { store.close(); }
 }
 export async function runCli(argv: readonly string[]): Promise<void> {

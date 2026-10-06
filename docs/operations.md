@@ -117,6 +117,17 @@ When both rules apply, the working-directory rule takes precedence.
 The details identify the rule without returning an absolute path.
 Other directory validation failures keep their existing messages.
 
+## Human issue reads
+
+The CLI returns JSON by default. Add `--human` to a successful `show`, `list`, or `search` read for a readable issue view.
+The option must appear before `--`, and it conflicts with `--json`.
+Other commands reject `--human` before the CLI reads connection defaults, opens a store, or starts authentication.
+Errors keep their JSON object on standard error.
+
+`show` prints the complete body and comments. `list` and `search` print full IDs, project and tool names, short body previews, and the next-page cursor when present.
+Human output adds no terminal control sequences when standard output is piped.
+On a TTY, color applies only to fixed headings when `NO_COLOR` is absent and `TERM` is not `dumb`.
+
 ## Field versions
 
 Every mutable field starts at version 1.

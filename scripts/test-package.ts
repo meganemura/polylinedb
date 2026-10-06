@@ -37,14 +37,15 @@ try {
   assert.equal(packed.length, 1);
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
-  const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/cli-commands.js', "dist/records/issues.js",
+  const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/cli-commands.js', 'dist/cli-human.js', "dist/records/issues.js",
     "dist/records/schema.js", "dist/local-store/index.js", "dist/records/snapshot.js", "dist/workspace/local-config.js", "dist/workspace/connections.js", 'dist/workspace/index.js', "dist/records/issue-id.js",
     'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
     "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
     'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
     "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md',
-    'dist/records/errors.js', 'dist/records/claims.js', 'dist/records/claims-sql.js', 'dist/records/schema-v5.js', 'docs/claims.md', 'docs/adr/0009-issue-ownership.md'].sort();
+    'dist/records/errors.js', 'dist/records/claims.js', 'dist/records/claims-sql.js', 'dist/records/schema-v5.js', 'docs/claims.md', 'docs/adr/0009-issue-ownership.md',
+    'docs/adr/0010-human-output.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
@@ -141,13 +142,34 @@ try {
   assert.equal(JSON.parse(pd(['search', 'Works from npm'])).issues[0].id, issue.id);
   assert.equal(JSON.parse(pd(['close', issue.id, '--expected', '2'])).issue.status, 'closed');
   assert.equal(JSON.parse(pd(['reopen', issue.id, '--expected', '3'])).issue.status, 'open');
+  assert.equal(JSON.parse(pd(['comment', issue.id, '--body', '日本語の確認です。\n次の行です'])).comment.body, '日本語の確認です。\n次の行です');
+  const controlBody = 'Package ESC:\u001b[31m C1:\u0085 DEL:\u007f LS:\u2028 PS:\u2029';
+  const secondIssue = JSON.parse(pd(['create', '--tool', 'package-test', '--project', 'release', '--body', controlBody])).issue;
+  const humanShow = pd(['show', issue.id, '--human']);
+  assert.ok(humanShow.includes('Issue details\nID pd-1\nStatus open\n'));
+  assert.ok(humanShow.includes('Comments (2)\n'));
+  assert.ok(humanShow.includes('    日本語の確認です。\n    次の行です'));
+  assert.equal(humanShow.includes('\u001b'), false);
+  const firstHumanPage = pd(['list', '--human', '--limit', '1']);
+  assert.ok(firstHumanPage.startsWith('Issues\npd-1  open  P2  task\n'));
+  assert.ok(firstHumanPage.endsWith('\n  pd-1\n'));
+  const secondHumanPage = pd(['list', '--human', '--after', 'pd-1', '--limit', '1']);
+  assert.ok(secondHumanPage.startsWith(`Issues\n${secondIssue.id}  open  P2  task\n`));
+  assert.ok(secondHumanPage.endsWith('\nEnd of results.\n'));
+  const humanSearch = pd(['search', 'Package ESC', '--human']);
+  assert.ok(humanSearch.includes('  Body: Package ESC:\\u001B[31m C1:\\u0085 DEL:\\u007F LS:\\u2028 PS:\\u2029'));
+  assert.equal(JSON.parse(pd(['--json', 'show', issue.id])).issue.id, issue.id);
   const memoryCreation = ['memory', 'create', '--project', 'release', '--title', 'Package fact', '--body', 'Installed sessions share this memory.', '--request-id', '56361bb3-2f79-4e47-bd3a-4d0b52d9b7cc'];
   assert.equal(JSON.parse(pd(memoryCreation)).memory.id, 'pd-m1');
   assert.equal(JSON.parse(pd(['memory', 'context', '--project', 'release'])).memories[0].body, 'Installed sessions share this memory.');
   const observation = JSON.parse(pd(['memory', 'context', '--project', 'release', '--with-revision'])).memory_revision;
-  assert.equal(JSON.parse(pd(['list', '--project', 'release', '--observed-memory-revision', observation])).memory_freshness.status, 'current');
+  const currentHumanRead = pd(['list', '--project', 'release', '--observed-memory-revision', observation, '--human']);
+  assert.ok(currentHumanRead.includes('Memory freshness: current · project release\n'));
+  assert.ok(currentHumanRead.includes('pd-1  open  P2  task'));
   assert.equal(JSON.parse(pd(['memory', 'update', '1', '--project', 'release', '--title', 'Package fact', '--body', 'Verified through the installed CLI.', '--expected', '1'])).memory.version, 2);
-  assert.equal(JSON.parse(pd(['list', '--project', 'release', '--observed-memory-revision', observation])).memory_freshness.reason, 'memory_changed');
+  const staleHumanRead = pd(['list', '--project', 'release', '--observed-memory-revision', observation, '--human']);
+  assert.ok(staleHumanRead.includes('Memory freshness: stale · project release · memory changed\n'));
+  assert.ok(staleHumanRead.includes('Retrieve project memory before acting.\n'));
   pd(['memory', 'delete', '1', '--project', 'release', '--expected', '1'], 4);
   const skill = readFileSync(join(installed, 'skills', 'polylinedb', 'SKILL.md'), 'utf8');
   assert.match(skill, /pd memory context/);
@@ -192,7 +214,7 @@ try {
   assert.match(skill, /pd claim acquire/);
   assert.equal(JSON.parse(restored(['memory', 'show', '1', '--project', 'release'])).memory.version, 2);
   assert.equal(JSON.parse(restored(memoryCreation)).memory.body, 'Verified through the installed CLI.');
-  assert.equal(JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'release', '--body', 'After restoration'])).issue.id, 'pd-3');
+  assert.equal(JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'release', '--body', 'After restoration'])).issue.id, 'pd-4');
   restored(['import', '--file', snapshotPath], 4);
   assert.deepEqual(readdirSync(workspace), []);
   assert.deepEqual(readdirSync(directory), ['polylinedb.sqlite']);

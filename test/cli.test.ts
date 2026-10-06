@@ -26,7 +26,7 @@ function fixture(t: TestContext) {
   const directory = join(root, 'store');
   mkdirSync(cwd);
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  function run(args: string[], options: { status?: number; input?: string; actor?: boolean; env?: NodeJS.ProcessEnv } = {}) {
+  function run(args: string[], options: { status?: number; input?: string; actor?: boolean; env?: NodeJS.ProcessEnv; raw?: boolean } = {}) {
     const env = { ...isolatedEnvironment(cwd), ...options.env };
     const result = spawnSync(process.execPath, [executable, '--data-dir', directory, ...(options.actor === false ? [] : ['--actor', 'local:test']), ...args], {
       cwd, encoding: 'utf8', input: options.input,
@@ -35,7 +35,7 @@ function fixture(t: TestContext) {
     assert.equal(result.status, options.status ?? 0, result.stderr);
     const output = result.status === 0 ? result.stdout : result.stderr;
     assert.equal(result.status === 0 ? result.stderr.replace(/^.*ExperimentalWarning.*\n(?:.*\n)?/gm, '') : result.stdout, '');
-    return JSON.parse(output);
+    return options.raw ? result.stdout : JSON.parse(output);
   }
   return { root, cwd, directory, run };
 }
@@ -85,6 +85,70 @@ test('CLI persists issues, exposes conflicts, and appends comments', t => {
   assert.deepEqual(run(['show', 'pd-51'], { status: 3 }).error, {
     code: 'not_found', message: 'Issue was not found', details: { id: 'pd-51' },
   });
+});
+test('CLI human reads show full details and comments, safe previews, and page cursors', t => {
+  const { run } = fixture(t);
+  run(['init']);
+  const body = 'Control ESC:\u001b[31m C1:\u0085 DEL:\u007f LS:\u2028 PS:\u2029\n入力';
+  const { issue } = run(['create', '--tool', 'editor', '--project', 'parser', '--body', body]);
+  run(['comment', issue.id, '--body', '確認しました。\n次へ進みます。']);
+  const second = run(['create', '--tool', 'editor', '--project', 'parser', '--body', 'Second issue']).issue;
+
+  const details = run(['show', issue.id, '--human'], { raw: true }) as string;
+  assert.match(details, /^Issue details\nID pd-1\nStatus open\n/);
+  assert.ok(details.includes('Project parser\nLabels (none)\n'));
+  assert.ok(details.includes('Body\n  Control ESC:\\u001B[31m C1:\\u0085 DEL:\\u007F LS:\\u2028 PS:\\u2029\n  入力\nComments (1)\n'));
+  assert.ok(details.includes('    確認しました。\n    次へ進みます。'));
+  assert.equal(details.endsWith('\n'), true);
+  assert.equal(details.endsWith('\n\n'), false);
+  assert.equal(details.includes('\u001b'), false);
+
+  const firstPage = run(['list', '--limit', '1', '--human'], { raw: true }) as string;
+  assert.ok(firstPage.startsWith('Issues\npd-1  open  P2  task\n'));
+  assert.ok(firstPage.includes('  Project: parser · Tool: editor\n'));
+  assert.ok(firstPage.includes('  Body: Control ESC:\\u001B[31m C1:\\u0085 DEL:\\u007F LS:'));
+  assert.ok(firstPage.endsWith('\n  pd-1\n'));
+  assert.ok(firstPage.includes('More results. Use this value with --after.'));
+  const nextPage = run(['list', '--human', '--limit', '1', '--after', 'pd-1'], { raw: true }) as string;
+  assert.ok(nextPage.startsWith(`Issues\n${second.id}  open  P2  task\n`));
+  assert.ok(nextPage.endsWith('\nEnd of results.\n'));
+  const matches = run(['search', 'Second issue', '--human'], { raw: true }) as string;
+  assert.ok(matches.startsWith(`Search matches\n${second.id}  open  P2  task\n`));
+
+  const literalAfterTerminator = run(['search', '--', '--human'], { raw: true }) as string;
+  assert.deepEqual(JSON.parse(literalAfterTerminator).issues, []);
+  assert.deepEqual(run(['show', '99', '--human'], { status: 3 }), {
+    error: { code: 'not_found', message: 'Issue was not found', details: { id: 'pd-99', prefix: 'pd', prefix_source: 'builtin' } },
+  });
+  assert.deepEqual(run(['show', issue.id]), run(['--json', 'show', issue.id]));
+});
+test('CLI rejects unsupported human commands and explicit JSON before opening a store', t => {
+  const { run, directory } = fixture(t);
+  const unsupported = [
+    ['context', '--human'],
+    ['auth', 'status', '--human'],
+    ['memory', 'context', '--project', 'parser', '--human'],
+    ['agent', 'context', 'claude', '--human'],
+    ['snapshot', 'convert', '--human'],
+    ['claim', 'show', '1', '--human'],
+    ['ready', '--human'],
+    ['blocked', '--human'],
+    ['create', '--tool', 'editor', '--project', 'parser', '--body', 'New issue', '--human'],
+  ];
+  for (const args of unsupported) {
+    const result = run(args, { status: 2 });
+    assert.deepEqual(result.error, {
+      code: 'invalid_input', message: '--human supports only show, list, and search',
+    });
+  }
+  for (const args of [
+    ['show', '1', '--human', '--json'],
+    ['--json', 'show', '1', '--human'],
+  ]) {
+    const result = run(args, { status: 2 });
+    assert.deepEqual(result.error, { code: 'invalid_input', message: '--human conflicts with --json' });
+  }
+  assert.equal(existsSync(directory), false);
 });
 test('CLI claim sessions, observed incarnation, proof JSON, CAS and immutable retries agree', t => {
   const { run } = fixture(t); run(['init']); run(['create', '--tool', 'test', '--project', 'test', '--body', 'Claim']);
@@ -221,6 +285,8 @@ test('help documents version expectations without initializing storage', t => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /--expected VERSION/);
   assert.match(result.stdout, /--expect FIELD=VERSION/);
+  assert.match(result.stdout, /--human for successful show, list and search reads/);
+  assert.match(result.stdout, /plain on pipes/);
   for (const args of [['search', '--help'], ['-h'], []]) {
     const helpResult = spawnSync(process.execPath, [executable, ...args], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
     assert.equal(helpResult.status, 0);

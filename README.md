@@ -45,7 +45,9 @@ The directory must be outside your current working directory and any enclosing G
 An existing data directory must have mode `0700`; its database must have mode `0600`.
 SQLite can create a temporary journal during writes, but the persistent store is `polylinedb.sqlite`.
 
-All commands except help return JSON.
+Commands return JSON by default. Use `--human` for successful `show`, `list`, and `search` reads.
+Human output stays plain when standard output is piped. A TTY gets color on fixed headings only when `NO_COLOR` is absent and `TERM` is not `dumb`.
+`--human` conflicts with `--json`; place it before `--`.
 Set `POLYLINEDB_ACTOR` or pass `--actor` for each mutation.
 The actor identifies the caller for local attribution; filesystem permissions control local access.
 
@@ -104,8 +106,10 @@ When omitted, the CLI generates a new request UUID for that invocation.
 
 ```sh
 pd list --status deferred --label maintenance
+pd list --human --status deferred --label maintenance
 pd search 'empty input' --project parser
 pd search -- -Werror
+pd show ISSUE_ID --human
 pd --actor local:owner update ISSUE_ID --body-file ./description.md --expect body=1
 ```
 

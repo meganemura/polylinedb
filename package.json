@@ -46,6 +46,7 @@
   "files": [
     "dist/cli.js",
     "dist/cli-commands.js",
+    "dist/cli-human.js",
     "dist/records/issues.js",
     "dist/records/issue-id.js",
     "dist/workspace/local-config.js",

@@ -56,6 +56,9 @@ Use these flags only when both appear in that output.
 When either flag is absent, retrieve context without revision flags and report that freshness observation is unavailable.
 Do not probe support by issuing a command with an unknown flag.
 The skill can be newer than the installed CLI; do not infer CLI support from this document.
+Use `--human` only for successful `pd show`, `pd list`, and `pd search` reads.
+Keep it before `--`, and do not combine it with `--json`.
+Piped output is plain text; TTY color uses fixed headings and stops when `NO_COLOR` exists or `TERM=dumb`.
 When supported, request context with `--with-revision`.
 If context returns a `memory_revision` token, keep it in this session, indexed by the selected store and project.
 Pass a retained token to issue commands with `--observed-memory-revision TOKEN` only when the installed CLI supports it.

@@ -27,7 +27,7 @@ function fixture(context: test.TestContext) {
     PD_AUTH_FIXTURE_STATE: credential, PD_AUTH_FIXTURE_MODE: 'normal', PD_AUTH_FIXTURE_TRACE: trace,
     PD_CLOUD_FIXTURE_STORE: join(root, 'remote-domain-store'),
     PD_CLOUD_FIXTURE_LOG: log, PD_CLOUD_FIXTURE_MODE: 'normal' };
-  const run = (args: string[], options: { status?: number; mode?: string; auth?: string; input?: string; trace?: string } = {}) => {
+  const run = (args: string[], options: { status?: number; mode?: string; auth?: string; input?: string; trace?: string; raw?: boolean } = {}) => {
     const result = spawnSync(process.execPath, ['--import', preload, executable, ...args], { cwd,
       env: { ...env, PD_AUTH_FIXTURE_MODE: options.auth ?? 'normal', PD_CLOUD_FIXTURE_MODE: options.mode ?? 'normal',
         PD_AUTH_FIXTURE_TRACE: options.trace ?? trace },
@@ -38,7 +38,7 @@ function fixture(context: test.TestContext) {
     assert.equal(result.status === 0 ? result.stderr : result.stdout, '');
     assert.equal(result.stderr.includes('synthetic-private-token'), false);
     assert.equal(result.stdout.includes('synthetic-access-token'), false);
-    return JSON.parse(result.status === 0 ? result.stdout : result.stderr);
+    return options.raw ? result.stdout : JSON.parse(result.status === 0 ? result.stdout : result.stderr);
   };
   run(['connection', 'add', 'cloud', '--url', 'https://issues.example.invalid']);
   execFileSync('git', ['init', '--quiet', cwd], { env });
@@ -104,6 +104,29 @@ test('cloud CLI executes all nine operations with defaults, actor ownership, bod
     ['actor', 'close', 'comment', 'create', 'list', 'reopen', 'search', 'show', 'update']);
   assert.equal(existsSync(join(root, 'local-data')), false);
 });
+test('cloud human issue reads use the formatter and retain pagination and safe body text', context => {
+  const { run, requests } = fixture(context);
+  const body = 'Cloud ESC:\u001b[31m C1:\u0085 DEL:\u007f LS:\u2028 PS:\u2029\n日本語';
+  const { issue } = run(['create', '--body', body]);
+  run(['comment', issue.id, '--body', '確認しました。\n次へ進みます。']);
+  const second = run(['create', '--body', 'Second cloud issue']).issue;
+
+  const details = run(['show', issue.id, '--human'], { raw: true }) as string;
+  assert.ok(details.startsWith('Issue details\nID sm-1\nStatus open\n'));
+  assert.ok(details.includes('Body\n  Cloud ESC:\\u001B[31m C1:\\u0085 DEL:\\u007F LS:\\u2028 PS:\\u2029\n  日本語\nComments (1)\n'));
+  assert.ok(details.includes('    確認しました。\n    次へ進みます。'));
+  assert.equal(details.includes('\u001b'), false);
+
+  const firstPage = run(['list', '--human', '--limit', '1'], { raw: true }) as string;
+  assert.ok(firstPage.startsWith('Issues\nsm-1  open  P2  task\n'));
+  assert.ok(firstPage.endsWith('\n  sm-1\n'));
+  const nextPage = run(['list', '--limit', '1', '--after', 'sm-1', '--human'], { raw: true }) as string;
+  assert.ok(nextPage.startsWith(`Issues\n${second.id}  open  P2  task\n`));
+  assert.ok(nextPage.endsWith('\nEnd of results.\n'));
+  const matches = run(['search', 'Second cloud issue', '--human'], { raw: true }) as string;
+  assert.ok(matches.startsWith(`Search matches\n${second.id}  open  P2  task\n`));
+  assert.deepEqual(requests().map(request => request.op), ['create', 'comment', 'create', 'show', 'list', 'list', 'search']);
+});
 test('cloud CLI claim flags recover original receipts after every ambiguous mutation', context => {
   const { root, run, requests } = fixture(context); run(['create', '--body', 'Cloud claim']);
   const inspected = run(['claim', 'show', '1']).claim; const session = crypto.randomUUID(); const acquireRequest = crypto.randomUUID();
@@ -125,6 +148,7 @@ test('cloud CLI claim flags recover original receipts after every ambiguous muta
 
 test('cloud context and snapshots reject before authentication, networking, or file access', context => {
   const { root, run, requests } = fixture(context);
+  assert.equal(run(['memory', 'context', '--project', 'sample', '--human'], { auth: 'unexpected', status: 2 }).error.code, 'invalid_input');
   const report = run(['context'], { auth: 'unexpected' });
   assert.equal(report.mode, 'cloud');
   assert.equal(report.actor_source, 'authenticated');
