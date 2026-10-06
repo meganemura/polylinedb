@@ -94,7 +94,7 @@ test('CLI human reads show full details and comments, safe previews, and page cu
   run(['comment', issue.id, '--body', '確認しました。\n次へ進みます。']);
   const second = run(['create', '--tool', 'editor', '--project', 'parser', '--body', 'Second issue']).issue;
 
-  const details = run(['show', issue.id, '--human'], { raw: true }) as string;
+  const details = run(['show', issue.id, '--human'], { raw: true });
   assert.match(details, /^Issue details\nID pd-1\nStatus open\n/);
   assert.ok(details.includes('Project parser\nLabels (none)\n'));
   assert.ok(details.includes('Body\n  Control ESC:\\u001B[31m C1:\\u0085 DEL:\\u007F LS:\\u2028 PS:\\u2029\n  入力\nComments (1)\n'));
@@ -103,19 +103,19 @@ test('CLI human reads show full details and comments, safe previews, and page cu
   assert.equal(details.endsWith('\n\n'), false);
   assert.equal(details.includes('\u001b'), false);
 
-  const firstPage = run(['list', '--limit', '1', '--human'], { raw: true }) as string;
+  const firstPage = run(['list', '--limit', '1', '--human'], { raw: true });
   assert.ok(firstPage.startsWith('Issues\npd-1  open  P2  task\n'));
   assert.ok(firstPage.includes('  Project: parser · Tool: editor\n'));
   assert.ok(firstPage.includes('  Body: Control ESC:\\u001B[31m C1:\\u0085 DEL:\\u007F LS:'));
   assert.ok(firstPage.endsWith('\n  pd-1\n'));
   assert.ok(firstPage.includes('More results. Use this value with --after.'));
-  const nextPage = run(['list', '--human', '--limit', '1', '--after', 'pd-1'], { raw: true }) as string;
+  const nextPage = run(['list', '--human', '--limit', '1', '--after', 'pd-1'], { raw: true });
   assert.ok(nextPage.startsWith(`Issues\n${second.id}  open  P2  task\n`));
   assert.ok(nextPage.endsWith('\nEnd of results.\n'));
-  const matches = run(['search', 'Second issue', '--human'], { raw: true }) as string;
+  const matches = run(['search', 'Second issue', '--human'], { raw: true });
   assert.ok(matches.startsWith(`Search matches\n${second.id}  open  P2  task\n`));
 
-  const literalAfterTerminator = run(['search', '--', '--human'], { raw: true }) as string;
+  const literalAfterTerminator = run(['search', '--', '--human'], { raw: true });
   assert.deepEqual(JSON.parse(literalAfterTerminator).issues, []);
   assert.deepEqual(run(['show', '99', '--human'], { status: 3 }), {
     error: { code: 'not_found', message: 'Issue was not found', details: { id: 'pd-99', prefix: 'pd', prefix_source: 'builtin' } },

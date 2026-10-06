@@ -111,19 +111,19 @@ test('cloud human issue reads use the formatter and retain pagination and safe b
   run(['comment', issue.id, '--body', '確認しました。\n次へ進みます。']);
   const second = run(['create', '--body', 'Second cloud issue']).issue;
 
-  const details = run(['show', issue.id, '--human'], { raw: true }) as string;
+  const details = run(['show', issue.id, '--human'], { raw: true });
   assert.ok(details.startsWith('Issue details\nID sm-1\nStatus open\n'));
   assert.ok(details.includes('Body\n  Cloud ESC:\\u001B[31m C1:\\u0085 DEL:\\u007F LS:\\u2028 PS:\\u2029\n  日本語\nComments (1)\n'));
   assert.ok(details.includes('    確認しました。\n    次へ進みます。'));
   assert.equal(details.includes('\u001b'), false);
 
-  const firstPage = run(['list', '--human', '--limit', '1'], { raw: true }) as string;
+  const firstPage = run(['list', '--human', '--limit', '1'], { raw: true });
   assert.ok(firstPage.startsWith('Issues\nsm-1  open  P2  task\n'));
   assert.ok(firstPage.endsWith('\n  sm-1\n'));
-  const nextPage = run(['list', '--limit', '1', '--after', 'sm-1', '--human'], { raw: true }) as string;
+  const nextPage = run(['list', '--limit', '1', '--after', 'sm-1', '--human'], { raw: true });
   assert.ok(nextPage.startsWith(`Issues\n${second.id}  open  P2  task\n`));
   assert.ok(nextPage.endsWith('\nEnd of results.\n'));
-  const matches = run(['search', 'Second cloud issue', '--human'], { raw: true }) as string;
+  const matches = run(['search', 'Second cloud issue', '--human'], { raw: true });
   assert.ok(matches.startsWith(`Search matches\n${second.id}  open  P2  task\n`));
   assert.deepEqual(requests().map(request => request.op), ['create', 'comment', 'create', 'show', 'list', 'list', 'search']);
 });
