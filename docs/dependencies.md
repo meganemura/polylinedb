@@ -23,6 +23,13 @@ Its advisories include [TLS certificate validation bypass](https://github.com/ad
 The override selects 7.30.0, and the subsequent npm audit reported zero known vulnerabilities.
 That report is dated evidence, not a guarantee about future advisories.
 
+The October 6, 2026 audit found a high-severity advisory in PostCSS's source-map-js 1.2.1.
+The exact override selects 1.2.2, which fixes [indexed source-map offset denial of service](https://github.com/advisories/GHSA-68fv-2mgg-jv7q).
+Version 1.2.2 was published on September 30, 2026.
+The owner approved a release-age exception for this security fix.
+The CLI runtime dependency list remains unchanged.
+The subsequent audit reported zero known vulnerabilities on October 6, 2026.
+
 Install with `npm ci --ignore-scripts`, then run the checks in the README.
 Review registry release dates and current advisories before changing versions.
 Run both workerd integration checks after changing the Cloudflare plugin or its HTTP dependency.

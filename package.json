@@ -40,7 +40,8 @@
   },
   "overrides": {
     "undici": "7.30.0",
-    "qs": "6.16.0"
+    "qs": "6.16.0",
+    "source-map-js": "1.2.2"
   },
   "license": "MIT",
   "files": [
