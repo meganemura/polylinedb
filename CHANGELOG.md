@@ -5,6 +5,28 @@
 - Distinguish denied authentication state access from a busy authentication lock without exposing filesystem paths.
 - Report signing-key outages with safe guidance and retain request UUIDs for explicit retries.
 - Preserve complete trigger definitions in cloud setup batches and compare the database version with the deployment source.
+- Add session-owned issue claims with database deadlines, incarnation fencing, and immutable request receipts.
+- Require a current claim proof for status writes after claim activation, including close, reopen, and forced prerequisite overrides.
+- Preserve claim history through schema 6 upgrades, snapshot 5 restoration, and guarded store transfers.
+
+### Upgrade from 0.2.0
+
+These instructions apply to the unreleased changes. Published 0.2.0 does not provide claim commands.
+Stop writers and preserve a private backup before installing the next release.
+For a local connection, run `pd upgrade` after installation to move schema 5 to schema 6.
+The upgrade preserves existing records and leaves issues unclaimed.
+For D1, use the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-or-5-deployment) before deploying the matching Worker.
+The CLI does not upgrade D1.
+
+Convert snapshot 4 explicitly before import:
+
+```sh
+pd snapshot convert --from 4 --file OLD --output NEW
+```
+
+Conversion writes snapshot 5 with empty claim collections. Versions 2 and 3 also require their explicit conversion option.
+Restoration preserves claim history but gives the destination new authority. Old proofs cannot authorize new writes there.
+Check the installed CLI help or MCP schemas before using the [claim workflow](docs/claims.md).
 
 ## 0.2.0 (2026-10-05)
 

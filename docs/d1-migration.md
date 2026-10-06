@@ -52,6 +52,8 @@ Its optional `--output` writes that verified remote snapshot to a new file with 
 The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts.
 Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
 
+<a id="upgrade-an-existing-schema-2-3-or-4-deployment"></a>
+
 ## Upgrade an existing schema 2, 3, 4 or 5 deployment
 
 The new Worker needs schema 6. The CLI's `upgrade` command applies only to local SQLite.
