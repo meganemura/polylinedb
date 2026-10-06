@@ -1,6 +1,6 @@
 // Subprocesses verify the executable contract against real persistent storage.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -132,7 +132,20 @@ for (const command of ['acquire', 'renew', 'release']) test(`CLI local claim ${c
     const before = ['issue_claims', 'claim_requests'].map(table => database.prepare(`SELECT * FROM ${table}`).all());
     const rejected = run(args, { actor: false, status: 2 }); assert.equal(rejected.error.code, 'invalid_input'); assert.match(rejected.error.message, /explicit.*actor/);
     assert.deepEqual(['issue_claims', 'claim_requests'].map(table => database.prepare(`SELECT * FROM ${table}`).all()), before);
+    const accepted = run(args, { actor: false, env: { POLYLINEDB_ACTOR: 'local:reader' } }).claim_receipt;
+    assert.equal(accepted.actor, 'local:reader'); assert.equal(accepted.outcome, command === 'acquire' ? 'acquired' : command === 'renew' ? 'renewed' : 'released');
   } finally { database.close(); }
+});
+test('CLI claim mutations accept the explicitly configured repository actor', t => {
+  const { run, cwd } = fixture(t); execFileSync('git', ['init', '--quiet', cwd], { env: isolatedEnvironment(cwd) });
+  run(['--actor', 'local:repository', 'init', '--tool', 'test', '--project', 'test'], { actor: false });
+  run(['create', '--body', 'Repository actor'], { actor: false });
+  const incarnation = run(['claim', 'show', '1'], { actor: false }).claim.store_incarnation;
+  const owner = run(['claim', 'acquire', '1', '--incarnation', incarnation, '--session-id', crypto.randomUUID()], { actor: false }).claim_receipt;
+  assert.equal(owner.actor, 'local:repository');
+  const proof = JSON.stringify({ issue_id: owner.issue_id, incarnation: owner.incarnation, session_id: owner.session_id, generation: owner.generation });
+  assert.equal(run(['claim', 'renew', '--claim-proof', proof, '--expected-revision', '1'], { actor: false }).claim_receipt.actor, 'local:repository');
+  assert.equal(run(['claim', 'release', '--claim-proof', proof, '--expected-revision', '2'], { actor: false }).claim_receipt.actor, 'local:repository');
 });
 
 test('CLI rejects invalid arguments before creating storage and actor requires no store', t => {
