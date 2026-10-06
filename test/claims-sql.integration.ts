@@ -147,7 +147,7 @@ try {
     const maxRequest = acquire('pd-5'); const beforeMax = await run(db, maxRequest);
     await db.batch([sql("UPDATE issue_claims SET revision=9007199254740991 WHERE issue_id='pd-5'")]);
     await assert.rejects(run(db, { op: 'claim_release', claim_proof: proof(beforeMax), expected_revision: Number.MAX_SAFE_INTEGER, request_id: crypto.randomUUID() }), /claim_rejected/);
-    await db.batch([sql("UPDATE issue_claims SET generation=9007199254740991,revision=9007199254740991,released_at=unixepoch() WHERE issue_id='pd-5'")]);
+    await db.batch([sql("UPDATE issue_claims SET generation=9007199254740991,revision=9007199254740991,released_at=changed_at WHERE issue_id='pd-5'")]);
     await assert.rejects(run(db, acquire('pd-5')), /claim_rejected/); assert.deepEqual(await run(db, maxRequest), beforeMax);
     assert.equal((await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-5'")).length, 1);
     const executor: SqlExecutor = name === 'D1' ? d1Executor(database) : { reads: node(local), async batch(statements) { return (await db.batch(statements)).map(rows => ({ rows })); } };
