@@ -1,7 +1,8 @@
 // Owns atomic lease transitions and proof predicates; transports supply validated commands and actors.
 import type { SqlStatement } from './issues.ts';
+import type { ClaimProof } from '../transition/index.ts';
+export type { ClaimProof };
 
-export type ClaimProof = { issue_id: string; incarnation: string; session_id: string; generation: number };
 export type ClaimMutation =
   | { op: 'claim_acquire'; issue_id: string; incarnation: string; session_id: string; request_id: string; ttl: number; agent_label: string | null }
   | { op: 'claim_renew'; claim_proof: ClaimProof; expected_revision: number; request_id: string; ttl: number }

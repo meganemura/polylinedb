@@ -4,12 +4,14 @@ import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
 import { claimMutationStatements } from './claims-sql.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
-import type { SqlExecutor } from './issues.ts';
+import type { SqlExecutor, SqlStatement } from './issues.ts';
+import { claimState, decideClaimMutation } from '../transition/index.ts';
+import type { ClaimState } from '../transition/index.ts';
 
 export type Claim = ClaimProof & { actor: string; agent_label: string | null; revision: number; acquired_at: number; changed_at: number; expires_at: number; released_at: number | null };
 export type ClaimReceipt = Omit<Claim, 'released_at'> & ({ outcome: 'released'; released_at: number } | { outcome: 'acquired' | 'renewed'; released_at: null });
 export type ClaimRequest = ClaimReceipt & { request_id: string; payload: string; created_at: number };
-export type ClaimState = 'never_claimed' | 'active' | 'released' | 'expired' | 'invalidated';
+export type { ClaimState };
 export type ClaimInspection = { issue_id: string; store_incarnation: string; observed_at: number; state: ClaimState; lease: Claim | null };
 export type ClaimOperation = ClaimMutation | { op: 'claim_show'; issue_id: string }
   | { op: 'claim_list'; tool?: string; project?: string; after?: string; limit: number };
@@ -99,8 +101,7 @@ function inspection(row: Record<string, unknown>): ClaimInspection {
   const store_incarnation = parseIncarnation(row.store_incarnation);
   const observed_at = integer(row.observed_at, 'observed_at', 0);
   const lease = row.generation === null ? null : claimRow(row);
-  const state: ClaimState = lease === null ? 'never_claimed' : lease.incarnation !== store_incarnation ? 'invalidated' : lease.released_at !== null ? 'released' : lease.expires_at <= observed_at ? 'expired' : 'active';
-  return { issue_id, store_incarnation, observed_at, state, lease };
+  return { issue_id, store_incarnation, observed_at, state: claimState(lease, store_incarnation, observed_at), lease };
 }
 function duplicateReceipt(error: unknown): boolean {
   let cause = error; const seen = new Set<unknown>();
@@ -128,7 +129,8 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   name(actor, 'actor');
   const payload = JSON.stringify(operation);
   let results;
-  try { results = await db.batch(claimMutationStatements(operation, actor)); }
+  const issue_id = operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id;
+  try { results = await db.batch([...claimMutationStatements(operation, actor), claimObservation(issue_id)]); }
   catch (error) {
     if (!duplicateReceipt(error)) throw error;
     const row = (await db.reads.all(issueQueries.claimRequest, { request_id: operation.request_id }))[0];
@@ -136,10 +138,19 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     if (row.actor !== actor || row.payload !== payload) throw new PolylinedbError('claim_request_conflict', 'The request ID belongs to a different actor, session, or payload', 409);
     return { claim_receipt: receipt(row) };
   }
-  const row = results.at(-1)?.rows[0];
+  const row = results.at(-2)?.rows[0];
   if (row) return { claim_receipt: receipt(row) };
-  const issue_id = operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id;
-  const current = (await db.reads.all(issueQueries.claimShow, { issue_id }))[0];
-  if (!current) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
-  throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current: inspection(current) });
+  const observed = results.at(-1)?.rows[0];
+  if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
+  const current = inspection(observed);
+  if (decideClaimMutation(current.lease, current.store_incarnation, operation, actor, current.observed_at).accepted) {
+    throw new PolylinedbError('storage_error', 'The database rejected a claim mutation without a matching condition', 503);
+  }
+  throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current });
+}
+function claimObservation(issue_id: string): SqlStatement {
+  return { sql: `SELECT issues.id AS issue_id, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor,
+    claim.session_id, claim.agent_label, claim.generation, claim.revision, claim.acquired_at, claim.changed_at, claim.expires_at, claim.released_at
+    FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id = issues.id
+    WHERE identity.singleton = 1 AND issues.id = ?`, params: [issue_id] };
 }
