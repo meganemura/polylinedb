@@ -1,6 +1,6 @@
 # Give each cloud actor a role in the Worker roster
 
-Status: proposed. The owner reviews the roster and chooses a route for the open question about cloud host connectors.
+Status: accepted. Each cloud host connector gets its own Access identity.
 
 ## Problem
 
@@ -47,7 +47,7 @@ The claim lease and the comment author record that actor; the agent label stays 
 
 ## Consequences
 
-- An owner can make the single sign-on actor a `reader` and move writes to service tokens.
+- An owner can make the single sign-on actor a `reader` and move writes to per-host identities and local service tokens.
   The roster expresses that choice, and the operator applies it at deployment.
 - An owner-only roster keeps the behavior of the earlier allowlist.
 - The lease rows from `claim_show` and `claim_list` carry the token-derived actor.
@@ -55,19 +55,22 @@ The claim lease and the comment author record that actor; the agent label stays 
 - The `actor` tool returns the actor ID only.
   A gated write shows the kind: an agent gets `not_ready` or `claim_required` where a human succeeds.
 
-## Open question: per-agent identity for cloud host connectors
+## Per-agent identity for cloud host connectors
 
 Cloud hosts such as Cursor, Claude, Codex, and ChatGPT link through OAuth and Access.
 Each link signs in as a person, so the host gets that person's `access:` actor.
 The [cloud guide](../cloud.md#use-service-tokens-only-from-a-local-client) keeps service tokens out of cloud agent machines.
 
-Two routes can give each host its own actor without a token inside the agent machine:
+Each cloud host links as its own Access identity, a separate user of the identity provider.
+The roster lists that identity as `{"actor": "access:HOST_SUBJECT", "role": "agent"}`.
+The Worker needs no change for this, because the roster already maps any `access:` actor to a role.
 
-- One Access identity for each host, with its own entry in the roster.
-- One Access application or audience for each agent group, with its own roster.
+The rollout keeps writes available at each step:
 
-The owner chooses between them.
-Until then, a cloud host that links as the owner writes as the owner, unless the roster makes the owner a `reader`.
+1. Deploy the roster code with the owner-only roster. Behavior does not change.
+2. Create one identity for each host, and add each one to the roster with the role `agent`.
+3. Link each host again as its own identity. Confirm the actor with the `actor` tool and the agent kind with a claim on an issue without the `ready` label, which returns `not_ready`.
+4. Change the owner's entry to `reader` only after every host writes as its own actor.
 
 ## Alternatives
 
@@ -75,5 +78,8 @@ Until then, a cloud host that links as the owner writes as the owner, unless the
   This ties a policy to a credential type and cannot express a read-only person or a human command-line client that uses a service token.
 - Make every `access:` actor read-only by default.
   This removes writes from every cloud host connector at the next deployment, before any host has another identity.
+- Give each agent group its own Access application and audience.
+  The subject of the assertion is the same person in every application, so the actor ID stays the owner's.
+  A distinct actor would need the Worker to derive actors from the audience, which is a second identity scheme.
 - Keep a separate list of reader actors.
   Two lists can disagree about one actor; one entry for each actor cannot.
