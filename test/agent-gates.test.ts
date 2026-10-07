@@ -1,7 +1,7 @@
 // Checks the agent gates through the shared operation entry and the CLI; human actors keep the cooperative contract.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -121,4 +121,27 @@ test('the CLI reads the actor kind from the flag or the environment', t => {
   assert.equal(pd(['--actor', 'local:codex', 'comment', 'pd-1', '--body', 'x'], { POLYLINEDB_ACTOR_KIND: 'agent' }).output.error.code, 'claim_required');
   assert.equal(pd(['--actor', 'local:codex', '--actor-kind', 'robot', 'comment', 'pd-1', '--body', 'x']).output.error.code, 'invalid_input');
   assert.ok('comment' in pd(['--actor', 'local:rocky', 'comment', 'pd-1', '--body', 'x']).output);
+});
+
+test('two local agents claim different issues under their own actors and never under the shared repository actor', t => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-actors-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cwd = join(root, 'repo'); const directory = join(root, 'store'); mkdirSync(cwd);
+  execFileSync('git', ['init', '-q'], { cwd });
+  const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(root, 'config-home') };
+  for (const name of ['POLYLINEDB_ACTOR', 'POLYLINEDB_ACTOR_KIND', 'POLYLINEDB_DATA_DIR', 'POLYLINEDB_CONNECTION', 'POLYLINEDB_SESSION_ID']) delete env[name];
+  const pd = (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
+    return JSON.parse(result.stdout || result.stderr);
+  };
+  assert.ok(pd(['--data-dir', directory, 'init', '--tool', 'gate', '--project', 'gate', '--actor', 'local:shared']).database_path);
+  for (const body of ['one', 'two']) assert.ok(pd(['create', '--body', body, '--label', 'ready']).issue);
+  const incarnation = pd(['claim', 'show', 'pd-1']).claim.store_incarnation;
+  const agent = (actor: string) => ({ POLYLINEDB_ACTOR: actor, POLYLINEDB_ACTOR_KIND: 'agent', POLYLINEDB_SESSION_ID: crypto.randomUUID() });
+  const codex = pd(['claim', 'acquire', 'pd-1', '--incarnation', incarnation, '--agent-label', 'Codex', '--request-id', crypto.randomUUID()], agent('local:codex'));
+  const claude = pd(['claim', 'acquire', 'pd-2', '--incarnation', incarnation, '--agent-label', 'Claude', '--request-id', crypto.randomUUID()], agent('local:claude'));
+  assert.deepEqual([codex.claim_receipt.actor, claude.claim_receipt.actor], ['local:codex', 'local:claude']);
+  assert.deepEqual(pd(['claim', 'list']).claims.map((claim: { lease: { actor: string } }) => claim.lease.actor), ['local:codex', 'local:claude']);
+  assert.equal(pd(['--actor-kind', 'agent', 'claim', 'show', 'pd-1']).error.code, 'invalid_input');
+  assert.equal(pd(['comment', 'pd-2', '--body', 'x'], agent('local:codex')).error.code, 'claim_required');
 });

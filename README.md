@@ -87,6 +87,7 @@ Replace placeholders with observed values and retained lowercase UUIDs.
 Read field and claim revisions before each new mutation.
 After a claim lifecycle starts, status writes require a current proof, and force overrides prerequisites only.
 See [ownership coordination](docs/claims.md) for deadlines, inspection, handoff, and retry rules.
+Give each local agent its own actor with [local agent actors](docs/agent-actors.md).
 
 Create an epic with `--type epic`, then create children with `--parent EPIC_ID`.
 A root ID looks like `pd-1`; its first child is `pd-1.1`.

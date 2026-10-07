@@ -347,6 +347,7 @@ async function main(argv: readonly string[]): Promise<void> {
   if (selected.kind === 'cloud' && one('actor-kind') !== undefined) invalid('Cloud connections derive the actor kind from authentication; --actor-kind is not accepted');
   const requestedKind = one('actor-kind') ?? process.env.POLYLINEDB_ACTOR_KIND;
   const actorKind = requestedKind === undefined ? 'human' : actorKinds.find(kind => kind === requestedKind) ?? invalid('The actor kind must be human or agent');
+  if (selected.kind === 'local' && actorKind === 'agent' && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR) invalid('An agent needs its own --actor or POLYLINEDB_ACTOR; the repository actor is shared');
   if (actor !== undefined && (!actor.trim() || /\p{Cc}/u.test(actor) || Buffer.byteLength(actor) > 256)) invalid('Invalid actor identity');
   if (command === 'context') {
     process.stdout.write(JSON.stringify({ mode: selected.kind, connection: selected.name, source: selected.source,
