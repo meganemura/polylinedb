@@ -120,28 +120,41 @@ The current restore operator writes no checkpoint when it restores an empty inpu
 The owner then refuses the store, because it has no recognized checkpoint.
 When a checkpoint for an empty input exists, the owner applies the same checks and the same barrier as for other inputs.
 
+The owner compares the 12 application tables with the original input.
+It captures and guards the identity and `project_memory_revisions`, but snapshot 5 has no revisions, so the owner cannot compare them with the original input.
+Batch reads must reach the primary database, because a lagging replica can show an old preimage.
+
 SQLite tests and local workerd D1 tests both pass these gates:
 
-- A failure at each packet statement rolls back the rename, the view, the receipt, and the added rows.
 - A replay of each recorded restore write after the barrier changes zero rows.
+- Rows deleted after the addition stay deleted when the restore writes run again. A control run without the barrier shows that the same replay restores them.
 - A restore paused at each write boundary keeps the addition refused until the restore completes.
 - Races on the checkpoint row, the identity, an issue, a trailing range, and the schema roll back the commit.
 - A lost response resumes as committed, with one dispatch and no second addition.
-- A receipt stays committed after later edits, and those edits block verification and source retirement.
+- A receipt stays committed after later edits, and after a later schema change. Those changes block verification and source retirement.
+
+The workerd D1 test also passes these gates:
+
+- A failure at each packet statement rolls back the rename, the view, the receipt, and the added rows. The SQLite test port gets this rollback from its own transaction.
+- Restore writes sent beside the commit leave the expected result.
 
 The SQLite tests also pass these gates:
 
 - A statement prepared before the barrier writes nothing after it.
 - Races on each of the 14 guarded tables roll back the commit.
-- An unchanged preimage permits a resend of the frozen packet, and a changed preimage is refused.
-- A source edit after freezing blocks source retirement.
+- An unchanged preimage permits one resend of the frozen packet per call, and a changed preimage is refused.
+- A batch that returns without a receipt is unknown after one dispatch.
+- A terminal layout without its receipt is unknown.
+- An edited or malformed journal operation is refused.
+- A source edit after freezing blocks source retirement, and a missing source is refused.
 - A crash after the retirement commit resumes and records the step.
-
-The workerd D1 test also sends restore writes beside the commit and checks that the expected result follows.
 
 These gates remain open:
 
 - The snapshot 3 to schema 6 projection and the release 0.1.0 restore SQL.
 - Request size, duration, and atomicity of the packet through the D1 REST batch API on a production database.
+- Claim validity at commit time beyond the guards on the captured claim rows.
+- Owner validity boundaries, receipt conflicts between concurrent operators, and metadata identity readback.
+- A supported procedure for an addition whose source retirement waits, because a destination write followed the commit. The owner does not stop Worker writers.
 - Routing changes after source retirement, with recovery for each step.
 - A command that runs the owner after review and owner approval.
