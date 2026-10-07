@@ -5,7 +5,9 @@ This page records one complete diagnosis on polylinedb: the reproduction, the de
 The fault was injected on purpose into a disposable copy of the source tree. No commit contains it.
 The test that exposed it is part of the suite.
 
-Environment: depug 0.1.3 from npm, Node 26.7.0, and polylinedb 0.3.1.
+Environment: Node 26.7.0 and polylinedb 0.3.1.
+The first pass used a local build of the depug repository at version 0.1.3.
+The `preflight`, `frames`, `probe`, and `exec` steps then ran again with depug 0.1.3 from npm and gave the same values.
 
 ## Supported runtime and interface
 
@@ -62,7 +64,7 @@ On the faulted copy it fails:
     ]
 ```
 
-With the depug node:test reporter, the failure also wrote an evidence file.
+With the depug node:test reporter from the local build, the failure also wrote an evidence file.
 The reporter classified the failure as `the value's source already returned; rerun to reach it`.
 The assertion sees the export after `parseSnapshot` has returned, so the stack at the failure cannot show the cause.
 
@@ -70,7 +72,11 @@ The assertion sees the export after `parseSnapshot` has returned, so the stack a
 
 Each command below ran with `-- node --test --test-name-pattern='^export lists the blockers' test/dependency-persistence.test.ts` after it.
 
-1. `preflight` reported `deterministic (app calls: 3236)`.
+1. `preflight` gave different results in different runs.
+   One run reported `deterministic (app calls: 3236)`. Another run reported `first divergence at call 2812`.
+   The two indexes separate inside the comparator at `src/records/snapshot.ts:89`, which sorts creation requests by request ID.
+   The test creates random request IDs, so that sort calls its comparator a different number of times in each run.
+   A call index counts the calls of one function. The calls used below kept the same index, `#1`, in every run.
 2. `frames --at src/local-store/index.ts:196` named the export function that ran: `src/local-store/index.ts:readSnapshot@196:9#1`.
    The frames index showed one call of the dependency sort comparator, `src/records/snapshot.ts:<anonymous>@172:13#1`, inside `parseSnapshotV4@153:10#1`.
 3. `probe "src/records/snapshot.ts:<anonymous>@169:36"` showed the rows that the store read, before the sort: `pd-10`, then `pd-9`.
@@ -123,4 +129,4 @@ npx @meganemura/depug@0.1.3 rerun -- node --test --test-name-pattern='^export li
 - Give the test command to depug as separate arguments. In zsh, an unquoted `$CMD` is one argument, and depug then reports zero calls instead of a launch failure.
 - `flt` cannot follow a function whose body is a single expression, such as a sort comparator. `exec` in the enclosing function, at the next statement, reads the same values.
 - `probe` keeps ten samples for each parameter. For a later call, use `frames` to find its index, then `exec` or `flt` on that call.
-- Request IDs are random UUIDs, so a sort by request ID calls its comparator a different number of times in each run. Here the total call count changed from 3236 to 3232 between runs, and `compareText` changed from 43 to 45 calls. The calls used above were the first call of each function, and their indexes did not change.
+- A `deterministic` result from one `preflight` run does not prove that the next run agrees. Here the total call count changed between 3232 and 3238, and `compareText` changed between 43 and 45 calls. Do not address `compareText` by call index in this test.
