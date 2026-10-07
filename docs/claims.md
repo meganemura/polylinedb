@@ -114,7 +114,7 @@ See [D1 restoration](d1-migration.md) and [ownership design](adr/0009-issue-owne
 An actor has a kind, `human` or `agent`.
 Local commands read the kind from `--actor-kind` or `POLYLINEDB_ACTOR_KIND`, and the kind defaults to `human`.
 Repository defaults do not store the kind, because each agent host sets its own value.
-Cloud connections derive the actor from authentication and treat it as `human`.
+Cloud connections derive the actor from authentication and take its kind from the role in the Worker roster; see [give each actor a role](cloud.md#give-each-actor-a-role).
 They reject `--actor-kind` and ignore `POLYLINEDB_ACTOR_KIND`.
 
 An agent claims only an issue with the `ready` label.

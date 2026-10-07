@@ -2,7 +2,8 @@
 
 Run every local agent under its own actor, so claims, updates, and comments name the agent that wrote them.
 This guide covers local stores.
-Cloud stores derive the actor from authentication, and per-agent cloud actors need separate tokens.
+Cloud stores derive the actor from authentication and take its kind from the Worker roster.
+A per-agent cloud actor needs its own credential; see [give each actor a role](cloud.md#give-each-actor-a-role).
 
 ## Choose one actor per agent host
 
