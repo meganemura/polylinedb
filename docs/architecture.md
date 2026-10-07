@@ -78,8 +78,10 @@ The `import` and `upgrade` commands stay in the CLI because they are outside `Op
 The CLI keeps its existing unknown-command error.
 
 MCP hints remain separate from local access rules.
-The service keeps its current conservative values, including `readOnlyHint: false` for dependency reads.
+Each hint describes the effect of a call, or of a repeated call, on the store.
+Reads are read-only. Every mutation except `comment` is idempotent through a request receipt or an observed version.
 The policy always sets `openWorldHint` to `false`.
+The [MCP hint decision](adr/0014-mcp-operation-hints.md) records the meaning of each hint and how the tests verify it.
 
 ## Identity
 
