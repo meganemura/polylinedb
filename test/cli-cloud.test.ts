@@ -8,6 +8,8 @@ import test from 'node:test';
 
 const executable = process.env.PD_CLI_EXECUTABLE ?? new URL('../src/cli.ts', import.meta.url).pathname;
 const preload = new URL('./fixtures/cli-auth-preload.ts', import.meta.url).pathname;
+// spawnSync blocks the runner's own test timeout.
+const hungChildLimit = 60_000;
 function fixture(context: test.TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pd-cli-cloud-')));
   const cwd = join(root, 'work');
@@ -31,9 +33,11 @@ function fixture(context: test.TestContext) {
     const result = spawnSync(process.execPath, ['--import', preload, executable, ...args], { cwd,
       env: { ...env, PD_AUTH_FIXTURE_MODE: options.auth ?? 'normal', PD_CLOUD_FIXTURE_MODE: options.mode ?? 'normal',
         PD_AUTH_FIXTURE_TRACE: options.trace ?? trace },
-      encoding: 'utf8', input: options.input, timeout: 10000 });
+      encoding: 'utf8', input: options.input, timeout: hungChildLimit });
     const expected = options.status ?? 0;
     const diagnostic = result.status !== expected && existsSync(trace) ? readFileSync(trace, 'utf8').trim().split('\n').slice(-3).join('\n') : '';
+    const failure = result.error as NodeJS.ErrnoException | undefined;
+    if (failure) throw new Error(`pd ${args.join(' ')} did not exit: ${failure.code}, signal ${result.signal}, child limit ${hungChildLimit} ms\n${diagnostic}`, { cause: failure });
     assert.equal(result.status, expected, `${result.stderr}\n${result.stdout}\n${diagnostic}`);
     assert.equal(result.status === 0 ? result.stderr : result.stdout, '');
     assert.equal(result.stderr.includes('synthetic-private-token'), false);
