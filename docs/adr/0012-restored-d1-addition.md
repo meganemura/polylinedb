@@ -156,5 +156,6 @@ These gates remain open:
 - Claim validity at commit time beyond the guards on the captured claim rows.
 - Owner validity boundaries, receipt conflicts between concurrent operators, and metadata identity readback.
 - A supported procedure for an addition whose source retirement waits, because a destination write followed the commit. The owner does not stop Worker writers.
+- A source lock that holds from an uncertain dispatch until resume. The owner releases the lock when the outcome is unknown, so local writes in that window block source retirement. The cutover operator instead retires the source after any dispatch attempt.
 - Routing changes after source retirement, with recovery for each step.
 - A command that runs the owner after review and owner approval.
