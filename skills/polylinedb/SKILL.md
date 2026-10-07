@@ -66,6 +66,14 @@ Read current ownership before further work. A replayed receipt does not prove cu
 After a version conflict, reread and reconsider the change.
 Do not silently replace versions, incarnations, or proofs.
 
+## Work in your own worktree
+
+After a successful acquisition, create a git worktree and branch for the issue from the current main, for example `git worktree add ../work-ISSUE_ID -b work/ISSUE_ID origin/main`.
+Make every edit, test run, and commit for the issue in that worktree.
+Never edit, stage, or commit in a checkout that another session uses, including the shared repository checkout.
+The branch name carries the issue ID, so other agents and the dispatcher can tell which worktree belongs to which claim.
+After the push and the close, remove the worktree with `git worktree remove` and delete its branch.
+
 ## Publish and record the tip
 
 The main-lock is a claim on one lock issue per repository.

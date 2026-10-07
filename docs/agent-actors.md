@@ -57,3 +57,16 @@ A command without `POLYLINEDB_ACTOR_KIND` or `--actor-kind` runs as `human`.
 An agent claims only issues with the `ready` label.
 An agent changes an issue only while it holds an active claim on it.
 See [gate agent work](claims.md#gate-agent-work) for the full rule.
+
+## Give each agent its own worktree
+
+Run each claimed issue in its own git worktree and branch, created from the current main:
+
+```sh
+git worktree add ../work-ISSUE_ID -b work/ISSUE_ID origin/main
+```
+
+Agents that share one working tree mix their changes.
+`git add` and test runs then pick up another agent's uncommitted files, and a commit can depend on a change that another agent has not finished.
+A separate worktree keeps each claim's files apart, and the branch name ties the worktree to the issue ID.
+Remove the worktree with `git worktree remove` after the push and the close.
