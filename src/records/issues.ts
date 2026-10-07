@@ -295,11 +295,13 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
       if (request && decideReplay(request, actor, payload) === 'request_conflict') throw new PolylinedbError('request_conflict', 'The request ID belongs to a different actor or payload', 409);
       const row = rowsAt(result, 4)[0];
       if (row) return { issue: issueRow(row) };
-      const parentRow = operation.parent ? rowsAt(result, 5)[0] : undefined;
-      const creation = decideCreation(operation.parent, parentRow ? { type: issueRow(parentRow).type } : null);
-      if (creation.accepted) throw new PolylinedbError('storage_error', 'The database rejected a creation without a matching condition', 503);
-      if (creation.reason === 'parent_not_found') return notFound(operation.parent ?? '');
-      throw new PolylinedbError('invalid_input', 'The parent must be an epic', 400);
+      if (operation.parent !== undefined) {
+        const parentRow = rowsAt(result, 5)[0];
+        const creation = decideCreation(operation.parent, parentRow ? { type: issueRow(parentRow).type } : null);
+        if (!creation.accepted && creation.reason === 'parent_not_found') return notFound(operation.parent);
+        if (!creation.accepted) throw new PolylinedbError('invalid_input', 'The parent must be an epic', 400);
+      }
+      throw new PolylinedbError('storage_error', 'The database rejected a creation without a matching condition', 503);
     }
     case 'show': {
       const rows = await db.reads.all(issueQueries.show, { id: operation.id });

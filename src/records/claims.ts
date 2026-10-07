@@ -5,7 +5,7 @@ import { issueQueries } from './issue-queries.ts';
 import { claimMutationStatements } from './claims-sql.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { claimState, decideClaimMutation, decideReplay } from '../transition/index.ts';
+import { claimState, decideReplay } from '../transition/index.ts';
 import type { ClaimState } from '../transition/index.ts';
 
 export type Claim = ClaimProof & { actor: string; agent_label: string | null; revision: number; acquired_at: number; changed_at: number; expires_at: number; released_at: number | null };
@@ -142,11 +142,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   if (row) return { claim_receipt: receipt(row) };
   const observed = results.at(-1)?.rows[0];
   if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
-  const current = inspection(observed);
-  if (decideClaimMutation(current.lease, current.store_incarnation, operation, actor, current.observed_at).accepted) {
-    throw new PolylinedbError('storage_error', 'The database rejected a claim mutation without a matching condition', 503);
-  }
-  throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current });
+  throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current: inspection(observed) });
 }
 function claimObservation(issue_id: string): SqlStatement {
   return { sql: `SELECT issues.id AS issue_id, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor,
