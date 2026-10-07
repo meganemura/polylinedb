@@ -25,6 +25,8 @@ Run the operator from a source checkout of polylinedb.
 The Worker and both stores must already use canonical schema 6.
 The additive operator refuses additional application tables, including an existing `polylinedb_snapshot_claim` restoration table.
 Use the separate restoration procedure or review that provenance before preparing a different operator.
+The [restored D1 addition proposal](adr/0012-restored-d1-addition.md) defines a possible single addition with the original input and unchanged destination rows.
+That design remains proposed, and the current operator continues to refuse restored destinations until its implementation gates pass.
 The operator does not deploy a Worker, upgrade schemas, or change Access policies.
 
 Register the cloud connection and complete its initial login:
