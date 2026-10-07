@@ -99,6 +99,9 @@ test('restored addition commits once, archives the checkpoint, fences old restor
   assert.throws(() => retired.exec("UPDATE issues SET body = 'x'"), /retired\. Use cloud connection cloud/);
 
   assert.deepEqual(await restoredAddition(f.batch, journal).resume(), result);
+  rmSync(join(journal, 'retired.json'));
+  assert.deepEqual(await restoredAddition(f.batch, journal).resume(), result, 'a crash after the retirement commit resumes');
+  assert.ok(readdirSync(journal).includes('retired.json'));
   await refused(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' }), /already recorded an addition/);
 });
 

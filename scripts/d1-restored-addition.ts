@@ -243,8 +243,21 @@ function journal(directory: string, fresh: boolean): Journal {
 }
 
 const canonicalSourceSchema = profileSchema([]);
-function readSource(database: DatabaseSync): RawRows {
-  if (stableJson(database.prepare(schemaSql).all()) !== canonicalSourceSchema) refuse('Source schema differs from canonical schema 6');
+function retiredSourceSchema(connection: string): string {
+  const reference = new DatabaseSync(':memory:');
+  try {
+    reference.exec(SCHEMA_SQL);
+    reference.exec('BEGIN');
+    retireSource(reference, connection);
+    reference.exec('COMMIT');
+    return stableJson(reference.prepare(schemaSql).all());
+  } finally { reference.close(); }
+}
+
+/** Reads the source rows. Only recovery passes `retiredFor`, because a crash can follow the retirement commit. */
+function readSource(database: DatabaseSync, retiredFor?: string): RawRows {
+  const schema = stableJson(database.prepare(schemaSql).all());
+  if (schema !== canonicalSourceSchema && (retiredFor === undefined || schema !== retiredSourceSchema(retiredFor))) refuse('Source schema differs from canonical schema 6');
   return normalizedRows(Object.fromEntries(tables.map(table => [table, database.prepare(`SELECT * FROM ${table}`).all().map(row => ({ ...row }))])));
 }
 
@@ -293,7 +306,7 @@ function retire(book: Journal, operation: Operation, held?: DatabaseSync): void 
   if (book.has('retired.json')) return;
   const database = held ?? lockedSource(operation.source_path);
   try {
-    if (stableJson(readSource(database)) !== stableJson(operation.source_rows)) refuse('The source changed after freezing; source retirement waits');
+    if (stableJson(readSource(database, operation.connection)) !== stableJson(operation.source_rows)) refuse('The source changed after freezing; source retirement waits');
     retireSource(database, operation.connection);
     database.exec('COMMIT');
   } finally {
