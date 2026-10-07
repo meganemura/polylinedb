@@ -130,3 +130,26 @@ Reads, claim commands, `actor`, issue creation, and memory commands stay open to
 A human keeps the cooperative contract and can claim an issue without the `ready` label.
 To rewrite a `ready` issue, a human claims it first or removes the `ready` label, so that no agent picks it up during the edit.
 The agent label in a claim is display text; the actor identifies the holder.
+
+## Publish under the main-lock
+
+Each repository has one lock issue with the labels `main-lock` and `ready`, for example with the body `main-lock: OWNER/REPO`.
+A human creates it once. Find it with `pd list --label main-lock`; the ready worklist never shows it.
+
+Before a push to main, acquire the lock issue with a short TTL:
+
+```sh
+pd claim acquire LOCK_ID --incarnation OBSERVED_HEX --ttl 120 --request-id REQUEST_UUID
+```
+
+While one actor holds it, another acquisition returns `claim_conflict`.
+After the push, write the verified tip on the claimed work issue, then release the lock:
+
+```sh
+pd comment ISSUE_ID --body "tip: FULL_40_CHARACTER_SHA"
+pd claim release --claim-proof "$LOCK_PROOF_JSON" --expected-revision LOCK_REVISION --request-id RELEASE_UUID
+```
+
+The newest `tip:` comment from the claim holder is the pointer for that issue.
+The comment holds only the SHA line, with no reasoning and no tool output.
+Close the work issue with its own proof and then release its claim.

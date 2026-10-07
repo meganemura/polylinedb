@@ -9,6 +9,7 @@ import { initializeStore, openStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { admitAgentWrite } from '../src/transition/index.ts';
 import { runGateRaces } from './fixtures/gate-races.ts';
+import { runMainLockFlow } from './fixtures/main-lock-flow.ts';
 
 const session = '00000000-0000-4000-8000-0000000000c1';
 const codex = { id: 'local:codex', kind: 'agent' } as const;
@@ -154,4 +155,13 @@ test('a change between the gate and the write cannot let an agent write land on 
   const store = openStore({ directory, cwd });
   t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
   assert.equal((await runGateRaces(store.db, 'r')).length, 10);
+});
+
+test('the main-lock issue stays out of the ready worklist and admits one agent at a time on SQLite', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-lock-'));
+  const cwd = join(root, 'work'); const directory = join(root, 'store'); mkdirSync(cwd);
+  initializeStore({ directory, cwd });
+  const store = openStore({ directory, cwd });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  await runMainLockFlow(store.db);
 });

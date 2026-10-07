@@ -33,7 +33,8 @@ pd ready --project demo
 pd blocked --tool compiler --project demo --after demo-10 --limit 50
 ```
 
-Ready issues have status `open` and no active blockers.
+Ready issues have status `open`, no active blockers, and no `main-lock` label.
+A `main-lock` issue is a repository lock, so the ready worklist leaves it out even when the filter names that label; find it with `pd list --label main-lock`.
 Blocked issues have status `open`, `in_progress`, or `deferred`, with an active blocker.
 A blocker is active when its status differs from `closed`.
 Filters select dependent issues. Worklists observe current state and do not establish exclusive ownership.

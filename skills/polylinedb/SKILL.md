@@ -62,24 +62,30 @@ Do not silently replace versions, incarnations, or proofs.
 
 ## Publish and record the tip
 
-Use only advertised MCP contracts for the main-lock and issue pointers.
-If a required contract is unavailable, retain the local commits and report the missing capability.
-Do not invent tool names or substitute an issue comment for a fenced pointer write.
+The main-lock is a claim on one lock issue per repository.
+The lock issue has the labels `main-lock` and `ready`, and its body names the repository, for example `main-lock: OWNER/REPO`.
+Find it only with `list` and the `main-lock` label. It never appears in the ready worklist, and it never belongs in `recommended_ids`.
+If the repository has no lock issue, stop and ask a human to create it.
+
+The tip pointer is a comment on the claimed issue whose whole body is `tip: ` followed by the 40-character commit SHA.
+The newest `tip:` comment from the claim holder is the current pointer.
+The comment holds only that line, with no reasoning and no tool output.
 
 For `main-direct` policy:
 
 1. Finish the work, run the relevant checks, and commit locally under the issue claim.
-2. Acquire the short-lived main-lock with a separate claim proof before the main push.
+2. Acquire the lock issue with `claim_acquire` and a short TTL, for example 120 seconds. Keep its proof separate from the issue proof.
 3. Read the current main tip under the lock. Reconcile the local commits and rerun affected checks if needed.
 4. Confirm both leases remain valid before the authorized push. Stop if either proof is stale.
 5. Push without force and verify the remote tip SHA.
-6. Write that verified tip SHA through the issue pointer mutation with the required proofs and observed versions.
-7. Release the main-lock after the pointer write succeeds.
+6. Write `tip: <SHA>` as a comment on the claimed issue.
+7. Release the lock issue with `claim_release`.
+8. Close the issue with the issue proof, then release the issue claim.
 
 For `PR` policy, commit locally and publish the authorized branch and PR through the repository workflow.
-Record the verified branch tip SHA and PR pointer through the advertised issue pointer mutation.
+Record the verified branch tip with a `tip: <SHA>` comment on the claimed issue.
 Keep the issue open for review until repository policy permits completion.
-If the PR workflow later updates main, acquire the main-lock for that update and record the verified main tip.
+If the PR workflow later updates main, acquire the lock issue for that update and record the verified main tip.
 
 If a push succeeds but the pointer write fails, report the remote SHA and reconcile the pointer before declaring completion.
 Never repeat a successful push merely because a later write failed.

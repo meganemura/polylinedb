@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add the actor kind `human` or `agent` to local operations through `--actor-kind` or `POLYLINEDB_ACTOR_KIND`; the kind defaults to `human`.
+- Keep issues labeled `main-lock` out of the ready worklist, and document the main-lock claim and the `tip:` comment for publishing.
 - Require a local agent to name its own actor through `--actor` or `POLYLINEDB_ACTOR` instead of the shared repository actor, and document one actor per agent host.
 - Let an agent actor claim only an issue labeled `ready`, and read only labeled issues from the ready worklist.
 - Reject agent updates, comments, close, reopen, and prerequisite edits with `claim_required` unless the agent holds an active claim on the issue; the check and the ready-label check for acquisition run in the same transaction as the write.
