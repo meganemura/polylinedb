@@ -9,6 +9,6 @@ const runtime = new Miniflare({ workers: [{ config: { name: 'differential-test',
 const seed = Number(process.env.PD_DIFFERENTIAL_SEED ?? 20261007);
 try {
   const database = await runtime.getD1Database('DB'); await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
-  await runDifferential(d1Executor(database), 'q', Number(process.env.PD_HEGEL_CASES ?? 25), seed);
+  await runDifferential(d1Executor(database), 'q', Number(process.env.PD_HEGEL_CASES ?? 100), seed);
   process.stdout.write(`PASS: transition decisions match workerd D1 conditional writes (seed ${seed})\n`);
 } finally { await runtime.dispose(); }

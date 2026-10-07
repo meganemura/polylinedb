@@ -1,4 +1,6 @@
 // Compares each transition decision with the real conditional write on one store; callers supply SQLite or D1 and the case count.
+// Accept or reject is the independent check, because production also names the rejection with the transition.
+// Leases sit far from their deadlines: statements in one batch can read different seconds, so a deadline case has no single expected result.
 import assert from 'node:assert/strict';
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
@@ -11,12 +13,12 @@ import type { ObservedClaim } from '../../src/transition/index.ts';
 const owner = 'alice';
 const session = '00000000-0000-4000-8000-00000000000a';
 const otherIncarnation = 'f'.repeat(32);
-const leases = ['none', 'active', 'released', 'expired'] as const;
+const leases = ['none', 'active', 'released', 'expired', 'invalidated', 'foreign'] as const;
 const proofs = ['none', 'current', 'wrong_session', 'wrong_generation', 'wrong_incarnation'] as const;
 type Lease = typeof leases[number];
 type ProofKind = typeof proofs[number];
 
-const coverage = ['accepted', 'conflict', 'claim_required', 'dependency_blocked', 'version_exhausted', 'epic_has_children', 'claim_conflict', 'not_found', 'dependency_conflict', 'invalid_input'];
+const coverage = ['accepted', 'conflict', 'claim_required', 'dependency_blocked', 'version_exhausted', 'epic_has_children', 'claim_conflict', 'not_found', 'dependency_conflict', 'dependency_version_exhausted', 'invalid_input'];
 const seen = new Set<string>();
 
 async function outcome(run: () => Promise<unknown>): Promise<string> {
@@ -42,9 +44,10 @@ export function differentialCases(db: SqlExecutor, label: string) {
   const seedLease = async (id: string, lease: Lease) => {
     if (lease === 'none') return;
     const store = await incarnation();
-    const acquired = await actorRun({ op: 'claim_acquire', issue_id: id, incarnation: store, session_id: session, request_id: crypto.randomUUID(), ttl: 300 });
+    const acquired = await actorRun({ op: 'claim_acquire', issue_id: id, incarnation: store, session_id: session, request_id: crypto.randomUUID(), ttl: 300 }, lease === 'foreign' ? 'bob' : owner);
     assert.ok('claim_receipt' in acquired);
     if (lease === 'released') await actorRun({ op: 'claim_release', claim_proof: { issue_id: id, incarnation: store, session_id: session, generation: acquired.claim_receipt.generation }, expected_revision: acquired.claim_receipt.revision, request_id: crypto.randomUUID() });
+    if (lease === 'invalidated') await sql('UPDATE issue_claims SET incarnation = ? WHERE issue_id = ?', otherIncarnation, id);
     if (lease === 'expired') await sql('UPDATE issue_claims SET acquired_at = acquired_at - 1000, changed_at = changed_at - 1000, expires_at = acquired_at - 999 WHERE issue_id = ?', id);
   };
   const proofFor = async (id: string, kind: ProofKind) => {
@@ -108,10 +111,11 @@ export function differentialCases(db: SqlExecutor, label: string) {
     },
     prerequisite: async (tc: hegel.TestCase) => {
       const prefix = scope();
-      const dependent = tc.draw(gs.booleans()) ? (await create(prefix)).id : `${prefix}-99`;
-      const blocker = tc.draw(gs.booleans()) ? (await create(prefix)).id : `${prefix}-98`;
+      const dependent = tc.draw(gs.sampledFrom([true, true, true, false])) ? (await create(prefix)).id : `${prefix}-99`;
+      const blocker = tc.draw(gs.sampledFrom([true, true, true, false])) ? (await create(prefix)).id : `${prefix}-98`;
+      if (tc.draw(gs.integers({ minValue: 0, maxValue: 3 })) === 0) await sql('UPDATE dependency_revisions SET revision = 9007199254740991 WHERE dependent_id = ?', dependent);
       const current = (await sql('SELECT revision FROM dependency_revisions WHERE dependent_id = ?', dependent))[0];
-      const expected = Number(current?.revision ?? 1) + (tc.draw(gs.booleans()) ? 0 : 1);
+      const expected = Math.min(Number(current?.revision ?? 1) + (tc.draw(gs.sampledFrom([0, 0, 0, 1]))), Number.MAX_SAFE_INTEGER);
       const decision = decidePrerequisiteEdit({ dependent_revision: current ? Number(current.revision) : null, blocker_exists: (await sql('SELECT 1 FROM issues WHERE id = ?', blocker)).length === 1 }, expected);
       const codes = { dependent_not_found: 'not_found', blocker_not_found: 'not_found', revision_conflict: 'dependency_conflict', revision_exhausted: 'dependency_version_exhausted' } as const;
       const command = { op: 'dependency_add', dependent_id: dependent, blocker_id: blocker, expected_revision: expected, request_id: crypto.randomUUID() };
