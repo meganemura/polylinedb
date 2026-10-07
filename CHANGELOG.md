@@ -10,6 +10,7 @@
 - Decide issue, claim, creation, and prerequisite rejections in a pure transition module that SQLite and D1 share, and prove it against the SQL writes with a differential test.
 - Let each cloud `ACCESS_ACTORS` entry carry a role: `human`, `agent`, or `reader`. A bare actor ID stays a human who writes. The Worker passes the actor kind to the agent gates, so a service-token agent claims only `ready` issues and writes only under its own claim. A `reader` gets `read_only_actor` on every write, claims included. A duplicate actor ID now makes the configuration invalid.
 - Report `read_only_actor`, `not_ready`, and the agent `claim_required` from the cloud through the CLI with their codes instead of `denied` or `cloud_invalid_response`.
+- Advertise MCP hints from the store effect of each tool. `dependency_list` and `dependency_worklist` are read-only. Every mutation except `comment` is idempotent, because a repeat replays its request receipt or fails its version check. `dependency_remove` is destructive. The `create` description now says to retain the request UUID for retries.
 - Print a fixed message for an unexpected CLI failure instead of the underlying error message, so SQLite trigger text and local paths stay out of the output. `error.details.diagnostic` gives the error `code`, SQLite `errcode`, `errno`, and `syscall` when they have a safe shape.
 
 ## 0.3.1 (2026-10-06)

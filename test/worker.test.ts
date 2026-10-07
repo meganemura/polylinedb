@@ -79,25 +79,25 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['claim_release', false, true, true, false],
       ['claim_renew', false, false, true, false],
       ['claim_show', true, false, true, false],
-      ['close', false, true, false, false],
+      ['close', false, true, true, false],
       ['comment', false, false, false, false],
-      ['create', false, false, false, false],
-      ['dependency_add', false, false, false, false],
-      ['dependency_list', false, false, false, false],
-      ['dependency_remove', false, false, false, false],
-      ['dependency_worklist', false, false, false, false],
+      ['create', false, false, true, false],
+      ['dependency_add', false, false, true, false],
+      ['dependency_list', true, false, true, false],
+      ['dependency_remove', false, true, true, false],
+      ['dependency_worklist', true, false, true, false],
       ['list', true, false, true, false],
       ['memory_context', true, false, true, false],
-      ['memory_create', false, false, false, false],
-      ['memory_delete', false, true, false, false],
+      ['memory_create', false, false, true, false],
+      ['memory_delete', false, true, true, false],
       ['memory_list', true, false, true, false],
       ['memory_search', true, false, true, false],
       ['memory_show', true, false, true, false],
-      ['memory_update', false, true, false, false],
-      ['reopen', false, true, false, false],
+      ['memory_update', false, true, true, false],
+      ['reopen', false, true, true, false],
       ['search', true, false, true, false],
       ['show', true, false, true, false],
-      ['update', false, true, false, false],
+      ['update', false, true, true, false],
     ]);
     const updated = await request('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
       name: 'update', arguments: { id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] },
@@ -246,5 +246,69 @@ test('the roster keeps readers read-only and gates each service-token agent as i
     assert.equal(lease.released_at, null);
     const comments = (await operate('viewer', { op: 'show', id: ready.id })).body.comments;
     assert.deepEqual(comments.map((comment: { created_by: string }) => comment.created_by), ['service:codex-token']);
+  } finally { sqlite.close(); }
+});
+
+test('each advertised MCP hint matches the store effect of a real tool call', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  let rpcId = 0;
+  const rpc = async (method: string, params: Record<string, unknown> = {}) => (await (await handleRequest(new Request('https://issues.example/mcp', {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': token },
+    body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
+  }), env, authenticate)).json()).result;
+  const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => String(row.name));
+  const store = () => JSON.stringify(tables.map(table => [table, sqlite.prepare(`SELECT * FROM "${table}"`).all().map(row => JSON.stringify(row)).sort()]));
+  const readOnly = new Set<string>(); const idempotent = new Set<string>(); const repeatable = new Set<string>();
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const result = await rpc('tools/call', { name, arguments: args });
+    assert.equal(result.isError, false, `${name}: ${JSON.stringify(result.structuredContent)}`);
+    return result.structuredContent;
+  };
+  const read = async (name: string, args: Record<string, unknown>) => {
+    const before = store(); const content = await call(name, args);
+    assert.equal(store(), before, `${name} changed the store`);
+    readOnly.add(name); return content;
+  };
+  const repeat = async (name: string, args: Record<string, unknown>) => {
+    const content = await call(name, args); const before = store();
+    await rpc('tools/call', { name, arguments: args });
+    assert.equal(store(), before, `a repeated ${name} changed the store`);
+    idempotent.add(name); return content;
+  };
+  const append = async (name: string, args: Record<string, unknown>) => {
+    await call(name, args); const before = store();
+    await call(name, args);
+    assert.notEqual(store(), before, `a repeated ${name} left the store unchanged`);
+    repeatable.add(name);
+  };
+  try {
+    const issue = (await repeat('create', { prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'empty input' })).issue;
+    const blocker = (await call('create', { prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'lexer' })).issue;
+    await read('actor', {}); await read('show', { id: issue.id }); await read('list', {}); await read('search', { query: 'empty' });
+    await repeat('update', { id: issue.id, changes: [{ field: 'priority', value: 1, expected: 1 }] });
+    await repeat('dependency_add', { dependent_id: issue.id, blocker_id: blocker.id, expected_revision: 1, request_id: crypto.randomUUID() });
+    await read('dependency_list', { dependent_id: issue.id });
+    await read('dependency_worklist', { state: 'blocked' }); await read('dependency_worklist', { state: 'ready' });
+    await repeat('dependency_remove', { dependent_id: issue.id, blocker_id: blocker.id, expected_revision: 2, request_id: crypto.randomUUID() });
+    await repeat('close', { id: issue.id, expected: 1 });
+    await repeat('reopen', { id: issue.id, expected: 2 });
+    await append('comment', { id: issue.id, body: 'confirmed' });
+    const memory = (await repeat('memory_create', { project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Parser constraint', body: 'Keep empty input valid.' })).memory;
+    await read('memory_show', { project: 'parser', id: memory.id }); await read('memory_list', { project: 'parser' });
+    await read('memory_search', { project: 'parser', query: 'empty' }); await read('memory_context', { project: 'parser' });
+    await repeat('memory_update', { project: 'parser', id: memory.id, title: 'Parser constraint', body: 'Verified.', expected: 1 });
+    await repeat('memory_delete', { project: 'parser', id: memory.id, expected: 2 });
+    const observed = (await read('claim_show', { issue_id: issue.id })).claim;
+    await read('claim_list', {});
+    const lease = (await repeat('claim_acquire', { issue_id: issue.id, incarnation: observed.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() })).claim_receipt;
+    const claim_proof = { issue_id: issue.id, incarnation: lease.incarnation, session_id: lease.session_id, generation: lease.generation };
+    await repeat('claim_renew', { claim_proof, expected_revision: 1, request_id: crypto.randomUUID() });
+    await repeat('claim_release', { claim_proof, expected_revision: 2, request_id: crypto.randomUUID() });
+
+    const advertised = (await rpc('tools/list')).tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; idempotentHint: boolean } }) =>
+      [tool.name, tool.annotations.readOnlyHint, tool.annotations.idempotentHint]).sort();
+    const measured = [...readOnly, ...idempotent, ...repeatable].map(name => [name, readOnly.has(name), !repeatable.has(name)]).sort();
+    assert.deepEqual(advertised, measured);
   } finally { sqlite.close(); }
 });

@@ -14,7 +14,7 @@ const verifyAccess = createAccessVerifier();
 const protocolVersion = '2025-11-25';
 const requestLimit = 128 * 1024;
 const descriptions: Record<string, string> = {
-  create: 'Create an issue. Supply tool, project, and body. An optional parent must be an epic.',
+  create: 'Create an issue. Supply tool, project, and body. An optional parent must be an epic. Retain the request UUID and payload for retries.',
   show: 'Read an issue, its field versions, and its comments before editing.',
   list: 'List issues with optional filters and ID pagination.',
   search: 'Find literal, case-sensitive text in issue bodies and comments.',
