@@ -76,7 +76,8 @@
     "dist/records/claims.js",
     "dist/records/claims-sql.js",
     "dist/records/schema-v5.js",
-    "dist/records/operation-policy.js"
+    "dist/records/operation-policy.js",
+    "dist/transition/"
   ],
   "publishConfig": {
     "access": "public",
