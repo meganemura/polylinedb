@@ -1,4 +1,4 @@
-/* The paper surface keeps selection monochrome. The dispatch control carries the only color emphasis. */
+/* The paper surface uses ink for both selection and dispatch. The action stays next to the list as rows wrap. */
 :root {
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
@@ -19,16 +19,16 @@ body {
 .paper {
   width: min(100%, 560px);
   margin: 0 auto;
-  padding: clamp(64px, 11svh, 112px) 32px 156px;
+  padding: clamp(48px, 8svh, 80px) 32px 24px;
   min-height: 100svh;
 }
 
 h1 {
-  margin: 0 0 clamp(48px, 8svh, 76px);
-  font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif CJK JP", serif;
+  margin: 0 0 24px;
+  font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(38px, 10vw, 48px);
   line-height: 1.4;
-  letter-spacing: .16em;
+  letter-spacing: -.025em;
   font-weight: 500;
 }
 
@@ -39,7 +39,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .attention-row {
   position: relative;
   display: block;
-  padding: 24px 0 26px;
+  padding: 28px 0 30px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -53,24 +53,22 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 
 .row-text {
   display: block;
-  padding-left: 14px;
-  border-left: 2px solid transparent;
-  transition: border-color 160ms ease;
+  padding: 10px 14px;
+  border-left: 4px solid transparent;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 
-.attention-row:has(input:checked) .row-text { border-left-color: #615b50; }
+.attention-row:has(input:checked) .row-text { border-left-color: #393730; background: #e9e4da; }
 .attention-row:has(input:focus-visible) { outline: 1px solid #615b50; outline-offset: 4px; }
-.reason { display: block; font-size: clamp(15px, 4.1vw, 18px); line-height: 1.7; white-space: nowrap; }
-.actor { display: block; margin-top: 8px; color: #888174; font-size: 12px; line-height: 1.5; letter-spacing: .025em; }
+.reason { display: block; font-size: clamp(21px, 5.6vw, 24px); line-height: 1.4; overflow-wrap: anywhere; }
+.actor { display: block; margin-top: 10px; color: #716b60; font-size: 16px; line-height: 1.5; letter-spacing: .025em; }
 
 .dispatch-area {
-  position: fixed;
+  position: sticky;
   z-index: 1;
   bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(100%, 560px);
-  padding: 28px 32px max(24px, env(safe-area-inset-bottom));
+  width: 100%;
+  padding: 8px 0 max(24px, env(safe-area-inset-bottom));
   background: linear-gradient(transparent, #f5f1e8 24%);
 }
 
@@ -79,7 +77,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   min-height: 64px;
   border: 0;
   border-radius: 3px;
-  background: #a94932;
+  background: #393730;
   color: #fffaf2;
   font: 400 20px/1.2 Georgia, "Times New Roman", serif;
   letter-spacing: .065em;
@@ -88,7 +86,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   touch-action: manipulation;
 }
 
-.dispatch:hover { background: #913d2b; }
+.dispatch:hover { background: #24231f; }
 .dispatch:active { transform: translateY(1px); }
 .dispatch:focus-visible { outline: 2px solid #393730; outline-offset: 5px; }
 
@@ -104,7 +102,6 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 
 @media (max-width: 340px) {
   .paper { padding-right: 24px; padding-left: 24px; }
-  .dispatch-area { padding-right: 24px; padding-left: 24px; }
   .row-text { padding-left: 10px; }
 }
 
