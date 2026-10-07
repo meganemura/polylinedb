@@ -160,6 +160,70 @@ pd show DESTINATION_ID
 
 A source ID can also appear in a child's relationship text, so use the ID map for an exact match.
 
+### Check the source after activation
+
+Continue complete source exports after the switch until old agent sessions, hooks, and background writers stop.
+Retrieve all comments and follow every page, as in the initial capture.
+Compare every field and comment with the captured baseline, including edits, status changes, and deletions.
+Counts and new IDs alone do not detect changes to existing records.
+Retain each capture, both stores' histories, and the updated ID map in the private archive.
+
+Separate genuinely new source issues from changes to mapped records.
+For mapped records, reconcile each changed field or comment deliberately against the destination's latest field versions.
+Review source deletions against both histories before changing the destination.
+Preserve destination work during reconciliation.
+`pd import` accepts an empty store or an exact, unchanged replay.
+It rejects a different snapshot in a populated store.
+Do not replace the populated destination with a new conversion of the old source.
+
+### Recover a new source issue
+
+Check the ID map before each recovery.
+Use `pd create` only for a genuinely new source issue without a destination mapping.
+Search markers can match other bodies or comments. The ID map determines the corresponding destination record.
+Review the source content for privacy before copying metadata or author details.
+Retain the complete source record and comments in the private archive.
+Map status, type, priority, labels, and parent relationships with the same rules as the original transfer.
+For a child, recover its parent first and pass the mapped destination parent ID through `--parent`.
+
+`pd create` allocates a new polylinedb ID.
+Its native creation and update metadata record the recovery time and the recovery actor.
+Keep the original source ID, timestamps, and authors in explicitly labeled body sections and the archive.
+Preserve each original comment's source ID, timestamps, and authors in its copied text or the archive.
+`pd comment` also records the recovery time and actor, rather than the original comment's audit metadata.
+After an uncertain comment append, read the destination issue before deciding whether another append is needed.
+Cloud mutations use the authenticated actor. Local mutations require an explicit local actor.
+
+Generate and retain a lowercase request UUID before each logical issue creation.
+Prepare and retain the exact body and field inputs before the request.
+This fictional example recovers a root task with reviewed fields:
+
+```sh
+cat > /srv/private-transfer/late-issue.md <<'EOF'
+# Add parser diagnostics
+
+Report the source position for an invalid token.
+
+## Original source metadata
+Source ID: source-42
+Created at: 2026-09-30T10:00:00.000Z
+Created by: source:example-author
+Updated at: 2026-09-30T11:00:00.000Z
+Updated by: source:example-editor
+EOF
+pd --data-dir /srv/personal-issues --actor local:owner --prefix parser \
+  create --tool compiler --project parser \
+  --body-file /srv/private-transfer/late-issue.md \
+  --status open --type task --priority 2 --label migration \
+  --request-id REQUEST_UUID
+```
+
+Replace `REQUEST_UUID` with the retained UUID.
+The example does not convert all source metadata or reproduce native source audit fields.
+If the result is uncertain, retry with the same actor, request UUID, body, and field inputs.
+Record the returned destination ID in the ID map.
+Run `pd show` for that ID and compare every field and comment before recovering the next issue.
+
 ## Move the checked store to Cloudflare
 
 Verify the local conversion before a cloud transfer.
