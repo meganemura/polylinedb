@@ -188,6 +188,10 @@ test('CLI claim acquire requires a session UUID from --session-id or POLYLINEDB_
   assert.deepEqual(run(['claim', 'acquire', '1', '--incarnation', 'f'.repeat(32), '--request-id', crypto.randomUUID()], { status: 2 }).error, {
     code: 'invalid_input', message: 'Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID',
   });
+  const proof = JSON.stringify({ issue_id: 'pd-1', incarnation: 'f'.repeat(32), session_id: 'x', generation: 1 });
+  assert.deepEqual(run(['claim', 'renew', '--claim-proof', proof, '--expected-revision', '1'], { status: 2 }).error, {
+    code: 'invalid_input', message: 'session_id must be a lowercase UUID',
+  });
   assert.equal(existsSync(directory), false);
 });
 test('CLI requires an explicit actor before parsing mutation payloads or opening storage', t => {
@@ -323,6 +327,7 @@ test('help pins the usage of the claim commands', t => {
   const result = spawnSync(process.execPath, [executable, '--help'], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
   assert.equal(result.status, 0);
   const usage = result.stdout.match(/^  claim .*\n(?: {8,}\S.*\n)*/gm)?.join('') ?? '';
+  assert.notEqual(usage, '', 'help lists the claim commands');
   assertSnapshot('cli-claim-usage.txt', usage);
 });
 test('help documents version expectations without initializing storage', t => {

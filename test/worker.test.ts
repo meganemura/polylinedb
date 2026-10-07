@@ -331,7 +331,7 @@ test('claim_acquire without a session UUID fails with a session_id usage error o
       const http = await post('/v1/operations', { op: 'claim_acquire', ...base, ...session });
       assert.equal(http.status, 400);
       assert.deepEqual((await http.json()).error, { code: 'invalid_input', message });
-      // MCP reports a failed tool call inside a successful JSON-RPC result, so the 400 stays in the error body only.
+      // MCP returns a failed tool call as an isError result in HTTP 200; the error body carries no status.
       const mcp = (await (await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'claim_acquire', arguments: { ...base, ...session } } })).json()).result;
       assert.equal(mcp.isError, true);
       assert.deepEqual(mcp.structuredContent.error, { code: 'invalid_input', message });

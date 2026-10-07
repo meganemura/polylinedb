@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Name the session in claim acquisition errors. Without `--session-id` or `POLYLINEDB_SESSION_ID`, `pd claim acquire` exits with a usage error, and the Worker and MCP `claim_acquire` report `session_id` instead of `request_id` for a missing or malformed session UUID. No session UUID is generated, because a generated UUID would leave other processes unable to renew or release the claim.
+- Name the session in claim acquisition errors. Without `--session-id` or `POLYLINEDB_SESSION_ID`, `pd claim acquire` exits with a usage error, and the Worker and MCP `claim_acquire` report `session_id` instead of `request_id` for a missing or malformed session UUID. A malformed `session_id` in a claim proof is reported the same way. No session UUID is generated, because a generated UUID would leave other processes unable to renew or release the claim.
 - Print help and `pd --version` on an unsupported runtime, such as Bun, without loading storage or SQL modules. Every other command still exits with `unsupported_runtime`.
 - Add the actor kind `human` or `agent` to local operations through `--actor-kind` or `POLYLINEDB_ACTOR_KIND`; the kind defaults to `human`.
 - Keep issues labeled `main-lock` out of the ready worklist, and document the main-lock claim and the `tip:` comment for publishing.
