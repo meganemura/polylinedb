@@ -1,9 +1,8 @@
-// Owns the persistent vocabulary and schema; runtime adapters own database access.
+// Owns the persistent schema for the shared issue vocabulary; runtime adapters own database access.
 import { CLAIM_STATEMENTS } from './claims-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
-export const statuses = ['open', 'in_progress', 'deferred', 'closed'] as const;
-export const issueTypes = ['bug', 'task', 'epic', 'feature', 'chore'] as const;
-export const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'] as const;
+import { statuses, issueTypes, fields } from '../transition/index.ts';
+export { statuses, issueTypes, fields };
 export const SCHEMA_VERSION = 6;
 
 export const MEMORY_SCHEMA_SQL = `

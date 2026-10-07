@@ -24,6 +24,7 @@ const baseline = run(['check', '--json'], 0);
 assert.deepEqual(baseline.violations, [], JSON.stringify(baseline.violations));
 const worker = 'src/service/index.ts';
 const records = 'src/records/issues.ts';
+const transition = 'src/transition/index.ts';
 const pathTo = (source: string, target: string) => {
   const path = relative(dirname(source), target);
   return path.startsWith('.') ? path : './' + path;
@@ -65,6 +66,11 @@ const controls: Control[] = [
   { name: 'hooks cannot import workspace', path: 'src/host-hooks/index.ts', statement: "import { readConnections as proof } from '../workspace/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('host-hooks') },
   { name: 'cloud client cannot import store', path: 'src/cloud-client/index.ts', statement: "import { openStore as proof } from '../local-store/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('cloud-client') },
   { name: 'service cannot import workspace', path: worker, statement: "import { readConnections as proof } from '../workspace/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('service') },
+  { name: 'transition cannot import records', path: transition, statement: "import { parseOperation as proof } from '../records/index.ts'; void proof;", rule: 'tag-order', pointer: 'edges.order[0].sequence' },
+  { name: 'transition cannot import service', path: transition, statement: "import { handleRequest as proof } from '../service/index.ts'; void proof;", rule: 'tag-order', pointer: 'edges.order[0].sequence' },
+  { name: 'transition Node builtin', path: transition, statement: "import { readFileSync as proof } from 'node:fs'; void proof;", rule: 'tag-boundary', pointer: 'edges.allowDeny[2].deny[0]' },
+  { name: 'private transition decision', path: 'src/cli.ts', statement: "import { decideIssueUpdate as proof } from './transition/issue-update.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('transition') },
+  { name: 'records public transition', path: records, statement: "import { decideIssueUpdate as proof } from '../transition/index.ts'; void proof;" },
 ];
 for (const control of controls) {
   const content = readFileSync(new URL(`../${control.path}`, import.meta.url), 'utf8') + '\n' + control.statement + '\n';

@@ -24,6 +24,7 @@ export default {
     { name: "workspace", glob: "src/workspace/**", surface: "index.ts" },
     { name: "host-hooks", glob: "src/host-hooks/**", surface: "index.ts" },
     { name: "service", glob: "src/service/**", surface: "index.ts" },
+    { name: "transition", glob: "src/transition/**", surface: "index.ts" },
   ],
   classify: [
     { glob: "src/cli.ts", tags: ["layer:entrypoint", "env:node"] },
@@ -39,6 +40,7 @@ export default {
     { glob: "src/host-hooks/**", tags: ["capability:host-hooks", "layer:adapter", "env:node"] },
     { glob: "src/service/**", tags: ["capability:service", "layer:adapter", "env:worker"] },
     { glob: "src/service/index.ts", tags: ["capability:service", "layer:entrypoint", "env:worker"] },
+    { glob: "src/transition/**", tags: ["capability:transition", "layer:core", "env:portable"] },
   ],
   edges: {
     allowDeny: [
@@ -56,9 +58,9 @@ export default {
     order: [
       {
         tagNamespace: "layer",
-        sequence: { "": ["domain", "adapter", "entrypoint"] },
+        sequence: { "": ["core", "domain", "adapter", "entrypoint"] },
         direction: "downward-only",
-        because: "Domain behavior stays independent of storage, credentials, and transport; adapters implement domain ports; command and Worker entrypoints consume both.",
+        because: "Transition decisions stay independent of SQL; domain behavior stays independent of storage, credentials, and transport; adapters implement domain ports; command and Worker entrypoints consume both.",
       },
     ],
   },
