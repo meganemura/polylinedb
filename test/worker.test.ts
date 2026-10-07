@@ -312,3 +312,29 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     assert.deepEqual(advertised, measured);
   } finally { sqlite.close(); }
 });
+
+test('claim_acquire without a session UUID fails with a session_id usage error on HTTP and MCP', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const post = (path: string, body: unknown) => handleRequest(new Request(`https://issues.example${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': token },
+    body: JSON.stringify(body),
+  }), env, authenticate);
+  try {
+    const base = { issue_id: 'pd-1', incarnation: 'f'.repeat(32), request_id: crypto.randomUUID() };
+    for (const [session, message] of [
+      [{}, 'Missing field: session_id'],
+      [{ session_id: null }, 'session_id must be a lowercase UUID'],
+      [{ session_id: 'NOT-A-UUID' }, 'session_id must be a lowercase UUID'],
+    ] as const) {
+      const http = await post('/v1/operations', { op: 'claim_acquire', ...base, ...session });
+      assert.equal(http.status, 400);
+      assert.deepEqual((await http.json()).error, { code: 'invalid_input', message });
+      // MCP reports a failed tool call inside a successful JSON-RPC result, so the 400 stays in the error body only.
+      const mcp = (await (await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'claim_acquire', arguments: { ...base, ...session } } })).json()).result;
+      assert.equal(mcp.isError, true);
+      assert.deepEqual(mcp.structuredContent.error, { code: 'invalid_input', message });
+    }
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM claim_requests').get()?.count, 0);
+  } finally { sqlite.close(); }
+});

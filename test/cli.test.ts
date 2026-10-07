@@ -177,10 +177,16 @@ test('CLI rejects claim flags and malformed proof before opening storage', t => 
   const { run, directory } = fixture(t);
   for (const args of [
     ['init', '--session-id', crypto.randomUUID()], ['claim', 'show', '1', '--ttl', '30'],
-    ['claim', 'acquire', '1', '--incarnation', 'f'.repeat(32)],
     ['claim', 'renew', '--claim-proof', '{', '--expected-revision', '1'],
     ['close', '1', '--expected', '1', '--claim-proof', '{}'], ['claim', 'unknown'],
   ]) assert.equal(run(args, { status: 2 }).error.code, 'invalid_input');
+  assert.equal(existsSync(directory), false);
+});
+test('CLI claim acquire requires a session UUID from --session-id or POLYLINEDB_SESSION_ID before opening storage', t => {
+  const { run, directory } = fixture(t);
+  assert.deepEqual(run(['claim', 'acquire', '1', '--incarnation', 'f'.repeat(32), '--request-id', crypto.randomUUID()], { status: 2 }).error, {
+    code: 'invalid_input', message: 'Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID',
+  });
   assert.equal(existsSync(directory), false);
 });
 test('CLI requires an explicit actor before parsing mutation payloads or opening storage', t => {
