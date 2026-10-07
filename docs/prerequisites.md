@@ -16,6 +16,7 @@ Named endpoint flags establish the direction. Numeric IDs use the selected prefi
 `dependency list` accepts `--after ID` and `--limit 1..100`. The default limit is 50.
 Blockers use numeric ID order. A returned cursor selects the next page.
 
+A new issue starts at revision 1, so revision 1 means that its prerequisites were never edited.
 Each accepted fresh request advances the dependent revision once, including duplicate adds and absent removes.
 Stale requests return `dependency_conflict`, including a current first page from the mutation transaction.
 Reread and reconsider the mutation. Do not silently refresh its expected revision.

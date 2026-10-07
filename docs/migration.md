@@ -44,6 +44,15 @@ Use these mappings as a starting point:
 | Creation and update timestamps | The corresponding audit fields |
 | Missing author information | An explicit marker such as `migration:unknown` |
 
+Migrated bodies can refer to other issues by source ID, such as `duplicate of source-17`.
+polylinedb does not resolve those references.
+Choose one treatment for the whole transfer and apply it consistently:
+
+- Rewrite each reference with the ID map. Keep the source ID beside the new ID, such as `parser-3 (source-17)`, so the original text stays traceable.
+- Keep the source ID as written. Tell readers to run `pd search "Source ID: source-17"`, which finds the issue whose body carries that marker.
+
+`pd search` matches the exact text, so use the same marker spelling in every migrated body.
+
 Do not infer an update author from the creation author.
 Validate statuses, types, priorities, timestamps, and relationships instead of silently assigning defaults.
 Inspect relationship records themselves. A summary count can omit parent-child edges.
@@ -52,6 +61,10 @@ polylinedb records issue prerequisites separately from epic containment.
 Review an explicit mapping from source dependency endpoints to destination issue IDs before adding each edge through the dependency operation.
 Keep the source direction explicit. The dependent points to its blocker.
 Plaintext blocker notes require human review; migration tools do not parse them automatically.
+Every new issue starts at prerequisite revision 1, and each accepted add or remove raises it by one.
+Revision 1 means that nobody has edited the prerequisites yet. It does not mean that the issue has no blockers.
+A script that adds edges to issues it just created can pass `--expected-revision 1` for the first edge and the returned revision for the next one.
+A `dependency_conflict` means that the expected revision is stale. Read the issue with `pd dependency list` and decide again.
 Ready and blocked worklists evaluate current blocker statuses. Deferred issues remain postponed until an explicit status change.
 See [issue prerequisites](prerequisites.md) for revisions, request receipts, and status exceptions.
 Keep source fields without a dedicated destination field in the body or in a private accompanying archive.
