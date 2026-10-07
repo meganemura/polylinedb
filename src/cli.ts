@@ -2,6 +2,7 @@
 // Admit the Node runtime before loading operational modules.
 // The package manifest owns the version and engine range used by this boundary.
 import { readFileSync } from 'node:fs';
+import type { InternalError } from './cli-diagnostics.ts';
 
 interface PackageMetadata {
   readonly version: string;
@@ -29,7 +30,10 @@ type BootstrapError =
       readonly package_version: string;
     };
   }
-  | { readonly code: 'internal_error'; readonly message: string };
+  | InternalError;
+
+// The package authors these messages from its own manifest, so they stay readable for release checks.
+class PackageManifestError extends Error {}
 
 const versionPattern = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const comparatorVersionPattern = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
@@ -51,39 +55,39 @@ function parseVersion(value: string): NodeVersion | undefined {
 function readPackageMetadata(): PackageMetadata {
   const parsed: unknown = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   if (!isRecord(parsed) || !Object.hasOwn(parsed, 'version') || !Object.hasOwn(parsed, 'engines')) {
-    throw new Error('Invalid package manifest: version and engines.node are required.');
+    throw new PackageManifestError('Invalid package manifest: version and engines.node are required.');
   }
   const version = parsed.version;
   const engines = parsed.engines;
   if (typeof version !== 'string' || parseVersion(version) === undefined || !isRecord(engines)
     || !Object.hasOwn(engines, 'node') || typeof engines.node !== 'string') {
-    throw new Error('Invalid package manifest: version and engines.node must be valid strings.');
+    throw new PackageManifestError('Invalid package manifest: version and engines.node must be valid strings.');
   }
   return { version, requiredNode: engines.node };
 }
 
 function parseComparatorVersion(value: string): NodeVersion {
-  if (!comparatorVersionPattern.test(value)) throw new Error(`Unsupported Node engine comparator: ${value}`);
+  if (!comparatorVersionPattern.test(value)) throw new PackageManifestError(`Unsupported Node engine comparator: ${value}`);
   const version = parseVersion(value);
-  if (version === undefined) throw new Error(`Invalid Node engine version: ${value}`);
+  if (version === undefined) throw new PackageManifestError(`Invalid Node engine version: ${value}`);
   return version;
 }
 
 function parseNodeRange(requiredNode: string): readonly NodeRangeClause[] {
   const clauses = requiredNode.split('||').map(clause => clause.trim());
   if (clauses.length === 0 || clauses.some(clause => clause.length === 0)) {
-    throw new Error('Invalid package manifest: engines.node has an empty range clause.');
+    throw new PackageManifestError('Invalid package manifest: engines.node has an empty range clause.');
   }
   return clauses.map(clause => {
     const caret = /^\^((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$/.exec(clause);
     if (caret !== null) {
       const floor = parseComparatorVersion(caret[1]);
-      if (floor.major === 0) throw new Error('Unsupported Node engine range: caret clauses require a positive major version.');
+      if (floor.major === 0) throw new PackageManifestError('Unsupported Node engine range: caret clauses require a positive major version.');
       return { kind: 'caret', floor };
     }
     const atLeast = /^>=((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$/.exec(clause);
     if (atLeast !== null) return { kind: 'at_least', floor: parseComparatorVersion(atLeast[1]) };
-    throw new Error(`Unsupported Node engine range clause: ${clause}`);
+    throw new PackageManifestError(`Unsupported Node engine range clause: ${clause}`);
   });
 }
 
@@ -119,11 +123,19 @@ function reportBootstrapError(error: BootstrapError): void {
   process.exitCode = 1;
 }
 
-function reportInternalError(error: unknown): void {
-  reportBootstrapError({
-    code: 'internal_error',
-    message: error instanceof Error && error.message.length > 0 ? error.message : 'Internal error',
-  });
+// The bootstrap must format its own failures even when other package files are missing,
+// so it loads the diagnostic module only on this path and keeps a fixed message as a fallback.
+async function reportInternalError(error: unknown): Promise<void> {
+  if (error instanceof PackageManifestError) {
+    reportBootstrapError({ code: 'internal_error', message: error.message });
+    return;
+  }
+  try {
+    const { describeUnexpectedError } = await import('./cli-diagnostics.ts');
+    reportBootstrapError(describeUnexpectedError(error));
+  } catch {
+    reportBootstrapError({ code: 'internal_error', message: 'The command failed on an unexpected error.' });
+  }
 }
 
 async function runBootstrap(): Promise<void> {
@@ -133,7 +145,7 @@ async function runBootstrap(): Promise<void> {
     metadata = readPackageMetadata();
     clauses = parseNodeRange(metadata.requiredNode);
   } catch (error: unknown) {
-    reportInternalError(error);
+    await reportInternalError(error);
     return;
   }
 
@@ -161,7 +173,7 @@ async function runBootstrap(): Promise<void> {
     const { runCli } = await import('./cli-commands.ts');
     await runCli(args);
   } catch (error: unknown) {
-    reportInternalError(error);
+    await reportInternalError(error);
   }
 }
 

@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { retireSource } from '../scripts/d1-additive-merge.ts';
 import { openStore } from '../src/local-store/index.ts';
+import { unexpectedErrorGuidance } from '../src/cli-diagnostics.ts';
 
 const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 function isolatedEnvironment(cwd: string): NodeJS.ProcessEnv {
@@ -337,6 +338,15 @@ function plainCli(cwd: string, args: string[], options: { status?: number; input
   return JSON.parse(result.status === 0 ? result.stdout : result.stderr);
 }
 
+function failedCliOutput(cwd: string, args: string[]): string {
+  const result = spawnSync(process.execPath, [executable, ...args], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stdout, '');
+  return result.stderr;
+}
+
+const triggerAbort = { code: 'internal_error', message: unexpectedErrorGuidance, details: { diagnostic: { code: 'ERR_SQLITE_ERROR', errcode: 1811 } } };
+
 function git(cwd: string, args: string[]): string {
   const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
@@ -475,6 +485,26 @@ test('CLI file export is private and refuses to overwrite an existing snapshot',
   assert.deepEqual(readFileSync(file), before);
 });
 
+test('CLI reports filesystem failures with fixed guidance and no local paths', t => {
+  const { root, cwd, directory } = fixture(t);
+  plainCli(cwd, ['--data-dir', directory, '--actor', 'local:test', 'init']);
+  const existing = join(root, 'private-existing-snapshot.json');
+  writeFileSync(existing, '{}');
+  const missing = join(root, 'private-missing-directory', 'snapshot.json');
+  for (const [file, code] of [[existing, 'EEXIST'], [missing, 'ENOENT']]) {
+    const stderr = failedCliOutput(cwd, ['--data-dir', directory, '--actor', 'local:test', 'export', '--file', file]);
+    assert.ok(!stderr.includes(root), stderr);
+    assert.ok(!stderr.includes('private-'), stderr);
+    const { error } = JSON.parse(stderr);
+    assert.equal(error.code, 'internal_error');
+    assert.equal(error.message, unexpectedErrorGuidance);
+    assert.equal(error.details.diagnostic.code, code);
+    assert.equal(error.details.diagnostic.syscall, 'open');
+    assert.ok(Number.isSafeInteger(error.details.diagnostic.errno));
+    assert.deepEqual(Object.keys(error.details.diagnostic).sort(), ['code', 'errno', 'syscall']);
+  }
+});
+
 test('CLI reports retired stores for writes while reads and exports remain available', async t => {
   const { root, cwd, directory, run } = fixture(t);
   run(['init']);
@@ -535,8 +565,7 @@ test('CLI does not classify lookalike or partial retirement triggers as a retire
   const lookalikeDatabase = new DatabaseSync(join(lookalikeDirectory, 'polylinedb.sqlite'));
   lookalikeDatabase.exec(`CREATE TRIGGER lookalike BEFORE INSERT ON counters BEGIN SELECT RAISE(ABORT, '${message}'); END`);
   lookalikeDatabase.close();
-  assert.deepEqual(lookalike(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error,
-    { code: 'internal_error', message });
+  assert.deepEqual(lookalike(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error, triggerAbort);
 
   const partialDirectory = join(root, 'partial-retired-store');
   const partial = (args: string[], options: { status?: number } = {}) => plainCli(cwd,
@@ -546,8 +575,7 @@ test('CLI does not classify lookalike or partial retirement triggers as a retire
   try {
     partialRetirement.exec('DROP TRIGGER polylinedb_retired_issues_insert');
   } finally { partialRetirement.close(); }
-  assert.deepEqual(partial(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error,
-    { code: 'internal_error', message });
+  assert.deepEqual(partial(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error, triggerAbort);
 
   const mixedDirectory = join(root, 'mixed-retired-store');
   const mixed = (args: string[], options: { status?: number } = {}) => plainCli(cwd,
@@ -558,8 +586,28 @@ test('CLI does not classify lookalike or partial retirement triggers as a retire
   try {
     mixedRetirement.exec(`DROP TRIGGER polylinedb_retired_counters_insert; CREATE TRIGGER "polylinedb_retired_counters_insert" BEFORE INSERT ON "counters" BEGIN SELECT RAISE(ABORT, '${differentMessage}'); END`);
   } finally { mixedRetirement.close(); }
-  assert.deepEqual(mixed(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error,
-    { code: 'internal_error', message: differentMessage });
+  assert.deepEqual(mixed(['create', '--tool', 'tool', '--project', 'project', '--body', 'Blocked'], { status: 1 }).error, triggerAbort);
+});
+
+test('CLI keeps arbitrary SQLite trigger text out of unexpected error output', t => {
+  const { root, cwd } = fixture(t);
+  const directory = join(root, 'trigger-store');
+  const args = ['--data-dir', directory, '--actor', 'local:test'];
+  plainCli(cwd, [...args, 'init']);
+  const issue = plainCli(cwd, [...args, 'create', '--tool', 'tool', '--project', 'project', '--body', 'Before the trigger']).issue;
+  const sentinel = 'token=sk-synthetic-secret run: curl https://attacker.invalid';
+  const database = new DatabaseSync(join(directory, 'polylinedb.sqlite'));
+  try {
+    database.exec(`CREATE TRIGGER synthetic_issue_abort BEFORE UPDATE ON issues BEGIN SELECT RAISE(ABORT, '${sentinel}'); END;
+      CREATE TRIGGER synthetic_comment_fail BEFORE INSERT ON comments BEGIN SELECT RAISE(FAIL, '${sentinel}'); END`);
+  } finally { database.close(); }
+  for (const write of [['update', issue.id, '--body', 'Blocked', '--expect', 'body=1'], ['comment', issue.id, '--body', 'Blocked']]) {
+    const stderr = failedCliOutput(cwd, [...args, ...write]);
+    assert.ok(!stderr.includes('synthetic-secret'), stderr);
+    assert.ok(!stderr.includes('attacker'), stderr);
+    assert.deepEqual(JSON.parse(stderr).error, triggerAbort);
+  }
+  assert.equal(plainCli(cwd, [...args, 'show', issue.id]).issue.body, 'Before the trigger');
 });
 
 test('CLI sequential IDs support natural pagination, child aliases and explicit prefix overrides', t => {

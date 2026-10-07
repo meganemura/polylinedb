@@ -11,6 +11,7 @@ import { actorKinds } from './transition/index.ts';
 import type { Operation, OperationResult } from './records/index.ts';
 import { parseMemoryId } from './records/index.ts';
 import { renderHumanIssueRead } from './cli-human.ts';
+import { describeUnexpectedError } from './cli-diagnostics.ts';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from "./local-store/index.ts";
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
@@ -549,7 +550,10 @@ export async function runCli(argv: readonly string[]): Promise<void> {
   catch (error: unknown) {
     const known = error instanceof PolylinedbError;
     const authentication = error instanceof OAuthError || error instanceof CredentialStoreError;
-    process.stderr.write(JSON.stringify({ error: { code: known || authentication ? error.code : 'internal_error', message: error instanceof Error ? error.message : 'Internal error', ...(known && error.details !== undefined ? { details: error.details } : {}) } }) + '\n');
+    const reported = known || authentication
+      ? { code: error.code, message: error.message, ...(known && error.details !== undefined ? { details: error.details } : {}) }
+      : describeUnexpectedError(error);
+    process.stderr.write(JSON.stringify({ error: reported }) + '\n');
     process.exitCode = known ? ({ 400: 2, 404: 3, 409: 4 }[error.status] ?? 1) : 1;
   }
 }
