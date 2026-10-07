@@ -1,6 +1,8 @@
 # Issue authority with Durable Objects and a D1 projection
 
-Status: proposed design. The cloud store uses D1 as its authority through `src/service/d1.ts`.
+Status: release 0.4 has started, and the rest is a proposed design.
+`src/transition/` holds the decisions, and the SQLite store and the D1 store both call it.
+The cloud store still uses D1 as its authority through `src/service/d1.ts`.
 
 This document describes how the cloud store can move its authoritative state into a Durable Object.
 D1 then keeps a projection of that state, and the local SQLite store keeps working as it does today.
@@ -376,7 +378,7 @@ Reads can use D1 during step 3 to step 5, because D1 does not change while write
 
 The release stages are:
 
-1. **Release 0.4.** Add `src/transition/` with the transition function and its types. Both stores keep their conditional SQL writes, and D1 stays the authority.
+1. **Release 0.4.** Add `src/transition/` with the transition function and its types. Both stores keep their conditional SQL writes, and D1 stays the authority. The main branch has this stage, and no published version contains it yet.
 2. **Release 0.5.** Add the store Durable Object and the D1 projection. Move authority with the migration from D1 to the store Durable Object. Keep the return path.
 3. **After 0.5.** Make outbox delivery and reconciliation stronger and add the measures. Remove the return path only after the failure classes stay at zero for an agreed period.
 4. **Later, if a measurement needs it.** Split the store into per-issue authorities, as the next section describes.
@@ -441,89 +443,81 @@ The module boundaries below already separate the per-issue write from the cross-
 
 ## Module boundaries keep the transition pure
 
-The current boundary configuration orders layers as domain, adapter, and entrypoint.
 The `records` module is in the domain layer, and it also contains SQL.
-A rule that keeps SQL out of the transition therefore needs a new layer below the domain layer.
+A rule that keeps SQL out of the transition therefore needs a layer below the domain layer.
+The boundary configuration has that `core` layer, and `src/transition/` is its only module.
 
-The proposal adds four modules.
-Three hold the transition, the per-issue write, and the cross-issue port of the store Durable Object.
-The fourth writes the D1 projection.
+Four modules hold the parts.
+`src/transition/` is in the configuration and holds the transition.
+The other three are proposed.
+They hold the per-issue write and the cross-issue port of the store Durable Object, and the writer of the D1 projection.
 Cross-issue search keeps its generated queries in `records`.
 
-| Module | Part | Tags | May import |
-| --- | --- | --- | --- |
-| `src/transition/` | Transition | `layer:core`, `env:portable` | Nothing outside itself, by the layer order |
-| `src/issue-authority/` | Per-issue atomic write in the store Durable Object | `layer:adapter`, `env:worker` | `transition` and the public entry of `cross-issue-port` |
-| `src/cross-issue-port/` | Cross-issue port in the store Durable Object | `layer:adapter`, `env:worker` | `transition` |
-| `src/projection/` | Writer of the D1 projection | `layer:adapter`, `env:portable` | `transition` |
+| Module | Part | State | Tags | May import |
+| --- | --- | --- | --- | --- |
+| `src/transition/` | Transition | In the configuration | `layer:core`, `env:portable` | Nothing outside itself, by the layer order |
+| `src/issue-authority/` | Per-issue atomic write in the store Durable Object | Proposed | `layer:adapter`, `env:worker` | `transition` and the public entry of `cross-issue-port` |
+| `src/cross-issue-port/` | Cross-issue port in the store Durable Object | Proposed | `layer:adapter`, `env:worker` | `transition` |
+| `src/projection/` | Writer of the D1 projection | Proposed | `layer:adapter`, `env:portable` | `transition` |
 
 The local store keeps every part in `src/records/` and `src/local-store/`, because one SQLite file holds them all.
 `src/records/` imports `src/transition/` for the decisions.
 
-This change to `archstrict.config.ts` encodes the table:
-
-```diff
-     { name: "workspace", glob: "src/workspace/**", surface: "index.ts" },
-     { name: "host-hooks", glob: "src/host-hooks/**", surface: "index.ts" },
-     { name: "service", glob: "src/service/**", surface: "index.ts" },
-+    { name: "transition", glob: "src/transition/**", surface: "index.ts" },
-+    { name: "projection", glob: "src/projection/**", surface: "index.ts" },
-+    { name: "issue-authority", glob: "src/issue-authority/**", surface: "index.ts" },
-+    { name: "cross-issue-port", glob: "src/cross-issue-port/**", surface: "index.ts" },
-   ],
-   classify: [
-     { glob: "src/cli.ts", tags: ["layer:entrypoint", "env:node"] },
-     { glob: "src/host-hooks/**", tags: ["capability:host-hooks", "layer:adapter", "env:node"] },
-     { glob: "src/service/**", tags: ["capability:service", "layer:adapter", "env:worker"] },
-     { glob: "src/service/index.ts", tags: ["capability:service", "layer:entrypoint", "env:worker"] },
-+    { glob: "src/transition/**", tags: ["capability:transition", "layer:core", "env:portable"] },
-+    { glob: "src/projection/**", tags: ["capability:projection", "layer:adapter", "env:portable"] },
-+    { glob: "src/issue-authority/**", tags: ["capability:issue-authority", "layer:adapter", "env:worker"] },
-+    { glob: "src/cross-issue-port/**", tags: ["capability:cross-issue-port", "layer:adapter", "env:worker"] },
-   ],
-   edges: {
-     allowDeny: [
-       { source: "capability:host-hooks", targetNamespace: "capability", allow: ["host-hooks","records"], because: "host-hooks imports only the capability contracts it uses." },
-       { source: "capability:cloud-client", targetNamespace: "capability", allow: ["cloud-client","records","workspace"], because: "cloud-client imports only the capability contracts it uses." },
-       { source: "capability:service", targetNamespace: "capability", allow: ["service","records"], because: "service imports only the capability contracts it uses." },
-+      { source: "capability:projection", targetNamespace: "capability", allow: ["projection", "transition"], because: "The cross-issue index applies authority signals and cannot reach the write commands of records." },
-+      { source: "capability:issue-authority", targetNamespace: "capability", allow: ["issue-authority", "transition", "cross-issue-port"], because: "An issue authority commits one issue and asks the port about other issues; it never reads the search index." },
-+      { source: "capability:cross-issue-port", targetNamespace: "capability", allow: ["cross-issue-port", "transition"], because: "The port owns facts that span issues and never writes issue fields or claims." },
-     ],
-     order: [
-       {
-         tagNamespace: "layer",
--        sequence: { "": ["domain", "adapter", "entrypoint"] },
-+        sequence: { "": ["core", "domain", "adapter", "entrypoint"] },
-         direction: "downward-only",
-         because: "Domain behavior stays independent of storage, credentials, and transport; adapters implement domain ports; command and Worker entrypoints consume both.",
-       },
-```
-
-The configuration was checked in a separate worktree with small modules in the four directories.
-Each new module imports a type from `src/transition/`, so each new rule evaluates at least one edge.
-`archstrict check` reported no violations, and the 25 existing boundary controls in `scripts/check-architecture.ts` passed.
-These probes gave the expected results:
+`scripts/check-architecture.ts` proves the transition boundary with these controls:
 
 | Probe | Result |
 | --- | --- |
 | `src/transition/` imports `src/records/index.ts` | `tag-order` violation |
 | `src/transition/` imports `src/service/index.ts` | `tag-order` violation |
 | `src/transition/` imports `node:fs` | `tag-boundary` violation from the portable rule |
+| `src/cli.ts` imports a private file in `src/transition/` | `public-surface-bypass` violation |
+| `src/records/` imports `src/transition/index.ts` | Allowed |
+
+This change to `archstrict.config.ts` adds the three proposed modules:
+
+```diff
+     { name: "service", glob: "src/service/**", surface: "index.ts" },
+     { name: "transition", glob: "src/transition/**", surface: "index.ts" },
++    { name: "projection", glob: "src/projection/**", surface: "index.ts" },
++    { name: "issue-authority", glob: "src/issue-authority/**", surface: "index.ts" },
++    { name: "cross-issue-port", glob: "src/cross-issue-port/**", surface: "index.ts" },
+   ],
+   classify: [
+     { glob: "src/transition/**", tags: ["capability:transition", "layer:core", "env:portable"] },
++    { glob: "src/projection/**", tags: ["capability:projection", "layer:adapter", "env:portable"] },
++    { glob: "src/issue-authority/**", tags: ["capability:issue-authority", "layer:adapter", "env:worker"] },
++    { glob: "src/cross-issue-port/**", tags: ["capability:cross-issue-port", "layer:adapter", "env:worker"] },
+   ],
+   edges: {
+     allowDeny: [
+       { source: "capability:service", targetNamespace: "capability", allow: ["service","records"], because: "service imports only the capability contracts it uses." },
++      { source: "capability:projection", targetNamespace: "capability", allow: ["projection", "transition"], because: "The cross-issue index applies authority signals and cannot reach the write commands of records." },
++      { source: "capability:issue-authority", targetNamespace: "capability", allow: ["issue-authority", "transition", "cross-issue-port"], because: "An issue authority commits one issue and asks the port about other issues; it never reads the search index." },
++      { source: "capability:cross-issue-port", targetNamespace: "capability", allow: ["cross-issue-port", "transition"], because: "The port owns facts that span issues and never writes issue fields or claims." },
+     ],
+```
+
+The change was checked on 2026-10-08 with archstrict 0.2.1 in a separate worktree.
+Each of the three directories held a small module that imports a type from `src/transition/`, so each new rule evaluates at least one edge.
+`src/cross-issue-port/` also held a private file for the surface probe.
+`archstrict check` reported no violations.
+The 30 existing boundary controls passed, and 9 added controls for these probes passed:
+
+| Probe | Result |
+| --- | --- |
 | `src/issue-authority/` imports `src/projection/index.ts` | `tag-boundary` violation from the issue authority rule |
 | `src/issue-authority/` imports `src/records/index.ts` | `tag-boundary` violation from the issue authority rule |
 | `src/issue-authority/` imports a private file in `src/cross-issue-port/` | `public-surface-bypass` violation |
+| `src/issue-authority/` imports `src/cross-issue-port/index.ts` | Allowed |
 | `src/cross-issue-port/` imports `src/issue-authority/index.ts` | `tag-boundary` violation from the port rule |
 | `src/cross-issue-port/` imports `src/projection/index.ts` | `tag-boundary` violation from the port rule |
 | `src/projection/` imports `src/records/index.ts` | `tag-boundary` violation from the projection rule |
 | `src/projection/` imports `src/issue-authority/index.ts` | `tag-boundary` violation from the projection rule |
 | `src/projection/` imports `src/cross-issue-port/index.ts` | `tag-boundary` violation from the projection rule |
-| `src/cli.ts` imports a private file in `src/transition/` | `public-surface-bypass` violation |
-| `src/records/` imports `src/transition/index.ts` | Allowed |
 
 The configuration has one known gap.
 A rule that denies the `solarsql` package to the core layer evaluates no edges while `src/transition/` imports no package.
-archstrict reports such a rule as `empty-rule-set`, so the configuration cannot carry it yet.
+archstrict 0.2.1 reports such a rule as `empty-rule-set`, so the configuration cannot carry it yet.
 The order rule still stops the transition from importing `records`, which holds the SQL.
 A direct `solarsql` import in `src/transition/` stays possible until archstrict can keep a deny rule for a module with no outgoing edges.
 
@@ -534,4 +528,4 @@ Add `records` to both allow lists in that change, and keep `projection` out of t
 Add each module and its configuration in the same change.
 An empty module glob is an `empty-rule-set` violation, so the configuration cannot come before its module.
 Add the new `allowDeny` rules at the end of the list, because the existing controls name earlier rules by index.
-Add a boundary control to `scripts/check-architecture.ts` for each probe in the table.
+Add a boundary control to `scripts/check-architecture.ts` for each probe of the proposed modules.

@@ -15,14 +15,16 @@ They do not expose interactive transactions to the issue module.
 
 ## Dependency direction
 
-The architecture check orders source modules as domain, adapter, then entrypoint.
-Imports may point toward the domain layer or stay within one layer.
+The architecture check orders source modules as core, domain, adapter, then entrypoint.
+Imports may point toward the core layer or stay within one layer.
+The core holds the pure issue and claim decisions.
 The domain includes issue and memory behavior, IDs, schemas, queries, and snapshots.
 Adapters include SQLite, D1, cloud access, credentials, and local configuration.
 The CLI, Worker, repository scripts, and build configuration are entrypoints.
 
 This rule keeps domain behavior independent from storage, authentication, and transport.
-The issue module keeps validation and SQL together because both stores run its ordered statements.
+The transition module decides issue and claim changes without SQL.
+The issue module keeps the ordered SQL statements that both stores run, and a differential test keeps them equal to the transition.
 Run `npm exec -- archstrict check` after changing imports or module boundaries.
 CI runs `npm run check:architecture`, which checks imports and proves the boundary controls.
 
@@ -31,6 +33,7 @@ The source modules expose capability contracts through these public entries:
 | Module | Public entries | Responsibility |
 | --- | --- | --- |
 | records | `src/records/index.ts`, `src/records/persistence.ts` | Commands and domain types; storage ports, row decoding, schemas, and portable snapshots |
+| transition | `src/transition/index.ts` | Pure issue, claim, creation, prerequisite, and agent gate decisions that both stores share |
 | local-store | `src/local-store/index.ts` | SQLite lifetime, transactions, upgrades, and restoration |
 | workspace | `src/workspace/index.ts` | Connection selection and repository settings |
 | cloud-client | `src/cloud-client/index.ts` | Authenticated outbound actions; private OAuth, credentials, and transport |
@@ -43,7 +46,7 @@ Capability rules restrict public imports to each module's required contracts.
 Node and Worker environment tags prevent imports between those hosts.
 Run `npm run check:architecture` to verify the graph and deliberate boundary controls.
 The [capability decision](adr/0006-capability-boundaries.md) records the module plan and verification limits.
-The [issue authority design](issue-authority.md) proposes a pure transition layer and a cloud store with Durable Objects.
+The [issue authority design](issue-authority.md) describes the transition layer and proposes a cloud store with Durable Objects.
 
 Each mutable field has its own version, starting at 1.
 An update supplies the observed version for each field it changes.
