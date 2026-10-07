@@ -11,16 +11,47 @@
 - Add explicit `--human` output for issue show, list, and search, with quiet terminal headings and safe text rendering.
 - Preserve memory freshness notices in human output; keep JSON as the default and disable styling for pipes and `NO_COLOR`.
 
-### Upgrade from 0.2.0
+<a id="upgrade-from-020"></a>
+
+### Upgrade from supported older versions
 
 Version 0.3.1 uses schema 6 and snapshot 5. Version 0.2.0 does not provide claim commands.
-Stop writers and preserve a private backup before installing version 0.3.1.
-For a local connection, run `pd upgrade` after installation to move schema 5 to schema 6.
-The upgrade preserves existing records and leaves issues unclaimed.
-For D1, use the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-or-5-deployment) before deploying the matching Worker.
+Local upgrades accept canonical schemas 2, 3, 4, and 5 directly.
+Version 0.1.0 uses schema 3 and can upgrade directly to 0.3.1 without installing 0.2.0 first.
+Version 0.2.0 uses schema 5 and follows the same procedure.
+The CLI requires Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later.
+
+Stop all writers, including agents, hooks, and background processes, before installation.
+Install version 0.3.1, then export a private backup before the upgrade.
+Use the same named local connection for every command:
+
+```sh
+npm install --global polylinedb@0.3.1
+pd --connection LOCAL export --historical --file /absolute/private/path/before-upgrade.json
+pd --connection LOCAL --actor local:operator upgrade
+pd --connection LOCAL list --project PROJECT
+pd --connection LOCAL memory context --project PROJECT
+```
+
+Replace `LOCAL` and `PROJECT` with your connection name and project.
+For an unnamed local store, replace `--connection LOCAL` with the same `--data-dir /absolute/store/path` in every `pd` command.
+Choose a new backup file outside Git checkouts. The export creates the file with mode `0600` and refuses an existing file.
+The new CLI's `export --historical` reads schemas 2 through 5 without changing the store and writes snapshot 5.
+The upgrade does not create a backup automatically.
+Local mutations require an actor. You can also supply the actor through `POLYLINEDB_ACTOR` or repository defaults.
+The upgrade preserves existing records, keeps existing prerequisite graphs, and leaves issues unclaimed.
+Check the preserved records before restarting writers.
+For schema 6, use ordinary `export` for backups. Historical export rejects schema 6, and another upgrade reports `already_current`.
+Retired stores remain read-only and refuse upgrades.
+Recover a retired schema 2 through 5 store through historical export and import into a separate fresh store.
+For a retired schema 6 store, use ordinary export instead. Keep the original store's retirement guards in place.
+
+For D1, stop writers and back up the database before changing its schema or Worker.
+Use the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-or-5-deployment) before deploying the matching Worker.
 The CLI does not upgrade D1.
 
-Convert snapshot 4 explicitly before import:
+Snapshot file conversion is separate from a local database upgrade.
+Convert an existing snapshot 4 file explicitly before import:
 
 ```sh
 pd snapshot convert --from 4 --file OLD --output NEW
