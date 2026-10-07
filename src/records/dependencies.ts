@@ -5,6 +5,8 @@ import { PolylinedbError } from './errors.ts';
 import type { Operation as IssueOperation, Issue, SqlExecutor, SqlStatement, Status } from './issues.ts';
 import { issueQueries } from './issue-queries.ts';
 import { decidePrerequisiteEdit, decideReplay } from '../transition/index.ts';
+import type { Actor } from '../transition/index.ts';
+import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 
 type WorkFilters = Omit<Extract<IssueOperation, { op: 'list' }>, 'op' | 'status'>;
 export type DependencyMutation = { op: 'dependency_add' | 'dependency_remove'; dependent_id: string; blocker_id: string; expected_revision: number; request_id: string };
@@ -89,7 +91,9 @@ function knownError(error: unknown, marker: string): boolean {
   }
   return false;
 }
-export async function executeDependencyOperation(db: SqlExecutor, operation: DependencyOperation, actor: string): Promise<DependencyResult> {
+export async function executeDependencyOperation(db: SqlExecutor, operation: DependencyOperation, by: string | Actor): Promise<DependencyResult> {
+  const caller = asActor(by);
+  const actor = caller.id;
   if (operation.op === 'dependency_worklist') {
     const rows = await db.reads.all(issueQueries.dependencyWorklist, { state: operation.state, tool: operation.tool ?? null, project: operation.project ?? null, type: operation.type ?? null, priority: operation.priority ?? null, label: operation.label ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 });
     const all = rows.map(issueRow); const issues = all.slice(0, operation.limit);
@@ -108,13 +112,14 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
   if (!actor.trim() || /\p{Cc}/u.test(actor) || new TextEncoder().encode(actor).length > 256) return invalid('Invalid actor');
   const payload = JSON.stringify(operation);
   const present = 'EXISTS(SELECT 1 FROM dependencies WHERE dependent_id = ? AND blocker_id = ?)';
+  const holds = agentHoldsClaim(operation.dependent_id, caller);
   const receipt: SqlStatement = { sql: `INSERT INTO dependency_requests(request_id,actor,payload,dependent_id,blocker_id,result_revision,outcome,created_at)
     SELECT ?,?,?,?,?,COALESCE((SELECT result_revision FROM dependency_requests WHERE request_id = ?),?),CASE WHEN ${present} THEN ? ELSE ? END,?
     WHERE EXISTS(SELECT 1 FROM dependency_requests WHERE request_id = ?) OR (
       EXISTS(SELECT 1 FROM issues WHERE id = ?) AND EXISTS(SELECT 1 FROM issues WHERE id = ?)
-      AND EXISTS(SELECT 1 FROM dependency_revisions WHERE dependent_id = ? AND revision = ? AND revision < 9007199254740991))`,
+      AND EXISTS(SELECT 1 FROM dependency_revisions WHERE dependent_id = ? AND revision = ? AND revision < 9007199254740991) AND ${holds.sql})`,
     params: [operation.request_id, actor, payload, operation.dependent_id, operation.blocker_id, operation.request_id, operation.expected_revision + 1,
-      operation.dependent_id, operation.blocker_id, operation.op === 'dependency_add' ? 'already_present' : 'removed', operation.op === 'dependency_add' ? 'added' : 'already_absent', new Date().toISOString(), operation.request_id, operation.dependent_id, operation.blocker_id, operation.dependent_id, operation.expected_revision] };
+      operation.dependent_id, operation.blocker_id, operation.op === 'dependency_add' ? 'already_present' : 'removed', operation.op === 'dependency_add' ? 'added' : 'already_absent', new Date().toISOString(), operation.request_id, operation.dependent_id, operation.blocker_id, operation.dependent_id, operation.expected_revision, ...holds.params] };
   const admitted = 'EXISTS(SELECT 1 FROM dependency_requests WHERE request_id = ? AND dependent_id = ? AND result_revision = ?)';
   const gate = [operation.request_id, operation.dependent_id, operation.expected_revision + 1];
   let result;
@@ -128,6 +133,7 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
       { sql: 'SELECT * FROM dependency_requests WHERE request_id = ?', params: [operation.request_id] },
       { sql: 'SELECT revision FROM dependency_revisions WHERE dependent_id = ?', params: [operation.dependent_id] },
       { sql: 'SELECT id FROM issues WHERE id = ?', params: [operation.blocker_id] },
+      heldClaimObservation(operation.dependent_id),
       { sql: 'SELECT issues.* FROM dependencies JOIN issues ON issues.id = dependencies.blocker_id WHERE dependent_id = ? ORDER BY sort_key LIMIT 51', params: [operation.dependent_id] },
     ]);
   } catch (error) {
@@ -142,13 +148,14 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
   const request = rowsAt(result, 3)[0];
   if (request) return { dependency: dependencyReceipt(request) };
   const observed = rowsAt(result, 4)[0];
+  if (observed) rejectAgentWrite(caller, 'issue_write', operation.dependent_id, [], rowsAt(result, 6)[0]);
   const edit = decidePrerequisiteEdit({ dependent_revision: observed ? revision(observed.revision) : null, blocker_exists: rowsAt(result, 5)[0] !== undefined }, operation.expected_revision);
   if (edit.accepted) throw new PolylinedbError('storage_error', 'The database rejected a prerequisite edit without a matching condition', 503);
   switch (edit.reason) {
     case 'dependent_not_found': throw new PolylinedbError('not_found', 'A dependency endpoint was not found', 404, { id: operation.dependent_id });
     case 'blocker_not_found': throw new PolylinedbError('not_found', 'A dependency endpoint was not found', 404, { id: operation.blocker_id });
     case 'revision_conflict': {
-      const all = rowsAt(result, 6).map(issueRow); const blockers = all.slice(0, 50).map(({ id, project, status }) => ({ id, project, status }));
+      const all = rowsAt(result, 7).map(issueRow); const blockers = all.slice(0, 50).map(({ id, project, status }) => ({ id, project, status }));
       throw new PolylinedbError('dependency_conflict', 'Read the current prerequisite revision before deciding on a new mutation', 409, { expected_revision: operation.expected_revision, current: { dependent_id: operation.dependent_id, revision: observed.revision, blockers, next_cursor: all.length > 50 ? blockers.at(-1)?.id ?? null : null } });
     }
     case 'revision_exhausted': throw new PolylinedbError('dependency_version_exhausted', 'The prerequisite revision cannot increase', 409, { dependent_id: operation.dependent_id });

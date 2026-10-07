@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { initializeStore, openStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { admitAgentWrite } from '../src/transition/index.ts';
+import { runGateRaces } from './fixtures/gate-races.ts';
 
 const session = '00000000-0000-4000-8000-0000000000c1';
 const codex = { id: 'local:codex', kind: 'agent' } as const;
@@ -144,4 +145,13 @@ test('two local agents claim different issues under their own actors and never u
   assert.deepEqual(pd(['claim', 'list']).claims.map((claim: { lease: { actor: string } }) => claim.lease.actor), ['local:codex', 'local:claude']);
   assert.equal(pd(['--actor-kind', 'agent', 'claim', 'show', 'pd-1']).error.code, 'invalid_input');
   assert.equal(pd(['comment', 'pd-2', '--body', 'x'], agent('local:codex')).error.code, 'claim_required');
+});
+
+test('a change between the gate and the write cannot let an agent write land on SQLite', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-races-'));
+  const cwd = join(root, 'work'); const directory = join(root, 'store'); mkdirSync(cwd);
+  initializeStore({ directory, cwd });
+  const store = openStore({ directory, cwd });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  assert.equal((await runGateRaces(store.db, 'r')).length, 10);
 });

@@ -15,7 +15,7 @@
     "build:worker": "npm run check:sql && cf build",
     "dev:worker": "cf dev --local",
     "typecheck": "npm run check:sql && tsc --noEmit",
-    "test:d1": "node test/d1.integration.ts && node test/memory-freshness-d1.integration.ts && node test/dependencies-d1.integration.ts && node test/claims-sql.integration.ts && node test/transition-differential-d1.integration.ts && node test/d1-snapshot.integration.ts",
+    "test:d1": "node test/d1.integration.ts && node test/memory-freshness-d1.integration.ts && node test/dependencies-d1.integration.ts && node test/claims-sql.integration.ts && node test/transition-differential-d1.integration.ts && node test/gate-races-d1.integration.ts && node test/d1-snapshot.integration.ts",
     "schema": "node scripts/schema.ts",
     "test:worker": "npm run build:worker && node test/worker.integration.ts",
     "build:cli": "npm run check:sql && tsc -p tsconfig.cli.json",
@@ -77,6 +77,7 @@
     "dist/records/claims-sql.js",
     "dist/records/schema-v5.js",
     "dist/records/operation-policy.js",
+    "dist/records/agent-gate.js",
     "dist/transition/"
   ],
   "publishConfig": {

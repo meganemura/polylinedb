@@ -56,7 +56,7 @@ export function issueClaimGuard(issue_id: string, proof: ClaimProof | undefined,
     ? { sql: 'NOT EXISTS(SELECT 1 FROM issue_claims WHERE issue_id = ?)', params: [issue_id] }
     : { sql: '1', params: [] };
 }
-export function claimMutationStatements(command: ClaimMutation, actor: string): readonly SqlStatement[] {
+export function claimMutationStatements(command: ClaimMutation, actor: string, acquisitionGate: SqlStatement = { sql: '1', params: [] }): readonly SqlStatement[] {
   const issue = command.op === 'claim_acquire' ? command.issue_id : command.claim_proof.issue_id;
   const payload = JSON.stringify(command);
   const replay: SqlStatement = { sql: `INSERT INTO claim_requests(${columns}) SELECT ${columns} FROM claim_requests WHERE request_id = ?`, params: [command.request_id] };
@@ -67,8 +67,8 @@ export function claimMutationStatements(command: ClaimMutation, actor: string): 
       FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id = issues.id
       WHERE issues.id = ? AND identity.singleton = 1 AND identity.incarnation = ?
       AND (claim.issue_id IS NULL OR claim.incarnation <> identity.incarnation OR claim.released_at IS NOT NULL OR claim.expires_at <= unixepoch())
-      AND COALESCE(claim.generation,0) < 9007199254740991 AND COALESCE(claim.revision,0) < 9007199254740991`,
-    params: [command.request_id, actor, payload, command.session_id, command.agent_label, command.ttl, issue, command.incarnation] };
+      AND COALESCE(claim.generation,0) < 9007199254740991 AND COALESCE(claim.revision,0) < 9007199254740991 AND ${acquisitionGate.sql}`,
+    params: [command.request_id, actor, payload, command.session_id, command.agent_label, command.ttl, issue, command.incarnation, ...acquisitionGate.params] };
   } else {
     const proof = claimProofPredicate(command.claim_proof, actor);
     admission = { sql: `INSERT INTO claim_requests(${columns})

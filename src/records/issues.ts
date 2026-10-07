@@ -6,6 +6,8 @@ import { issueQueries } from "./issue-queries.ts";
 import { PolylinedbError } from './errors.ts';
 import { claimProofSchema, claimRow, parseClaimProof } from './claims.ts';
 import { decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
+import type { Actor } from '../transition/index.ts';
+import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 import { issueClaimGuard } from './claims-sql.ts';
 import type { ClaimProof } from './claims-sql.ts';
 
@@ -217,11 +219,13 @@ const observation = (issueId: string): SqlStatement => ({ sql: `SELECT issues.*,
   EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children
   FROM issues WHERE id = ?`, params: [issueId] });
 
-async function update(db: SqlExecutor, issueId: string, changes: readonly Change[], actor: string, override: StatusOverride = {}, proof?: ClaimProof): Promise<OperationResult> {
+async function update(db: SqlExecutor, issueId: string, changes: readonly Change[], caller: Actor, override: StatusOverride = {}, proof?: ClaimProof): Promise<OperationResult> {
+  const actor = caller.id;
   const assignments: string[] = [];
-  const conditions = ['id = ?'];
+  const gate = agentHoldsClaim(issueId, caller);
+  const conditions = ['id = ?', gate.sql];
   const params: (string | number | null)[] = [];
-  const guards: (string | number | null)[] = [issueId];
+  const guards: (string | number | null)[] = [issueId, ...gate.params];
   const ownership = issueClaimGuard(issueId, proof, changes.some(change => change.field === 'status'), actor);
   conditions.push(ownership.sql); guards.push(...ownership.params);
   const guardedStatus = changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'));
@@ -237,8 +241,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   params.push(actor, new Date().toISOString(), ...guards);
   const result = await db.batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
     ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId),
-    { sql: `SELECT identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.* FROM memory_store_identity AS identity
-      LEFT JOIN issue_claims AS claim ON claim.issue_id = ? WHERE identity.singleton = 1`, params: [issueId] }]);
+    heldClaimObservation(issueId)]);
   const changed = rowsAt(result, 0)[0];
   if (changed) return { issue: issueRow(changed) };
   const observed = rowsAt(result, override.force ? 2 : 1)[0];
@@ -246,6 +249,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   const issue = issueRow(observed);
   const ownershipRow = rowsAt(result, override.force ? 3 : 2)[0];
   if (!ownershipRow || typeof ownershipRow.store_incarnation !== 'string' || typeof ownershipRow.observed_at !== 'number') throw new PolylinedbError('storage_error', 'Database omitted the claim observation', 503);
+  rejectAgentWrite(caller, 'issue_write', issueId, issue.labels, ownershipRow);
   const decision = decideIssueUpdate({ id: issueId, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1,
     claim: ownershipRow.generation === null ? null : claimRow(ownershipRow), store_incarnation: ownershipRow.store_incarnation },
     { changes, force: override.force === true, ...(proof === undefined ? {} : { claim_proof: proof }) }, actor, ownershipRow.observed_at);
@@ -262,7 +266,9 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   }
 }
 
-export async function executeOperation(db: SqlExecutor, operation: Operation, actor: string): Promise<OperationResult> {
+export async function executeOperation(db: SqlExecutor, operation: Operation, by: string | Actor): Promise<OperationResult> {
+  const caller = asActor(by);
+  const actor = caller.id;
   if (operation.op === 'actor') return { actor: name(actor, 'actor') };
   if (!['show', 'list', 'search'].includes(operation.op)) name(actor, 'actor');
   switch (operation.op) {
@@ -313,16 +319,21 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
       })) };
     }
     case 'comment': {
+      const gate = agentHoldsClaim(operation.id, caller);
       const result = await db.batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by)
-        SELECT ?, id, ?, ?, ? FROM issues WHERE id = ? RETURNING *`,
-        params: [crypto.randomUUID(), operation.body, new Date().toISOString(), actor, operation.id] }]);
+        SELECT ?, id, ?, ?, ? FROM issues WHERE id = ? AND ${gate.sql} RETURNING *`,
+        params: [crypto.randomUUID(), operation.body, new Date().toISOString(), actor, operation.id, ...gate.params] },
+        ...(caller.kind === 'agent' ? [observation(operation.id), heldClaimObservation(operation.id)] : [])]);
       const row = rowsAt(result, 0)[0];
-      if (!row) return notFound(operation.id);
-      return { comment: commentRow(row) };
+      if (row) return { comment: commentRow(row) };
+      const observed = caller.kind === 'agent' ? rowsAt(result, 1)[0] : undefined;
+      if (!observed) return notFound(operation.id);
+      rejectAgentWrite(caller, 'issue_write', operation.id, issueRow(observed).labels, rowsAt(result, 2)[0]);
+      throw new PolylinedbError('storage_error', 'The database rejected a comment without a matching condition', 503);
     }
-    case 'close': return update(db, operation.id, [{ field: 'status', value: 'closed', expected: operation.expected }], actor, operation, operation.claim_proof);
-    case 'reopen': return update(db, operation.id, [{ field: 'status', value: 'open', expected: operation.expected }], actor, {}, operation.claim_proof);
-    case 'update': return update(db, operation.id, operation.changes, actor, operation, operation.claim_proof);
+    case 'close': return update(db, operation.id, [{ field: 'status', value: 'closed', expected: operation.expected }], caller, operation, operation.claim_proof);
+    case 'reopen': return update(db, operation.id, [{ field: 'status', value: 'open', expected: operation.expected }], caller, {}, operation.claim_proof);
+    case 'update': return update(db, operation.id, operation.changes, caller, operation, operation.claim_proof);
     case 'list': case 'search': {
       const query = operation.tool === undefined ? issueQueries.list
         : operation.project === undefined ? issueQueries.listByTool

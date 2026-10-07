@@ -6,6 +6,8 @@ import { claimMutationStatements } from './claims-sql.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
 import { claimState, decideReplay } from '../transition/index.ts';
+import type { Actor } from '../transition/index.ts';
+import { agentMayAcquire, asActor, rejectAgentWrite } from './agent-gate.ts';
 import type { ClaimState } from '../transition/index.ts';
 
 export type Claim = ClaimProof & { actor: string; agent_label: string | null; revision: number; acquired_at: number; changed_at: number; expires_at: number; released_at: number | null };
@@ -116,7 +118,9 @@ function duplicateReceipt(error: unknown): boolean {
 function receipt(row: Record<string, unknown>): ClaimReceipt {
   const { request_id: _, payload: __, created_at: ___, ...result } = claimRequestRow(row); return result;
 }
-export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOperation, actor: string): Promise<ClaimResult> {
+export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOperation, by: string | Actor): Promise<ClaimResult> {
+  const caller = asActor(by);
+  const actor = caller.id;
   if (operation.op === 'claim_list') {
     const all = (await db.reads.all(issueQueries.claimList, { tool: operation.tool ?? null, project: operation.project ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 })).map(inspection);
     const claims = all.slice(0, operation.limit); return { claims, next_cursor: all.length > operation.limit ? claims.at(-1)?.issue_id ?? null : null };
@@ -130,7 +134,8 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   const payload = JSON.stringify(operation);
   let results;
   const issue_id = operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id;
-  try { results = await db.batch([...claimMutationStatements(operation, actor), claimObservation(issue_id)]); }
+  const gate = operation.op === 'claim_acquire' ? agentMayAcquire(caller, 'issues.labels_json') : undefined;
+  try { results = await db.batch([...claimMutationStatements(operation, actor, gate), claimObservation(issue_id)]); }
   catch (error) {
     if (!duplicateReceipt(error)) throw error;
     const row = (await db.reads.all(issueQueries.claimRequest, { request_id: operation.request_id }))[0];
@@ -142,10 +147,11 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   if (row) return { claim_receipt: receipt(row) };
   const observed = results.at(-1)?.rows[0];
   if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
+  if (operation.op === 'claim_acquire') rejectAgentWrite(caller, 'claim_acquire', issue_id, JSON.parse(String(observed.labels_json)), observed);
   throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current: inspection(observed) });
 }
 function claimObservation(issue_id: string): SqlStatement {
-  return { sql: `SELECT issues.id AS issue_id, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor,
+  return { sql: `SELECT issues.id AS issue_id, issues.labels_json, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor,
     claim.session_id, claim.agent_label, claim.generation, claim.revision, claim.acquired_at, claim.changed_at, claim.expires_at, claim.released_at
     FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id = issues.id
     WHERE identity.singleton = 1 AND issues.id = ?`, params: [issue_id] };
