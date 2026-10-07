@@ -8,6 +8,8 @@ Select the intended connection and actor before acquisition.
 Use one lowercase session UUID for this caller session.
 Keep it separate from each mutation's request UUID.
 For CLI acquisition, pass `--session-id` or set `POLYLINEDB_SESSION_ID` for that run.
+Without either, acquisition stops with a usage error.
+The CLI does not generate a session UUID, because another process could not renew or release a claim under a UUID it never saw.
 Repository and user defaults do not store session IDs.
 
 ## Acquire and inspect
@@ -139,7 +141,8 @@ A human creates it once. Find it with `pd list --label main-lock`; the ready wor
 Before a push to main, acquire the lock issue with a short TTL:
 
 ```sh
-pd claim acquire LOCK_ID --incarnation OBSERVED_HEX --ttl 120 --request-id REQUEST_UUID
+pd claim acquire LOCK_ID --incarnation OBSERVED_HEX --session-id SESSION_UUID \
+  --ttl 120 --request-id REQUEST_UUID
 ```
 
 While one actor holds it, another acquisition returns `claim_conflict`.
