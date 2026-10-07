@@ -38,7 +38,7 @@ try {
   assert.equal(packed.length, 1);
   const pack = packed[0];
   assert.equal(pack.name, 'polylinedb');
-  const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/cli-commands.js', 'dist/cli-human.js', 'dist/cli-diagnostics.js', "dist/records/issues.js",
+  const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/cli-help.js', 'dist/cli-commands.js', 'dist/cli-human.js', 'dist/cli-diagnostics.js', "dist/records/issues.js",
     "dist/records/schema.js", "dist/local-store/index.js", "dist/records/snapshot.js", "dist/workspace/local-config.js", "dist/workspace/connections.js", 'dist/workspace/index.js', "dist/records/issue-id.js",
     'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
     "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/agent-workflow.md', 'docs/architecture.md',
