@@ -7,5 +7,5 @@ export type { MemoryCounter, MemoryRequest } from './memories.ts';
 export { issueSortKey } from './issue-id.ts';
 export { statuses } from './schema.ts';
 export { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_STATEMENTS, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from './schema.ts';
-export { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4 } from './snapshot.ts';
+export { canonicalSnapshot, canonicalSnapshotV3, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4 } from './snapshot.ts';
 export type { Snapshot, SnapshotImport, Counter, CreateRequest } from './snapshot.ts';

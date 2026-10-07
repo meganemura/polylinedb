@@ -146,6 +146,8 @@ function parseSnapshotV3(input: unknown): SnapshotV3 {
     return fail(error instanceof Error ? error.message : 'Invalid memory snapshot');
   }
 }
+/** Release 0.1.0 restore checkpoints hold the digest of this form, so it must stay byte-identical to that release. */
+export function canonicalSnapshotV3(input: unknown): string { return JSON.stringify(parseSnapshotV3(input)); }
 export function convertSnapshotV3(input: unknown): Snapshot {
   const snapshot = parseSnapshotV3(input);
   return convertSnapshotV4({ ...snapshot, version: 4, dependencies: [], dependency_revisions: snapshot.issues.map(issue => ({ dependent_id: issue.id, revision: 1 })), dependency_requests: [] });
