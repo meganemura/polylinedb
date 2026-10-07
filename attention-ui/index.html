@@ -7,48 +7,32 @@
     <title>Attention</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/styles.css">
-    <script src="/app.js" defer></script>
+    <script src="/app.js" type="module"></script>
   </head>
   <body>
     <main class="paper">
       <h1>Attention</h1>
-      <form id="attention">
+      <form id="attention" aria-busy="true">
         <fieldset>
           <legend class="visually-hidden">Select an item</legend>
-          <ul class="attention-list">
-            <li>
-              <label class="attention-row">
-                <input type="radio" name="issue" value="fixture-1" checked>
-                <span class="row-text">
-                  <span class="reason">Decide the next step</span>
-                  <span class="actor">Claude</span>
-                </span>
-              </label>
-            </li>
-            <li>
-              <label class="attention-row">
-                <input type="radio" name="issue" value="fixture-2">
-                <span class="row-text">
-                  <span class="reason">Check the connection</span>
-                  <span class="actor">Codex</span>
-                </span>
-              </label>
-            </li>
-            <li>
-              <label class="attention-row">
-                <input type="radio" name="issue" value="fixture-3">
-                <span class="row-text">
-                  <span class="reason">Choose who takes over</span>
-                  <span class="actor">Rocky</span>
-                </span>
-              </label>
-            </li>
-          </ul>
+          <ul class="attention-list"></ul>
+          <p class="quiet-note" hidden></p>
         </fieldset>
         <footer class="dispatch-area">
-          <button type="submit" class="dispatch">Dispatch</button>
+          <button type="submit" class="dispatch" disabled>Dispatch</button>
         </footer>
       </form>
     </main>
+    <template id="attention-row">
+      <li>
+        <label class="attention-row">
+          <input type="radio" name="issue">
+          <span class="row-text">
+            <span class="reason"></span>
+            <span class="actor"></span>
+          </span>
+        </label>
+      </li>
+    </template>
   </body>
 </html>
