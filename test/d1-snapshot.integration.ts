@@ -14,12 +14,13 @@ import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { d1Executor } from "../src/service/d1.ts";
 import { canonicalSnapshot } from "../src/records/snapshot.ts";
 import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
+import { d1Relay, d1RelayModule } from "./fixtures/d1-relay.ts";
 
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');
 const runtime = new Miniflare({ workers: [{ config: {
   name: 'snapshot-test', compatibilityDate: '2026-09-25',
-  manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: 'export default { fetch() { return new Response("ready"); } }' } } },
+  manifest: d1RelayModule,
   env: { DB: { type: 'd1', name: 'snapshot-test' }, MERGEDB: { type: 'd1', name: 'claims-merge-test' } },
 } }] });
 const root = mkdtempSync(join(tmpdir(), 'pd-snapshot-test-'));
@@ -27,7 +28,8 @@ const location = { directory: join(root, 'source') };
 initializeStore(location);
 const source = openStore(location);
 try {
-  const database = await runtime.getD1Database('DB');
+  const entry: URL = await runtime.ready;
+  const database = d1Relay(entry, 'DB');
   const query: Query = async ({ sql, params }) => {
     const result = await database.prepare(sql).bind(...params).all();
     return result.results;
@@ -146,7 +148,7 @@ try {
   assert.throws(() => parseQueryOutput([{ success: true, results: [null] }]), /Invalid/);
   assert.deepEqual(parseQueryOutput([{ success: true, results: [{ n: 1 }] }]), [{ n: 1 }]);
   assert.throws(() => parseTarget({}), /Invalid/);
-  const mergedDatabase = await runtime.getD1Database('MERGEDB'); await mergedDatabase.batch(SCHEMA_STATEMENTS.map(sql => mergedDatabase.prepare(sql)));
+  const mergedDatabase = d1Relay(entry, 'MERGEDB'); await mergedDatabase.batch(SCHEMA_STATEMENTS.map(sql => mergedDatabase.prepare(sql)));
   const mergedExecutor = d1Executor(mergedDatabase); const mergedRun = (input: unknown) => executeOperation(mergedExecutor, parseOperation(input), 'test:destination');
   await mergedRun({ op: 'create', prefix: 'dest', request_id: randomUUID(), tool: 'compiler', project: 'p', body: 'Destination' });
   await mergedRun({ op: 'memory_create', prefix: 'dest', request_id: randomUUID(), project: 'p', title: 'Destination', body: 'Preserve revision' });

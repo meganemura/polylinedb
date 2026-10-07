@@ -145,6 +145,8 @@ node test/d1-snapshot.integration.ts
 ```
 
 The integration test requires the same external Miniflare installation used by `test/d1.integration.ts`. An optional module path can be passed as its first argument.
+The integration test sends its D1 calls through a relay worker over keep-alive connections.
+Miniflare's binding proxy closes the connection after every call, and the test makes thousands of calls, which would fill the macOS ephemeral port range with TIME_WAIT sockets.
 
 The tests cover committed-response-loss recovery, duplicate and concurrent restores, conflicting claims and rows, corrupt sort keys, and a 64 KiB issue body.
 They preserve issue and memory versions, audit fields, comments, counters, and creation requests.
