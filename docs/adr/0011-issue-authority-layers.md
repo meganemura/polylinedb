@@ -38,7 +38,8 @@ The owner chose this option over per-issue authorities for release 0.5.
 The stored state is the truth.
 A signal carries the full row and a sequence number, and D1 applies only a greater sequence.
 Claims expire by the deadline comparison at each write.
-The Durable Object alarm only drives outbox delivery.
+The Durable Object alarm only drives outbox delivery, and it is the outbox sender in release 0.5.
+A Cloudflare Queue replaces it when the oldest waiting outbox row stays older than the lag budget, or when delivery work delays the requests of the store object.
 
 The store object's name contains the store incarnation.
 The migration from D1 and the return to D1 are snapshot restores into a new object or a new database, and each restore rotates the incarnation.
@@ -70,6 +71,9 @@ The port must keep a mirror of the closed and epic facts of each issue without a
 Two adversarial reviews of that mirror protocol found defects that let a dependent close while its blocker was active.
 The design records the proposed fixes as unverified rules and gates a split on a measured need and a passing interleaving model.
 
+One Durable Object for each project is the other scale-out candidate.
+Dependencies can join projects, and the project field is mutable, so that split also needs a cross-issue port and meets the same gates.
+
 Per-issue authorities that check cross-issue rules against the D1 projection admit operations from old facts.
 An old projection could then allow a close while a blocker is active again.
 
@@ -81,8 +85,8 @@ The design keeps the rule.
 
 ## Open questions
 
-1. Does the outbox sender use the Durable Object alarm or a Cloudflare Queue? The alarm needs no extra service. A queue separates delivery retries from the store object.
-2. Which limits start a return to D1 as the authority? The design names the failure classes, and the owner sets the numbers.
+1. Which limits start a return to D1 as the authority? The design names the failure classes, and the owner sets the numbers.
+2. What is the projection lag budget? Measure the lag of alarm delivery in a staging deployment first.
 3. What request rate and store size does the personal store reach? Measure both before release 0.5.
 4. Do the generated list, search, and claim queries return the same results on Durable Object SQLite storage? Run the contract tests in a local workerd process.
 5. Can archstrict keep a deny rule for a module that has no outgoing edges? Until it can, the configuration cannot deny `solarsql` to `src/transition/` directly.

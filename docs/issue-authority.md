@@ -8,6 +8,8 @@ The [authority decision](adr/0011-issue-authority-layers.md) records the choices
 
 Cloudflare figures in this document come from the official documentation pages, read on 2026-10-06.
 Check the pages again before you use a figure for a commitment.
+The Worker configuration in `cloudflare.config.ts` sets `compatibilityDate` to `2026-09-25`.
+Review that date in the change that adds the store Durable Object.
 
 ## Purpose and non-goals
 
@@ -25,9 +27,10 @@ The Durable Object alarm also gives the store a timer for outbox delivery.
 
 The design has these non-goals:
 
-- Users cannot supply transition code. The product defines every transition.
+- Users cannot supply transition code or define their own workflows. The product defines every transition.
 - Events do not define the state. The stored state is the truth, and an event only reports a change.
 - The CLI, HTTP, and MCP request and response shapes stay the same.
+- Release 0.5 does not split the store into per-issue or per-project Durable Objects. Those splits are scale-out candidates with the gates in [the split section](#a-per-issue-split-stays-gated-after-05).
 
 ## Stored state is the truth, and signals report changes
 
@@ -138,10 +141,16 @@ The CLI flags, HTTP requests, MCP tool schemas, result shapes, and error codes s
 In release 0.5, every read and every write goes to the store Durable Object.
 A list after a write therefore shows the write, as it does on D1 today.
 The D1 projection serves no public read in release 0.5.
+Projection lag therefore does not show through any public operation in release 0.5.
+It affects only the return path and a later read offload.
 
 The current list, search, and claim queries are SQLite statements that solarsql generates.
-The Durable Object runs them on SQLite storage.
-Run the contract tests against a store Durable Object in a local workerd process before release 0.5, to prove that each query returns the same results there.
+The Durable Object runs them on its SQLite storage, which behaves differently from local SQLite and from D1 in two known ways.
+`sql.exec()` rejects `BEGIN TRANSACTION` and `SAVEPOINT`, so the store uses `transactionSync` for each transaction.
+A cursor that stays open across an `await` loses snapshot isolation, so the store reads each cursor to the end before it awaits.
+Both differences come from the Cloudflare page for the SQLite storage API, and the contract tests check the rest of the dialect.
+Run the contract tests against a store Durable Object in a local workerd process before release 0.5.
+The tests must prove that every solarsql query and every schema statement, including the triggers, gives the same results there.
 
 A ready issue stays a candidate.
 A caller that starts work on a ready issue still needs a claim and a status write.
@@ -192,8 +201,10 @@ The sequence number increases by one for each committed change to the issue.
 A change to dependency edges sends a signal with the full edge set of the dependent and its own sequence.
 
 The sender delivers outbox rows to D1.
-The sender can be the Durable Object alarm or a Cloudflare Queue.
-Both deliver at least once, so D1 can receive a signal twice or out of order.
+In release 0.5, the Durable Object alarm is the sender.
+It needs no other service, and the store has one outbox in one object.
+Switch to a Cloudflare Queue when the oldest waiting outbox row stays older than the lag budget, or when delivery work delays the requests of the store object.
+The alarm and a queue both deliver at least once, so D1 can receive a signal twice or out of order.
 D1 applies a signal only when its sequence is greater than the stored sequence for that issue or edge set.
 Because the signal carries the full row, D1 does not need the signals in between, and a repeated signal changes nothing.
 The sender deletes an outbox row only after D1 confirms that it stored that sequence or a later one.
@@ -235,6 +246,10 @@ Durable Objects also bill duration at $12.50 per million GB-s after 400,000 GB-s
 An alarm invocation counts as a request, and each `setAlarm()` counts as one row written.
 One Durable Object has a soft limit of about 1,000 requests per second.
 Queues bill $0.40 per million operations after one million a month, and one message takes about three operations.
+The Paid figures in the table are monthly amounts.
+On the Workers Free plan, D1 allows 100,000 rows written and 5 million rows read a day.
+On the same plan, Durable Objects allow 100,000 requests, 100,000 rows written, and 5 million rows read a day.
+One Worker invocation can run 1,000 D1 queries on the Paid plan and 50 on the Free plan, so one alarm run delivers at most that many statements to D1.
 
 One mutation in the cloud store causes this work:
 
@@ -292,6 +307,9 @@ Every issue with a claim row then needs a new acquisition before its next status
 The design does not carry claims across the switch, because that needs an exception to the fencing rule.
 Memory observations report `stale` with the reason `store_changed`.
 
+The current restore tooling targets D1 and local SQLite.
+Step 3 needs a restore path inside the store Durable Object that writes through `transactionSync`, and the contract tests must cover that path.
+
 Reads can use D1 during step 3 to step 5, because D1 does not change while writes are stopped.
 
 ## Release stages build the transition first
@@ -326,6 +344,12 @@ Every other mutation still needs one serialization point for its cross-issue ans
 That covers start, close, reopen, type change, creation, and every claim mutation, because claim request IDs are unique in the store.
 The serialization point is a coordinator Durable Object or D1.
 Either has the same single-writer limit as the store Durable Object.
+
+A per-project split, with one Durable Object for each project, is the other scale-out candidate.
+Dependencies can join issues in different projects, and prefixes do not restrict the project field.
+A per-project split therefore still needs a cross-issue port for edges between projects and for counters.
+The project field is also mutable, so an update can move an issue to another object.
+The per-project split meets the same gates as the per-issue split.
 
 In a split, the port and the issue authorities are separate objects, and no transaction covers both.
 The port must then keep a mirror of the closed and epic facts of each issue.
