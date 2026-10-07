@@ -3,8 +3,8 @@ export function parsePrefix(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-z][a-z0-9]{0,15}$/.test(value)) throw new Error('prefix must contain 1–16 lowercase letters or digits, starting with a letter');
   return value;
 }
-export function parseRequestId(value: unknown): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error('request_id must be a lowercase UUID');
+export function parseRequestId(value: unknown, label = 'request_id'): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error(`${label} must be a lowercase UUID`);
   return value;
 }
 export function parseIssueId(value: unknown, label = 'id'): string {

@@ -62,7 +62,7 @@ export function parseClaimProof(value: unknown, target?: string): ClaimProof {
   keys(input, claimProofSchema.required, claimProofSchema.required);
   const issue_id = identifier(parseIssueId, input.issue_id);
   if (target !== undefined && issue_id !== target) return invalid('claim_proof must target the requested issue');
-  return { issue_id, incarnation: parseIncarnation(input.incarnation), session_id: identifier(parseRequestId, input.session_id), generation: integer(input.generation, 'generation', 1) };
+  return { issue_id, incarnation: parseIncarnation(input.incarnation), session_id: identifier(value => parseRequestId(value, 'session_id'), input.session_id), generation: integer(input.generation, 'generation', 1) };
 }
 export function parseClaimOperation(value: unknown): ClaimOperation {
   const input = object(value);
@@ -72,7 +72,7 @@ export function parseClaimOperation(value: unknown): ClaimOperation {
   if (op === 'claim_list') return { op, limit: input.limit === undefined ? 50 : integer(input.limit, 'limit', 1, 100), ...(input.tool === undefined ? {} : { tool: name(input.tool, 'tool') }), ...(input.project === undefined ? {} : { project: name(input.project, 'project') }), ...(input.after === undefined ? {} : { after: identifier(parseIssueId, input.after) }) };
   if (op === 'claim_show') return { op, issue_id: identifier(parseIssueId, input.issue_id) };
   const request_id = identifier(parseRequestId, input.request_id);
-  if (op === 'claim_acquire') return { op, issue_id: identifier(parseIssueId, input.issue_id), incarnation: parseIncarnation(input.incarnation), session_id: identifier(parseRequestId, input.session_id), request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600), agent_label: input.agent_label === undefined || input.agent_label === null ? null : name(input.agent_label, 'agent_label', 64) };
+  if (op === 'claim_acquire') return { op, issue_id: identifier(parseIssueId, input.issue_id), incarnation: parseIncarnation(input.incarnation), session_id: identifier(value => parseRequestId(value, 'session_id'), input.session_id), request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600), agent_label: input.agent_label === undefined || input.agent_label === null ? null : name(input.agent_label, 'agent_label', 64) };
   const claim_proof = parseClaimProof(input.claim_proof); const expected_revision = integer(input.expected_revision, 'expected_revision', 1);
   return op === 'claim_release' ? { op, claim_proof, expected_revision, request_id } : { op, claim_proof, expected_revision, request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600) };
 }

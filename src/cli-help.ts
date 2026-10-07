@@ -85,7 +85,7 @@ Update accepts the same override when it sets status to in_progress or closed.
 Update, close and reopen accept --claim-proof JSON. A supplied proof always asserts current ownership.
 Claimed issues require an unexpired proof for every requested status change, including unchanged status values.
 Force overrides prerequisites only. Closed issues remain claimable. Acquisition does not change status.
-Claim acquisition can read POLYLINEDB_SESSION_ID when --session-id is omitted. Keep one UUID per caller session.
+Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID. Keep one UUID per caller session.
 Claims require the observed store incarnation. Claim timestamps use database Unix seconds, not agent liveness.
 TTL defaults to 300 seconds. Agent labels are nullable acquisition metadata, bounded at 64 UTF-8 bytes.
 Retain the claim request UUID, incarnation, session and payload for retries. No automatic retry or reacquisition occurs.

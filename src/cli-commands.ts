@@ -371,6 +371,7 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (command === 'claim_acquire') {
     raw.incarnation = one('incarnation'); raw.session_id = one('session-id') ?? process.env.POLYLINEDB_SESSION_ID;
+    if (raw.session_id === undefined) invalid('Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID');
     if (one('agent-label') !== undefined) raw.agent_label = one('agent-label');
     raw.request_id = one('request-id') ?? randomUUID();
   }
