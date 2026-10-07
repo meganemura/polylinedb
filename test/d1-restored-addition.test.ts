@@ -339,6 +339,20 @@ test('a release 0.1.0 restore paused at every write boundary keeps the addition 
   assert.deepEqual([...revisions].sort(), [1, 2], 'memory inserts after the upgrade raise project revisions, which the addition guards but does not compare');
 });
 
+test('a release 0.1.0 checkpoint change racing the commit rolls back the whole batch', async context => {
+  const f = await legacyFixture();
+  context.after(f.close);
+  const racing: Batch = async statements => {
+    if (isAddition(statements)) f.destination.exec(`UPDATE polylinedb_snapshot_claim SET sha256 = '${'0'.repeat(64)}'`);
+    return f.batch(statements);
+  };
+  const journal = f.journal();
+  await assert.rejects(restoredAddition(racing, journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await refused(restoredAddition(f.batch, journal).resume(), /changed after freezing/);
+  assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive')").get()?.n, 0);
+  assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0);
+});
+
 test('refuses missing, invalid, mismatched, edited, and unupgraded release 0.1.0 evidence', async context => {
   const f = await legacyFixture();
   context.after(f.close);
