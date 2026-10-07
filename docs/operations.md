@@ -174,6 +174,19 @@ It exposes `initialize`, `ping`, `tools/list`, and `tools/call`.
 CLI errors use the same error object on stderr.
 Exit codes are 0 for success, 2 for invalid input, 3 for missing issues, 4 for conflicts, and 1 for other failures.
 
+An unexpected failure has the code `internal_error`, exit code 1, and a fixed message.
+The CLI does not print the message of the underlying error.
+A SQLite trigger can set that message to any text, and a filesystem error message contains local paths.
+`error.details.diagnostic` identifies the failure class instead.
+It contains only these fields, each when the error supplies it in a safe shape:
+
+- `code`: an upper-case error code, such as `ERR_SQLITE_ERROR` or `EEXIST`.
+- `errcode`: the SQLite extended result code, such as `1811` for a trigger abort.
+- `errno`: the system error number.
+- `syscall`: the failed system call, such as `open`.
+
+Known domain and authentication errors keep their codes, messages, and details.
+
 ## Local repository defaults
 
 Run `pd init --stealth --prefix NAME --tool NAME --project NAME --actor IDENTITY` inside a Git working tree.
