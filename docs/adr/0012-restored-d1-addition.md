@@ -1,6 +1,6 @@
 # Add once to an unchanged restored D1 store
 
-Status: Proposed; current operator refuses restored destinations.
+Status: Proposed. The four-column route has a tested operator library, and no command runs it yet.
 
 ## Problem
 
@@ -103,3 +103,45 @@ Inject statement failures and response loss after every commit point, then verif
 Exercise crashes before source retirement, after source retirement, and during routing changes against the frozen journal.
 The bounded local evidence supports the proposed SQL barrier.
 The full D1 and lifecycle gates decide whether implementation can enable the route.
+
+## Implementation status
+
+`scripts/d1-restored-addition.ts` implements the four-column route as the `restoredAddition` lifecycle owner.
+Its `run` and `resume` methods take the destination batch port, the journal directory, the original file, the SQLite source, and the cloud connection name.
+The cutover command and the CLI do not call it, so operators still refuse restored destinations.
+
+The owner recognizes both checkpoint layouts by exact DDL.
+It accepts only the four-column layout with a snapshot 5 original input.
+It refuses the two-column layout with either input version, because the snapshot 3 projection is not validated.
+The packet limit is 1,000 statements, which is the D1 query limit for one Workers Paid invocation.
+A caller can set a lower limit, such as 50 for Workers Free.
+
+The current restore operator writes no checkpoint when it restores an empty input into an empty store, because it reports that store as identical.
+The owner then refuses the store, because it has no recognized checkpoint.
+When a checkpoint for an empty input exists, the owner applies the same checks and the same barrier as for other inputs.
+
+SQLite tests and local workerd D1 tests both pass these gates:
+
+- A failure at each packet statement rolls back the rename, the view, the receipt, and the added rows.
+- A replay of each recorded restore write after the barrier changes zero rows.
+- A restore paused at each write boundary keeps the addition refused until the restore completes.
+- Races on the checkpoint row, the identity, an issue, a trailing range, and the schema roll back the commit.
+- A lost response resumes as committed, with one dispatch and no second addition.
+- A receipt stays committed after later edits, and those edits block verification and source retirement.
+
+The SQLite tests also pass these gates:
+
+- A statement prepared before the barrier writes nothing after it.
+- Races on each of the 14 guarded tables roll back the commit.
+- An unchanged preimage permits a resend of the frozen packet, and a changed preimage is refused.
+- A source edit after freezing blocks source retirement.
+- A crash after the retirement commit resumes and records the step.
+
+The workerd D1 test also sends restore writes beside the commit and checks that the expected result follows.
+
+These gates remain open:
+
+- The snapshot 3 to schema 6 projection and the release 0.1.0 restore SQL.
+- Request size, duration, and atomicity of the packet through the D1 REST batch API on a production database.
+- Routing changes after source retirement, with recovery for each step.
+- A command that runs the owner after review and owner approval.

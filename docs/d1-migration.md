@@ -142,10 +142,14 @@ See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 ```sh
 node --test test/d1-snapshot.test.ts
 node test/d1-snapshot.integration.ts
+node --test test/d1-restored-addition.test.ts
+node test/d1-restored-addition.integration.ts
 ```
 
-The integration test requires the same external Miniflare installation used by `test/d1.integration.ts`. An optional module path can be passed as its first argument.
-The integration test sends its D1 calls through a relay worker over keep-alive connections.
+The restored addition tests cover the gates that the [restored D1 addition ADR](adr/0012-restored-d1-addition.md#implementation-status) lists as passed.
+
+The integration tests require the same external Miniflare installation used by `test/d1.integration.ts`. An optional module path can be passed as the first argument.
+The integration tests send their D1 calls through a relay worker over keep-alive connections.
 Miniflare's binding proxy closes the connection after every call, and the test makes thousands of calls, which would fill the macOS ephemeral port range with TIME_WAIT sockets.
 
 The tests cover committed-response-loss recovery, duplicate and concurrent restores, conflicting claims and rows, corrupt sort keys, and a 64 KiB issue body.
