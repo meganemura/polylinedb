@@ -1,4 +1,4 @@
-// Exercises the restored-store addition lifecycle against workerd D1 restored by the current operator.
+// Exercises the restored-store addition lifecycle against workerd D1 restored by the current and release 0.1.0 operators.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,9 +9,9 @@ import { snapshotMigration, type Query, type Statement } from '../scripts/d1-sna
 import { AdditionRefused, AdditionUnknown, restoredAddition, type Batch } from '../scripts/d1-restored-addition.ts';
 import { tables } from '../scripts/d1-additive-merge.ts';
 import { canonicalSnapshot } from '../src/records/snapshot.ts';
-import { SCHEMA_STATEMENTS } from '../src/records/schema.ts';
+import { SCHEMA_STATEMENTS, SCHEMA_V3_SQL, schemaUpgradeStatements } from '../src/records/schema.ts';
 import { d1Relay, d1RelayModule } from './fixtures/d1-relay.ts';
-import { failAt, isAddition, localStore, loseResponse, originalInput, privateDirectory } from './fixtures/restored-addition.ts';
+import { failAt, isAddition, legacyRestore, localStore, loseResponse, originalInput, privateDirectory } from './fixtures/restored-addition.ts';
 
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');
@@ -41,13 +41,13 @@ try {
   let journals = 0;
   const journal = () => privateDirectory(root, `journal-${journals += 1}`);
 
-  const reset = async () => {
+  const reset = async (statements: readonly string[] = SCHEMA_STATEMENTS) => {
     const existing = await query({ sql: objects, params: [] });
     for (const { type, name } of existing.filter(object => object.type === 'view')) await query({ sql: `DROP VIEW "${String(name)}"`, params: [] });
     for (const table of ['polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive', 'polylinedb_snapshot_claim', 'extra', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version']) {
       if (existing.some(object => object.type === 'table' && object.name === table)) await query({ sql: `DROP TABLE ${table}`, params: [] });
     }
-    await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
+    await database.batch(statements.map(sql => database.prepare(sql)));
   };
   const restore = async (pauseAt?: number) => {
     const writes: Statement[] = [];
@@ -148,9 +148,46 @@ try {
   await query({ sql: 'CREATE TABLE polylinedb_snapshot_claim (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)', params: [] });
   await query({ sql: 'INSERT INTO polylinedb_snapshot_claim VALUES (1, ?)', params: [String(checkpoint)] });
   await assert.rejects(run(), (error: unknown) => error instanceof AdditionRefused && /two-column checkpoint requires snapshot format 3/.test(error.message));
-  const legacy = join(root, 'legacy.json');
-  writeFileSync(legacy, JSON.stringify({ format: 'polylinedb.snapshot', version: 3, issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] }));
-  await assert.rejects(restoredAddition(batch, journal()).run({ original: legacy, source: await source(), connection: 'cloud' }), (error: unknown) => error instanceof AdditionRefused && /snapshot 3 to schema 6 projection/.test(error.message));
+
+  const legacyOriginal = join(root, 'original-v3.json');
+  writeFileSync(legacyOriginal, JSON.stringify(legacyRestore.input));
+  const legacy = async (restoredWrites = legacyRestore.writes.length) => {
+    await reset(SCHEMA_V3_SQL.split(';').map(sql => sql.trim()).filter(Boolean));
+    for (const statement of legacyRestore.writes.slice(0, restoredWrites)) await query(statement);
+    await batch(schemaUpgradeStatements(3).map(sql => ({ sql, params: [] })));
+    return { finishRestore: async () => { for (const statement of legacyRestore.writes.slice(restoredWrites)) await query(statement); } };
+  };
+  const runLegacy = async (port: Batch = batch, directory = journal()) => restoredAddition(port, directory).run({ original: legacyOriginal, source: await source(), connection: 'cloud' });
+
+  await legacy();
+  const legacyResult = await runLegacy();
+  assert.equal(legacyResult.outcome, 'retired');
+  assert.deepEqual(await query({ sql: `${objects} AND name LIKE 'polylinedb_%' ORDER BY name`, params: [] }), [
+    { type: 'table', name: 'polylinedb_addition_receipt' }, { type: 'view', name: 'polylinedb_snapshot_claim' }, { type: 'table', name: 'polylinedb_snapshot_claim_archive' },
+  ]);
+  assert.deepEqual(await query({ sql: 'SELECT * FROM polylinedb_snapshot_claim_archive', params: [] }), [{ singleton: 1, sha256: legacyRestore.sha256 }]);
+  assert.equal((await query({ sql: 'SELECT checkpoint_layout FROM polylinedb_addition_receipt', params: [] }))[0]?.checkpoint_layout, 'two-column');
+  const legacyBarrierState = await state();
+  for (const statement of legacyRestore.writes) {
+    try { await changes(statement); } catch (error) { assert.match(String(error), /cannot modify polylinedb_snapshot_claim because it is a view/); }
+  }
+  assert.equal(await state(), legacyBarrierState);
+
+  await legacy();
+  const legacyBefore = await state();
+  let legacyPacket = 0;
+  await assert.rejects(runLegacy(async statements => { if (!isAddition(statements)) return batch(statements); legacyPacket = statements.length; throw new Error('not sent'); }), AdditionUnknown);
+  for (let index = 0; index < legacyPacket; index += 1) {
+    await assert.rejects(runLegacy(failAt(batch, index)), AdditionUnknown);
+    assert.equal(await state(), legacyBefore, `release 0.1.0 statement ${index} left a partial addition`);
+  }
+
+  for (let pause = 0; pause < legacyRestore.writes.length; pause += 1) {
+    const paused = await legacy(pause);
+    await assert.rejects(runLegacy(), AdditionRefused, `release 0.1.0 write ${pause + 1}`);
+    await paused.finishRestore();
+    assert.equal((await runLegacy()).outcome, 'retired', `release 0.1.0 write ${pause + 1}`);
+  }
 
 const deletions = ["DELETE FROM dependencies WHERE dependent_id LIKE 'dst-%'", "DELETE FROM comments WHERE body = 'dst comment'"];
 const replayAll = async () => { for (const statement of writes) await query(statement).catch(() => []); };
@@ -173,5 +210,5 @@ await assert.rejects(restoredAddition(batch, migrated).resume(), (error: unknown
 assert.deepEqual(readdirSync(migrated).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
 await query({ sql: 'DROP TABLE d1_migrations', params: [] });
 
-  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races, deleted rows kept deleted after replay, a receipt found after a schema change, response loss, committed receipt after edits, queued restore SQL, ${writes.length} paused restore boundaries and legacy checkpoint refusal\n`);
+  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races, deleted rows kept deleted after replay, a receipt found after a schema change, response loss, committed receipt after edits, queued restore SQL, ${writes.length} paused restore boundaries, a snapshot 5 input refused for the release 0.1.0 layout, and the release 0.1.0 route with ${legacyRestore.writes.length} fenced writes, ${legacyPacket} rolled-back statement failures and ${legacyRestore.writes.length} paused restore boundaries\n`);
 } finally { rmSync(root, { recursive: true, force: true }); await runtime.dispose(); }

@@ -1,12 +1,12 @@
 // Owns one addition of local records to an unchanged restored D1 store, through source retirement.
-// It does not change repository routing, and it refuses the release 0.1.0 checkpoint until its snapshot 3 projection is validated.
+// It does not change repository routing. A release 0.1.0 checkpoint qualifies only after the schema 3 to 6 upgrade.
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, writeSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import type { Counts, Statement } from './d1-additive-merge.ts';
-import { canonicalSnapshot, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
+import { canonicalSnapshot, canonicalSnapshotV3, convertSnapshotV3, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
 
 export type Batch = (statements: readonly Statement[]) => Promise<readonly (readonly Record<string, unknown>[])[]>;
 export type AdditionOutcome = { outcome: 'retired'; operation_id: string; expected_sha256: string; counts: Counts };
@@ -31,19 +31,41 @@ const schemaSql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name N
 // Workers Paid permits 1,000 queries per invocation; Free permits 50. A larger packet is refused, never split.
 const maximumStatementLimit = 1000;
 
+type Checkpoint = Record<string, string | 1> & { singleton: 1; sha256: string };
+/** The original input as the restore checkpoint digested it, and as the schema 6 rows that restoration leaves. */
+type OriginalForms = { canonical: string; projected: string };
+type CheckpointLayout = {
+  ddl: string;
+  /** In table order, which the barrier view keeps. */
+  columns: readonly string[];
+  snapshotVersion: number;
+  original(input: unknown): OriginalForms;
+  valid(row: Record<string, unknown>): boolean;
+  /** The destination incarnation that the checkpoint records, when the layout records one. */
+  target(checkpoint: Checkpoint): string | undefined;
+};
+
 const checkpointLayouts = {
+  // Release 0.1.0 restored snapshot 3 into schema 3. The schema 3 to 6 upgrade leaves what convertSnapshotV3 produces in the 12 application tables.
   'two-column': {
     ddl: `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)`,
-    columns: ['sha256', 'singleton'],
+    columns: ['singleton', 'sha256'],
     snapshotVersion: 3,
+    original: input => ({ canonical: canonicalSnapshotV3(input), projected: canonicalSnapshot(convertSnapshotV3(input)) }),
+    valid: () => true,
+    target: () => undefined,
   },
   'four-column': {
     ddl: `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL, original_incarnation TEXT NOT NULL, incarnation TEXT NOT NULL CHECK(length(incarnation)=32 AND incarnation NOT GLOB '*[^a-f0-9]*' AND incarnation<>original_incarnation))`,
-    columns: ['incarnation', 'original_incarnation', 'sha256', 'singleton'],
+    columns: ['singleton', 'sha256', 'original_incarnation', 'incarnation'],
     snapshotVersion: 5,
+    original(input) { const canonical = canonicalSnapshot(parseSnapshot(input)); return { canonical, projected: canonical }; },
+    valid: row => hexIncarnation(row.original_incarnation) && hexIncarnation(row.incarnation) && row.original_incarnation !== row.incarnation,
+    target: checkpoint => String(checkpoint.incarnation),
   },
-} as const;
+} satisfies Record<string, CheckpointLayout>;
 type Layout = keyof typeof checkpointLayouts;
+const layouts = Object.keys(checkpointLayouts) as Layout[];
 
 const receiptColumns = ['singleton', 'operation_id', 'frozen_sha256', 'destination_incarnation', 'checkpoint_layout', 'original_sha256', 'baseline_sha256', 'expected_sha256', 'counts_json'] as const;
 type Receipt = { [Column in typeof receiptColumns[number]]: Column extends 'singleton' ? 1 : string };
@@ -51,9 +73,9 @@ const receiptSchema = [
   `CREATE TABLE ${receiptTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), ${receiptColumns.slice(1).map(column => `${column} TEXT NOT NULL`).join(', ')})`,
   ...(['UPDATE', 'DELETE'] as const).map(event => `CREATE TRIGGER ${receiptTable}_immutable_${event.toLowerCase()} BEFORE ${event} ON ${receiptTable} BEGIN SELECT RAISE(ABORT, 'The addition receipt is immutable'); END`),
 ];
-const barrier = [
+const barrier = (layout: Layout) => [
   `ALTER TABLE ${claimTable} RENAME TO ${archiveTable}`,
-  `CREATE VIEW ${claimTable} AS SELECT singleton, sha256, original_incarnation, incarnation FROM ${archiveTable} WHERE 0`,
+  `CREATE VIEW ${claimTable} AS SELECT ${checkpointLayouts[layout].columns.join(', ')} FROM ${archiveTable} WHERE 0`,
 ];
 
 const refuse = (message: string): never => { throw new AdditionRefused(message); };
@@ -82,16 +104,14 @@ function profileSchema(statements: readonly string[]): string {
     return stableJson(reference.prepare(schemaSql).all());
   } finally { reference.close(); }
 }
-const restoredProfiles = Object.fromEntries((Object.keys(checkpointLayouts) as Layout[]).map(layout => [profileSchema([checkpointLayouts[layout].ddl]), layout])) as Record<string, Layout>;
-const terminalProfile = profileSchema([checkpointLayouts['four-column'].ddl, ...receiptSchema, ...barrier]);
+type Profile = { kind: 'restored' | 'terminal'; layout: Layout };
+const profiles = new Map(layouts.flatMap((layout): [string, Profile][] => [
+  [profileSchema([checkpointLayouts[layout].ddl]), { kind: 'restored', layout }],
+  [profileSchema([checkpointLayouts[layout].ddl, ...receiptSchema, ...barrier(layout)]), { kind: 'terminal', layout }],
+]));
 
-type Profile = { kind: 'restored'; layout: Layout } | { kind: 'terminal' };
 function classifySchema(schema: readonly SchemaEntry[]): Profile {
-  const key = stableJson(schema);
-  const layout = restoredProfiles[key];
-  if (layout) return { kind: 'restored', layout };
-  if (key === terminalProfile) return { kind: 'terminal' };
-  return refuse('Destination schema is not canonical schema 6 with a recognized restore checkpoint layout');
+  return profiles.get(stableJson(schema)) ?? refuse('Destination schema is not canonical schema 6 with a recognized restore checkpoint layout');
 }
 
 type Capture = { profile: Profile; schema: SchemaEntry[]; version: unknown; checkpoint: Record<string, unknown>[]; receipt: Record<string, unknown>[]; visibleCheckpoint: Record<string, unknown>[]; rows: RawRows };
@@ -125,14 +145,13 @@ async function capture(batch: Batch): Promise<Capture> {
   };
 }
 
-type Checkpoint = { singleton: 1; sha256: string; original_incarnation: string; incarnation: string };
-
-function fourColumnCheckpoint(rows: readonly Record<string, unknown>[]): Checkpoint {
+function restoreCheckpoint(layout: Layout, rows: readonly Record<string, unknown>[]): Checkpoint {
+  const { columns, valid } = checkpointLayouts[layout];
   const row = rows[0];
-  if (rows.length !== 1 || !row || Object.keys(row).sort().join(',') !== checkpointLayouts['four-column'].columns.join(',')) return refuse('Destination must have exactly one restore checkpoint row');
+  if (rows.length !== 1 || !row || Object.keys(row).sort().join(',') !== [...columns].sort().join(',')) return refuse('Destination must have exactly one restore checkpoint row');
   if (row.singleton !== 1 || typeof row.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sha256)) return refuse('Restore checkpoint row is invalid');
-  if (!hexIncarnation(row.original_incarnation) || !hexIncarnation(row.incarnation) || row.original_incarnation === row.incarnation) return refuse('Restore checkpoint incarnations are invalid');
-  return { singleton: 1, sha256: row.sha256, original_incarnation: row.original_incarnation, incarnation: row.incarnation };
+  if (!valid(row)) return refuse('Restore checkpoint incarnations are invalid');
+  return Object.fromEntries(columns.map(column => [column, row[column]])) as Checkpoint;
 }
 
 function destinationIncarnation(rows: RawRows): string {
@@ -141,31 +160,33 @@ function destinationIncarnation(rows: RawRows): string {
   return identity[0].incarnation;
 }
 
-function originalInput(text: string, layout: Layout): { canonical: string; digest: OriginalDigest } {
+function originalInput(text: string, layout: Layout): { projected: string; digest: OriginalDigest } {
   let input: unknown;
   try { input = JSON.parse(text); } catch { return refuse('Original restore input is not JSON'); }
   const declared = input !== null && typeof input === 'object' && 'version' in input ? input.version : undefined;
   if (declared !== checkpointLayouts[layout].snapshotVersion) refuse(`The ${layout} checkpoint requires snapshot format ${checkpointLayouts[layout].snapshotVersion}`);
-  if (layout === 'two-column') refuse('The release 0.1.0 checkpoint requires a validated snapshot 3 to schema 6 projection');
-  let canonical: string;
-  try { canonical = canonicalSnapshot(parseSnapshot(input)); } catch { return refuse('Original restore input is not a valid snapshot'); }
-  return { canonical, digest: sha256(canonical) as OriginalDigest };
+  let forms: OriginalForms;
+  try { forms = checkpointLayouts[layout].original(input); } catch { return refuse('Original restore input is not a valid snapshot'); }
+  return { projected: forms.projected, digest: sha256(forms.canonical) as OriginalDigest };
 }
 
-type Baseline = { layout: 'four-column'; schema: SchemaEntry[]; checkpoint: Checkpoint; rows: RawRows; originalDigest: OriginalDigest; digest: BaselineDigest };
+// No original input records project_memory_revisions, so it is guarded but not compared. After a schema 3 upgrade, its values also depend on when the upgrade ran.
+type Baseline = { layout: Layout; schema: SchemaEntry[]; checkpoint: Checkpoint; incarnation: string; rows: RawRows; originalDigest: OriginalDigest; digest: BaselineDigest };
 
 function restoredBaseline(destination: Capture, originalText: string): Baseline {
   if (destination.profile.kind === 'terminal') return refuse('Destination already recorded an addition; only its recovery is permitted');
   const { layout } = destination.profile;
   const original = originalInput(originalText, layout);
-  const checkpoint = fourColumnCheckpoint(destination.checkpoint);
+  const checkpoint = restoreCheckpoint(layout, destination.checkpoint);
   if (checkpoint.sha256 !== original.digest) refuse('Restore checkpoint digest differs from the original input');
-  if (destinationIncarnation(destination.rows) !== checkpoint.incarnation) refuse('Destination identity differs from the restore checkpoint target');
+  const incarnation = destinationIncarnation(destination.rows);
+  const target = checkpointLayouts[layout].target(checkpoint);
+  if (target !== undefined && target !== incarnation) refuse('Destination identity differs from the restore checkpoint target');
   let restored: string;
   try { restored = canonicalSnapshot(rawToSnapshot(destination.rows)); } catch { return refuse('Destination rows are not a canonical store'); }
-  if (restored !== original.canonical) refuse('Destination rows differ from the original restore input');
+  if (restored !== original.projected) refuse('Destination rows differ from the original restore input');
   const rows = normalizedRows(destination.rows);
-  return { layout: 'four-column', schema: destination.schema, checkpoint, rows, originalDigest: original.digest, digest: sha256(stableJson({ schema: destination.schema, version: destination.version, checkpoint, rows })) as BaselineDigest };
+  return { layout, schema: destination.schema, checkpoint, incarnation, rows, originalDigest: original.digest, digest: sha256(stableJson({ schema: destination.schema, version: destination.version, checkpoint, rows })) as BaselineDigest };
 }
 
 function guard(condition: string, params: Statement['params']): Statement {
@@ -175,9 +196,10 @@ function guard(condition: string, params: Statement['params']): Statement {
 function barrierGuards(baseline: Baseline): Statement[] {
   const schemaJson = `(SELECT json_group_array(json_object('name',name,'sql',sql,'tbl_name',tbl_name,'type',type)) FROM (${schemaSql}))`;
   const { checkpoint } = baseline;
+  const { columns } = checkpointLayouts[baseline.layout];
   return [
     guard(`${schemaJson} IS NOT json(?)`, [JSON.stringify(baseline.schema.map(stable))]),
-    guard(`(SELECT COUNT(*) FROM ${claimTable}) <> 1 OR NOT EXISTS (SELECT 1 FROM ${claimTable} WHERE singleton = 1 AND sha256 = ? AND original_incarnation = ? AND incarnation = ?)`, [checkpoint.sha256, checkpoint.original_incarnation, checkpoint.incarnation]),
+    guard(`(SELECT COUNT(*) FROM ${claimTable}) <> 1 OR NOT EXISTS (SELECT 1 FROM ${claimTable} WHERE ${columns.map(column => `${column} = ?`).join(' AND ')})`, columns.map(column => checkpoint[column] ?? null)),
   ];
 }
 
@@ -196,7 +218,7 @@ function packetEnd(receipt: Receipt): Statement[] {
   return [
     ...receiptSchema.map(sql => ({ sql, params: [] })),
     { sql: `INSERT INTO ${receiptTable}(${receiptColumns.join(',')}) VALUES (${receiptColumns.map(() => '?').join(',')})`, params: receiptColumns.map(column => receipt[column]) },
-    ...barrier.map(sql => ({ sql, params: [] })),
+    ...barrier(receipt.checkpoint_layout as Layout).map(sql => ({ sql, params: [] })),
   ];
 }
 
@@ -227,7 +249,7 @@ function freezeOperation(input: { operationId: string; connection: string; sourc
   const sourceDigest = sha256(stableJson(sourceRows)) as SourceDigest;
   const frozen = frozenDigest(input.operationId, input.baseline, sourceDigest, additions);
   const receipt: Receipt = {
-    singleton: 1, operation_id: input.operationId, frozen_sha256: frozen, destination_incarnation: input.baseline.checkpoint.incarnation,
+    singleton: 1, operation_id: input.operationId, frozen_sha256: frozen, destination_incarnation: input.baseline.incarnation,
     checkpoint_layout: input.baseline.layout, original_sha256: input.baseline.originalDigest, baseline_sha256: input.baseline.digest,
     expected_sha256: plan.digest, counts_json: JSON.stringify(plan.counts),
   };
