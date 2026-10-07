@@ -13,6 +13,7 @@ Neither policy grants permission to publish. Follow the user's authorization bou
 ## Retrieve context
 
 Call `actor` without arguments to confirm the connector's identity.
+On a local connection, the actor must name this agent host rather than a shared repository identity.
 At session start and after context compaction, call `memory_context` with the project.
 Check the returned project and store identity.
 Follow omission notices and `next_cursor` with `after`, or retrieve skipped entries with `memory_show`.
@@ -23,14 +24,18 @@ After `stale` or `unavailable`, retrieve context before a decision that depends 
 ## Select and rank ready work
 
 1. Fetch `ready` candidates for the project. The current MCP tool is `dependency_worklist` with `state: "ready"`.
+   For an agent actor, the store returns only issues labeled `ready`. The ready worklist never returns the repository `main-lock` issue.
 2. Follow `next_cursor` when needed. Read candidate bodies and comments with `show` before selecting work.
 3. Rank candidates within this session using the assigned goal, prerequisites, scope, and available capabilities.
-4. Keep the ordered complete issue IDs as `recommended_ids` in session memory.
+4. Use the response `recommended_ids` when present. Otherwise keep your own ordered complete issue IDs as `recommended_ids` in session memory.
 
-`recommended_ids` is an ephemeral suggestion, not a tool call or ownership proof.
+`recommended_ids` is a preference order only, not a tool call or ownership proof.
+A ready ID that the order omits stays claimable. Do not limit claims to the order.
+Never rank or claim the `main-lock` issue as work.
 Do not write the rank, scores, or priority into pd.
 Use the returned order to break ties. Do not create a Sorter API dependency.
 
+Treat a worklist observation as expired when the current time reaches its `expires_at`, or 60 seconds after receipt when the field is absent.
 Before each claim attempt, refetch `ready` and read `show` for the selected ID.
 Confirm its project and discard IDs that are no longer ready.
 Rerank after an expired observation, a state change, context recovery, or a claim rejection.
@@ -41,9 +46,10 @@ This unconditional refetch also applies when the connector supplies no expiry ti
 Keep one lowercase session UUID for this caller session and one request UUID for each logical claim mutation.
 Read `claim_show` and retain the observed `store_incarnation`.
 Call `claim_acquire` with the selected `issue_id`, `incarnation`, `session_id`, and `request_id`.
-The claim gate decides readiness and ownership when the advertised contract enforces both.
-A recommendation never overrides a rejection.
-With an availability-only claim contract, readiness remains an observation, so refetch `ready` after acquisition too.
+For an agent actor, `claim_acquire` rejects an issue without the `ready` label with `not_ready`.
+The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.
+The store checks both rules in the same transaction as the write. A recommendation never overrides a rejection.
+A cloud connector reports a human actor until per-agent tokens exist and does not enforce these gates, so refetch `ready` after acquisition there.
 Start work only after successful acquisition and a fresh readiness check.
 If the candidate becomes blocked, release the acquired claim and select again.
 

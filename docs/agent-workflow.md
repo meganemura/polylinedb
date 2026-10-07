@@ -10,14 +10,18 @@ The current MCP vocabulary represents ready work as `dependency_worklist` with `
 The skill reads schemas at runtime and uses separate issue and main-lock proofs.
 Repository publication policy selects main-direct or PR work.
 
-The current claim acquisition contract checks claim availability.
-The atomic ready-only gate, main-lock, and issue pointer contracts require companion implementation work.
-Until those contracts are advertised, the skill can retrieve, rank, and claim candidates with fresh readiness observations.
-Those observations cannot guarantee atomic ready-only acquisition.
-Publication that requires unavailable lock or pointer contracts stops with local commits intact.
-This boundary preserves the existing mutation APIs while the coordination contracts develop.
+An agent actor claims only issues labeled `ready`, and the store checks that label in the same transaction as the acquisition.
+An agent update, close, reopen, comment, or prerequisite edit succeeds only while the agent holds an active claim on the issue, checked in the same transaction as the write.
+Local connections set the agent kind and actor per host, as [local agent actors](agent-actors.md) describes.
+Cloud connections derive a human actor from authentication until per-agent tokens exist, so the agent gates do not apply there yet.
 
-A verified remote SHA precedes a pointer write because a local commit does not establish a remote tip.
-The main-lock covers reconciliation, push, and the pointer write.
+`recommended_ids` is a preference order only.
+A ready ID that the order omits stays claimable, and the skill never limits its choice to the order.
+The ready worklist leaves out issues labeled `main-lock`, so the repository lock issue never enters the ranking.
+The main-lock is a short claim on that lock issue, found with `list` and the `main-lock` label.
+The issue pointer is a comment from the claim holder whose whole body is `tip: <40-character SHA>`.
+
+A verified remote SHA precedes the tip comment because a local commit does not establish a remote tip.
+The main-lock covers reconciliation, push, and the tip comment.
 Completion closes the issue before releasing its lease because close requires a current ownership proof.
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
