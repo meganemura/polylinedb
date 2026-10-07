@@ -6,6 +6,7 @@ import { storageOf } from 'solarsql/node';
 import { createAccessVerifier } from "../src/service/access.ts";
 import { handleRequest } from "../src/service/index.ts";
 import { SCHEMA_SQL } from "../src/records/schema.ts";
+import { assertSnapshot } from "./fixtures/snapshot.ts";
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
   publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -336,5 +337,20 @@ test('claim_acquire without a session UUID fails with a session_id usage error o
       assert.deepEqual(mcp.structuredContent.error, { code: 'invalid_input', message });
     }
     assert.equal(sqlite.prepare('SELECT count(*) AS count FROM claim_requests').get()?.count, 0);
+  } finally { sqlite.close(); }
+});
+
+test('tools/list advertises the pinned inputSchema of every MCP tool and requires session_id for claim_acquire', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const response = await handleRequest(new Request('https://issues.example/mcp', {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': token },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    }), env, authenticate);
+    const tools: { name: string; inputSchema: { required: string[] } }[] = (await response.json()).result.tools;
+    assert.deepEqual(tools.find(tool => tool.name === 'claim_acquire')?.inputSchema.required, ['issue_id', 'incarnation', 'session_id', 'request_id']);
+    const schemas = Object.fromEntries(tools.map(tool => [tool.name, tool.inputSchema]).sort(([left], [right]) => String(left).localeCompare(String(right))));
+    assertSnapshot('mcp-input-schemas.json', JSON.stringify(schemas, null, 2) + '\n');
   } finally { sqlite.close(); }
 });

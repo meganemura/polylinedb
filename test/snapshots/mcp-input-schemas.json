@@ -1,0 +1,1177 @@
+{
+  "actor": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "claim_acquire": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "issue_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "incarnation": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      },
+      "session_id": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "ttl": {
+        "type": "integer",
+        "minimum": 30,
+        "maximum": 3600,
+        "default": 300
+      },
+      "agent_label": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1,
+        "maxLength": 64,
+        "description": "Caller metadata, at most 64 UTF-8 bytes. Omitted labels become null."
+      }
+    },
+    "required": [
+      "issue_id",
+      "incarnation",
+      "session_id",
+      "request_id"
+    ]
+  },
+  "claim_list": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "tool": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      }
+    },
+    "required": []
+  },
+  "claim_release": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ]
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
+    },
+    "required": [
+      "claim_proof",
+      "expected_revision",
+      "request_id"
+    ]
+  },
+  "claim_renew": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ]
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "ttl": {
+        "type": "integer",
+        "minimum": 30,
+        "maximum": 3600,
+        "default": 300
+      }
+    },
+    "required": [
+      "claim_proof",
+      "expected_revision",
+      "request_id"
+    ]
+  },
+  "claim_show": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "issue_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      }
+    },
+    "required": [
+      "issue_id"
+    ]
+  },
+  "close": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "expected": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "force": {
+        "const": true
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "At most 65536 UTF-8 bytes."
+      },
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ]
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "id",
+      "expected"
+    ],
+    "additionalProperties": false
+  },
+  "comment": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "At most 65536 UTF-8 bytes."
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "id",
+      "body"
+    ],
+    "additionalProperties": false
+  },
+  "create": {
+    "type": "object",
+    "properties": {
+      "tool": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "At most 65536 UTF-8 bytes."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "open",
+          "in_progress",
+          "deferred",
+          "closed"
+        ]
+      },
+      "type": {
+        "type": "string",
+        "enum": [
+          "bug",
+          "task",
+          "epic",
+          "feature",
+          "chore"
+        ]
+      },
+      "priority": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4
+      },
+      "labels": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "At most 256 UTF-8 bytes, without control characters."
+        }
+      },
+      "parent": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "prefix": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}$"
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry."
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "tool",
+      "project",
+      "body",
+      "prefix",
+      "request_id"
+    ],
+    "additionalProperties": false
+  },
+  "dependency_add": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "dependent_id",
+      "blocker_id",
+      "expected_revision",
+      "request_id"
+    ],
+    "properties": {
+      "dependent_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "blocker_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Reuse one lowercase UUID for each logical mutation."
+      }
+    }
+  },
+  "dependency_list": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "dependent_id"
+    ],
+    "properties": {
+      "dependent_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      }
+    }
+  },
+  "dependency_remove": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "dependent_id",
+      "blocker_id",
+      "expected_revision",
+      "request_id"
+    ],
+    "properties": {
+      "dependent_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "blocker_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Reuse one lowercase UUID for each logical mutation."
+      }
+    }
+  },
+  "dependency_worklist": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "state"
+    ],
+    "properties": {
+      "state": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "blocked"
+        ]
+      },
+      "tool": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "type": {
+        "type": "string",
+        "enum": [
+          "bug",
+          "task",
+          "epic",
+          "feature",
+          "chore"
+        ]
+      },
+      "priority": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      }
+    }
+  },
+  "list": {
+    "type": "object",
+    "properties": {
+      "tool": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "open",
+          "in_progress",
+          "deferred",
+          "closed"
+        ]
+      },
+      "type": {
+        "type": "string",
+        "enum": [
+          "bug",
+          "task",
+          "epic",
+          "feature",
+          "chore"
+        ]
+      },
+      "priority": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "memory_context": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-m[1-9][0-9]*$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "max_bytes": {
+        "type": "integer",
+        "minimum": 4096,
+        "maximum": 65536,
+        "default": 32768
+      },
+      "with_revision": {
+        "const": true,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "project"
+    ],
+    "additionalProperties": false
+  },
+  "memory_create": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "prefix": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}$"
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry."
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16384,
+        "description": "At most 16384 UTF-8 bytes."
+      }
+    },
+    "required": [
+      "project",
+      "prefix",
+      "request_id",
+      "title",
+      "body"
+    ],
+    "additionalProperties": false
+  },
+  "memory_delete": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-m[1-9][0-9]*$"
+      },
+      "expected": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "project",
+      "id",
+      "expected"
+    ],
+    "additionalProperties": false
+  },
+  "memory_list": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-m[1-9][0-9]*$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": [
+      "project"
+    ],
+    "additionalProperties": false
+  },
+  "memory_search": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-m[1-9][0-9]*$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16384,
+        "description": "At most 16384 UTF-8 bytes."
+      }
+    },
+    "required": [
+      "project",
+      "query"
+    ],
+    "additionalProperties": false
+  },
+  "memory_show": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-m[1-9][0-9]*$"
+      }
+    },
+    "required": [
+      "project",
+      "id"
+    ],
+    "additionalProperties": false
+  },
+  "memory_update": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-m[1-9][0-9]*$"
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes; no control characters."
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16384,
+        "description": "At most 16384 UTF-8 bytes."
+      },
+      "expected": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "project",
+      "id",
+      "title",
+      "body",
+      "expected"
+    ],
+    "additionalProperties": false
+  },
+  "reopen": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "expected": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ]
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "id",
+      "expected"
+    ],
+    "additionalProperties": false
+  },
+  "search": {
+    "type": "object",
+    "properties": {
+      "tool": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "open",
+          "in_progress",
+          "deferred",
+          "closed"
+        ]
+      },
+      "type": {
+        "type": "string",
+        "enum": [
+          "bug",
+          "task",
+          "epic",
+          "feature",
+          "chore"
+        ]
+      },
+      "priority": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "At most 256 UTF-8 bytes, without control characters."
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      },
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "At most 65536 UTF-8 bytes."
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "additionalProperties": false
+  },
+  "show": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "additionalProperties": false
+  },
+  "update": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "changes": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 7,
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "const": "tool"
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "description": "At most 256 UTF-8 bytes, without control characters."
+                },
+                "expected": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "value",
+                "expected"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "const": "project"
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "description": "At most 256 UTF-8 bytes, without control characters."
+                },
+                "expected": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "value",
+                "expected"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "const": "body"
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 65536,
+                  "description": "At most 65536 UTF-8 bytes."
+                },
+                "expected": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "value",
+                "expected"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "const": "status"
+                },
+                "value": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "in_progress",
+                    "deferred",
+                    "closed"
+                  ]
+                },
+                "expected": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "value",
+                "expected"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "const": "type"
+                },
+                "value": {
+                  "type": "string",
+                  "enum": [
+                    "bug",
+                    "task",
+                    "epic",
+                    "feature",
+                    "chore"
+                  ]
+                },
+                "expected": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "value",
+                "expected"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "const": "priority"
+                },
+                "value": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "expected": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "value",
+                "expected"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "const": "labels"
+                },
+                "value": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "description": "At most 256 UTF-8 bytes, without control characters."
+                  }
+                },
+                "expected": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "value",
+                "expected"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "force": {
+        "const": true
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "At most 65536 UTF-8 bytes."
+      },
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ]
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "id",
+      "changes"
+    ],
+    "additionalProperties": false
+  }
+}
