@@ -298,3 +298,26 @@ test('transport rejects malformed JWKS errors and JWKS codes under other statuse
       fetch: async () => Response.json(exact, { status }) }), { code, status });
   }
 });
+
+test('transport keeps the read-only and agent gate rejections of the Worker', async () => {
+  const send = (operation: Parameters<typeof executeCloudOperation>[0]['operation'], status: number, body: unknown) => executeCloudOperation({
+    origin: 'https://issues.example', operation, authorize: async () => 'secret', fetch: async () => Response.json(body, { status }) });
+  const comment = parseOperation({ op: 'comment', id: 'pd-1', body: 'note' });
+  await assert.rejects(send(comment, 403, { error: { code: 'read_only_actor', message: 'This actor can only read', details: { op: 'comment' } } }),
+    { code: 'read_only_actor', status: 403, details: { op: 'comment' } });
+  for (const body of [
+    { error: { code: 'read_only_actor', message: 'This actor can only read', details: { op: 'update' } } },
+    { error: { code: 'read_only_actor', message: 'This actor can only read' } },
+    { error: { code: 'actor_not_allowed', message: 'Access denied' } },
+  ]) await assert.rejects(send(comment, 403, body), { code: 'denied', status: 403 });
+  await assert.rejects(send(comment, 409, { error: { code: 'claim_required', message: 'claim', details: { id: 'pd-1' } } }),
+    { code: 'claim_required', status: 409, details: { id: 'pd-1' } });
+  await assert.rejects(send(comment, 409, { error: { code: 'claim_required', message: 'claim', details: { id: 'pd-2' } } }), { code: 'cloud_invalid_response' });
+  const dependency = parseOperation({ op: 'dependency_add', dependent_id: 'pd-1', blocker_id: 'pd-2', expected_revision: 1, request_id: crypto.randomUUID() });
+  await assert.rejects(send(dependency, 409, { error: { code: 'claim_required', message: 'claim', details: { id: 'pd-1' } } }),
+    { code: 'claim_required', details: { id: 'pd-1' } });
+  const acquire = parseOperation({ op: 'claim_acquire', issue_id: 'pd-3', incarnation: 'a'.repeat(32), session_id: crypto.randomUUID(), request_id: crypto.randomUUID() });
+  await assert.rejects(send(acquire, 409, { error: { code: 'not_ready', message: 'ready', details: { id: 'pd-3' } } }),
+    { code: 'not_ready', status: 409, details: { id: 'pd-3' } });
+  await assert.rejects(send(comment, 409, { error: { code: 'not_ready', message: 'ready', details: { id: 'pd-1' } } }), { code: 'cloud_invalid_response' });
+});

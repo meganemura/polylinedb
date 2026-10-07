@@ -203,9 +203,20 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       return { current };
     }
     case 'claim_required': {
+      // The agent gate names only the issue; a missing ownership proof returns the current issue.
+      if (object(value).id !== undefined) {
+        const target = operation.op === 'dependency_add' || operation.op === 'dependency_remove' ? operation.dependent_id
+          : operation.op === 'update' || operation.op === 'close' || operation.op === 'reopen' || operation.op === 'comment' ? operation.id : invalid();
+        if (exact(value, ['id']).id !== target) return invalid();
+        return { id: target };
+      }
       if (operation.op !== 'update' && operation.op !== 'close' && operation.op !== 'reopen') return invalid();
       const current = issue(exact(value, ['issue']).issue); if (current.id !== operation.id) return invalid();
       return { issue: current };
+    }
+    case 'not_ready': {
+      if (operation.op !== 'claim_acquire' || exact(value, ['id']).id !== operation.issue_id) return invalid();
+      return { id: operation.issue_id };
     }
     case 'dependency_conflict': {
       if (operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') return invalid();
@@ -310,7 +321,16 @@ export async function executeCloudOperation(input: {
       body: JSON.stringify(input.operation),
     });
     if (response.status === 401) throw new PolylinedbError('auth_required', 'Run auth login for this cloud connection.', 401);
-    if (response.status === 403) throw new PolylinedbError('denied', 'Cloud access was denied.', 403);
+    if (response.status === 403) {
+      // Access itself answers 403 without this envelope, so only the Worker's read-only rejection keeps its code.
+      let readOnly = false;
+      try {
+        const error = exact(exact(await readResponse(response, controller.signal), ['error']).error, ['code', 'message', 'details']);
+        readOnly = error.code === 'read_only_actor' && exact(error.details, ['op']).op === input.operation.op;
+      } catch { controller.signal.throwIfAborted(); }
+      if (readOnly) throw new PolylinedbError('read_only_actor', 'This cloud actor can only read.', 403, { op: input.operation.op });
+      throw new PolylinedbError('denied', 'Cloud access was denied.', 403);
+    }
     let value: unknown;
     try { value = await readResponse(response, controller.signal); } catch { controller.signal.throwIfAborted(); return invalid(); }
     if (response.status !== 200) {
