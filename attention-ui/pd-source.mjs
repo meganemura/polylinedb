@@ -119,8 +119,7 @@ export function projectTasks(state) {
   return {
     project: state.project,
     ready: state.ready.map(pointer),
-    in_progress: state.inProgress.map((issue) => ({ ...pointer(issue), holder: holders.get(issue.id) ?? null })),
-    tips: state.inProgress.filter((issue) => issue.tip).map((issue) => ({ ...pointer(issue), tip: issue.tip })),
+    in_progress: state.inProgress.map((issue) => ({ ...pointer(issue), holder: holders.get(issue.id) ?? null, tip: issue.tip })),
   };
 }
 

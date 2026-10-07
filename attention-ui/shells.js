@@ -20,9 +20,9 @@ function section(heading, rows, emptyText) {
     return block;
   }
   const list = element('ul', 'quiet-list');
-  for (const [primary, secondary] of rows) {
+  for (const [primary, ...secondaries] of rows) {
     const item = element('li', 'quiet-row');
-    item.append(element('span', 'primary', primary), element('span', 'secondary', secondary));
+    item.append(element('span', 'primary', primary), ...secondaries.map((text) => element('span', 'secondary', text)));
     list.append(item);
   }
   block.append(list);
@@ -34,10 +34,12 @@ const renderers = {
     section('Ready', data.ready.map((task) => [task.title, task.issue_id]), 'Nothing is ready.'),
     section(
       'In progress',
-      data.in_progress.map((task) => [task.title, [task.issue_id, task.holder].filter(Boolean).join(' · ')]),
+      data.in_progress.map((task) => [
+        task.title,
+        [task.issue_id, task.holder, task.tip && `tip ${task.tip.slice(0, 7)}`].filter(Boolean).join(' · '),
+      ]),
       'Nothing is in progress.',
     ),
-    section('Tips', data.tips.map((task) => [task.title, `${task.issue_id} · ${task.tip.slice(0, 7)}`]), 'No tip is recorded.'),
   ],
   // A lease end time is when the claim lapses, not evidence that the agent is still working.
   agents: (data) => [
@@ -45,12 +47,9 @@ const renderers = {
       null,
       data.claims.map((claim) => [
         claim.agent_label ?? 'Unlabeled claim',
-        [
-          claim.title ? `${claim.issue_id} · ${claim.title}` : claim.issue_id,
-          claim.tip ? `tip ${claim.tip.slice(0, 7)}` : 'no tip yet',
-          `lease to ${timeOf(claim.expires_at)}`,
-          claim.host ?? 'host not reported',
-        ].join(' · '),
+        claim.title ? `${claim.issue_id} · ${claim.title}` : claim.issue_id,
+        `held until ${timeOf(claim.expires_at)} · ${claim.tip ? `tip ${claim.tip.slice(0, 7)}` : 'no tip yet'}`,
+        `host: ${claim.host ?? 'not reported'}`,
       ]),
       'No agent holds a claim.',
     ),
