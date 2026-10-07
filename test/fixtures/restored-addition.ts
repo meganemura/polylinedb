@@ -1,7 +1,7 @@
 // Builds synthetic stores for restored-D1 addition tests; each engine supplies its own query and batch ports.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { executeOperation, parseOperation } from '../../src/records/index.ts';
@@ -12,6 +12,9 @@ import type { Statement } from '../../scripts/d1-additive-merge.ts';
 import type { Batch } from '../../scripts/d1-restored-addition.ts';
 
 export type Store = ReturnType<typeof openStore>;
+
+/** The release 0.1.0 operator's restore of one snapshot 3 input into schema 3, from record-release-0.1.0-restore.ts. */
+export const legacyRestore: { schema_sql: string; input: unknown; sha256: string; writes: Statement[] } = JSON.parse(readFileSync(new URL('release-0.1.0-restore.json', import.meta.url), 'utf8'));
 
 export async function populate(store: Store, prefix: string): Promise<void> {
   const run = (operation: unknown, actor = `${prefix}-author`) => executeOperation(store.db, parseOperation(operation), actor);
