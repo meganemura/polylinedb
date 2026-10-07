@@ -8,6 +8,8 @@ import test from 'node:test';
 
 const executable = new URL('../src/cli.ts', import.meta.url).pathname;
 const preload = new URL('./fixtures/cli-auth-preload.ts', import.meta.url).pathname;
+// spawnSync blocks the runner's own test timeout, so this limit only stops a hung child.
+const childLimit = 60_000;
 function fixture(context: test.TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pd-cli-auth-')));
   const cwd = join(root, 'work');
@@ -18,8 +20,10 @@ function fixture(context: test.TestContext) {
     PD_AUTH_FIXTURE_STATE: join(root, 'synthetic-credential'), PD_AUTH_FIXTURE_MODE: 'normal', PD_OAUTH_LISTENER_CODE: '' };
   const run = (args: string[], status = 0, mode = 'normal', listenerCode?: string) => {
     const result = spawnSync(process.execPath, ['--import', preload, executable, ...args], {
-      cwd, env: { ...env, PD_AUTH_FIXTURE_MODE: mode, PD_OAUTH_LISTENER_CODE: listenerCode ?? '' }, encoding: 'utf8', timeout: 10000,
+      cwd, env: { ...env, PD_AUTH_FIXTURE_MODE: mode, PD_OAUTH_LISTENER_CODE: listenerCode ?? '' }, encoding: 'utf8', timeout: childLimit,
     });
+    const failure = result.error as NodeJS.ErrnoException | undefined;
+    if (failure) throw new Error(`pd ${args.join(' ')} did not exit: ${failure.code}, signal ${result.signal}, child limit ${childLimit} ms`, { cause: failure });
     assert.equal(result.status, status, `${result.stderr}\n${result.stdout}`);
     assert.equal(result.stdout.includes('synthetic-access-token'), false);
     assert.equal(result.stderr.includes('synthetic-private-token'), false);
