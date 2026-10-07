@@ -1,4 +1,4 @@
-/* The paper surface uses ink for both selection and dispatch. The action stays next to the list as rows wrap. */
+/* The paper surface uses ink for both selection and dispatch. Dispatch holds the bottom thumb zone even when the list is short. */
 :root {
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
@@ -19,7 +19,9 @@ body {
 .paper {
   width: min(100%, 560px);
   margin: 0 auto;
-  padding: clamp(48px, 8svh, 80px) 32px 24px;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(48px, 8svh, 80px) 32px 0;
   min-height: 100svh;
 }
 
@@ -32,6 +34,7 @@ h1 {
   font-weight: 500;
 }
 
+form { display: flex; flex: 1; flex-direction: column; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .attention-list { list-style: none; margin: 0; padding: 0; }
 .attention-list li + li { border-top: 1px solid #ddd7cb; }
@@ -68,7 +71,8 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   z-index: 1;
   bottom: 0;
   width: 100%;
-  padding: 8px 0 max(24px, env(safe-area-inset-bottom));
+  margin-top: auto;
+  padding: 16px 0 max(24px, env(safe-area-inset-bottom));
   background: linear-gradient(transparent, #f5f1e8 24%);
 }
 
