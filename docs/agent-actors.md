@@ -13,7 +13,7 @@ Give each host a stable actor ID, for example:
 | Codex | `local:codex` | `agent` |
 | Claude Code | `local:claude` | `agent` |
 | Cursor | `local:cursor` | `agent` |
-| A dispatch agent | `local:rocky` | `agent` |
+| A dispatch agent | `local:dispatcher` | `agent` |
 | You at a terminal | `local:<your name>` | `human` |
 
 The actor is attribution, not a credential.

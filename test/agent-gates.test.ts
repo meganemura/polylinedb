@@ -14,7 +14,7 @@ import { runMainLockFlow } from './fixtures/main-lock-flow.ts';
 const session = '00000000-0000-4000-8000-0000000000c1';
 const codex = { id: 'local:codex', kind: 'agent' } as const;
 const claude = { id: 'local:claude', kind: 'agent' } as const;
-const human = 'local:rocky-human';
+const human = 'local:operator';
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-gates-'));
@@ -118,11 +118,11 @@ test('the CLI reads the actor kind from the flag or the environment', t => {
     const result = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), '--data-dir', directory, ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
     return { status: result.status, output: JSON.parse(result.stdout || result.stderr) };
   };
-  assert.equal(pd(['--actor', 'local:rocky', 'create', '--tool', 'gate', '--project', 'gate', '--body', 'work']).status, 0);
+  assert.equal(pd(['--actor', 'local:operator', 'create', '--tool', 'gate', '--project', 'gate', '--body', 'work']).status, 0);
   assert.equal(pd(['--actor', 'local:codex', '--actor-kind', 'agent', 'comment', 'pd-1', '--body', 'x']).output.error.code, 'claim_required');
   assert.equal(pd(['--actor', 'local:codex', 'comment', 'pd-1', '--body', 'x'], { POLYLINEDB_ACTOR_KIND: 'agent' }).output.error.code, 'claim_required');
   assert.equal(pd(['--actor', 'local:codex', '--actor-kind', 'robot', 'comment', 'pd-1', '--body', 'x']).output.error.code, 'invalid_input');
-  assert.ok('comment' in pd(['--actor', 'local:rocky', 'comment', 'pd-1', '--body', 'x']).output);
+  assert.ok('comment' in pd(['--actor', 'local:operator', 'comment', 'pd-1', '--body', 'x']).output);
 });
 
 test('two local agents claim different issues under their own actors and never under the shared repository actor', t => {
