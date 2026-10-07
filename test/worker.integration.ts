@@ -34,7 +34,8 @@ const runtime = new Miniflare({
         DB: { type: 'd1', name: 'polylinedb-built-worker' },
         ACCESS_TEAM_DOMAIN: { type: 'text', value: 'polylinedb-integration.cloudflareaccess.com' },
         ACCESS_AUD: { type: 'text', value: audience },
-        ACCESS_ACTORS: { type: 'text', value: '["access:owner"]' },
+        ACCESS_ACTORS: { type: 'text', value: JSON.stringify(['access:owner', { actor: 'access:viewer', role: 'reader' },
+          { actor: 'service:codex-token', role: 'agent' }, { actor: 'service:claude-token', role: 'agent' }]) },
         ALLOWED_ORIGINS: { type: 'text', value: '["https://local-client.example"]' },
       },
     },
@@ -208,6 +209,30 @@ try {
   const listedClaims = await http({ op: 'claim_list', project: 'parser' }); assert.ok(Array.isArray(listedClaims.claims)); assert.equal(record(listedClaims.claims[0]).state, 'released');
   const claimDenied = await rpc('tools/call', { name: 'close', arguments: { id, expected: 3, force: true, reason: 'Exception', claim_proof } }); assert.equal(claimDenied.isError, true); assert.equal(record(record(claimDenied.structuredContent).error).code, 'claim_required');
   const invalidProof = await rpc('tools/call', { name: 'claim_acquire', arguments: { ...claimArgs, clock: 0 } }); assert.equal(invalidProof.isError, true); assert.equal(record(record(invalidProof.structuredContent).error).code, 'invalid_input');
+  const as = async (token: string, operation: Record<string, unknown>, expectedStatus = 200) => {
+    const response = await post('/v1/operations', operation, token);
+    const output = record(await response.json());
+    assert.equal(response.status, expectedStatus, JSON.stringify(output));
+    return output;
+  };
+  const viewer = await assertion({ sub: 'viewer' });
+  const codex = await assertion({ sub: '', common_name: 'codex-token' });
+  const claude = await assertion({ sub: '', common_name: 'claude-token' });
+  const readyIssue = record((await http({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'gated', body: 'Ready work', labels: ['ready'] })).issue);
+  const draftIssue = record((await http({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'gated', body: 'Draft' })).issue);
+  assert.equal(record((await as(viewer, { op: 'show', id: readyIssue.id })).issue).body, 'Ready work');
+  assert.equal(record((await as(viewer, { op: 'comment', id: readyIssue.id, body: 'Edit' }, 403)).error).code, 'read_only_actor');
+  const gatedObservation = record((await as(codex, { op: 'claim_show', issue_id: readyIssue.id })).claim);
+  const agentClaim = (issueId: unknown) => ({ op: 'claim_acquire', issue_id: issueId, incarnation: gatedObservation.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() });
+  assert.equal(record((await as(viewer, agentClaim(readyIssue.id), 403)).error).code, 'read_only_actor');
+  assert.equal(record((await as(codex, agentClaim(draftIssue.id), 409)).error).code, 'not_ready');
+  assert.equal(record((await as(codex, { op: 'comment', id: readyIssue.id, body: 'Early' }, 409)).error).code, 'claim_required');
+  assert.equal(record((await as(codex, agentClaim(readyIssue.id))).claim_receipt).actor, 'service:codex-token');
+  await as(codex, { op: 'comment', id: readyIssue.id, body: 'Started' });
+  assert.equal(record((await as(claude, { op: 'comment', id: readyIssue.id, body: 'Mine' }, 409)).error).code, 'claim_required');
+  assert.deepEqual(await database.prepare('SELECT actor FROM issue_claims WHERE issue_id = ?').bind(readyIssue.id).first(), { actor: 'service:codex-token' });
+  assert.deepEqual(await database.prepare('SELECT created_by FROM comments WHERE issue_id = ?').bind(readyIssue.id).all().then((result: { results: unknown[] }) => result.results),
+    [{ created_by: 'service:codex-token' }]);
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
@@ -216,5 +241,6 @@ try {
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
+      'read-only roster actor', 'per-token agent actors behind the ready and claim gates',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

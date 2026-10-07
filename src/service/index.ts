@@ -1,8 +1,9 @@
 /** Adapts authenticated HTTP and MCP requests to issue and memory operations. OAuth belongs to Access. */
-import { AccessError, createAccessVerifier, type AccessSettings } from "./access.ts";
+import { AccessError, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { PolylinedbError } from "../records/index.ts";
-import { executeOperation, mcpAnnotationsFor, operationSchemas, parseOperation } from "../records/index.ts";
+import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseOperation } from "../records/index.ts";
+import type { Operation } from "../records/index.ts";
 
 export type Environment = AccessSettings & {
   DB: D1DatabaseLike;
@@ -118,7 +119,14 @@ function accepts(request: Request, type: string): boolean {
   });
 }
 
-async function mcp(request: Request, env: Environment, actor: string): Promise<Response> {
+function execute(request: Request, env: Environment, operation: Operation, caller: Caller) {
+  if (caller.access === 'read' && operationAccess(operation.op) === 'write') {
+    throw new PolylinedbError('read_only_actor', 'This actor can only read', 403, { op: operation.op });
+  }
+  return executeOperation(d1Executor(env.DB), operation, caller.actor, { kind: 'cloud', url: new URL(request.url).origin });
+}
+
+async function mcp(request: Request, env: Environment, caller: Caller): Promise<Response> {
   if (!accepts(request, 'application/json') || !accepts(request, 'text/event-stream')) {
     return rpcError(null, -32600, 'Accept must include application/json and text/event-stream.', 406);
   }
@@ -170,7 +178,7 @@ async function mcp(request: Request, env: Environment, actor: string): Promise<R
       try {
         if ('op' in args) throw new PolylinedbError('invalid_input', 'Tool arguments cannot override the operation.', 400);
         const operation = parseOperation({ ...args, op: params.name });
-        const output = await executeOperation(d1Executor(env.DB), operation, actor, { kind: 'cloud', url: new URL(request.url).origin });
+        const output = await execute(request, env, operation, caller);
         return result({ content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output, isError: false });
       } catch (error) {
         const failure = publicError(error);
@@ -190,11 +198,10 @@ export async function handleRequest(
     const path = new URL(request.url).pathname;
     if (path !== '/mcp' && path !== '/v1/operations') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
     checkOrigin(request, env);
-    const actor = await authenticate(request, env);
+    const caller = await authenticate(request, env);
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
-    if (path === '/mcp') return await mcp(request, env, actor);
-    const operation = parseOperation(await readJson(request));
-    return json(await executeOperation(d1Executor(env.DB), operation, actor, { kind: 'cloud', url: new URL(request.url).origin }));
+    if (path === '/mcp') return await mcp(request, env, caller);
+    return json(await execute(request, env, parseOperation(await readJson(request)), caller));
   } catch (error) {
     const failure = publicError(error);
     return json(failure.body, failure.status, failure.status === 401 ? { 'www-authenticate': 'Bearer' } : {});
@@ -203,5 +210,5 @@ export async function handleRequest(
 
 export default { fetch: (request: Request, env: Environment) => handleRequest(request, env) };
 
-export type { AccessSettings } from './access.ts';
+export type { AccessSettings, AccessRole, Caller } from './access.ts';
 export type { D1DatabaseLike } from './d1.ts';
