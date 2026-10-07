@@ -38,8 +38,16 @@ The owner chose this option over per-issue authorities for release 0.5.
 The stored state is the truth.
 A signal carries the full row and a sequence number, and D1 applies only a greater sequence.
 Claims expire by the deadline comparison at each write.
-The Durable Object alarm only drives outbox delivery, and it is the outbox sender in release 0.5.
-A Cloudflare Queue replaces it when the oldest waiting outbox row stays older than the lag budget, or when delivery work delays the requests of the store object.
+An expired claim admits a new acquisition, so an abandoned claim frees itself at its deadline.
+The store has one Durable Object alarm with two roles.
+The reclaim role writes `reclaimed_at` on lapsed leases and leaves `released_at`, the revision, and the public state `expired` unchanged.
+The sender role delivers the outbox in release 0.5.
+A Cloudflare Queue replaces the sender role when the oldest waiting outbox row stays older than the lag budget, or when delivery work delays the requests of the store object.
+Pending I/O keeps the store in memory after a client disconnects.
+The change that adds the store either sets `durable_object_io_tasks_prevent_eviction` or moves the compatibility date from `2026-09-25` to `2026-10-01` or later.
+
+Each reconciliation run writes its measures as one row to a `reconcile_runs` table in the D1 projection database.
+The measures are missed revocations, successful and failed runs, repairs, sequence gaps, and the reclaim success rate.
 
 The store object's name contains the store incarnation.
 The migration from D1 and the return to D1 are snapshot restores into a new object or a new database, and each restore rotates the incarnation.
@@ -79,6 +87,9 @@ An old projection could then allow a close while a blocker is active again.
 
 D1 as the authority with the transition only as a specification keeps the current deployment.
 It keeps conditional SQL as the place that enforces each rule in the cloud.
+
+A reclaim could write `released_at` on lapsed leases.
+It would replace the public state `expired` with `released` and change claim history without a request ID, so the reclaim role writes `reclaimed_at` instead.
 
 Carrying claims across a switch needs an exception to the rule that a transfer invalidates imported authority.
 The design keeps the rule.

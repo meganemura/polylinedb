@@ -9,7 +9,7 @@ The [authority decision](adr/0011-issue-authority-layers.md) records the choices
 Cloudflare figures in this document come from the official documentation pages, read on 2026-10-06.
 Check the pages again before you use a figure for a commitment.
 The Worker configuration in `cloudflare.config.ts` sets `compatibilityDate` to `2026-09-25`.
-Review that date in the change that adds the store Durable Object.
+[The eviction note](#the-compatibility-date-decides-whether-pending-io-keeps-the-store-in-memory) explains why that date matters for the store Durable Object.
 
 ## Purpose and non-goals
 
@@ -23,7 +23,7 @@ A Durable Object with SQLite storage runs a synchronous callback as one transact
 The cloud store can then read the state, run the transition, and write the result in one transaction.
 The transition becomes the only place that decides a change, and the cloud write path no longer needs conditional SQL.
 That is the main gain of a Durable Object over D1 as the authority.
-The Durable Object alarm also gives the store a timer for outbox delivery.
+The Durable Object alarm also gives the store a timer for outbox delivery and for the reclaim of lapsed leases.
 
 The design has these non-goals:
 
@@ -156,25 +156,52 @@ A ready issue stays a candidate.
 A caller that starts work on a ready issue still needs a claim and a status write.
 Those writes check the current state, so a ready list that is old by the time the caller acts cannot cause a wrong status change.
 
-## Claims keep leases, and expiry needs no alarm
+## Claims keep leases, and a reclaim alarm records lapsed leases
 
 Claims keep the current contract.
 The proof has the issue ID, the store incarnation, the session UUID, and the generation.
 The transition compares the proof, the actor, and the deadline with the clock reading at each write.
 Equality with the deadline means expiry, as it does today.
 
-No part of the claim lifecycle needs an alarm.
+Authority over a claim never depends on an alarm.
 The deadline comparison at the write rejects an expired proof.
 The claim list derives `expired` at read time from `expires_at` and the read time.
 The projection keeps that derivation, so an expired claim shows as expired in D1 without a new signal.
 
-The Durable Object alarm only drives outbox delivery.
+An abandoned claim frees itself at its deadline.
+`claim_acquire` admits a new acquisition when the current claim has `expires_at <= unixepoch()`, as `claimMutationStatements` in `src/records/claims-sql.ts` shows.
+Another session can therefore acquire the issue as soon as the lease expires.
+The issue status stays as the last owner left it, because only a caller with a proof can change it.
+
+The store still reclaims lapsed leases on time, so operators and the projection see them without a later write to the issue.
+The reclaim role writes `reclaimed_at` on a claim whose deadline passed, in one `transactionSync` with an outbox row for that issue.
+It leaves `released_at`, the revision, and the generation unchanged.
+`claim_show` and `claim_list` therefore still report the state `expired`, and the public contract stays the same.
+The local store has no timer.
+It writes `reclaimed_at` in the next write transaction for that issue, so both stores report the same public state.
+The `reclaimed_at` column is a schema change in the release that adds the store Durable Object.
+
+A reclaim that writes `released_at` is a rejected alternative.
+It would turn the public state `expired` into `released` and remove the difference between a deliberate release and a lapsed lease.
+It would also change claim history without a request ID and a receipt.
+
 Each Durable Object can have one pending alarm, and `setAlarm()` replaces the previous alarm.
+The store therefore uses one alarm with two roles:
+
+| Role | Work | Next time |
+| --- | --- | --- |
+| Reclaim | Write `reclaimed_at` on each claim whose deadline passed, and add its outbox row | The earliest deadline of a claim without `reclaimed_at` |
+| Sender | Deliver outbox rows to D1 | The next delivery attempt while outbox rows wait |
+
+The store sets the alarm to the earlier of the two times.
+The handler runs the reclaim role first, so its outbox rows go out in the same run.
+Each role checks its own condition again when it runs, so an early, late, or repeated alarm does no harm.
+A failure in one role does not stop the other role, and the handler sets the next alarm for both.
 Alarms run at least once.
 When the handler throws, Cloudflare retries it with exponential backoff and a limited number of retries.
-The handler therefore catches each delivery error and calls `setAlarm()` for the next attempt itself.
-A late or repeated alarm can delay the projection.
-It cannot change a claim, because the write path never reads the alarm.
+The handler therefore catches each error and calls `setAlarm()` for the next attempt itself.
+A late or repeated alarm can delay the projection and the reclaim record.
+It cannot change the authority of a claim, because the write path never reads the alarm.
 
 ## Actor, session, incarnation, and proof fencing stay in the transition
 
@@ -209,6 +236,31 @@ D1 applies a signal only when its sequence is greater than the stored sequence f
 Because the signal carries the full row, D1 does not need the signals in between, and a repeated signal changes nothing.
 The sender deletes an outbox row only after D1 confirms that it stored that sequence or a later one.
 
+### The compatibility date decides whether pending I/O keeps the store in memory
+
+A Durable Object with no connected client and no pending work leaves memory after 70 to 140 seconds without requests or events.
+From compatibility date `2026-10-01`, pending I/O also keeps the object in memory.
+Pending I/O includes service binding requests, Durable Object RPC and `fetch()` calls, promises passed to `ctx.waitUntil()`, and pending timers.
+Each operation keeps the object for up to 15 minutes or until it completes.
+
+This repository sets `compatibilityDate` to `2026-09-25` in `cloudflare.config.ts`, so it does not get this behavior by default.
+The change that adds the store Durable Object chooses one of these options:
+
+- Add the `durable_object_io_tasks_prevent_eviction` compatibility flag and keep the date.
+- Move the compatibility date to `2026-10-01` or later, after a check of the other flags that the new date turns on.
+
+The `durable_object_io_tasks_do_not_prevent_eviction` flag turns the behavior off for a later date.
+
+Without the behavior, the object can leave memory while a delivery started with `ctx.waitUntil()` still runs, for example after the agent that sent a claim mutation disconnects.
+The mutation is safe, because the transaction commits before the response leaves the object.
+The outbox row stays, and the next alarm delivers it, so the cost is projection lag.
+
+These pages describe the behavior:
+
+- [Pending I/O keep-alive](https://developers.cloudflare.com/changelog/post/2026-10-01-pending-io-keep-alive/)
+- [Compatibility flags](https://developers.cloudflare.com/workers/configuration/compatibility-flags/)
+- [Durable Object lifecycle](https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/)
+
 ## Cold reconciliation targets zero missed revocations first
 
 A missed revocation is a case where the projection shows authority that the store already removed.
@@ -218,7 +270,7 @@ The first correctness target for reconciliation is zero missed revocations after
 Cold reconciliation compares the store Durable Object with the D1 projection.
 It walks the issue IDs in pages and compares the sequence of each issue and each edge set.
 A gap starts a repair that copies the current row.
-It also checks that the store has a pending alarm whenever outbox rows wait.
+It also checks that the store has a pending alarm whenever outbox rows wait or a lapsed lease has no `reclaimed_at`.
 
 Operators need these measures to decide when the projection is complete:
 
@@ -226,8 +278,16 @@ Operators need these measures to decide when the projection is complete:
 - The number of outbox rows waiting and the age of the oldest row.
 - The number of repairs by class: a missing signal, an old projection row, a missing alarm, and a missed revocation.
 - The number of reconciliation runs that failed, with the failure class.
+- The number of leases that passed their deadline, the number that the reclaim role recorded, and the reclaim success rate as the ratio of the two. A lease that a new acquisition replaced before the reclaim ran counts as reclaimed by acquisition.
+- The reclaim delay, from `expires_at` to `reclaimed_at`, and the age of the oldest lapsed lease on an `in_progress` issue.
 
-A reconciliation run counts as done when every issue and edge set has a zero sequence gap and the run reported zero missed revocations.
+Each reconciliation run writes these measures as one row to a `reconcile_runs` table in the D1 projection database.
+The row has the run start and end times, the result, the failure class, the missed revocation count, the repair counts by class, the sequence gaps, and the reclaim counts.
+An operator or an agent reads the rows with SQL or exports them as JSON, so another agent can check the state without reading this document.
+The table is an operator record and is not part of the CLI, HTTP, or MCP contract.
+
+A reconciliation run counts as done when its row reports success, zero sequence gaps, and zero missed revocations.
+Operators see the current state from the latest rows, and they see a trend from the counts of successful and failed runs.
 In release 0.5, the projection serves no public read, so the lag affects only the return path.
 
 ## Cost and limits come from requests, rows written, and the projection
@@ -254,7 +314,7 @@ One Worker invocation can run 1,000 D1 queries on the Paid plan and 50 on the Fr
 One mutation in the cloud store causes this work:
 
 1. One request to the store Durable Object, with its rows written for the change, the receipt, and the outbox row.
-2. One `setAlarm()` when outbox rows wait.
+2. One `setAlarm()` when outbox rows wait or a lease deadline is the next alarm time.
 3. One projection write in D1 for each delivered signal.
 
 Each read is one request to the store Durable Object with its rows read.
