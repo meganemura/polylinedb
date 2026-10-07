@@ -1,6 +1,6 @@
 import type { Operation } from './operations.ts';
 
-type OperationAccess = 'read' | 'write';
+export type OperationAccess = 'read' | 'write';
 
 type McpHints = {
   readOnlyHint: boolean;
@@ -47,6 +47,10 @@ function hasOperationPolicy(name: string): name is Operation['op'] {
 
 export function requiresExplicitLocalActor(name: string): boolean {
   return hasOperationPolicy(name) && operationPolicy[name].access === 'write';
+}
+
+export function operationAccess(name: Operation['op']): OperationAccess {
+  return operationPolicy[name].access;
 }
 
 export function mcpAnnotationsFor(name: string) {

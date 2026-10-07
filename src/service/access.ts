@@ -1,4 +1,6 @@
-/** Verifies Access assertions and owner policy before issue operations receive an actor. */
+/** Verifies Access assertions and maps each allowlisted actor to its role. Operation access checks belong to the Worker entry. */
+import type { Actor, OperationAccess } from '../records/index.ts';
+
 export interface AccessSettings {
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
@@ -16,7 +18,12 @@ export class AccessError extends Error {
   }
 }
 
-type Configuration = { issuer: string; audience: string; actors: ReadonlySet<string> };
+/** `reader` is a human who can only read; `agent` writes pass the ready-label and claim gates. */
+export const accessRoles = ['human', 'agent', 'reader'] as const;
+export type AccessRole = typeof accessRoles[number];
+export type Caller = { actor: Actor; access: OperationAccess };
+
+type Configuration = { issuer: string; audience: string; roles: ReadonlyMap<string, AccessRole> };
 type Keys = { issuer: string; expires: number; keys: ReadonlyMap<string, CryptoKey> };
 const unauthorized = () => new AccessError(401, 'invalid_assertion');
 const infrastructure = () => new AccessError(503, 'jwks_unavailable');
@@ -33,14 +40,31 @@ function configuration(settings: AccessSettings): Configuration {
       || typeof settings.ACCESS_AUD !== 'string' || settings.ACCESS_AUD.trim() !== settings.ACCESS_AUD
       || settings.ACCESS_AUD.length === 0 || settings.ACCESS_AUD.length > 256
       || typeof settings.ACCESS_ACTORS !== 'string' || settings.ACCESS_ACTORS.length > 32768) throw new Error();
-    const actors: unknown = JSON.parse(settings.ACCESS_ACTORS);
-    if (!Array.isArray(actors) || actors.length === 0 || actors.length > 64
-      || !actors.every((actor: unknown) => typeof actor === 'string'
-        && /^(access|service):\S+$/.test(actor) && actor.length <= 512)) throw new Error();
-    return { issuer: `https://${settings.ACCESS_TEAM_DOMAIN}`, audience: settings.ACCESS_AUD, actors: new Set(actors) };
+    const entries: unknown = JSON.parse(settings.ACCESS_ACTORS);
+    if (!Array.isArray(entries) || entries.length === 0 || entries.length > 64) throw new Error();
+    const roles = new Map<string, AccessRole>();
+    for (const entry of entries) {
+      // A bare actor ID is a human who writes, so an owner-only allowlist needs no roles.
+      const { actor, role } = typeof entry === 'string' ? { actor: entry, role: 'human' } : rosterEntry(entry);
+      if (typeof actor !== 'string' || !/^(access|service):\S+$/.test(actor) || actor.length > 512
+        || !accessRoles.includes(role as AccessRole) || roles.has(actor)) throw new Error();
+      roles.set(actor, role as AccessRole);
+    }
+    return { issuer: `https://${settings.ACCESS_TEAM_DOMAIN}`, audience: settings.ACCESS_AUD, roles };
   } catch {
     throw new AccessError(503, 'invalid_access_configuration');
   }
+}
+
+function rosterEntry(entry: unknown): { actor: unknown; role: unknown } {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new Error();
+  const keys = Object.keys(entry);
+  if (keys.length !== 2 || !keys.includes('actor') || !keys.includes('role')) throw new Error();
+  return entry as { actor: unknown; role: unknown };
+}
+
+function callerFor(id: string, role: AccessRole): Caller {
+  return { actor: { id, kind: role === 'agent' ? 'agent' : 'human' }, access: role === 'reader' ? 'read' : 'write' };
 }
 
 function bytes(segment: string): Uint8Array<ArrayBuffer> {
@@ -116,7 +140,7 @@ async function trustedKeys(response: Response, signal: AbortSignal): Promise<Rea
   return keys;
 }
 
-export function createAccessVerifier(fetcher: typeof fetch = fetch): (request: Request, settings: AccessSettings) => Promise<string> {
+export function createAccessVerifier(fetcher: typeof fetch = fetch): (request: Request, settings: AccessSettings) => Promise<Caller> {
   let cached: Keys | undefined;
   let loading: { issuer: string; promise: Promise<Keys> } | undefined;
   let unknownRefresh: { issuer: string; at: number } | undefined;
@@ -172,7 +196,8 @@ export function createAccessVerifier(fetcher: typeof fetch = fetch): (request: R
     } catch { throw unauthorized(); }
     if (!valid) throw unauthorized();
     const actor = actorFrom(claims, config);
-    if (!config.actors.has(actor)) throw new AccessError(403, 'actor_not_allowed');
-    return actor;
+    const role = config.roles.get(actor);
+    if (role === undefined) throw new AccessError(403, 'actor_not_allowed');
+    return callerFor(actor, role);
   };
 }

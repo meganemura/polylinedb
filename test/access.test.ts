@@ -42,8 +42,8 @@ async function rejects(action: Promise<unknown>, status: number, code: string): 
 }
 
 test('valid signed assertion yields only the allowlisted subject', async () => {
-  assert.equal(await verifier()(request(await signed()), settings), 'access:owner');
-  assert.equal(await verifier()(request(await signed({ aud: 'private-application' })), settings), 'access:owner');
+  assert.equal((await verifier()(request(await signed()), settings)).actor.id, 'access:owner');
+  assert.equal((await verifier()(request(await signed({ aud: 'private-application' })), settings)).actor.id, 'access:owner');
 });
 
 test('missing assertion and bearer-only request are unauthorized', async () => {
@@ -84,7 +84,7 @@ test('valid signatures still require exact issuer, audience and claim types', as
     { sub: '' }, { sub: ' ' }, { sub: 'owner\n' }, { sub: 'x'.repeat(257) },
   ];
   for (const claims of cases) await rejects(verify(request(await signed(claims)), settings), 401, 'invalid_assertion');
-  assert.equal(await verify(request(await signed({ nbf: now - 100 })), settings), 'access:owner');
+  assert.equal((await verify(request(await signed({ nbf: now - 100 })), settings)).actor.id, 'access:owner');
 });
 
 test('user allowlist ignores caller actor arguments and email headers', async () => {
@@ -93,19 +93,37 @@ test('user allowlist ignores caller actor arguments and email headers', async ()
     body: JSON.stringify({ actor: 'access:owner' }),
   });
   await rejects(verifier()(untrusted, settings), 403, 'actor_not_allowed');
-  assert.equal(await verifier()(request(await signed({ actor: 'access:intruder' })), settings), 'access:owner');
+  assert.equal((await verifier()(request(await signed({ actor: 'access:intruder' })), settings)).actor.id, 'access:owner');
 });
 
 test('service identities require a verified common_name and explicit allowlist', async () => {
   const verify = verifier();
-  assert.equal(await verify(request(await signed({ sub: '', common_name: 'local-service' })), settings), 'service:local-service');
+  assert.equal((await verify(request(await signed({ sub: '', common_name: 'local-service' })), settings)).actor.id, 'service:local-service');
   const now = Math.floor(Date.now() / 1000);
   const content = `${encode(JSON.stringify({ alg: 'RS256', kid: 'initial' }))}.${encode(JSON.stringify({ iss: issuer, aud: 'private-application', exp: now + 100, common_name: 'local-service' }))}`;
   const noSubject = `${content}.${encode(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, new TextEncoder().encode(content)))}`;
-  assert.equal(await verify(request(noSubject), settings), 'service:local-service');
+  assert.equal((await verify(request(noSubject), settings)).actor.id, 'service:local-service');
   await rejects(verify(request(await signed({ sub: '', common_name: 'unknown' })), settings), 403, 'actor_not_allowed');
   await rejects(verify(request(await signed({ sub: '', common_name: '' })), settings), 401, 'invalid_assertion');
   await rejects(verify(request(await signed({ sub: 'intruder', common_name: 'local-service' })), settings), 403, 'actor_not_allowed');
+});
+
+test('the roster gives each actor a kind and an access level', async () => {
+  const verify = verifier();
+  const roster = { ...settings, ACCESS_ACTORS: JSON.stringify([
+    { actor: 'access:owner', role: 'reader' },
+    { actor: 'service:codex-token', role: 'agent' },
+    { actor: 'service:claude-token', role: 'agent' },
+    'service:owner-cli',
+  ]) };
+  assert.deepEqual(await verify(request(await signed()), roster), { actor: { id: 'access:owner', kind: 'human' }, access: 'read' });
+  assert.deepEqual(await verify(request(await signed({ sub: '', common_name: 'codex-token' })), roster),
+    { actor: { id: 'service:codex-token', kind: 'agent' }, access: 'write' });
+  assert.deepEqual(await verify(request(await signed({ sub: '', common_name: 'claude-token' })), roster),
+    { actor: { id: 'service:claude-token', kind: 'agent' }, access: 'write' });
+  assert.deepEqual(await verify(request(await signed({ sub: '', common_name: 'owner-cli' })), roster),
+    { actor: { id: 'service:owner-cli', kind: 'human' }, access: 'write' });
+  await rejects(verify(request(await signed({ sub: '', common_name: 'cursor-token' })), roster), 403, 'actor_not_allowed');
 });
 
 test('invalid configuration fails closed before fetching keys', async () => {
@@ -116,6 +134,10 @@ test('invalid configuration fails closed before fetching keys', async () => {
     { ACCESS_TEAM_DOMAIN: '-personal.cloudflareaccess.com' }, { ACCESS_AUD: '' },
     { ACCESS_ACTORS: '[]' }, { ACCESS_ACTORS: 'null' }, { ACCESS_ACTORS: 'invalid' },
     { ACCESS_ACTORS: '["owner"]' }, { ACCESS_ACTORS: '[123]' }, { ACCESS_ACTORS: '["access:"]' },
+    { ACCESS_ACTORS: '[{"actor":"access:owner","role":"admin"}]' }, { ACCESS_ACTORS: '[{"actor":"access:owner"}]' },
+    { ACCESS_ACTORS: '[{"actor":"access:owner","role":"human","kind":"agent"}]' }, { ACCESS_ACTORS: '[{"actor":"owner","role":"human"}]' },
+    { ACCESS_ACTORS: '[null]' }, { ACCESS_ACTORS: '[["access:owner","human"]]' },
+    { ACCESS_ACTORS: '["access:owner",{"actor":"access:owner","role":"reader"}]' },
   ]) await rejects(verify(request(await signed()), { ...settings, ...patch }), 503, 'invalid_access_configuration');
 });
 
@@ -129,8 +151,8 @@ test('cache reuses keys while every request rechecks time and owner policy', asy
     return jwks();
   });
   const token = await signed();
-  assert.deepEqual(await Promise.all([verify(request(token), settings), verify(request(token), settings)]), ['access:owner', 'access:owner']);
-  assert.equal(await verify(request(token), settings), 'access:owner');
+  assert.deepEqual((await Promise.all([verify(request(token), settings), verify(request(token), settings)])).map(caller => caller.actor.id), ['access:owner', 'access:owner']);
+  assert.equal((await verify(request(token), settings)).actor.id, 'access:owner');
   await rejects(verify(request(await signed({ exp: 1 })), settings), 401, 'invalid_assertion');
   await rejects(verify(request(token), { ...settings, ACCESS_ACTORS: '["access:another"]' }), 403, 'actor_not_allowed');
   assert.equal(count, 1);
@@ -142,8 +164,8 @@ test('unknown kid refresh accepts rotation and throttles nonexistent keys', asyn
     count += 1;
     return count === 1 ? jwks() : jwks({ ...publicKey, kid: 'initial' }, { ...rotatedKey, kid: 'rotated' });
   });
-  assert.equal(await verify(request(await signed()), settings), 'access:owner');
-  assert.equal(await verify(request(await signed({}, { kid: 'rotated' }, rotatedPair.privateKey)), settings), 'access:owner');
+  assert.equal((await verify(request(await signed()), settings)).actor.id, 'access:owner');
+  assert.equal((await verify(request(await signed({}, { kid: 'rotated' }, rotatedPair.privateKey)), settings)).actor.id, 'access:owner');
   for (const kid of ['missing1', 'missing2', 'https://attacker.example']) await rejects(verify(request(await signed({}, { kid })), settings), 401, 'invalid_assertion');
   assert.equal(count, 2);
 });
@@ -153,13 +175,13 @@ test('cache expiry reloads keys and cached keys do not extend assertion validity
   let count = 0;
   const verify = createAccessVerifier(async () => { count += 1; return jwks(); });
   const token = await signed({ exp: Math.floor(Date.now() / 1000) + 1000 });
-  assert.equal(await verify(request(token), settings), 'access:owner');
+  assert.equal((await verify(request(token), settings)).actor.id, 'access:owner');
   const shortToken = await signed({ exp: Math.floor(Date.now() / 1000) + 1 });
   context.mock.timers.tick(2000);
   await rejects(verify(request(shortToken), settings), 401, 'invalid_assertion');
   assert.equal(count, 1);
   context.mock.timers.tick(300000);
-  assert.equal(await verify(request(token), settings), 'access:owner');
+  assert.equal((await verify(request(token), settings)).actor.id, 'access:owner');
   assert.equal(count, 2);
 });
 
@@ -170,10 +192,10 @@ test('failed unknown-key refresh is rate limited without poisoning known keys', 
     if (count > 1) return new Response('unavailable', { status: 503 });
     return jwks();
   });
-  assert.equal(await verify(request(await signed()), settings), 'access:owner');
+  assert.equal((await verify(request(await signed()), settings)).actor.id, 'access:owner');
   await rejects(verify(request(await signed({}, { kid: 'new' })), settings), 503, 'jwks_unavailable');
   await rejects(verify(request(await signed({}, { kid: 'another' })), settings), 401, 'invalid_assertion');
-  assert.equal(await verify(request(await signed()), settings), 'access:owner');
+  assert.equal((await verify(request(await signed()), settings)).actor.id, 'access:owner');
   assert.equal(count, 2);
 });
 
@@ -187,7 +209,7 @@ test('JWKS failure is unavailable, leaks no upstream errors, and is not cached a
   const token = await signed();
   await assert.rejects(verify(request(token), settings), error => error instanceof AccessError
     && error.status === 503 && error.code === 'jwks_unavailable' && error.message === 'Authentication unavailable');
-  assert.equal(await verify(request(token), settings), 'access:owner');
+  assert.equal((await verify(request(token), settings)).actor.id, 'access:owner');
   assert.equal(count, 2);
 });
 

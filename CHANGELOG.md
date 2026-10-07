@@ -8,6 +8,7 @@
 - Let an agent actor claim only an issue labeled `ready`, and read only labeled issues from the ready worklist.
 - Reject agent updates, comments, close, reopen, and prerequisite edits with `claim_required` unless the agent holds an active claim on the issue; the check and the ready-label check for acquisition run in the same transaction as the write.
 - Decide issue, claim, creation, and prerequisite rejections in a pure transition module that SQLite and D1 share, and prove it against the SQL writes with a differential test.
+- Let each cloud `ACCESS_ACTORS` entry carry a role: `human`, `agent`, or `reader`. A bare actor ID stays a human who writes. The Worker passes the actor kind to the agent gates, so a service-token agent claims only `ready` issues and writes only under its own claim. A `reader` gets `read_only_actor` on every write, claims included. A duplicate actor ID now makes the configuration invalid.
 
 ## 0.3.1 (2026-10-06)
 

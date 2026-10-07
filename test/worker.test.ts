@@ -13,15 +13,15 @@ const publicKey = await crypto.subtle.exportKey('jwk', pair.publicKey);
 const issuer = 'https://polylinedb-test.cloudflareaccess.com';
 const authenticate = createAccessVerifier(async () => Response.json({ keys: [{ ...publicKey, kid: 'test', alg: 'RS256', use: 'sig' }] }));
 
-async function assertion(): Promise<string> {
+async function assertion(claims: Record<string, unknown> = {}): Promise<string> {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const encoded = `${encode({ alg: 'RS256', kid: 'test' })}.${encode({ iss: issuer, aud: ['polylinedb-test'],
-    sub: 'owner', exp: Math.floor(Date.now() / 1000) + 300 })}`;
+    sub: 'owner', exp: Math.floor(Date.now() / 1000) + 300, ...claims })}`;
   const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, new TextEncoder().encode(encoded));
   return `${encoded}.${Buffer.from(signature).toString('base64url')}`;
 }
 
-function fixture() {
+function fixture(actors = '["access:owner"]') {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(SCHEMA_SQL);
   const storage = storageOf(sqlite);
@@ -45,7 +45,7 @@ function fixture() {
     },
   };
   const env = { DB, ACCESS_TEAM_DOMAIN: 'polylinedb-test.cloudflareaccess.com', ACCESS_AUD: 'polylinedb-test',
-    ACCESS_ACTORS: '["access:owner"]', ALLOWED_ORIGINS: '["https://client.example"]' };
+    ACCESS_ACTORS: actors, ALLOWED_ORIGINS: '["https://client.example"]' };
   return { sqlite, env };
 }
 
@@ -184,5 +184,67 @@ test('MCP handles transport and JSON-RPC failures without executing tools', asyn
     assert.deepEqual((await (await call({ jsonrpc: '2.0', id: 2, method: 'ping' })).json()).result, {});
     const get = await handleRequest(new Request('https://issues.example/mcp', { headers: { 'cf-access-jwt-assertion': token } }), env, authenticate);
     assert.equal(get.status, 405);
+  } finally { sqlite.close(); }
+});
+
+test('the roster keeps readers read-only and gates each service-token agent as its own actor', async () => {
+  const { sqlite, env } = fixture(JSON.stringify([
+    'access:owner',
+    { actor: 'access:viewer', role: 'reader' },
+    { actor: 'service:codex-token', role: 'agent' },
+    { actor: 'service:claude-token', role: 'agent' },
+  ]));
+  const tokens = {
+    owner: await assertion(),
+    viewer: await assertion({ sub: 'viewer' }),
+    codex: await assertion({ sub: '', common_name: 'codex-token' }),
+    claude: await assertion({ sub: '', common_name: 'claude-token' }),
+  };
+  const operate = async (who: keyof typeof tokens, body: Record<string, unknown>) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': tokens[who] }, body: JSON.stringify(body),
+    }), env, authenticate);
+    return { status: response.status, body: await response.json() };
+  };
+  const tool = async (who: keyof typeof tokens, name: string, args: Record<string, unknown>) => {
+    const response = await handleRequest(new Request('https://issues.example/mcp', {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': tokens[who] },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    }), env, authenticate);
+    return (await response.json()).result;
+  };
+  const acquire = async (who: keyof typeof tokens, issueId: string) => {
+    const { claim } = (await operate(who, { op: 'claim_show', issue_id: issueId })).body;
+    return operate(who, { op: 'claim_acquire', issue_id: issueId, incarnation: claim.store_incarnation,
+      session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'shared-label' });
+  };
+  try {
+    const ready = (await operate('owner', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'ready work', labels: ['ready'] })).body.issue;
+    const draft = (await operate('owner', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'draft' })).body.issue;
+
+    assert.equal((await operate('viewer', { op: 'show', id: ready.id })).status, 200);
+    assert.deepEqual(await operate('viewer', { op: 'comment', id: ready.id, body: 'edit' }),
+      { status: 403, body: { error: { code: 'read_only_actor', message: 'This actor can only read', details: { op: 'comment' } } } });
+    assert.equal((await operate('viewer', { op: 'claim_show', issue_id: ready.id })).status, 200);
+    assert.equal((await acquire('viewer', ready.id)).body.error.code, 'read_only_actor');
+    const readerUpdate = await tool('viewer', 'update', { id: ready.id, changes: [{ field: 'priority', value: 0, expected: 1 }] });
+    assert.equal(readerUpdate.isError, true);
+    assert.equal(readerUpdate.structuredContent.error.code, 'read_only_actor');
+
+    assert.equal((await acquire('codex', draft.id)).body.error.code, 'not_ready');
+    assert.equal((await operate('codex', { op: 'comment', id: ready.id, body: 'early' })).body.error.code, 'claim_required');
+    const held = await acquire('codex', ready.id);
+    assert.equal(held.body.claim_receipt.actor, 'service:codex-token');
+    assert.equal((await operate('codex', { op: 'comment', id: ready.id, body: 'started' })).status, 200);
+
+    assert.equal((await operate('claude', { op: 'comment', id: ready.id, body: 'mine' })).body.error.code, 'claim_required');
+    const proof = { issue_id: ready.id, incarnation: held.body.claim_receipt.incarnation, session_id: held.body.claim_receipt.session_id, generation: held.body.claim_receipt.generation };
+    const foreignRelease = await operate('claude', { op: 'claim_release', claim_proof: proof, expected_revision: 1, request_id: crypto.randomUUID() });
+    assert.equal(foreignRelease.status, 409);
+    const lease = (await tool('viewer', 'claim_show', { issue_id: ready.id })).structuredContent.claim.lease;
+    assert.equal(lease.actor, 'service:codex-token');
+    assert.equal(lease.released_at, null);
+    const comments = (await operate('viewer', { op: 'show', id: ready.id })).body.comments;
+    assert.deepEqual(comments.map((comment: { created_by: string }) => comment.created_by), ['service:codex-token']);
   } finally { sqlite.close(); }
 });
