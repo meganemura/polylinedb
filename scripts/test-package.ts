@@ -45,7 +45,7 @@ try {
     'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
     "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md',
     'dist/records/errors.js', 'dist/records/claims.js', 'dist/records/claims-sql.js', 'dist/records/schema-v5.js', 'docs/claims.md', 'docs/adr/0009-issue-ownership.md',
-    'docs/adr/0010-human-output.md', 'dist/records/operation-policy.js'].sort();
+    'docs/adr/0010-human-output.md', 'dist/records/operation-policy.js', 'dist/transition/index.js', 'dist/transition/claims.js', 'dist/transition/cross-issue.js', 'dist/transition/issue-update.js', 'dist/transition/receipts.js', 'dist/transition/vocabulary.js', 'docs/issue-authority.md', 'docs/adr/0011-issue-authority-layers.md'].sort();
   assert.deepEqual(pack.files.map((file: { path: string }) => file.path).sort(), expectedFiles);
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
