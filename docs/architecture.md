@@ -44,7 +44,6 @@ Node and Worker environment tags prevent imports between those hosts.
 Run `npm run check:architecture` to verify the graph and deliberate boundary controls.
 The [capability decision](adr/0006-capability-boundaries.md) records the module plan and verification limits.
 The [issue authority design](issue-authority.md) proposes a pure transition layer and a cloud store with Durable Objects.
-The [human exception board](human-exception-board.md) proposes the cloud-agent-first human UI as a small trust and exception surface.
 
 Each mutable field has its own version, starting at 1.
 An update supplies the observed version for each field it changes.
