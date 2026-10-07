@@ -108,3 +108,24 @@ A missing old receipt with an old incarnation cannot acquire in the restored sto
 Observe the current incarnation and choose a new request UUID for a deliberate new acquisition.
 An arbitrary raw copy with an unchanged incarnation requires explicit offline rotation before use.
 See [D1 restoration](d1-migration.md) and [ownership design](adr/0009-issue-ownership.md).
+
+## Gate agent work
+
+An actor has a kind, `human` or `agent`.
+Local commands read the kind from `--actor-kind` or `POLYLINEDB_ACTOR_KIND`, and the kind defaults to `human`.
+Repository defaults do not store the kind, because each agent host sets its own value.
+Cloud connections derive the actor from authentication and treat it as `human`.
+They reject `--actor-kind` and ignore `POLYLINEDB_ACTOR_KIND`.
+
+An agent claims only an issue with the `ready` label.
+A different issue returns `not_ready`.
+An agent reads the ready worklist only through the `ready` label, so `pd ready` shows an agent only labeled issues.
+
+An agent needs its own active claim before it changes an issue.
+The rule covers `update`, `close`, `reopen`, `comment`, and prerequisite edits where the issue is the dependent.
+Without that claim, the write fails at entry with `claim_required` and changes nothing.
+Reads, claim commands, `actor`, issue creation, and memory commands stay open to agents.
+
+A human keeps the cooperative contract and can claim an issue without the `ready` label.
+To rewrite a `ready` issue, a human claims it first or removes the `ready` label, so that no agent picks it up during the edit.
+The agent label in a claim is display text; the actor identifies the holder.

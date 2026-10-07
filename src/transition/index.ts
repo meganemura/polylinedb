@@ -9,3 +9,5 @@ export { decideReplay } from './receipts.ts';
 export type { StoredRequest, ReplayDecision } from './receipts.ts';
 export { decideCreation, decidePrerequisiteEdit } from './cross-issue.ts';
 export type { ObservedParent, CreationDecision, ObservedPrerequisites, PrerequisiteRejection, PrerequisiteDecision } from './cross-issue.ts';
+export { actorKinds, readyLabel, admitAgentWrite } from './agent-gate.ts';
+export type { ActorKind, Actor, GatedWrite, GateObservation, GateDecision } from './agent-gate.ts';

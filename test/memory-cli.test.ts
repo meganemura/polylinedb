@@ -12,7 +12,7 @@ test('CLI retrieves a prior session fact, detects conflicts, and preserves it th
   const cwd = join(root, 'work'); mkdirSync(cwd);
   const source = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
   const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(root, 'config') };
-  delete env.POLYLINEDB_CONNECTION; delete env.POLYLINEDB_DATA_DIR; delete env.POLYLINEDB_ACTOR;
+  delete env.POLYLINEDB_CONNECTION; delete env.POLYLINEDB_DATA_DIR; delete env.POLYLINEDB_ACTOR; delete env.POLYLINEDB_ACTOR_KIND;
   const run = (args: string[], status = 0, directory = join(root, 'store')) => {
     const result = spawnSync(process.execPath, [source, '--data-dir', directory, '--actor', 'test:cli', ...args], { cwd, env, encoding: 'utf8' });
     assert.equal(result.status, status, result.stderr);

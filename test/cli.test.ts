@@ -15,6 +15,7 @@ const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 function isolatedEnvironment(cwd: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(cwd, '..', 'config-home') };
   delete env.POLYLINEDB_ACTOR;
+  delete env.POLYLINEDB_ACTOR_KIND;
   delete env.POLYLINEDB_DATA_DIR;
   delete env.POLYLINEDB_CONNECTION;
   delete env.POLYLINEDB_SESSION_ID;

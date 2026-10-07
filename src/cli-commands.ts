@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { PolylinedbError } from './records/index.ts';
 import { executeOperation, parseOperation, requiresExplicitLocalActor } from './records/index.ts';
+import { actorKinds } from './transition/index.ts';
 import type { Operation, OperationResult } from './records/index.ts';
 import { parseMemoryId } from './records/index.ts';
 import { renderHumanIssueRead } from './cli-human.ts';
@@ -20,7 +21,7 @@ import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 
 const help = `polylinedb (polyline database) stores personal issues through local or cloud connections.
-Usage: pd [--connection NAME | --data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--prefix PREFIX] COMMAND [OPTIONS]
+Usage: pd [--connection NAME | --data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--actor-kind human|agent] [--prefix PREFIX] COMMAND [OPTIONS]
 Commands return JSON by default. --json is accepted before --. Help returns text.
 Use --human for successful show, list and search reads. It conflicts with --json.
 Human output stays plain on pipes. Color applies only to fixed headings on a TTY without NO_COLOR or TERM=dumb.
@@ -28,7 +29,8 @@ pd --version [--json] reports the installed package and running Node versions as
 Use -- before a positional query that starts with a dash.
 An option consumes its value, so --body --help stores the text --help.
 Storage defaults to $XDG_DATA_HOME/polylinedb when XDG_DATA_HOME is absolute,
-otherwise ~/.local/share/polylinedb. POLYLINEDB_DATA_DIR and POLYLINEDB_ACTOR are supported.
+otherwise ~/.local/share/polylinedb. POLYLINEDB_DATA_DIR, POLYLINEDB_ACTOR, and POLYLINEDB_ACTOR_KIND are supported.
+A local agent actor claims only issues labeled ready and writes only to issues it holds; the kind defaults to human.
 Storage must be outside the working directory and its Git repository.
 
 Commands:
@@ -121,7 +123,7 @@ Examples:
   pd --actor local:agent close ISSUE_ID --expected 1
 `;
 const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'];
-const globals = ['connection', 'data-dir', 'actor', 'prefix'];
+const globals = ['connection', 'data-dir', 'actor', 'actor-kind', 'prefix'];
 const commandFlags: Record<string, readonly string[]> = {
   auth: [],
   upgrade: [], snapshot_convert: ['file', 'output', 'from'],
@@ -342,6 +344,9 @@ async function main(argv: readonly string[]): Promise<void> {
   const project = one('project') ?? defaults?.project;
   const actor = selected.kind === 'cloud' ? undefined : one('actor') ?? process.env.POLYLINEDB_ACTOR ?? defaults?.actor ?? 'local:reader';
   if (selected.kind === 'cloud' && one('actor') !== undefined) invalid('Cloud connections derive the actor from authentication; --actor is not accepted');
+  if (selected.kind === 'cloud' && one('actor-kind') !== undefined) invalid('Cloud connections derive the actor kind from authentication; --actor-kind is not accepted');
+  const requestedKind = one('actor-kind') ?? process.env.POLYLINEDB_ACTOR_KIND;
+  const actorKind = requestedKind === undefined ? 'human' : actorKinds.find(kind => kind === requestedKind) ?? invalid('The actor kind must be human or agent');
   if (actor !== undefined && (!actor.trim() || /\p{Cc}/u.test(actor) || Buffer.byteLength(actor) > 256)) invalid('Invalid actor identity');
   if (command === 'context') {
     process.stdout.write(JSON.stringify({ mode: selected.kind, connection: selected.name, source: selected.source,
@@ -445,7 +450,7 @@ async function main(argv: readonly string[]): Promise<void> {
       if (actor === undefined) invalid('Local connection requires an actor');
       const store = openStore({ directory: selected.directory });
       try { writeOperationResult(operation,
-        await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })), human); }
+        await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, { id: actor, kind: actorKind }, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })), human); }
       finally { store.close(); }
     }
     return;
@@ -535,7 +540,7 @@ async function main(argv: readonly string[]): Promise<void> {
   if (actor === undefined) invalid('Local connection requires an actor');
   const store = openStore({ directory: selected.directory });
   try { writeOperationResult(operation,
-    await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, actor, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })), human); }
+    await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, { id: actor, kind: actorKind }, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })), human); }
   finally { store.close(); }
 }
 export async function runCli(argv: readonly string[]): Promise<void> {

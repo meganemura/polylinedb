@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add the actor kind `human` or `agent` to local operations through `--actor-kind` or `POLYLINEDB_ACTOR_KIND`; the kind defaults to `human`.
+- Let an agent actor claim only an issue labeled `ready`, and read only labeled issues from the ready worklist.
+- Reject agent updates, comments, close, reopen, and prerequisite edits at entry with `claim_required` unless the agent holds an active claim on the issue.
+- Decide issue, claim, creation, and prerequisite rejections in a pure transition module that SQLite and D1 share, and prove it against the SQL writes with a differential test.
+
 ## 0.3.1 (2026-10-06)
 
 - Distinguish denied authentication state access from a busy authentication lock without exposing filesystem paths.

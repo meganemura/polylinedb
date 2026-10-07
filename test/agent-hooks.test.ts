@@ -22,6 +22,7 @@ function settingsPath(home: string, host: Host): string {
 function environment(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config') };
   delete env.POLYLINEDB_ACTOR;
+  delete env.POLYLINEDB_ACTOR_KIND;
   delete env.POLYLINEDB_DATA_DIR;
   delete env.POLYLINEDB_CONNECTION;
   delete env.CURSOR_PROJECT_DIR;

@@ -12,6 +12,7 @@ const root = mkdtempSync(join(tmpdir(), 'polylinedb-package-'));
 const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ''}`,
   HOME: join(root, 'home'), XDG_CONFIG_HOME: join(root, 'config-home'), npm_config_cache: join(root, 'cache'), npm_config_audit: 'false', npm_config_fund: 'false' };
 delete env.POLYLINEDB_ACTOR;
+delete env.POLYLINEDB_ACTOR_KIND;
 delete env.POLYLINEDB_DATA_DIR;
 delete env.POLYLINEDB_CONNECTION;
 delete env.POLYLINEDB_SESSION_ID;

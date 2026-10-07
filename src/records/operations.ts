@@ -4,6 +4,11 @@ import type { Operation as IssueOperation, OperationResult as IssueResult, SqlEx
 import { executeMemoryOperation, parseMemoryOperation, memorySchemas, parseMemoryRevision, observedMemoryProject, memoryFreshness } from "./memories.ts";
 import type { MemoryOperation, MemoryResult, MemoryStore, MemoryRevision, MemoryFreshness } from "./memories.ts";
 import { issueQueries } from "./issue-queries.ts";
+import { issueRow } from "./issues.ts";
+import { claimRow } from './claims.ts';
+import { PolylinedbError } from './errors.ts';
+import { admitAgentWrite, readyLabel } from '../transition/index.ts';
+import type { Actor, GatedWrite } from '../transition/index.ts';
 import { parseDependencyOperation, executeDependencyOperation, dependencySchemas } from './dependencies.ts';
 import type { DependencyOperation, DependencyResult } from './dependencies.ts';
 import { claimSchemas, parseClaimOperation, executeClaimOperation } from './claims.ts';
@@ -26,7 +31,39 @@ export function parseOperation(value: unknown): Operation {
   }
   return parseIssue(value);
 }
-export async function executeOperation(db: SqlExecutor, operation: Operation, actor: string, store?: MemoryStore): Promise<OperationResult> {
+export async function executeOperation(db: SqlExecutor, operation: Operation, caller: string | Actor, store?: MemoryStore): Promise<OperationResult> {
+  const actor: Actor = typeof caller === 'string' ? { id: caller, kind: 'human' } : caller;
+  if (actor.kind === 'agent' && operation.op === 'dependency_worklist' && operation.state === 'ready') {
+    if (operation.label !== undefined && operation.label !== readyLabel) throw new PolylinedbError('invalid_input', `An agent reads the ready worklist through the ${readyLabel} label`, 400);
+    return dispatch(db, { ...operation, label: readyLabel }, actor.id, store);
+  }
+  const target = gatedTarget(operation);
+  if (actor.kind === 'agent' && target) await admit(db, actor, target);
+  return dispatch(db, operation, actor.id, store);
+}
+
+function gatedTarget(operation: Operation): { issue_id: string; write: GatedWrite } | undefined {
+  switch (operation.op) {
+    case 'claim_acquire': return { issue_id: operation.issue_id, write: 'claim_acquire' };
+    case 'update': case 'close': case 'reopen': case 'comment': return { issue_id: operation.id, write: 'issue_write' };
+    case 'dependency_add': case 'dependency_remove': return { issue_id: operation.dependent_id, write: 'issue_write' };
+    default: return undefined;
+  }
+}
+
+async function admit(db: SqlExecutor, actor: Actor, target: { issue_id: string; write: GatedWrite }): Promise<void> {
+  const row = (await db.reads.all(issueQueries.claimShow, { issue_id: target.issue_id }))[0];
+  const issue = (await db.reads.all(issueQueries.show, { id: target.issue_id }))[0];
+  if (!row || !issue) return;
+  const lease = row.generation === null ? null : claimRow(row);
+  const decision = admitAgentWrite(actor, target.write, { labels: issueRow(issue).labels, claim: lease,
+    store_incarnation: String(row.store_incarnation), now: Number(row.observed_at) });
+  if (decision.admitted) return;
+  if (decision.code === 'not_ready') throw new PolylinedbError('not_ready', `An agent can claim only an issue with the ${readyLabel} label`, 409, { id: target.issue_id });
+  throw new PolylinedbError('claim_required', 'An agent needs its own active claim on this issue before it writes', 409, { id: target.issue_id });
+}
+
+async function dispatch(db: SqlExecutor, operation: Operation, actor: string, store?: MemoryStore): Promise<OperationResult> {
   switch (operation.op) {
     case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_release':
       return executeClaimOperation(db, operation, actor);
