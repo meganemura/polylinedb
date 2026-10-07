@@ -1,0 +1,438 @@
+{
+  "schema_sql": "\nCREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL CHECK(version > 0));\nINSERT INTO schema_version(version) VALUES (3);\nCREATE TABLE issues (\n  id TEXT PRIMARY KEY NOT NULL,\n  parent_id TEXT REFERENCES issues(id),\n  sort_key TEXT NOT NULL UNIQUE,\n  tool TEXT NOT NULL CHECK(length(tool) > 0),\n  project TEXT NOT NULL CHECK(length(project) > 0),\n  body TEXT NOT NULL CHECK(length(body) > 0),\n  status TEXT NOT NULL CHECK(status IN ('open','in_progress','deferred','closed')),\n  type TEXT NOT NULL CHECK(type IN ('bug','task','epic','feature','chore')),\n  priority INTEGER NOT NULL CHECK(typeof(priority) = 'integer' AND priority BETWEEN 0 AND 4),\n  labels_json TEXT NOT NULL CHECK(json_valid(labels_json) AND json_type(labels_json) = 'array'),\n  tool_v INTEGER NOT NULL DEFAULT 1\n  CHECK(typeof(tool_v) = 'integer' AND tool_v BETWEEN 1 AND 9007199254740991),\nproject_v INTEGER NOT NULL DEFAULT 1\n  CHECK(typeof(project_v) = 'integer' AND project_v BETWEEN 1 AND 9007199254740991),\nbody_v INTEGER NOT NULL DEFAULT 1\n  CHECK(typeof(body_v) = 'integer' AND body_v BETWEEN 1 AND 9007199254740991),\nstatus_v INTEGER NOT NULL DEFAULT 1\n  CHECK(typeof(status_v) = 'integer' AND status_v BETWEEN 1 AND 9007199254740991),\ntype_v INTEGER NOT NULL DEFAULT 1\n  CHECK(typeof(type_v) = 'integer' AND type_v BETWEEN 1 AND 9007199254740991),\npriority_v INTEGER NOT NULL DEFAULT 1\n  CHECK(typeof(priority_v) = 'integer' AND priority_v BETWEEN 1 AND 9007199254740991),\nlabels_v INTEGER NOT NULL DEFAULT 1\n  CHECK(typeof(labels_v) = 'integer' AND labels_v BETWEEN 1 AND 9007199254740991),\n  created_at TEXT NOT NULL,\n  created_by TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  updated_by TEXT NOT NULL\n);\nCREATE TABLE counters (\n  scope TEXT PRIMARY KEY NOT NULL,\n  last_number INTEGER NOT NULL CONSTRAINT counter_not_exhausted CHECK(typeof(last_number) = 'integer' AND last_number BETWEEN 1 AND 9007199254740991)\n);\nCREATE TABLE requests (\n  request_id TEXT PRIMARY KEY NOT NULL,\n  actor TEXT NOT NULL,\n  payload TEXT NOT NULL,\n  issue_id TEXT NOT NULL REFERENCES issues(id)\n);\nCREATE INDEX issues_scope ON issues(tool, project, status, id);\nCREATE INDEX issues_parent ON issues(parent_id, id);\nCREATE TABLE comments (\n  id TEXT PRIMARY KEY NOT NULL,\n  issue_id TEXT NOT NULL REFERENCES issues(id),\n  body TEXT NOT NULL CHECK(length(body) > 0),\n  created_at TEXT NOT NULL,\n  created_by TEXT NOT NULL\n);\nCREATE INDEX comments_issue ON comments(issue_id, created_at, id);\n\nCREATE TABLE memories (\n  id TEXT PRIMARY KEY NOT NULL,\n  sort_key TEXT NOT NULL UNIQUE,\n  project TEXT NOT NULL CHECK(length(project) > 0),\n  title TEXT NOT NULL CHECK(length(title) > 0),\n  body TEXT NOT NULL CHECK(length(body) > 0),\n  version INTEGER NOT NULL CHECK(typeof(version) = 'integer' AND version BETWEEN 1 AND 9007199254740991),\n  created_at TEXT NOT NULL,\n  created_by TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  updated_by TEXT NOT NULL\n);\nCREATE INDEX memories_project ON memories(project, sort_key);\nCREATE TABLE memory_counters (\n  prefix TEXT PRIMARY KEY NOT NULL,\n  last_number INTEGER NOT NULL CONSTRAINT memory_counter_not_exhausted CHECK(typeof(last_number) = 'integer' AND last_number BETWEEN 1 AND 9007199254740991)\n);\nCREATE TABLE memory_requests (\n  request_id TEXT PRIMARY KEY NOT NULL,\n  actor TEXT NOT NULL,\n  payload TEXT NOT NULL,\n  memory_id TEXT NOT NULL UNIQUE\n);\n",
+  "input": {
+    "memory_requests": [
+      {
+        "memory_id": "old-m3",
+        "payload": "{\"op\":\"memory_create\",\"project\":\"other\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000013\",\"title\":\"third\",\"body\":\"other project memory\"}",
+        "actor": "memory-author",
+        "request_id": "00000000-0000-4000-8000-000000000013"
+      },
+      {
+        "request_id": "00000000-0000-4000-8000-000000000011",
+        "actor": "memory-author",
+        "payload": "{\"op\":\"memory_create\",\"project\":\"legacy\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000011\",\"title\":\"first\",\"body\":\"first legacy memory\"}",
+        "memory_id": "old-m1"
+      },
+      {
+        "request_id": "00000000-0000-4000-8000-000000000012",
+        "actor": "memory-editor",
+        "payload": "{\"op\":\"memory_create\",\"project\":\"legacy\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000012\",\"title\":\"second\",\"body\":\"second legacy memory\"}",
+        "memory_id": "old-m2"
+      }
+    ],
+    "version": 3,
+    "issues": [
+      {
+        "updated_by": "editor",
+        "id": "old-2",
+        "tool": "legacy-tool",
+        "project": "legacy",
+        "body": "legacy bug 日本語",
+        "status": "in_progress",
+        "type": "bug",
+        "priority": 0,
+        "labels": [
+          "b-label",
+          "a-label"
+        ],
+        "versions": {
+          "labels": 3,
+          "priority": 1,
+          "type": 1,
+          "status": 2,
+          "body": 1,
+          "project": 1,
+          "tool": 1
+        },
+        "created_at": "2026-01-02T00:00:00.000Z",
+        "created_by": "author",
+        "updated_at": "2026-01-03T10:00:00.5+09:00"
+      },
+      {
+        "id": "old-1.1",
+        "tool": "legacy-tool",
+        "project": "legacy",
+        "body": "legacy child",
+        "status": "open",
+        "type": "task",
+        "priority": 2,
+        "labels": [],
+        "versions": {
+          "labels": 1,
+          "priority": 1,
+          "type": 1,
+          "status": 1,
+          "body": 1,
+          "project": 1,
+          "tool": 1
+        },
+        "created_at": "2026-01-01T01:00:00.000Z",
+        "created_by": "author",
+        "updated_at": "2026-01-01T01:00:00.000Z",
+        "updated_by": "author"
+      },
+      {
+        "id": "old-1",
+        "tool": "legacy-tool",
+        "project": "legacy",
+        "body": "legacy epic",
+        "status": "open",
+        "type": "epic",
+        "priority": 1,
+        "labels": [
+          "epic"
+        ],
+        "versions": {
+          "labels": 1,
+          "priority": 1,
+          "type": 1,
+          "status": 1,
+          "body": 2,
+          "project": 1,
+          "tool": 1
+        },
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "created_by": "author",
+        "updated_at": "2026-01-04T00:00:00Z",
+        "updated_by": "editor"
+      }
+    ],
+    "format": "polylinedb.snapshot",
+    "comments": [
+      {
+        "id": "00000000-0000-4000-8000-000000000022",
+        "issue_id": "old-1",
+        "body": "second comment",
+        "created_at": "2026-01-05T00:00:00.000Z",
+        "created_by": "commenter"
+      },
+      {
+        "created_by": "commenter",
+        "created_at": "2026-01-04T00:00:00.000Z",
+        "body": "first comment",
+        "issue_id": "old-2",
+        "id": "00000000-0000-4000-8000-000000000021"
+      }
+    ],
+    "counters": [
+      {
+        "scope": "old-1",
+        "last_number": 1
+      },
+      {
+        "last_number": 2,
+        "scope": "old"
+      }
+    ],
+    "requests": [
+      {
+        "request_id": "00000000-0000-4000-8000-000000000003",
+        "actor": "author",
+        "payload": "{\"op\":\"create\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000003\",\"parent\":\"old-1\",\"tool\":\"legacy-tool\",\"project\":\"legacy\",\"body\":\"legacy child\",\"status\":\"open\",\"type\":\"task\",\"priority\":2,\"labels\":[]}",
+        "issue_id": "old-1.1"
+      },
+      {
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "actor": "author",
+        "payload": "{\"op\":\"create\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000002\",\"tool\":\"legacy-tool\",\"project\":\"legacy\",\"body\":\"legacy bug\",\"status\":\"open\",\"type\":\"bug\",\"priority\":2,\"labels\":[]}",
+        "issue_id": "old-2"
+      },
+      {
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "actor": "author",
+        "payload": "{\"op\":\"create\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000001\",\"tool\":\"legacy-tool\",\"project\":\"legacy\",\"body\":\"legacy epic\",\"status\":\"open\",\"type\":\"epic\",\"priority\":2,\"labels\":[]}",
+        "issue_id": "old-1"
+      }
+    ],
+    "memories": [
+      {
+        "id": "old-m2",
+        "project": "legacy",
+        "title": "second",
+        "body": "second legacy memory, edited",
+        "version": 2,
+        "created_at": "2026-01-06T00:00:00.000Z",
+        "created_by": "memory-editor",
+        "updated_at": "2026-01-07T00:00:00.000Z",
+        "updated_by": "memory-editor"
+      },
+      {
+        "id": "old-m3",
+        "project": "other",
+        "title": "third",
+        "body": "other project memory",
+        "version": 1,
+        "created_at": "2026-01-06T00:00:00.000Z",
+        "created_by": "memory-author",
+        "updated_at": "2026-01-06T00:00:00.000Z",
+        "updated_by": "memory-author"
+      },
+      {
+        "id": "old-m1",
+        "project": "legacy",
+        "title": "first",
+        "body": "first legacy memory",
+        "version": 1,
+        "created_at": "2026-01-05T00:00:00.000Z",
+        "created_by": "memory-author",
+        "updated_at": "2026-01-05T00:00:00.000Z",
+        "updated_by": "memory-author"
+      }
+    ],
+    "memory_counters": [
+      {
+        "prefix": "old",
+        "last_number": 3
+      }
+    ]
+  },
+  "sha256": "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2",
+  "writes": [
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS polylinedb_snapshot_claim (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)",
+      "params": []
+    },
+    {
+      "sql": "INSERT INTO polylinedb_snapshot_claim(singleton,sha256) SELECT 1,? WHERE NOT EXISTS (SELECT 1 FROM issues) AND NOT EXISTS (SELECT 1 FROM comments) AND NOT EXISTS (SELECT 1 FROM counters) AND NOT EXISTS (SELECT 1 FROM requests) AND NOT EXISTS (SELECT 1 FROM memories) AND NOT EXISTS (SELECT 1 FROM memory_counters) AND NOT EXISTS (SELECT 1 FROM memory_requests) ON CONFLICT(singleton) DO NOTHING",
+      "params": [
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO issues(id,parent_id,sort_key,tool,project,body,status,type,priority,labels_json,tool_v,project_v,body_v,status_v,type_v,priority_v,labels_v,created_at,created_by,updated_at,updated_by) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "old-1",
+        null,
+        "old-0000000000000001",
+        "legacy-tool",
+        "legacy",
+        "legacy epic",
+        "open",
+        "epic",
+        1,
+        "[\"epic\"]",
+        1,
+        1,
+        2,
+        1,
+        1,
+        1,
+        1,
+        "2026-01-01T00:00:00.000Z",
+        "author",
+        "2026-01-04T00:00:00Z",
+        "editor",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO issues(id,parent_id,sort_key,tool,project,body,status,type,priority,labels_json,tool_v,project_v,body_v,status_v,type_v,priority_v,labels_v,created_at,created_by,updated_at,updated_by) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "old-2",
+        null,
+        "old-0000000000000002",
+        "legacy-tool",
+        "legacy",
+        "legacy bug 日本語",
+        "in_progress",
+        "bug",
+        0,
+        "[\"a-label\",\"b-label\"]",
+        1,
+        1,
+        1,
+        2,
+        1,
+        1,
+        3,
+        "2026-01-02T00:00:00.000Z",
+        "author",
+        "2026-01-03T10:00:00.5+09:00",
+        "editor",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO issues(id,parent_id,sort_key,tool,project,body,status,type,priority,labels_json,tool_v,project_v,body_v,status_v,type_v,priority_v,labels_v,created_at,created_by,updated_at,updated_by) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "old-1.1",
+        "old-1",
+        "old-0000000000000001.0000000000000001",
+        "legacy-tool",
+        "legacy",
+        "legacy child",
+        "open",
+        "task",
+        2,
+        "[]",
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        "2026-01-01T01:00:00.000Z",
+        "author",
+        "2026-01-01T01:00:00.000Z",
+        "author",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000021",
+        "old-2",
+        "first comment",
+        "2026-01-04T00:00:00.000Z",
+        "commenter",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000022",
+        "old-1",
+        "second comment",
+        "2026-01-05T00:00:00.000Z",
+        "commenter",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO counters(scope,last_number) SELECT ?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(scope) DO NOTHING",
+      "params": [
+        "old",
+        2,
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO counters(scope,last_number) SELECT ?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(scope) DO NOTHING",
+      "params": [
+        "old-1",
+        1,
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO requests(request_id,actor,payload,issue_id) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(request_id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000001",
+        "author",
+        "{\"op\":\"create\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000001\",\"tool\":\"legacy-tool\",\"project\":\"legacy\",\"body\":\"legacy epic\",\"status\":\"open\",\"type\":\"epic\",\"priority\":2,\"labels\":[]}",
+        "old-1",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO requests(request_id,actor,payload,issue_id) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(request_id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000002",
+        "author",
+        "{\"op\":\"create\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000002\",\"tool\":\"legacy-tool\",\"project\":\"legacy\",\"body\":\"legacy bug\",\"status\":\"open\",\"type\":\"bug\",\"priority\":2,\"labels\":[]}",
+        "old-2",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO requests(request_id,actor,payload,issue_id) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(request_id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000003",
+        "author",
+        "{\"op\":\"create\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000003\",\"parent\":\"old-1\",\"tool\":\"legacy-tool\",\"project\":\"legacy\",\"body\":\"legacy child\",\"status\":\"open\",\"type\":\"task\",\"priority\":2,\"labels\":[]}",
+        "old-1.1",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO memories(id,project,title,body,version,created_at,created_by,updated_at,updated_by,sort_key) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "old-m1",
+        "legacy",
+        "first",
+        "first legacy memory",
+        1,
+        "2026-01-05T00:00:00.000Z",
+        "memory-author",
+        "2026-01-05T00:00:00.000Z",
+        "memory-author",
+        "old-m0000000000000001",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO memories(id,project,title,body,version,created_at,created_by,updated_at,updated_by,sort_key) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "old-m2",
+        "legacy",
+        "second",
+        "second legacy memory, edited",
+        2,
+        "2026-01-06T00:00:00.000Z",
+        "memory-editor",
+        "2026-01-07T00:00:00.000Z",
+        "memory-editor",
+        "old-m0000000000000002",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO memories(id,project,title,body,version,created_at,created_by,updated_at,updated_by,sort_key) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(id) DO NOTHING",
+      "params": [
+        "old-m3",
+        "other",
+        "third",
+        "other project memory",
+        1,
+        "2026-01-06T00:00:00.000Z",
+        "memory-author",
+        "2026-01-06T00:00:00.000Z",
+        "memory-author",
+        "old-m0000000000000003",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO memory_counters(prefix,last_number) SELECT ?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(prefix) DO NOTHING",
+      "params": [
+        "old",
+        3,
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO memory_requests(request_id,actor,payload,memory_id) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(request_id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000011",
+        "memory-author",
+        "{\"op\":\"memory_create\",\"project\":\"legacy\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000011\",\"title\":\"first\",\"body\":\"first legacy memory\"}",
+        "old-m1",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO memory_requests(request_id,actor,payload,memory_id) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(request_id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000012",
+        "memory-editor",
+        "{\"op\":\"memory_create\",\"project\":\"legacy\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000012\",\"title\":\"second\",\"body\":\"second legacy memory\"}",
+        "old-m2",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    },
+    {
+      "sql": "INSERT INTO memory_requests(request_id,actor,payload,memory_id) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM polylinedb_snapshot_claim WHERE singleton = 1 AND sha256 = ?) ON CONFLICT(request_id) DO NOTHING",
+      "params": [
+        "00000000-0000-4000-8000-000000000013",
+        "memory-author",
+        "{\"op\":\"memory_create\",\"project\":\"other\",\"prefix\":\"old\",\"request_id\":\"00000000-0000-4000-8000-000000000013\",\"title\":\"third\",\"body\":\"other project memory\"}",
+        "old-m3",
+        "602922dc9b822f491f5ebc0bbf8c2eaf68154499ee3212d841ce4664cafd67b2"
+      ]
+    }
+  ]
+}
