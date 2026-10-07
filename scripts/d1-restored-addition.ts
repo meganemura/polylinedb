@@ -188,6 +188,35 @@ type Operation = {
   receipt: Receipt; statements: Statement[]; expected: string; counts: Counts;
 };
 
+function frozenDigest(operationId: string, baseline: Baseline, source: SourceDigest, additions: readonly Statement[]): FrozenDigest {
+  return sha256(stableJson({ operation_id: operationId, original: baseline.originalDigest, baseline: baseline.digest, source, statements: additions })) as FrozenDigest;
+}
+
+function packetEnd(receipt: Receipt): Statement[] {
+  return [
+    ...receiptSchema.map(sql => ({ sql, params: [] })),
+    { sql: `INSERT INTO ${receiptTable}(${receiptColumns.join(',')}) VALUES (${receiptColumns.map(() => '?').join(',')})`, params: receiptColumns.map(column => receipt[column]) },
+    ...barrier.map(sql => ({ sql, params: [] })),
+  ];
+}
+
+/** Refuses a journal whose packet, receipt, or frozen inputs no longer match the digest recorded before dispatch. */
+function frozenOperation(value: unknown): Operation {
+  const operation = value as Operation;
+  try {
+    if (operation.format !== 'polylinedb.restored-addition' || operation.version !== 1) return refuse('The journal format is not supported');
+    const end = packetEnd(operation.receipt);
+    const additions = operation.statements.slice(0, operation.statements.length - end.length);
+    const source = sha256(stableJson(operation.source_rows)) as SourceDigest;
+    if (stableJson(operation.statements.slice(additions.length)) !== stableJson(end) || source !== operation.source_sha256
+      || frozenDigest(operation.operation_id, operation.baseline, source, additions) !== operation.receipt.frozen_sha256) return refuse('The journal operation differs from its frozen digest');
+    return operation;
+  } catch (error) {
+    if (error instanceof AdditionRefused) throw error;
+    return refuse('The journal operation is malformed');
+  }
+}
+
 function freezeOperation(input: { operationId: string; connection: string; sourcePath: string; original: string; baseline: Baseline; sourceRows: RawRows; maximumStatements: number }): Operation {
   const sourceRows = normalizedRows(input.sourceRows);
   let plan: ReturnType<typeof additiveMerge>;
@@ -196,18 +225,13 @@ function freezeOperation(input: { operationId: string; connection: string; sourc
   if (!schemaVersionGuard) return refuse('Addition plan has no schema guard');
   const additions = [schemaVersionGuard, ...barrierGuards(input.baseline), ...rest];
   const sourceDigest = sha256(stableJson(sourceRows)) as SourceDigest;
-  const frozen = sha256(stableJson({ operation_id: input.operationId, original: input.baseline.originalDigest, baseline: input.baseline.digest, source: sourceDigest, statements: additions })) as FrozenDigest;
+  const frozen = frozenDigest(input.operationId, input.baseline, sourceDigest, additions);
   const receipt: Receipt = {
     singleton: 1, operation_id: input.operationId, frozen_sha256: frozen, destination_incarnation: input.baseline.checkpoint.incarnation,
     checkpoint_layout: input.baseline.layout, original_sha256: input.baseline.originalDigest, baseline_sha256: input.baseline.digest,
     expected_sha256: plan.digest, counts_json: JSON.stringify(plan.counts),
   };
-  const statements = [
-    ...additions,
-    ...receiptSchema.map(sql => ({ sql, params: [] })),
-    { sql: `INSERT INTO ${receiptTable}(${receiptColumns.join(',')}) VALUES (${receiptColumns.map(() => '?').join(',')})`, params: receiptColumns.map(column => receipt[column]) },
-    ...barrier.map(sql => ({ sql, params: [] })),
-  ];
+  const statements = [...additions, ...packetEnd(receipt)];
   if (statements.length > input.maximumStatements) refuse(`The atomic addition needs ${statements.length} statements, above the limit of ${input.maximumStatements}`);
   return {
     format: 'polylinedb.restored-addition', version: 1, operation_id: input.operationId, connection: input.connection, source_path: input.sourcePath,
@@ -262,6 +286,9 @@ function readSource(database: DatabaseSync, retiredFor?: string): RawRows {
 }
 
 function lockedSource(path: string): DatabaseSync {
+  let stat: ReturnType<typeof lstatSync>;
+  try { stat = lstatSync(path); } catch { return refuse('The source store is missing'); }
+  if (!stat.isFile() || stat.isSymbolicLink()) refuse('The source store must be a regular file');
   const database = new DatabaseSync(path);
   database.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
   return database;
@@ -270,7 +297,8 @@ function lockedSource(path: string): DatabaseSync {
 type Classification = { state: 'committed' } | { state: 'unchanged' };
 function classify(destination: Capture, operation: Operation): Classification {
   if (destination.profile.kind === 'terminal') {
-    if (destination.receipt.length !== 1 || stableJson(destination.receipt[0]) !== stableJson(operation.receipt)) return refuse('Destination recorded a different addition');
+    if (destination.receipt.length !== 1) throw new AdditionUnknown('The terminal layout has no single addition receipt');
+    if (stableJson(destination.receipt[0]) !== stableJson(operation.receipt)) return refuse('Destination recorded a different addition');
     if (destination.checkpoint.length !== 1 || stableJson(destination.checkpoint[0]) !== stableJson(operation.baseline.checkpoint) || destination.visibleCheckpoint.length !== 0) throw new AdditionUnknown('The addition receipt and the archived checkpoint disagree');
     return { state: 'committed' };
   }
@@ -280,16 +308,35 @@ function classify(destination: Capture, operation: Operation): Classification {
   return { state: 'unchanged' };
 }
 
+async function matchingReceipt(batch: Batch, operation: Operation): Promise<boolean> {
+  try {
+    const [found] = await batch([{ sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", params: [receiptTable] }]);
+    if (!found?.length) return false;
+    const [receipts] = await batch([{ sql: `SELECT * FROM ${receiptTable}`, params: [] }]);
+    return receipts?.length === 1 && stableJson(receipts[0]) === stableJson(operation.receipt);
+  } catch { throw new AdditionUnknown('Destination evidence is unavailable'); }
+}
+
+/** A later schema change must not hide a matching receipt, so a refused capture still reads the receipt. */
+async function committedState(batch: Batch, operation: Operation): Promise<Classification['state']> {
+  let destination: Capture;
+  try { destination = await capture(batch); } catch (error) {
+    if (error instanceof AdditionRefused && await matchingReceipt(batch, operation)) return 'committed';
+    throw error;
+  }
+  return classify(destination, operation).state;
+}
+
 async function commit(batch: Batch, book: Journal, operation: Operation): Promise<void> {
-  for (;;) {
-    if (book.has('committed.json')) return;
-    const state = classify(await capture(batch), operation);
-    if (state.state === 'committed') { book.write('committed.json', { receipt: operation.receipt }); return; }
+  if (book.has('committed.json')) return;
+  if (await committedState(batch, operation) !== 'committed') {
     book.write(book.next('dispatch'), { frozen_sha256: operation.receipt.frozen_sha256 });
     try { await batch(operation.statements); } catch {
       throw new AdditionUnknown('The addition batch did not return a result; resume classifies the destination');
     }
+    if (await committedState(batch, operation) !== 'committed') throw new AdditionUnknown('The addition batch returned, but the destination shows no receipt');
   }
+  book.write('committed.json', { receipt: operation.receipt });
 }
 
 async function verify(batch: Batch, book: Journal, operation: Operation): Promise<void> {
@@ -346,8 +393,9 @@ export function restoredAddition(destination: Batch, journalDirectory: string) {
     async resume(): Promise<AdditionOutcome> {
       const book = journal(journalDirectory, false);
       if (!book.has('operation.json')) refuse('The journal has no frozen addition');
-      const operation = book.read<Operation>('operation.json');
-      if (operation.format !== 'polylinedb.restored-addition' || operation.version !== 1) refuse('The journal format is not supported');
+      let stored: unknown;
+      try { stored = book.read<unknown>('operation.json'); } catch { return refuse('The journal operation is malformed'); }
+      const operation = frozenOperation(stored);
       await commit(destination, book, operation);
       await verify(destination, book, operation);
       retire(book, operation);

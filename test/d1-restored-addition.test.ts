@@ -1,7 +1,7 @@
 // Exercises the restored-store addition lifecycle against SQLite destinations restored by the current operator.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -318,4 +318,77 @@ test('an empty original input requires the same checks and atomic barrier', asyn
   }
   assert.equal(empty.destination.prepare('SELECT COUNT(*) AS n FROM polylinedb_snapshot_claim').get()?.n, 0);
   assert.equal(empty.destination.prepare('SELECT COUNT(*) AS n FROM polylinedb_snapshot_claim_archive').get()?.n, 1);
+});
+
+test('the barrier keeps late restore writes from bringing back rows deleted after the addition', async context => {
+  const deletions = ["DELETE FROM dependencies WHERE dependent_id LIKE 'dst-%'", "DELETE FROM comments WHERE body = 'dst comment'"];
+  const replay = (f: Fixture) => { for (const statement of f.restoreWrites) try { f.destination.prepare(statement.sql).run(...statement.params); } catch { /* the view refuses checkpoint inserts */ } };
+  const control = await fixture();
+  context.after(control.close);
+  for (const sql of deletions) assert.equal(control.destination.prepare(sql).run().changes, 1, sql);
+  replay(control);
+  assert.equal(control.destination.prepare("SELECT COUNT(*) AS n FROM comments WHERE body = 'dst comment'").get()?.n, 1, 'without the barrier the replay restores the comment');
+
+  const f = await fixture();
+  context.after(f.close);
+  await restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' });
+  for (const sql of deletions) assert.equal(f.destination.prepare(sql).run().changes, 1, sql);
+  const deleted = f.state();
+  replay(f);
+  assert.equal(f.state(), deleted);
+});
+
+test('a schema change after a lost response still finds the committed receipt', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const journal = f.journal();
+  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  f.destination.exec('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY)');
+  await refused(restoredAddition(f.batch, journal).resume(), /not canonical schema 6/);
+  assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
+});
+
+test('a batch that returns without committing is unknown after one dispatch', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const journal = f.journal();
+  const dropped: Batch = async statements => isAddition(statements) ? [] : f.batch(statements);
+  await assert.rejects(restoredAddition(dropped, journal).run({ original: f.original, source: f.source, connection: 'cloud' }), (error: unknown) => error instanceof AdditionUnknown && /shows no receipt/.test(error.message));
+  assert.deepEqual(readdirSync(journal).filter(name => name.startsWith('dispatch')), ['dispatch-1.json']);
+});
+
+test('a terminal layout without its receipt leaves the outcome unknown', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const journal = f.journal();
+  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  f.destination.exec('DROP TRIGGER polylinedb_addition_receipt_immutable_delete');
+  f.destination.exec('DELETE FROM polylinedb_addition_receipt');
+  f.destination.exec("CREATE TRIGGER polylinedb_addition_receipt_immutable_delete BEFORE DELETE ON polylinedb_addition_receipt BEGIN SELECT RAISE(ABORT, 'The addition receipt is immutable'); END");
+  await assert.rejects(restoredAddition(f.batch, journal).resume(), (error: unknown) => error instanceof AdditionUnknown && /no single addition receipt/.test(error.message));
+});
+
+test('resume refuses a journal whose frozen packet was edited', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const journal = f.journal();
+  await assert.rejects(restoredAddition(failAt(f.batch, 0), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  const path = join(journal, 'operation.json');
+  const operation = JSON.parse(readFileSync(path, 'utf8'));
+  const insert = operation.statements.findIndex((statement: Statement) => statement.sql.startsWith('INSERT INTO "comments"'));
+  assert.ok(insert > 0);
+  operation.statements[insert].params[0] = operation.statements[insert].params[0].replace('src comment', 'other comment');
+  writeFileSync(path, JSON.stringify(operation));
+  await refused(restoredAddition(f.batch, journal).resume(), /differs from its frozen digest/);
+  writeFileSync(path, '{');
+  await refused(restoredAddition(f.batch, journal).resume(), /malformed/);
+  assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0);
+});
+
+test('a missing source store is refused without creating a file', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const missing = join(f.root, 'missing.sqlite');
+  await refused(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: missing, connection: 'cloud' }), /source store is missing/);
+  assert.equal(existsSync(missing), false);
 });

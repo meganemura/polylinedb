@@ -152,5 +152,26 @@ try {
   writeFileSync(legacy, JSON.stringify({ format: 'polylinedb.snapshot', version: 3, issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] }));
   await assert.rejects(restoredAddition(batch, journal()).run({ original: legacy, source: await source(), connection: 'cloud' }), (error: unknown) => error instanceof AdditionRefused && /snapshot 3 to schema 6 projection/.test(error.message));
 
-  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races, response loss, committed receipt after edits, queued restore SQL, ${writes.length} paused restore boundaries and legacy checkpoint refusal\n`);
+const deletions = ["DELETE FROM dependencies WHERE dependent_id LIKE 'dst-%'", "DELETE FROM comments WHERE body = 'dst comment'"];
+const replayAll = async () => { for (const statement of writes) await query(statement).catch(() => []); };
+await restore();
+for (const sql of deletions) await query({ sql, params: [] });
+await replayAll();
+assert.equal(await count("SELECT COUNT(*) AS n FROM comments WHERE body = 'dst comment'"), 1, 'without the barrier the replay restores the comment');
+await restore();
+assert.equal((await run()).outcome, 'retired');
+for (const sql of deletions) await query({ sql, params: [] });
+const deleted = await state();
+await replayAll();
+assert.equal(await state(), deleted);
+
+await restore();
+const migrated = journal();
+await assert.rejects(run(loseResponse(batch, isAddition), migrated), AdditionUnknown);
+await query({ sql: 'CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY)', params: [] });
+await assert.rejects(restoredAddition(batch, migrated).resume(), (error: unknown) => error instanceof AdditionRefused && /not canonical schema 6/.test(error.message));
+assert.deepEqual(readdirSync(migrated).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
+await query({ sql: 'DROP TABLE d1_migrations', params: [] });
+
+  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races, deleted rows kept deleted after replay, a receipt found after a schema change, response loss, committed receipt after edits, queued restore SQL, ${writes.length} paused restore boundaries and legacy checkpoint refusal\n`);
 } finally { rmSync(root, { recursive: true, force: true }); await runtime.dispose(); }
