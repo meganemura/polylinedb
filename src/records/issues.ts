@@ -4,7 +4,8 @@ import { fields, issueTypes, statuses } from "./schema.ts";
 import type { Database } from 'solarsql';
 import { issueQueries } from "./issue-queries.ts";
 import { PolylinedbError } from './errors.ts';
-import { claimProofSchema, parseClaimProof } from './claims.ts';
+import { claimProofSchema, claimRow, parseClaimProof } from './claims.ts';
+import { decideIssueUpdate } from '../transition/index.ts';
 import { issueClaimGuard } from './claims-sql.ts';
 import type { ClaimProof } from './claims-sql.ts';
 
@@ -236,23 +237,29 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   params.push(actor, new Date().toISOString(), ...guards);
   const result = await db.batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
     ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId),
-    { sql: `SELECT ${ownership.sql} AS ownership_allowed`, params: ownership.params }]);
+    { sql: `SELECT identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.* FROM memory_store_identity AS identity
+      LEFT JOIN issue_claims AS claim ON claim.issue_id = ? WHERE identity.singleton = 1`, params: [issueId] }]);
   const changed = rowsAt(result, 0)[0];
   if (changed) return { issue: issueRow(changed) };
   const observed = rowsAt(result, override.force ? 2 : 1)[0];
   if (!observed) return notFound(issueId);
   const issue = issueRow(observed);
-  const conflicts = changes.filter((change) => issue.versions[change.field] !== change.expected)
-    .map((change) => ({ field: change.field, expected: change.expected, actual: issue.versions[change.field], current: issue[change.field] }));
-  if (conflicts.length) throw new PolylinedbError('conflict', 'Read the current issue before deciding on a new update', 409, { issue, fields: conflicts });
-  if (rowsAt(result, override.force ? 3 : 2)[0]?.ownership_allowed !== 1) throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue });
-  if (guardedStatus && !override.force && observed.has_active_blockers === 1) throw new PolylinedbError('dependency_blocked', 'The issue has active prerequisites', 409, { issue });
-  const exhausted = changes.find((change) => issue.versions[change.field] === Number.MAX_SAFE_INTEGER);
-  if (exhausted) throw new PolylinedbError('version_exhausted', 'The field version cannot increase', 409, { field: exhausted.field, issue });
-  if (observed.has_children === 1 && changes.some((change) => change.field === 'type' && change.value !== 'epic')) {
-    throw new PolylinedbError('epic_has_children', 'An epic with children must remain an epic', 409, { issue });
+  const ownershipRow = rowsAt(result, override.force ? 3 : 2)[0];
+  if (!ownershipRow || typeof ownershipRow.store_incarnation !== 'string' || typeof ownershipRow.observed_at !== 'number') throw new PolylinedbError('storage_error', 'Database omitted the claim observation', 503);
+  const decision = decideIssueUpdate({ id: issueId, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1,
+    claim: ownershipRow.generation === null ? null : claimRow(ownershipRow), store_incarnation: ownershipRow.store_incarnation },
+    { changes, force: override.force === true, ...(proof === undefined ? {} : { claim_proof: proof }) }, actor, ownershipRow.observed_at);
+  if (decision.accepted) throw new PolylinedbError('storage_error', 'The database rejected an update without a matching condition', 503);
+  const rejection = decision.rejection;
+  switch (rejection.code) {
+    case 'conflict': throw new PolylinedbError('conflict', 'Read the current issue before deciding on a new update', 409,
+      { issue, fields: rejection.fields.map(conflict => ({ ...conflict, current: issue[conflict.field] })) });
+    case 'claim_required': throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue });
+    case 'dependency_blocked': throw new PolylinedbError('dependency_blocked', 'The issue has active prerequisites', 409, { issue });
+    case 'version_exhausted': throw new PolylinedbError('version_exhausted', 'The field version cannot increase', 409, { field: rejection.field, issue });
+    case 'epic_has_children': throw new PolylinedbError('epic_has_children', 'An epic with children must remain an epic', 409, { issue });
+    default: { const unreachable: never = rejection; return unreachable; }
   }
-  throw new PolylinedbError('storage_error', 'The database rejected an update without a matching condition', 503);
 }
 
 export async function executeOperation(db: SqlExecutor, operation: Operation, actor: string): Promise<OperationResult> {
