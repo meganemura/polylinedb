@@ -170,10 +170,12 @@ SQLite tests and local workerd D1 tests both pass these release 0.1.0 gates:
 - A replay of each recorded release 0.1.0 write after the barrier leaves the store unchanged. `CREATE TABLE IF NOT EXISTS` does nothing against the view, and the checkpoint insert fails.
 - A release 0.1.0 restore paused before each write, then upgraded, keeps the addition refused until its remaining writes run.
 - A snapshot 5 input for the two-column layout is refused.
+- A race on the two-column checkpoint row rolls back the commit, and resume refuses the changed preimage.
 
-The workerd D1 test also passes this release 0.1.0 gate:
+The workerd D1 test also passes these release 0.1.0 gates:
 
 - A failure at each packet statement rolls back the rename, the two-column view, the receipt, and the added rows.
+- Release 0.1.0 restore writes sent beside the commit leave the expected result.
 
 The SQLite tests also pass these release 0.1.0 gates:
 

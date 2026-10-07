@@ -182,6 +182,17 @@ try {
     assert.equal(await state(), legacyBefore, `release 0.1.0 statement ${index} left a partial addition`);
   }
 
+  await legacy();
+  const legacyRace = journal();
+  await assert.rejects(runLegacy(async statements => { if (isAddition(statements)) await query({ sql: `UPDATE polylinedb_snapshot_claim SET sha256 = '${'0'.repeat(64)}'`, params: [] }); return batch(statements); }, legacyRace), AdditionUnknown);
+  await assert.rejects(restoredAddition(batch, legacyRace).resume(), (error: unknown) => error instanceof AdditionRefused && /changed after freezing/.test(error.message));
+  assert.equal(await count("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('polylinedb_addition_receipt','polylinedb_snapshot_claim_archive')"), 0);
+  assert.equal(await count("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'"), 0);
+
+  await legacy();
+  await Promise.all([runLegacy(), ...legacyRestore.writes.map(statement => query(statement).catch(() => []))]).then(([outcome]) => assert.equal(outcome.outcome, 'retired'));
+  assert.equal(await count("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'"), 2);
+
   for (let pause = 0; pause < legacyRestore.writes.length; pause += 1) {
     const paused = await legacy(pause);
     await assert.rejects(runLegacy(), AdditionRefused, `release 0.1.0 write ${pause + 1}`);
@@ -210,5 +221,5 @@ await assert.rejects(restoredAddition(batch, migrated).resume(), (error: unknown
 assert.deepEqual(readdirSync(migrated).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
 await query({ sql: 'DROP TABLE d1_migrations', params: [] });
 
-  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races, deleted rows kept deleted after replay, a receipt found after a schema change, response loss, committed receipt after edits, queued restore SQL, ${writes.length} paused restore boundaries, a snapshot 5 input refused for the release 0.1.0 layout, and the release 0.1.0 route with ${legacyRestore.writes.length} fenced writes, ${legacyPacket} rolled-back statement failures and ${legacyRestore.writes.length} paused restore boundaries\n`);
+  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races, deleted rows kept deleted after replay, a receipt found after a schema change, response loss, committed receipt after edits, queued restore SQL, ${writes.length} paused restore boundaries, a snapshot 5 input refused for the release 0.1.0 layout, and the release 0.1.0 route with ${legacyRestore.writes.length} fenced writes, ${legacyPacket} rolled-back statement failures, a checkpoint race, queued release 0.1.0 SQL and ${legacyRestore.writes.length} paused restore boundaries\n`);
 } finally { rmSync(root, { recursive: true, force: true }); await runtime.dispose(); }
