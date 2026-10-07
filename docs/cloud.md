@@ -450,8 +450,9 @@ Supply it from the operator's environment, as the other Worker settings.
 
 A `reader` owner cannot write from any connector that signs in as the owner.
 This includes every cloud host connector in this guide, because each one signs in through OAuth as a person.
+Give each cloud host its own Access identity, and list it with the role `agent`, before the owner becomes a `reader`.
 Make the owner a `reader` only after every writer has its own actor.
-The [cloud actor role decision](adr/0013-cloud-actor-roles.md) records the roles and the open question about cloud host identity.
+The [cloud actor role decision](adr/0013-cloud-actor-roles.md) records the roles and the rollout order for cloud host identities.
 
 The agent gates are the same as for a local agent; see [gate agent work](claims.md#gate-agent-work).
 The claim lease and the comment author record the actor from authentication.
