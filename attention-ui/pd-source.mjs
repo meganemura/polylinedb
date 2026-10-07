@@ -103,7 +103,7 @@ export function attentionProjection(state) {
       id: `dependency_stuck:${issue.id}`,
       issue_id: issue.id,
       reason_code: 'dependency_stuck',
-      summary: `${titleOf(issue.body)} is waiting on ${waitingOn.join(', ') || 'a prerequisite'}.`,
+      summary: `Waiting on ${waitingOn.join(', ') || 'a prerequisite'} — ${titleOf(issue.body)}`,
       attention_since: secondsOf(issue.updated_at),
     };
     const actor = holders.get(issue.id);
