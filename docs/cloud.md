@@ -69,18 +69,19 @@ If the selected cloud product cannot broker the connection without exposing cred
 | --- | --- | --- |
 | `POLYLINEDB_ACCESS_TEAM_DOMAIN` | `ACCESS_TEAM_DOMAIN` | A single DNS label followed by `.cloudflareaccess.com`, without a scheme or path. |
 | `POLYLINEDB_ACCESS_AUD` | `ACCESS_AUD` | The exact Access application audience. |
-| `POLYLINEDB_ACCESS_ACTORS` | `ACCESS_ACTORS` | A nonempty JSON array of allowed actor IDs, such as `["access:OWNER_SUBJECT"]`. |
+| `POLYLINEDB_ACCESS_ACTORS` | `ACCESS_ACTORS` | A nonempty JSON array of allowed actors, such as `["access:OWNER_SUBJECT"]`. An entry can also give the actor a role; see [Give each actor a role](#give-each-actor-a-role). |
 | `POLYLINEDB_ALLOWED_ORIGINS` | `ALLOWED_ORIGINS` | A JSON array of exact allowed Origin header values. The default is `[]`. |
 
 The default Worker name and D1 database name are `polylinedb`. Override them with `POLYLINEDB_WORKER_NAME` and `POLYLINEDB_D1_NAME` before build or deployment. The D1 binding is `DB`. The entry point is `src/service/index.ts`. Preview URLs are disabled in the project configuration.
 
 A `workers.dev` hostname can use hostname-based Access without a custom domain. Protect the complete hostname as a self-hosted Access application. See [Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/). Check the actual deployment's routes and preview settings before acceptance.
 
-The verifier accepts RS256 assertions from the configured issuer and application audience. It checks signature, expiry, optional `nbf`, optional `iat`, and the actor allowlist. User actors are `access:<sub>`. Service actors use `service:<common_name>` only when the assertion has no nonempty subject. A team login alone does not authorize an actor.
+The verifier accepts RS256 assertions from the configured issuer and application audience. It checks signature, expiry, optional `nbf`, optional `iat`, and the actor allowlist, and it takes the actor's role from the same entry. User actors are `access:<sub>`. Service actors use `service:<common_name>` only when the assertion has no nonempty subject. A team login alone does not authorize an actor.
 
-Missing or invalid identity returns 401. An authenticated actor outside the allowlist receives 403. Invalid authentication configuration or an unavailable signing-key endpoint returns 503. Do not log assertions, bearer tokens, or raw OAuth responses.
+Missing or invalid identity returns 401. An authenticated actor outside the allowlist receives 403. A `reader` actor receives 403 with `read_only_actor` for a write operation. Invalid authentication configuration or an unavailable signing-key endpoint returns 503. Do not log assertions, bearer tokens, or raw OAuth responses.
 
 An empty `ACCESS_ACTORS` list is invalid and blocks every authenticated actor.
+A duplicate actor ID, an unknown role, or an entry object with other keys is also invalid.
 The same `invalid_access_configuration` code covers invalid team-domain and audience settings.
 The CLI recognizes this code only in an HTTP 503 response.
 The response must contain an `error` object with exactly `code` and `message`.
@@ -423,8 +424,49 @@ Do not infer credential isolation from encryption at rest alone. Confirm that th
 
 Local SQLite tests and the local workerd D1 check in `test/d1.integration.ts` provide development evidence. They do not prove production D1 behavior, Access routing, host OAuth refresh, or cloud credential isolation.
 
+## Give each actor a role
+
+Each `ACCESS_ACTORS` entry is an actor ID or an object with exactly `actor` and `role`.
+An actor ID alone has the role `human`.
+
+| Role | The Worker treats the actor as | Writes |
+| --- | --- | --- |
+| `human` | a human | allowed under the cooperative claim contract |
+| `agent` | an agent | allowed only through the `ready` label and the agent's own active claim |
+| `reader` | a human | rejected with `read_only_actor`, including claim commands |
+
+For example, this roster keeps the owner's single sign-on read-only and gives two local agents their own service tokens:
+
+```sh
+export POLYLINEDB_ACCESS_ACTORS='[
+  {"actor": "access:OWNER_SUBJECT", "role": "reader"},
+  {"actor": "service:CODEX_CLIENT_ID", "role": "agent"},
+  {"actor": "service:CLAUDE_CLIENT_ID", "role": "agent"}
+]'
+```
+
+The roster holds actor IDs, not credentials.
+Supply it from the operator's environment, as the other Worker settings.
+
+A `reader` owner cannot write from any connector that signs in as the owner.
+This includes every cloud host connector in this guide, because each one signs in through OAuth as a person.
+Make the owner a `reader` only after every writer has its own actor.
+The [cloud actor role decision](adr/0013-cloud-actor-roles.md) records the roles and the open question about cloud host identity.
+
+The agent gates are the same as for a local agent; see [gate agent work](claims.md#gate-agent-work).
+The claim lease and the comment author record the actor from authentication.
+The `agent_label` of a claim stays display text.
+
 ## Use service tokens only from a local client
 
 An operator-controlled local HTTP client may use an Access Service Token with a Service Auth policy. Keep that credential in the local client's protected credential source. Access must produce a verified service assertion whose actor is explicitly allowlisted.
+
+Give each agent its own service token, so that each agent has its own actor:
+
+1. Create one Access service token for each agent. Store the client ID and the client secret only in that agent's protected credential source.
+2. Add a Service Auth policy for each token to the Access application of the Worker.
+3. Add `service:CLIENT_ID` to `ACCESS_ACTORS` with the role `agent`. The verifier uses the `common_name` claim of the service assertion, which is expected to hold the client ID.
+4. Deploy, then call the `actor` operation with that token. Compare the returned actor with the roster entry.
+5. Try a claim on an issue without the `ready` label. An `agent` actor gets `not_ready`.
 
 The bundled CLI supports local SQLite and public-client OAuth for the Worker. It does not implement service-token authentication. Never place a Service Token in cloud-agent setup scripts, environment variables, or tool arguments.
