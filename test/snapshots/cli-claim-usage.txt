@@ -1,0 +1,6 @@
+  claim show ID                 Inspect ownership and the current store incarnation.
+  claim list [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
+  claim acquire ID --incarnation HEX --session-id UUID [--ttl 30..3600]
+        [--agent-label TEXT] [--request-id UUID]
+  claim renew --claim-proof JSON --expected-revision N [--ttl 30..3600] [--request-id UUID]
+  claim release --claim-proof JSON --expected-revision N [--request-id UUID]

@@ -11,6 +11,7 @@ import type { TestContext } from 'node:test';
 import { retireSource } from '../scripts/d1-additive-merge.ts';
 import { openStore } from '../src/local-store/index.ts';
 import { unexpectedErrorGuidance } from '../src/cli-diagnostics.ts';
+import { assertSnapshot } from './fixtures/snapshot.ts';
 
 const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 function isolatedEnvironment(cwd: string): NodeJS.ProcessEnv {
@@ -317,6 +318,13 @@ test('CLI treats dash queries and help option values as literal text', t => {
   assert.equal(run(['comment', helpText.id, '--body', '--help']).comment.body, '--help');
 });
 
+test('help pins the usage of the claim commands', t => {
+  const { cwd } = fixture(t);
+  const result = spawnSync(process.execPath, [executable, '--help'], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
+  assert.equal(result.status, 0);
+  const usage = result.stdout.match(/^  claim .*\n(?: {8,}\S.*\n)*/gm)?.join('') ?? '';
+  assertSnapshot('cli-claim-usage.txt', usage);
+});
 test('help documents version expectations without initializing storage', t => {
   const { root, cwd, directory } = fixture(t);
   const result = spawnSync(process.execPath, [executable, '--data-dir', directory, '--help'], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
