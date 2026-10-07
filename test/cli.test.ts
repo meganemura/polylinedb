@@ -319,10 +319,34 @@ test('help documents version expectations without initializing storage', t => {
   assert.match(result.stdout, /--expect FIELD=VERSION/);
   assert.match(result.stdout, /--human for successful show, list and search reads/);
   assert.match(result.stdout, /plain on pipes/);
-  for (const args of [['search', '--help'], ['-h'], []]) {
+  for (const args of [['search', '--help'], ['claim', 'acquire', '--help'], ['-h'], []]) {
     const helpResult = spawnSync(process.execPath, [executable, ...args], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
     assert.equal(helpResult.status, 0);
     assert.equal(helpResult.stdout, result.stdout);
+  }
+  assert.deepEqual(readdirSync(root), ['work']);
+});
+
+test('help and version answer on an unsupported runtime while commands stay rejected', t => {
+  const { root, cwd, directory } = fixture(t);
+  const runtimePreload = fileURLToPath(new URL('./fixtures/cli-runtime-preload.mjs', import.meta.url));
+  const env = { ...isolatedEnvironment(cwd), HOME: join(root, 'home'), XDG_DATA_HOME: join(root, 'data'), PD_TEST_NODE_VERSION: '26.3.0' };
+  const invoke = (args: string[]) => spawnSync(process.execPath, ['--import', runtimePreload, executable, ...args], { cwd, env, encoding: 'utf8' });
+  const parserHelp = spawnSync(process.execPath, [executable, '--data-dir', directory, '--help'], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
+  assert.equal(parserHelp.status, 0, parserHelp.stderr);
+  for (const args of [['--help'], ['search', '--help'], ['claim', 'acquire', '--help'], []]) {
+    const result = invoke(args);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, parserHelp.stdout);
+  }
+  const version = invoke(['--version']);
+  assert.equal(version.status, 0, version.stderr);
+  assert.equal(JSON.parse(version.stdout).node, '26.3.0');
+  for (const args of [['list'], ['--data-dir', directory, 'init'], ['--data-dir', directory, '--help'], ['create', '--body', '--help']]) {
+    const result = invoke(args);
+    assert.equal(result.status, 1, result.stdout);
+    assert.equal(result.stdout, '');
+    assert.equal(JSON.parse(result.stderr).error.code, 'unsupported_runtime');
   }
   assert.deepEqual(readdirSync(root), ['work']);
 });

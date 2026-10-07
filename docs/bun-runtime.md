@@ -2,6 +2,7 @@
 
 polylinedb 0.3.1 does not run under Bun.
 Every command exits with `unsupported_runtime`, `--help` included.
+A later change lets help and `--version` print on any runtime; every other command still exits with `unsupported_runtime`.
 This page records the measurements behind that result, the reason the version checks are correct to refuse Bun, and the experiments that come next.
 It records the state on October 8, 2026, and declares no Bun support.
 
@@ -137,11 +138,12 @@ Under Bun, only the rejection path runs, so a time would measure the bootstrap c
 The install and run combinations remain unmeasured: `bun install` with a Node run, and `bun install` with a Bun run.
 `bun install` writes `bun.lock`, so run it in a disposable copy of the repository.
 
-## Open question
+## Help and version after this measurement
 
-The bootstrap check also rejects `--help` and `--version`.
-A user on an unsupported runtime gets an error and no help text.
-Whether help should bypass the check is a product decision. This page does not change it.
+In 0.3.1, the bootstrap check also rejects `--help` and `--version`, and a user on an unsupported runtime gets an error and no help text.
+The bootstrap now answers help and `--version` before the check, because neither loads solarsql or opens a store.
+[ADR 0007](adr/0007-cli-runtime-admission.md) lists the forms that bypass the check.
+The measured tables above record 0.3.1 and stay unchanged.
 
 ## Non-goals
 

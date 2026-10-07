@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Print help and `pd --version` on an unsupported runtime, such as Bun, without loading storage or SQL modules. Every other command still exits with `unsupported_runtime`.
 - Add the actor kind `human` or `agent` to local operations through `--actor-kind` or `POLYLINEDB_ACTOR_KIND`; the kind defaults to `human`.
 - Keep issues labeled `main-lock` out of the ready worklist, and document the main-lock claim and the `tip:` comment for publishing.
 - Require a local agent to name its own actor through `--actor` or `POLYLINEDB_ACTOR` instead of the shared repository actor, and document one actor per agent host.

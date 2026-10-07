@@ -79,6 +79,15 @@ try {
   assert.equal(missingCommands.stdout, '');
   assert.equal(missingCommands.stderr.includes(malformedRoot), false, missingCommands.stderr);
   assert.deepEqual(JSON.parse(missingCommands.stderr).error, { code: 'internal_error', message: 'The command failed on an unexpected error.' });
+  copyFileSync(join(installed, 'dist/cli-help.js'), join(malformedDist, 'cli-help.js'));
+  const isolatedHelp = invokeAtNodeVersion('25.0.0', join(malformedDist, 'cli.js'), ['--help'], root);
+  assert.equal(isolatedHelp.status, 0, isolatedHelp.stderr);
+  assert.equal(isolatedHelp.stderr, '');
+  assert.match(isolatedHelp.stdout, /^polylinedb \(polyline database\) stores personal issues/);
+  assert.match(isolatedHelp.stdout, /\nUsage: pd /);
+  const isolatedVersion = invokeAtNodeVersion('25.0.0', join(malformedDist, 'cli.js'), ['--version'], root);
+  assert.equal(isolatedVersion.status, 0, isolatedVersion.stderr);
+  assert.deepEqual(JSON.parse(isolatedVersion.stdout), { version: manifest.version, node: '25.0.0' });
   const command = join(prefix, 'bin', 'pd');
   assert.equal(realpathSync(command), realpathSync(join(installed, 'dist', 'cli.js')));
   const workspace = join(root, 'work');
@@ -108,13 +117,28 @@ try {
     XDG_CONFIG_HOME: join(sideEffectRoot, 'config'),
     XDG_DATA_HOME: join(sideEffectRoot, 'data'),
   };
+  const helpText = run(command, ['--data-dir', join(sideEffectRoot, 'help-store'), '--help'], workspace);
+  const helpCommands = [[], ['--help'], ['-h'], ['search', '--help'], ['claim', 'acquire', '--help'], ['--help', '--unknown']];
   const unsupportedCommands = [
-    [], ['--help'], ['--version'], ['--unknown'],
+    ['--unknown'], ['--unknown', '--help'], ['--version', '--help'], ['--actor', 'local:agent', '--help'],
+    ['search', '--', '--help'], ['--data-dir', '--help', 'list'],
+    ['create', '--tool', 'package-test', '--project', 'release', '--body', '--help'],
     ['--data-dir', join(sideEffectRoot, 'selected-store'), 'init'],
     ['list'], ['context'], ['connection', 'list'],
     ['connection', 'add', 'home', '--data-dir', join(sideEffectRoot, 'connection-store')], ['auth', 'status'],
   ];
   for (const nodeVersion of ['20.20.2', '24.18.0', '24.19.0', '25.0.0', '26.6.9', '24.20.0-rc.1']) {
+    for (const args of helpCommands) {
+      const result = invokeAtNodeVersion(nodeVersion, command, args, workspace, unsupportedEnv);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, '');
+      assert.equal(result.stdout, helpText);
+    }
+    for (const args of [['--version'], ['--json', '--version']]) {
+      const result = invokeAtNodeVersion(nodeVersion, command, args, workspace, unsupportedEnv);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { version: manifest.version, node: nodeVersion });
+    }
     for (const args of unsupportedCommands) {
       const result = invokeAtNodeVersion(nodeVersion, command, args, workspace, unsupportedEnv);
       assert.equal(result.status, 1, result.stderr || result.stdout);

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Admit the Node runtime before loading operational modules.
-// The package manifest owns the version and engine range used by this boundary.
+// Admit the Node runtime before loading operational modules. Help and version answers load
+// no operational module, so they print on any runtime. The package manifest owns the version
+// and engine range used here.
 import { readFileSync } from 'node:fs';
 import type { InternalError } from './cli-diagnostics.ts';
 
@@ -118,6 +119,14 @@ function isVersionInquiry(args: readonly string[]): boolean {
   return args.length === 2 && args.includes('--version') && args.includes('--json');
 }
 
+// Accepts only forms that the command parser also answers with help. Every argument before the help
+// flag is a command word, so no option can consume the flag as its value and no -- can end options.
+function isHelpInquiry(args: readonly string[]): boolean {
+  if (args.length === 0) return true;
+  const helpIndex = args.findIndex(arg => arg === '--help' || arg === '-h');
+  return helpIndex >= 0 && args.slice(0, helpIndex).every(arg => !arg.startsWith('-'));
+}
+
 function reportBootstrapError(error: BootstrapError): void {
   process.stderr.write(JSON.stringify({ error }) + '\n');
   process.exitCode = 1;
@@ -150,6 +159,21 @@ async function runBootstrap(): Promise<void> {
   }
 
   const actualNode = process.versions.node;
+  const args = process.argv.slice(2);
+  if (isVersionInquiry(args)) {
+    process.stdout.write(JSON.stringify({ version: metadata.version, node: actualNode }) + '\n');
+    return;
+  }
+  if (isHelpInquiry(args)) {
+    try {
+      const { help } = await import('./cli-help.ts');
+      process.stdout.write(help);
+    } catch (error: unknown) {
+      await reportInternalError(error);
+    }
+    return;
+  }
+
   if (!supportsNode(actualNode, clauses)) {
     reportBootstrapError({
       code: 'unsupported_runtime',
@@ -160,12 +184,6 @@ async function runBootstrap(): Promise<void> {
         package_version: metadata.version,
       },
     });
-    return;
-  }
-
-  const args = process.argv.slice(2);
-  if (isVersionInquiry(args)) {
-    process.stdout.write(JSON.stringify({ version: metadata.version, node: actualNode }) + '\n');
     return;
   }
 
