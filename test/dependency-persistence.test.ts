@@ -65,6 +65,13 @@ test('graph roundtrip preserves removed-edge receipts, validates graph rows and 
   await assert.rejects(migration.restore(), /Lost committed response/); assert.equal((await migration.inspect()).state, 'resumable');
   assert.equal((await migration.restore()).result, 'restored'); assert.equal(canonicalSnapshot((await migration.verify()).snapshot), canonical);
 });
+test('export lists the blockers of one dependent in issue number order', async t => {
+  const directory = join(root(t), 'store'); initializeStore({ directory }); const store = openStore({ directory }); t.after(() => store.close());
+  for (let i = 0; i < 10; i++) await executeOperation(store.db, create('pd'), 'test');
+  await executeOperation(store.db, parseOperation({ op: 'dependency_add', dependent_id: 'pd-1', blocker_id: 'pd-10', expected_revision: 1, request_id: crypto.randomUUID() }), 'test');
+  await executeOperation(store.db, parseOperation({ op: 'dependency_add', dependent_id: 'pd-1', blocker_id: 'pd-9', expected_revision: 2, request_id: crypto.randomUUID() }), 'test');
+  assert.deepEqual(store.exportSnapshot().dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-9' }, { dependent_id: 'pd-1', blocker_id: 'pd-10' }]);
+});
 
 test('operator inspection rejects orphan edges instead of hiding them behind tuple joins', async t => {
   const directory = join(root(t), 'empty'); initializeStore({ directory }); const store = openStore({ directory }); const snapshot = store.exportSnapshot(); store.close();
