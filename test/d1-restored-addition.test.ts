@@ -306,7 +306,6 @@ test('an empty original input requires the same checks and atomic barrier', asyn
   assert.deepEqual(empty.restoreWrites, [], 'the current restore treats an empty destination as already identical');
   await refused(restoredAddition(empty.batch, empty.journal()).run({ original: empty.original, source: empty.source, connection: 'cloud' }), /not canonical schema 6 with a recognized restore checkpoint/);
 
-  // A job that wrote its checkpoint for the empty input must pass the same boundaries as a non-empty restore.
   const writes = (await fixture()).restoreWrites;
   const emptyDigest = digest(canonicalSnapshot(JSON.parse((await import('node:fs')).readFileSync(empty.original, 'utf8'))));
   const checkpointWrites = writes.slice(0, 3).map(statement => ({ sql: statement.sql, params: statement.params.map(() => emptyDigest) }));

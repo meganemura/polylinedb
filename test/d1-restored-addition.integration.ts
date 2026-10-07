@@ -49,7 +49,6 @@ try {
     }
     await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
   };
-  /** Restores the original input, recording each write, and stops before write `pauseAt` when it is given. */
   const restore = async (pauseAt?: number) => {
     const writes: Statement[] = [];
     let release: (() => void) | undefined;

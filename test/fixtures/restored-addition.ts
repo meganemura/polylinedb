@@ -42,7 +42,7 @@ export async function localStore(root: string, name: string, prefix?: string): P
   return { path, store };
 }
 
-/** Writes an original restore input and returns its path and snapshot. A null prefix writes an empty store. */
+/** A null prefix writes an empty store. */
 export async function originalInput(root: string, prefix: string | null = 'dst'): Promise<{ path: string; snapshot: Snapshot }> {
   const name = `original-${prefix ?? 'empty'}`;
   const { store } = await localStore(root, name, prefix ?? undefined);
@@ -62,12 +62,10 @@ export function privateDirectory(root: string, name: string): string {
 
 export const failingStatement: Statement = { sql: 'INSERT INTO schema_version(version) VALUES (0)', params: [] };
 
-/** Replaces addition statement `index` with one that always fails, so the engine must roll back the whole batch. */
 export function failAt(batch: Batch, index: number): Batch {
   return statements => batch(isAddition(statements) ? statements.map((statement, position) => position === index ? failingStatement : statement) : statements);
 }
 
-/** Runs one batch when `isTarget` matches, then throws as if the response were lost. */
 export function loseResponse(batch: Batch, isTarget: (statements: readonly Statement[]) => boolean): Batch {
   let lost = false;
   return async statements => {
@@ -79,10 +77,7 @@ export function loseResponse(batch: Batch, isTarget: (statements: readonly State
 
 export const isAddition = (statements: readonly Statement[]) => statements.some(statement => statement.sql.startsWith('ALTER TABLE'));
 
-/**
- * Changes one captured row of `table`, removes it, or copies it under a new key when triggers forbid the earlier forms.
- * The statements are generic so every guarded range gets the same race.
- */
+/** Triggers can forbid an update or a delete, so the last form copies the row under a new key. Generic statements give every guarded range the same race. */
 export function rowChange(table: string, columns: readonly { name: string; type: string; pk: number }[]): string[] {
   const text = columns.filter(column => column.pk === 0 && column.type === 'TEXT').map(column => column.name);
   const target = `rowid = (SELECT max(rowid) FROM ${table})`;
