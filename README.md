@@ -119,7 +119,7 @@ See the [operation contract](docs/operations.md) for fields, defaults, paginatio
 
 ## Use the agent skill
 
-The package includes [the polylinedb skill](skills/polylinedb/SKILL.md) for agents that manage local or cloud issues through the CLI.
+The package includes [the polylinedb skill](skills/polylinedb/SKILL.md) for agents that select, claim, and complete work through MCP.
 Copy or symlink the complete `skills/polylinedb` directory into your host's skill directory.
 Common user directories are `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`.
 Choose one installed source for each host and reload skill discovery as required by that host.

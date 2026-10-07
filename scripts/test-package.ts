@@ -40,7 +40,7 @@ try {
   const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/cli-commands.js', 'dist/cli-human.js', "dist/records/issues.js",
     "dist/records/schema.js", "dist/local-store/index.js", "dist/records/snapshot.js", "dist/workspace/local-config.js", "dist/workspace/connections.js", 'dist/workspace/index.js', "dist/records/issue-id.js",
     'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
-    "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/architecture.md',
+    "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/agent-workflow.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
     'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
     "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md',
@@ -172,7 +172,7 @@ try {
   assert.ok(staleHumanRead.includes('Retrieve project memory before acting.\n'));
   pd(['memory', 'delete', '1', '--project', 'release', '--expected', '1'], 4);
   const skill = readFileSync(join(installed, 'skills', 'polylinedb', 'SKILL.md'), 'utf8');
-  assert.match(skill, /pd memory context/);
+  assert.match(skill, /memory_context/);
   assert.match(skill, /context compaction/);
   const snapshotPath = join(root, 'snapshot.json');
   const exported = JSON.parse(pd(['export', '--file', snapshotPath]));
@@ -211,7 +211,7 @@ try {
   const reacquired = JSON.parse(restored(['claim', 'acquire', issue.id, '--incarnation', claim.store_incarnation, '--session-id', crypto.randomUUID()])).claim_receipt;
   const newProof = JSON.stringify({ issue_id: reacquired.issue_id, incarnation: reacquired.incarnation, session_id: reacquired.session_id, generation: reacquired.generation });
   assert.equal(JSON.parse(restored(['reopen', issue.id, '--expected', '5', '--claim-proof', newProof])).issue.status, 'open');
-  assert.match(skill, /pd claim acquire/);
+  assert.match(skill, /claim_acquire/);
   assert.equal(JSON.parse(restored(['memory', 'show', '1', '--project', 'release'])).memory.version, 2);
   assert.equal(JSON.parse(restored(memoryCreation)).memory.body, 'Verified through the installed CLI.');
   assert.equal(JSON.parse(restored(['create', '--tool', 'package-test', '--project', 'release', '--body', 'After restoration'])).issue.id, 'pd-4');
