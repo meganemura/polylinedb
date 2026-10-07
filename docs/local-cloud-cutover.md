@@ -26,7 +26,7 @@ The Worker and both stores must already use canonical schema 6.
 The additive operator refuses additional application tables, including an existing `polylinedb_snapshot_claim` restoration table.
 Use the separate restoration procedure or review that provenance before preparing a different operator.
 The [restored D1 addition proposal](adr/0012-restored-d1-addition.md) defines a possible single addition with the original input and unchanged destination rows.
-An operator library implements its four-column route, and the ADR lists the gates that remain open.
+An operator library implements its four-column route and its release 0.1.0 two-column route, and the ADR lists the gates that remain open.
 This cutover operator continues to refuse restored destinations, and no command runs the library.
 The operator does not deploy a Worker, upgrade schemas, or change Access policies.
 

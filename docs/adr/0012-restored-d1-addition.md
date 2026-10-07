@@ -1,6 +1,6 @@
 # Add once to an unchanged restored D1 store
 
-Status: Proposed. The four-column route has a tested operator library, and no command runs it yet.
+Status: Proposed. The four-column and two-column routes have a tested operator library, and no command runs it yet.
 
 ## Problem
 
@@ -40,7 +40,12 @@ Verify the checkpoint SHA against the original input's version-specific canonica
 Keep original-input, current-baseline, and frozen-operation digests as separate domain types.
 Compare every projected application row, key, and count with the destination.
 The historical snapshot 3 branch requires a validated deterministic projection into schema 6, including later collections and metadata.
-That projection remains unverified, so the two-column branch must refuse until validation supplies the complete mapping.
+Release 0.1.0 restores snapshot 3 into schema 3 only, so a two-column store reaches schema 6 through the schema 3 upgrade.
+The upgrade leaves the 12 application tables equal to `convertSnapshotV3` of the original input.
+That result has dependency revision 1 for each issue, no dependency edges, and no claims.
+The upgrade seeds project memory revision 1 for each project, but a memory insert after the upgrade increments it.
+The two-column checkpoint holds the digest of the snapshot 3 canonical form, which `canonicalSnapshotV3` reproduces.
+The snapshot 5 form of the converted input has a different digest.
 Do not guess revision values or substitute snapshot 5 canonicalization for the original digest.
 Exact equality establishes complete input data now, rather than the historical time at which a restore job finished.
 A partial restore, missing original file, changed live state, or new active destination claims cause refusal under this contract.
@@ -106,13 +111,15 @@ The full D1 and lifecycle gates decide whether implementation can enable the rou
 
 ## Implementation status
 
-`scripts/d1-restored-addition.ts` implements the four-column route as the `restoredAddition` lifecycle owner.
+`scripts/d1-restored-addition.ts` implements both routes as the `restoredAddition` lifecycle owner.
 Its `run` and `resume` methods take the destination batch port, the journal directory, the original file, the SQLite source, and the cloud connection name.
 The cutover command and the CLI do not call it, so operators still refuse restored destinations.
 
 The owner recognizes both checkpoint layouts by exact DDL.
-It accepts only the four-column layout with a snapshot 5 original input.
-It refuses the two-column layout with either input version, because the snapshot 3 projection is not validated.
+It accepts the four-column layout with a snapshot 5 original input, and the two-column layout with a snapshot 3 original input.
+It refuses each layout with the other input version.
+For the two-column layout, the owner takes the destination identity from the store, because the checkpoint records none.
+The barrier view keeps the visible columns of each layout.
 The packet limit is 1,000 statements, which is the D1 query limit for one Workers Paid invocation.
 A caller can set a lower limit, such as 50 for Workers Free.
 
@@ -120,8 +127,9 @@ The current restore operator writes no checkpoint when it restores an empty inpu
 The owner then refuses the store, because it has no recognized checkpoint.
 When a checkpoint for an empty input exists, the owner applies the same checks and the same barrier as for other inputs.
 
-The owner compares the 12 application tables with the original input.
-It captures and guards the identity and `project_memory_revisions`, but snapshot 5 has no revisions, so the owner cannot compare them with the original input.
+The owner compares the 12 application tables with the original input, or with its snapshot 3 projection.
+It captures and guards the identity and `project_memory_revisions`, but no original input records revisions, so the owner cannot compare them.
+After the schema 3 upgrade, the revision values also depend on the order of the upgrade and the memory inserts.
 Batch reads must reach the primary database, because a lagging replica can show an old preimage.
 
 SQLite tests and local workerd D1 tests both pass these gates:
@@ -149,9 +157,34 @@ The SQLite tests also pass these gates:
 - A source edit after freezing blocks source retirement, and a missing source is refused.
 - A crash after the retirement commit resumes and records the step.
 
+The release 0.1.0 route tests replay the writes that the release 0.1.0 operator sent for one snapshot 3 input.
+`test/fixtures/release-0.1.0-restore.json` holds those writes, the input, the digest, and the release schema.
+`node test/fixtures/record-release-0.1.0-restore.ts` records them again from the `v0.1.0` tag.
+Each test applies the writes to schema 3, then applies the schema 3 upgrade.
+The route shares the commit and recovery code with the four-column route.
+Its tests cover the parts that change with the layout.
+
+SQLite tests and local workerd D1 tests both pass these release 0.1.0 gates:
+
+- The addition commits once, archives the two-column checkpoint, and records the two-column layout in the receipt.
+- A replay of each recorded release 0.1.0 write after the barrier leaves the store unchanged. `CREATE TABLE IF NOT EXISTS` does nothing against the view, and the checkpoint insert fails.
+- A release 0.1.0 restore paused before each write, then upgraded, keeps the addition refused until its remaining writes run.
+- A snapshot 5 input for the two-column layout is refused.
+
+The workerd D1 test also passes this release 0.1.0 gate:
+
+- A failure at each packet statement rolls back the rename, the two-column view, the receipt, and the added rows.
+
+The SQLite tests also pass these release 0.1.0 gates:
+
+- The recorded digest equals the snapshot 3 canonical digest, and differs from the snapshot 5 digest of the converted input.
+- The upgraded store holds the converted snapshot 3 rows, dependency revision 1 for each issue, and project memory revision 1 for each project.
+- Memory inserts after a paused upgrade raise a project revision to 2, and the addition still commits after the restore completes.
+- A missing, invalid, or different original input is refused.
+- An edited row, checkpoint digest, or checkpoint DDL is refused, and so is a store that has not been upgraded.
+
 These gates remain open:
 
-- The snapshot 3 to schema 6 projection and the release 0.1.0 restore SQL.
 - Request size, duration, and atomicity of the packet through the D1 REST batch API on a production database.
 - Claim validity at commit time beyond the guards on the captured claim rows.
 - Owner validity boundaries, receipt conflicts between concurrent operators, and metadata identity readback.
