@@ -6,6 +6,8 @@ description: Select, claim, and complete agent work through polylinedb MCP tools
 # Complete claimed agent work
 
 Use the selected MCP connector's advertised tools and argument schemas.
+They decide what is available, even when the installed package and the connector run different versions.
+If the connector does not advertise a tool that this skill names, stop and report the gap. Do not substitute another tool.
 Keep the same connector and explicit project throughout the work.
 Repository policy selects `main-direct` or `PR` publication.
 Neither policy grants permission to publish. Follow the user's authorization boundary before an external write.

@@ -23,3 +23,10 @@ test('every operation the skill names is an advertised MCP tool with the argumen
   }
   assert.deepEqual((operationSchemas.dependency_worklist.properties.state as { enum: string[] }).enum, ['ready', 'blocked']);
 });
+
+// A shipped skill outlives the release it was written for, so release status in its text goes stale.
+test('the skill takes capabilities from advertised schemas rather than release status', () => {
+  assert.doesNotMatch(skill, /\b\d+\.\d+\.\d+\b/, 'the skill names no package version');
+  assert.doesNotMatch(skill, /\bschema \d/i, 'the skill names no schema number');
+  assert.doesNotMatch(skill, /\bunreleased\b|\bpre-release\b|\bnot yet (released|published)\b/i, 'the skill has no release status');
+});
