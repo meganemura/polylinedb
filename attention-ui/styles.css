@@ -117,3 +117,18 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .attention-row:has(input:disabled) { cursor: default; }
 .dispatch:disabled { background: #a8a297; cursor: default; transform: none; }
 
+/* Secondary screens keep the same paper and type, without selection or Dispatch. */
+.shell { padding-bottom: max(32px, env(safe-area-inset-bottom)); }
+.quiet-section + .quiet-section { margin-top: 40px; }
+.quiet-section h2 {
+  margin: 0 0 4px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.quiet-list { list-style: none; margin: 0; padding: 0; }
+.quiet-row { display: block; padding: 18px 0 20px; }
+.quiet-row + .quiet-row { border-top: 1px solid #ddd7cb; }
+.quiet-row .primary { display: block; font-size: 19px; line-height: 1.45; overflow-wrap: anywhere; }
+.quiet-row .secondary { display: block; margin-top: 6px; color: #716b60; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
