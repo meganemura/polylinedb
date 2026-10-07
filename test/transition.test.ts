@@ -1,7 +1,7 @@
 // Checks the pure transition decisions with literal states; store tests prove that SQL agrees with them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { claimState, decideClaimMutation, decideIssueUpdate } from '../src/transition/index.ts';
+import { claimState, decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, decideReplay } from '../src/transition/index.ts';
 import type { ObservedClaim, ObservedIssue } from '../src/transition/index.ts';
 
 const store = 'a'.repeat(32);
@@ -90,4 +90,25 @@ test('claim renewal and release need the observed revision and a current proof',
   assert.deepEqual(decideClaimMutation(lease(), store, renew, 'alice', 1000), { accepted: false, reason: 'proof_rejected' });
   assert.deepEqual(decideClaimMutation(lease({ revision: Number.MAX_SAFE_INTEGER }), store, { ...renew, expected_revision: Number.MAX_SAFE_INTEGER }, 'alice', 999),
     { accepted: false, reason: 'counter_exhausted' });
+});
+
+test('a repeated request ID replays only for the same actor and payload', () => {
+  assert.equal(decideReplay({ actor: 'alice', payload: '{"a":1}' }, 'alice', '{"a":1}'), 'replay');
+  assert.equal(decideReplay({ actor: 'alice', payload: '{"a":1}' }, 'bob', '{"a":1}'), 'request_conflict');
+  assert.equal(decideReplay({ actor: 'alice', payload: '{"a":1}' }, 'alice', '{"a":2}'), 'request_conflict');
+});
+
+test('a child needs an existing epic parent', () => {
+  assert.deepEqual(decideCreation(undefined, null), { accepted: true });
+  assert.deepEqual(decideCreation('pd-1', { type: 'epic' }), { accepted: true });
+  assert.deepEqual(decideCreation('pd-1', null), { accepted: false, reason: 'parent_not_found' });
+  assert.deepEqual(decideCreation('pd-1', { type: 'task' }), { accepted: false, reason: 'parent_not_epic' });
+});
+
+test('a prerequisite edit needs both endpoints and the observed revision', () => {
+  assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: 3, blocker_exists: true }, 3), { accepted: true });
+  assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: null, blocker_exists: false }, 3), { accepted: false, reason: 'dependent_not_found' });
+  assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: 3, blocker_exists: false }, 3), { accepted: false, reason: 'blocker_not_found' });
+  assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: 4, blocker_exists: true }, 3), { accepted: false, reason: 'revision_conflict' });
+  assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: Number.MAX_SAFE_INTEGER, blocker_exists: true }, Number.MAX_SAFE_INTEGER), { accepted: false, reason: 'revision_exhausted' });
 });

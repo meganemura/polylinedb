@@ -5,7 +5,7 @@ import type { Database } from 'solarsql';
 import { issueQueries } from "./issue-queries.ts";
 import { PolylinedbError } from './errors.ts';
 import { claimProofSchema, claimRow, parseClaimProof } from './claims.ts';
-import { decideIssueUpdate } from '../transition/index.ts';
+import { decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
 import { issueClaimGuard } from './claims-sql.ts';
 import type { ClaimProof } from './claims-sql.ts';
 
@@ -292,10 +292,13 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ac
         throw error;
       });
       const request = rowsAt(result, 3)[0];
-      if (request && (request.actor !== actor || request.payload !== payload)) throw new PolylinedbError('request_conflict', 'The request ID belongs to a different actor or payload', 409);
+      if (request && decideReplay(request, actor, payload) === 'request_conflict') throw new PolylinedbError('request_conflict', 'The request ID belongs to a different actor or payload', 409);
       const row = rowsAt(result, 4)[0];
       if (row) return { issue: issueRow(row) };
-      if (operation.parent && !rowsAt(result, 5)[0]) return notFound(operation.parent);
+      const parentRow = operation.parent ? rowsAt(result, 5)[0] : undefined;
+      const creation = decideCreation(operation.parent, parentRow ? { type: issueRow(parentRow).type } : null);
+      if (creation.accepted) throw new PolylinedbError('storage_error', 'The database rejected a creation without a matching condition', 503);
+      if (creation.reason === 'parent_not_found') return notFound(operation.parent ?? '');
       throw new PolylinedbError('invalid_input', 'The parent must be an epic', 400);
     }
     case 'show': {

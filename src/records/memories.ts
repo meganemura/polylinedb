@@ -4,6 +4,7 @@ import type { SqlExecutor, SqlStatement } from "./issues.ts";
 import { parsePrefix, parseRequestId } from "./issue-id.ts";
 import { issueQueries } from "./issue-queries.ts";
 import { statements } from "./solarsql.generated.ts";
+import { decideReplay } from "../transition/index.ts";
 
 export type Memory = { id: string; project: string; title: string; body: string; version: number;
   created_at: string; created_by: string; updated_at: string; updated_by: string };
@@ -149,7 +150,7 @@ export async function executeMemoryOperation(db: SqlExecutor, operation: MemoryO
       });
       const request = result[3]?.rows[0];
       if (!request) throw new PolylinedbError('storage_error', 'Missing memory creation receipt', 503);
-      if (request.actor !== actor || request.payload !== payload) throw new PolylinedbError('request_conflict', 'Request belongs to another actor or payload', 409);
+      if (decideReplay(request, actor, payload) === 'request_conflict') throw new PolylinedbError('request_conflict', 'Request belongs to another actor or payload', 409);
       const row = result[4]?.rows[0];
       if (!row) throw new PolylinedbError('memory_deleted', 'The previously created memory was deleted', 409, { project: operation.project, id: parseMemoryId(request.memory_id) });
       return { memory: memoryRow(row) };

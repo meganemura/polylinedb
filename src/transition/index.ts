@@ -5,3 +5,7 @@ export { claimState, holdsClaim, decideClaimMutation } from './claims.ts';
 export type { ClaimProof, ObservedClaim, ClaimState, ClaimCommand, ClaimRejection, ClaimDecision } from './claims.ts';
 export { decideIssueUpdate } from './issue-update.ts';
 export type { FieldChange, IssueUpdate, ObservedIssue, FieldConflict, UpdateRejection, UpdateDecision } from './issue-update.ts';
+export { decideReplay } from './receipts.ts';
+export type { StoredRequest, ReplayDecision } from './receipts.ts';
+export { decideCreation, decidePrerequisiteEdit } from './cross-issue.ts';
+export type { ObservedParent, CreationDecision, ObservedPrerequisites, PrerequisiteRejection, PrerequisiteDecision } from './cross-issue.ts';

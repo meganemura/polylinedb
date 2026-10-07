@@ -4,6 +4,7 @@ import { parseOperation as parseIssue, issueRow } from './issues.ts';
 import { PolylinedbError } from './errors.ts';
 import type { Operation as IssueOperation, Issue, SqlExecutor, SqlStatement, Status } from './issues.ts';
 import { issueQueries } from './issue-queries.ts';
+import { decidePrerequisiteEdit, decideReplay } from '../transition/index.ts';
 
 type WorkFilters = Omit<Extract<IssueOperation, { op: 'list' }>, 'op' | 'status'>;
 export type DependencyMutation = { op: 'dependency_add' | 'dependency_remove'; dependent_id: string; blocker_id: string; expected_revision: number; request_id: string };
@@ -135,16 +136,22 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
     const replay = await db.batch([{ sql: 'SELECT * FROM dependency_requests WHERE request_id = ?', params: [operation.request_id] }]);
     const row = rowsAt(replay, 0)[0];
     if (!row) throw new PolylinedbError('storage_error', 'Committed dependency receipt is unavailable', 503);
-    if (row.actor !== actor || row.payload !== payload) throw new PolylinedbError('dependency_request_conflict', 'The request ID belongs to a different actor or payload', 409);
+    if (decideReplay(row, actor, payload) === 'request_conflict') throw new PolylinedbError('dependency_request_conflict', 'The request ID belongs to a different actor or payload', 409);
     return { dependency: dependencyReceipt(row) };
   }
   const request = rowsAt(result, 3)[0];
   if (request) return { dependency: dependencyReceipt(request) };
   const observed = rowsAt(result, 4)[0];
-  if (!observed || !rowsAt(result, 5)[0]) throw new PolylinedbError('not_found', 'A dependency endpoint was not found', 404, { id: observed ? operation.blocker_id : operation.dependent_id });
-  if (observed.revision !== operation.expected_revision) {
-    const all = rowsAt(result, 6).map(issueRow); const blockers = all.slice(0, 50).map(({ id, project, status }) => ({ id, project, status }));
-    throw new PolylinedbError('dependency_conflict', 'Read the current prerequisite revision before deciding on a new mutation', 409, { expected_revision: operation.expected_revision, current: { dependent_id: operation.dependent_id, revision: observed.revision, blockers, next_cursor: all.length > 50 ? blockers.at(-1)?.id ?? null : null } });
+  const edit = decidePrerequisiteEdit({ dependent_revision: observed ? revision(observed.revision) : null, blocker_exists: rowsAt(result, 5)[0] !== undefined }, operation.expected_revision);
+  if (edit.accepted) throw new PolylinedbError('storage_error', 'The database rejected a prerequisite edit without a matching condition', 503);
+  switch (edit.reason) {
+    case 'dependent_not_found': throw new PolylinedbError('not_found', 'A dependency endpoint was not found', 404, { id: operation.dependent_id });
+    case 'blocker_not_found': throw new PolylinedbError('not_found', 'A dependency endpoint was not found', 404, { id: operation.blocker_id });
+    case 'revision_conflict': {
+      const all = rowsAt(result, 6).map(issueRow); const blockers = all.slice(0, 50).map(({ id, project, status }) => ({ id, project, status }));
+      throw new PolylinedbError('dependency_conflict', 'Read the current prerequisite revision before deciding on a new mutation', 409, { expected_revision: operation.expected_revision, current: { dependent_id: operation.dependent_id, revision: observed.revision, blockers, next_cursor: all.length > 50 ? blockers.at(-1)?.id ?? null : null } });
+    }
+    case 'revision_exhausted': throw new PolylinedbError('dependency_version_exhausted', 'The prerequisite revision cannot increase', 409, { dependent_id: operation.dependent_id });
+    default: { const unreachable: never = edit.reason; return unreachable; }
   }
-  throw new PolylinedbError('dependency_version_exhausted', 'The prerequisite revision cannot increase', 409, { dependent_id: operation.dependent_id });
 }

@@ -5,7 +5,7 @@ import { issueQueries } from './issue-queries.ts';
 import { claimMutationStatements } from './claims-sql.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { claimState, decideClaimMutation } from '../transition/index.ts';
+import { claimState, decideClaimMutation, decideReplay } from '../transition/index.ts';
 import type { ClaimState } from '../transition/index.ts';
 
 export type Claim = ClaimProof & { actor: string; agent_label: string | null; revision: number; acquired_at: number; changed_at: number; expires_at: number; released_at: number | null };
@@ -135,7 +135,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     if (!duplicateReceipt(error)) throw error;
     const row = (await db.reads.all(issueQueries.claimRequest, { request_id: operation.request_id }))[0];
     if (!row) throw new PolylinedbError('storage_error', 'Committed claim receipt is unavailable', 503);
-    if (row.actor !== actor || row.payload !== payload) throw new PolylinedbError('claim_request_conflict', 'The request ID belongs to a different actor, session, or payload', 409);
+    if (decideReplay(row, actor, payload) === 'request_conflict') throw new PolylinedbError('claim_request_conflict', 'The request ID belongs to a different actor, session, or payload', 409);
     return { claim_receipt: receipt(row) };
   }
   const row = results.at(-2)?.rows[0];
