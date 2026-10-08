@@ -24,7 +24,10 @@ export class CredentialStoreError extends Error {
 /** @internal The runner seam lets tests use a child fixture without opening a live credential store. */
 export function runCredentialCommand(command: Command, limits = { timeoutMs: 30_000, outputBytes: 64 * 1024 }): Promise<Result> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command.executable, command.args, { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Without input, a command can exit before the runner writes to a stdin pipe, and that write gets EPIPE.
+    const child = command.input === undefined
+      ? spawn(command.executable, command.args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] })
+      : spawn(command.executable, command.args, { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let bytes = 0;
@@ -34,7 +37,7 @@ export function runCredentialCommand(command: Command, limits = { timeoutMs: 30_
       finished = true;
       clearTimeout(timer);
       child.kill('SIGKILL');
-      child.stdin.destroy();
+      child.stdin?.destroy();
       child.stdout.destroy();
       child.stderr.destroy();
       reject(new CredentialStoreError());
@@ -48,7 +51,7 @@ export function runCredentialCommand(command: Command, limits = { timeoutMs: 30_
     child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk));
     child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk));
     child.on('error', fail);
-    child.stdin.on('error', fail);
+    child.stdin?.on('error', fail);
     child.on('close', status => {
       if (finished) return;
       finished = true;
@@ -58,7 +61,7 @@ export function runCredentialCommand(command: Command, limits = { timeoutMs: 30_
         resolve({ status, stdout: decoder.decode(Buffer.concat(stdout)), stderr: decoder.decode(Buffer.concat(stderr)) });
       } catch { reject(new CredentialStoreError()); }
     });
-    child.stdin.end(command.input ?? '');
+    child.stdin?.end(command.input);
   });
 }
 
