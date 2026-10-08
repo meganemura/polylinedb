@@ -353,3 +353,13 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
     default: { const unreachable: never = operation; return unreachable; }
   }
 }
+
+// pd records no close time, so a closed issue's last update stands in for it; comments never touch updated_at.
+export async function recentlyClosedIssues(db: SqlExecutor, limit: number): Promise<Issue[]> {
+  return (await db.reads.all(issueQueries.recentlyClosed, { limit })).map(issueRow);
+}
+
+// `main-wait` keeps an issue open while its merge sits in a local land queue that the remote trunk does not yet contain.
+export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promise<Issue[]> {
+  return (await db.reads.all(issueQueries.awaitingMain, { limit })).map(issueRow);
+}

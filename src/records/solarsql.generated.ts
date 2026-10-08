@@ -56,6 +56,14 @@ export type Generated = {
     params: { request_id: SqlValue | null };
     row: { request_id: SqlValue; actor: SqlValue; payload: SqlValue; issue_id: SqlValue; incarnation: SqlValue; session_id: SqlValue; agent_label: SqlValue | null; generation: SqlValue; revision: SqlValue; acquired_at: SqlValue; changed_at: SqlValue; expires_at: SqlValue; released_at: SqlValue | null; created_at: SqlValue; outcome: SqlValue };
   };
+  "SELECT issues.* FROM issues WHERE status = 'closed' ORDER BY updated_at DESC, sort_key DESC LIMIT :limit": {
+    params: { limit: number };
+    row: { id: SqlValue; parent_id: SqlValue | null; sort_key: SqlValue; tool: SqlValue; project: SqlValue; body: SqlValue; status: SqlValue; type: SqlValue; priority: SqlValue; labels_json: SqlValue; tool_v: SqlValue; project_v: SqlValue; body_v: SqlValue; status_v: SqlValue; type_v: SqlValue; priority_v: SqlValue; labels_v: SqlValue; created_at: SqlValue; created_by: SqlValue; updated_at: SqlValue; updated_by: SqlValue };
+  };
+  "SELECT issues.* FROM issues WHERE status = 'open' AND EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = 'main-wait') ORDER BY updated_at DESC, sort_key DESC LIMIT :limit": {
+    params: { limit: number };
+    row: { id: SqlValue; parent_id: SqlValue | null; sort_key: SqlValue; tool: SqlValue; project: SqlValue; body: SqlValue; status: SqlValue; type: SqlValue; priority: SqlValue; labels_json: SqlValue; tool_v: SqlValue; project_v: SqlValue; body_v: SqlValue; status_v: SqlValue; type_v: SqlValue; priority_v: SqlValue; labels_v: SqlValue; created_at: SqlValue; created_by: SqlValue; updated_at: SqlValue; updated_by: SqlValue };
+  };
 };
 
 export const generated: Meta<Generated> = {
@@ -72,6 +80,8 @@ export const generated: Meta<Generated> = {
   "SELECT issues.id AS issue_id, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor, claim.session_id, claim.agent_label, claim.generation, claim.revision, claim.acquired_at, claim.changed_at, claim.expires_at, claim.released_at FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id=issues.id WHERE identity.singleton=1 AND issues.id=:issue_id": { params: ["issue_id"], encode: [], json: [], reads: ["issue_claims", "issues", "memory_store_identity"] },
   "SELECT issues.id AS issue_id, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor, claim.session_id, claim.agent_label, claim.generation, claim.revision, claim.acquired_at, claim.changed_at, claim.expires_at, claim.released_at FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id=issues.id WHERE identity.singleton=1 AND (:tool IS NULL OR issues.tool=:tool) AND (:project IS NULL OR issues.project=:project) AND issues.sort_key>:after ORDER BY issues.sort_key LIMIT :limit": { params: ["tool", "project", "after", "limit"], encode: [], json: [], reads: ["issue_claims", "issues", "memory_store_identity"] },
   "SELECT * FROM claim_requests WHERE request_id=:request_id": { params: ["request_id"], encode: [], json: [], reads: ["claim_requests"] },
+  "SELECT issues.* FROM issues WHERE status = 'closed' ORDER BY updated_at DESC, sort_key DESC LIMIT :limit": { params: ["limit"], encode: [], json: [], reads: ["issues"] },
+  "SELECT issues.* FROM issues WHERE status = 'open' AND EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = 'main-wait') ORDER BY updated_at DESC, sort_key DESC LIMIT :limit": { params: ["limit"], encode: [], json: [], reads: ["issues"] },
 };
 
 export const statements = {
@@ -88,4 +98,6 @@ export const statements = {
   ["claimShow"]: "SELECT issues.id AS issue_id, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor, claim.session_id, claim.agent_label, claim.generation, claim.revision, claim.acquired_at, claim.changed_at, claim.expires_at, claim.released_at FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id=issues.id WHERE identity.singleton=1 AND issues.id=:issue_id",
   ["claimList"]: "SELECT issues.id AS issue_id, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor, claim.session_id, claim.agent_label, claim.generation, claim.revision, claim.acquired_at, claim.changed_at, claim.expires_at, claim.released_at FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id=issues.id WHERE identity.singleton=1 AND (:tool IS NULL OR issues.tool=:tool) AND (:project IS NULL OR issues.project=:project) AND issues.sort_key>:after ORDER BY issues.sort_key LIMIT :limit",
   ["claimRequest"]: "SELECT * FROM claim_requests WHERE request_id=:request_id",
+  ["recentlyClosed"]: "SELECT issues.* FROM issues WHERE status = 'closed' ORDER BY updated_at DESC, sort_key DESC LIMIT :limit",
+  ["awaitingMain"]: "SELECT issues.* FROM issues WHERE status = 'open' AND EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = 'main-wait') ORDER BY updated_at DESC, sort_key DESC LIMIT :limit",
 } as const;
