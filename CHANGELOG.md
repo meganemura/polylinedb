@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Name every unexpected and missing field in `invalid_input` errors, with a path for nested fields (`changes[0].note`) and `<path>: expected <type>` for a wrong structure. A message echoes at most 10 names, each cut to 64 bytes, and prints `<invalid name>` for a key that is not shaped like an identifier. "Unknown field" now reads "Unexpected field".
 - Name the session in claim acquisition errors. Without `--session-id` or `POLYLINEDB_SESSION_ID`, `pd claim acquire` exits with a usage error, and the Worker and MCP `claim_acquire` report `session_id` instead of `request_id` for a missing or malformed session UUID. A malformed `session_id` in a claim proof is reported the same way. No session UUID is generated, because a generated UUID would leave other processes unable to renew or release the claim.
 - Print help and `pd --version` on an unsupported runtime, such as Bun, without loading storage or SQL modules. Every other command still exits with `unsupported_runtime`.
 - Add the actor kind `human` or `agent` to local operations through `--actor-kind` or `POLYLINEDB_ACTOR_KIND`; the kind defaults to `human`.
