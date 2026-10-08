@@ -1,4 +1,5 @@
 // Evaluates cloudflare.config.ts in a fresh Node process per case, because the config reads the environment at import.
+// Also pins the dev:worker script, which keeps the dev server off remote bindings.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
