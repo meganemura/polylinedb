@@ -8,8 +8,10 @@ import type { Readable } from 'node:stream';
 export type ChildLimits = { startMs: number; runMs: number };
 export type ChildResult = { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string };
 
-// The start limit only keeps the suite from waiting forever on a host that never runs the child.
-export const childLimits: ChildLimits = { startMs: 300_000, runMs: 60_000 };
+// Time after the start still includes waits the CLI does not control, such as the exec of its git and credential children.
+// At parallelism 16 on a loaded macOS host, 768 CLI children ran a median 6.2 s after start and at most 190 s.
+// These limits only stop a hung child, so a real hang takes up to 300 s to report.
+export const childLimits: ChildLimits = { startMs: 300_000, runMs: 300_000 };
 export const childStarted = new URL('./child-started.ts', import.meta.url).pathname;
 
 type Process = { pid: number; ppid: number; stat: string; cpu: string; rss: string; command: string };
