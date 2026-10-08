@@ -1,15 +1,22 @@
-// Owns one addition of local records to an unchanged restored D1 store, through source retirement.
-// It does not change repository routing. A release 0.1.0 checkpoint qualifies only after the schema 3 to 6 upgrade.
+// Owns one addition of local records to an unchanged restored D1 store, through source retirement and routing.
+// Routing changes only the repository and user defaults that select the source, never Worker routing. A release 0.1.0 checkpoint qualifies only after the schema 3 to 6 upgrade.
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, writeSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, writeSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import type { Counts, Statement } from './d1-additive-merge.ts';
 import { canonicalSnapshot, canonicalSnapshotV3, convertSnapshotV3, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
+import { defaultConnection, readConnections, readRepositoryDefaults, repositoryConfigPath, selectConnection, useRepositoryConnection } from '../src/workspace/index.ts';
+import type { RepositoryConfiguration, RepositorySelection } from '../src/workspace/index.ts';
+import { PolylinedbError } from '../src/records/index.ts';
 
 export type Batch = (statements: readonly Statement[]) => Promise<readonly (readonly Record<string, unknown>[])[]>;
-export type AdditionOutcome = { outcome: 'retired'; operation_id: string; expected_sha256: string; counts: Counts };
+export type AdditionOutcome = { outcome: 'routed'; operation_id: string; expected_sha256: string; counts: Counts; routes: number };
+export type ReleaseOutcome = { outcome: 'released'; operation_id: string };
+/** Writes one routing change. Tests wrap it to crash after the write. */
+export type RouteSwitches = { repository(connection: string, root: string): void; userDefault(connection: string, environment: NodeJS.ProcessEnv): void };
+const workspaceSwitches: RouteSwitches = { repository: (connection, root) => { useRepositoryConnection(connection, root); }, userDefault: defaultConnection };
 
 /** Evidence proves that the addition must not proceed from this state. */
 export class AdditionRefused extends Error { override name = 'AdditionRefused'; }
@@ -207,11 +214,11 @@ type Operation = {
   format: 'polylinedb.restored-addition'; version: 1;
   operation_id: string; connection: string; source_path: string;
   original: string; baseline: Baseline; source_rows: RawRows; source_sha256: SourceDigest;
-  receipt: Receipt; statements: Statement[]; expected: string; counts: Counts;
+  routing: RoutingPlan; receipt: Receipt; statements: Statement[]; expected: string; counts: Counts;
 };
 
-function frozenDigest(operationId: string, baseline: Baseline, source: SourceDigest, additions: readonly Statement[]): FrozenDigest {
-  return sha256(stableJson({ operation_id: operationId, original: baseline.originalDigest, baseline: baseline.digest, source, statements: additions })) as FrozenDigest;
+function frozenDigest(operationId: string, baseline: Baseline, source: SourceDigest, routing: RoutingPlan, additions: readonly Statement[]): FrozenDigest {
+  return sha256(stableJson({ operation_id: operationId, original: baseline.originalDigest, baseline: baseline.digest, source, routing, statements: additions })) as FrozenDigest;
 }
 
 function packetEnd(receipt: Receipt): Statement[] {
@@ -231,7 +238,7 @@ function frozenOperation(value: unknown): Operation {
     const additions = operation.statements.slice(0, operation.statements.length - end.length);
     const source = sha256(stableJson(operation.source_rows)) as SourceDigest;
     if (stableJson(operation.statements.slice(additions.length)) !== stableJson(end) || source !== operation.source_sha256
-      || frozenDigest(operation.operation_id, operation.baseline, source, additions) !== operation.receipt.frozen_sha256) return refuse('The journal operation differs from its frozen digest');
+      || frozenDigest(operation.operation_id, operation.baseline, source, operation.routing, additions) !== operation.receipt.frozen_sha256) return refuse('The journal operation differs from its frozen digest');
     return operation;
   } catch (error) {
     if (error instanceof AdditionRefused) throw error;
@@ -239,7 +246,7 @@ function frozenOperation(value: unknown): Operation {
   }
 }
 
-function freezeOperation(input: { operationId: string; connection: string; sourcePath: string; original: string; baseline: Baseline; sourceRows: RawRows; maximumStatements: number }): Operation {
+function freezeOperation(input: { operationId: string; connection: string; sourcePath: string; original: string; baseline: Baseline; sourceRows: RawRows; routing: RoutingPlan; maximumStatements: number }): Operation {
   const sourceRows = normalizedRows(input.sourceRows);
   let plan: ReturnType<typeof additiveMerge>;
   try { plan = additiveMerge({ source: sourceRows, destination: input.baseline.rows }); } catch (error) { return refuse(error instanceof Error ? error.message : 'Source cannot be added'); }
@@ -247,7 +254,7 @@ function freezeOperation(input: { operationId: string; connection: string; sourc
   if (!schemaVersionGuard) return refuse('Addition plan has no schema guard');
   const additions = [schemaVersionGuard, ...barrierGuards(input.baseline), ...rest];
   const sourceDigest = sha256(stableJson(sourceRows)) as SourceDigest;
-  const frozen = frozenDigest(input.operationId, input.baseline, sourceDigest, additions);
+  const frozen = frozenDigest(input.operationId, input.baseline, sourceDigest, input.routing, additions);
   const receipt: Receipt = {
     singleton: 1, operation_id: input.operationId, frozen_sha256: frozen, destination_incarnation: input.baseline.incarnation,
     checkpoint_layout: input.baseline.layout, original_sha256: input.baseline.originalDigest, baseline_sha256: input.baseline.digest,
@@ -257,7 +264,7 @@ function freezeOperation(input: { operationId: string; connection: string; sourc
   if (statements.length > input.maximumStatements) refuse(`The atomic addition needs ${statements.length} statements, above the limit of ${input.maximumStatements}`);
   return {
     format: 'polylinedb.restored-addition', version: 1, operation_id: input.operationId, connection: input.connection, source_path: input.sourcePath,
-    original: input.original, baseline: input.baseline, source_rows: sourceRows, source_sha256: sourceDigest,
+    original: input.original, baseline: input.baseline, source_rows: sourceRows, source_sha256: sourceDigest, routing: input.routing,
     receipt, statements, expected: canonicalSnapshot(plan.expectedSnapshot), counts: plan.counts,
   };
 }
@@ -300,7 +307,7 @@ function retiredSourceSchema(connection: string): string {
   } finally { reference.close(); }
 }
 
-/** Reads the source rows. Only recovery passes `retiredFor`, because a crash can follow the retirement commit. */
+/** Reads the source rows. Retirement and release pass `retiredFor`, because a crash can follow the retirement commit. */
 function readSource(database: DatabaseSync, retiredFor?: string): RawRows {
   const schema = stableJson(database.prepare(schemaSql).all());
   if (schema !== canonicalSourceSchema && (retiredFor === undefined || schema !== retiredSourceSchema(retiredFor))) refuse('Source schema differs from canonical schema 6');
@@ -361,21 +368,24 @@ async function commit(batch: Batch, book: Journal, operation: Operation): Promis
   book.write('committed.json', { receipt: operation.receipt });
 }
 
-async function verify(batch: Batch, book: Journal, operation: Operation): Promise<void> {
+/** Later destination edits change the result but not the committed receipt, so only an explicit operator decision accepts them. */
+async function verify(batch: Batch, book: Journal, operation: Operation, acceptDestinationEdits: boolean): Promise<void> {
   if (book.has('verified.json')) return;
   const destination = await capture(batch);
-  classify(destination, operation);
+  if (classify(destination, operation).state !== 'committed') throw new AdditionUnknown('The journal records a commit, but the destination shows no receipt');
   let result: string;
   try { result = canonicalSnapshot(rawToSnapshot(destination.rows)); } catch { return refuse('The addition committed, but the destination is no longer a canonical store'); }
-  if (result !== operation.expected || destinationIncarnation(destination.rows) !== operation.receipt.destination_incarnation) refuse('The addition committed, but the destination changed afterward; source retirement waits');
-  book.write('verified.json', { expected_sha256: operation.receipt.expected_sha256 });
+  if (destinationIncarnation(destination.rows) !== operation.receipt.destination_incarnation) refuse('The addition committed, but the destination identity changed; routing waits');
+  if (result === operation.expected) return book.write('verified.json', { expected_sha256: operation.receipt.expected_sha256 });
+  if (!acceptDestinationEdits) refuse('The addition committed, but the destination changed afterward; routing waits until an operator accepts the later destination edits');
+  book.write('verified.json', { expected_sha256: operation.receipt.expected_sha256, accepted_sha256: sha256(result) });
 }
 
 function retire(book: Journal, operation: Operation, held?: DatabaseSync): void {
   if (book.has('retired.json')) return;
   const database = held ?? lockedSource(operation.source_path);
   try {
-    if (stableJson(readSource(database, operation.connection)) !== stableJson(operation.source_rows)) refuse('The source changed after freezing; source retirement waits');
+    if (stableJson(readSource(database, operation.connection)) !== stableJson(operation.source_rows)) refuse('The source changed after freezing; nothing was dispatched');
     retireSource(database, operation.connection);
     database.exec('COMMIT');
   } finally {
@@ -385,11 +395,120 @@ function retire(book: Journal, operation: Operation, held?: DatabaseSync): void 
   book.write('retired.json', { connection: operation.connection });
 }
 
-const outcome = (operation: Operation): AdditionOutcome => ({ outcome: 'retired', operation_id: operation.operation_id, expected_sha256: operation.receipt.expected_sha256, counts: operation.counts });
+type RouteStep =
+  | { kind: 'repository'; root: string; before: RepositoryConfiguration; after: RepositorySelection }
+  | { kind: 'user-default'; before: string; after: string };
+type Checkout = { root: string; tool: string; project: string; prefix: string; actor: string | null };
+/** Every setting that selects the source store, frozen before dispatch with the value that routing writes. */
+type RoutingPlan = { connection: string; url: string; steps: RouteStep[]; checkouts: Checkout[] };
 
-export function restoredAddition(destination: Batch, journalDirectory: string) {
+function workspace<T>(action: () => T): T {
+  try { return action(); } catch (error) {
+    if (error instanceof PolylinedbError) return refuse(error.message);
+    throw error;
+  }
+}
+const realPath = (path: string) => { try { return realpathSync(path); } catch { return path; } };
+type Connections = ReturnType<typeof readConnections>;
+
+function cloudUrl(name: string, { connections }: Connections): string {
+  const definition = connections.find(connection => connection.name === name)?.definition;
+  if (definition?.kind !== 'cloud') return refuse(`The connection ${name} must be a configured cloud connection`);
+  return definition.url;
+}
+
+/** Process overrides would hide the stored selection, so routing reads only repository defaults and the user default. */
+function storedSelection(root: string, current: Connections) {
+  const repository = workspace(() => readRepositoryDefaults(root)) ?? refuse('Initialize repository defaults in each routed repository');
+  return { repository, selection: workspace(() => selectConnection({ connection: undefined, directory: undefined, environment: {}, repository, ...current, fallbackDirectory: '' })) };
+}
+
+function planRouting(connection: string, sourcePath: string, repositories: readonly string[], environment: NodeJS.ProcessEnv): RoutingPlan {
+  if (basename(sourcePath) !== 'polylinedb.sqlite') refuse('The source store must be a polylinedb.sqlite file');
+  const directory = realPath(dirname(sourcePath));
+  const current = workspace(() => readConnections(environment));
+  const url = cloudUrl(connection, current);
+  const steps: RouteStep[] = [];
+  const checkouts: Checkout[] = [];
+  const files = new Set<string>();
+  for (const root of repositories) {
+    if (!isAbsolute(root)) refuse('Routed repository paths must be absolute');
+    const { repository: before, selection } = storedSelection(root, current);
+    if (selection.kind !== 'local' || realPath(selection.directory) !== directory) refuse('A supplied repository does not select the source store');
+    const actor = before.actor ?? null;
+    checkouts.push({ root, tool: before.tool, project: before.project, prefix: before.prefix, actor });
+    const file = workspace(() => repositoryConfigPath(root)) ?? refuse('A routed repository has no Git metadata');
+    if (files.has(file)) continue;
+    files.add(file);
+    steps.push({ kind: 'repository', root, before, after: { version: 3, connection, tool: before.tool, project: before.project, prefix: before.prefix, ...(actor === null ? {} : { actor }) } });
+  }
+  const preferred = current.connections.find(named => named.name === current.defaultName)?.definition;
+  if (current.defaultName !== undefined && preferred?.kind === 'local' && realPath(preferred.data_dir) === directory) steps.push({ kind: 'user-default', before: current.defaultName, after: connection });
+  if (steps.length === 0) refuse('No supplied repository and no user default selects the source store');
+  return { connection, url, steps, checkouts };
+}
+
+/** Each step converges from its frozen value or its target value. Any other value is a later decision that routing must not overwrite. */
+function route(book: Journal, operation: Operation, environment: NodeJS.ProcessEnv, switches: RouteSwitches): void {
+  if (book.has('routed.json')) return;
+  const { routing } = operation;
+  const current = () => workspace(() => readConnections(environment));
+  if (cloudUrl(routing.connection, current()) !== routing.url) refuse('The cloud connection changed after freezing; routing waits');
+  for (const [index, step] of routing.steps.entries()) {
+    const name = `route-${index + 1}.json`;
+    if (book.has(name)) continue;
+    const observe = () => stableJson(step.kind === 'repository' ? workspace(() => readRepositoryDefaults(step.root)) : current().defaultName);
+    const observed = observe();
+    if (observed === stableJson(step.before)) {
+      if (step.kind === 'repository') switches.repository(step.after.connection, step.root);
+      else switches.userDefault(step.after, environment);
+      if (observe() !== stableJson(step.after)) refuse('A routing change did not read back; routing waits');
+    } else if (observed !== stableJson(step.after)) refuse('Routing settings changed after freezing; routing waits');
+    book.write(name, { kind: step.kind, connection: routing.connection });
+  }
+  const settled = current();
+  for (const checkout of routing.checkouts) {
+    const { repository, selection } = storedSelection(checkout.root, settled);
+    const kept = repository.tool === checkout.tool && repository.project === checkout.project && repository.prefix === checkout.prefix && (repository.actor ?? null) === checkout.actor;
+    if (selection.kind !== 'cloud' || selection.name !== routing.connection || !kept) refuse('A routed repository does not select the cloud connection with its frozen defaults');
+  }
+  book.write('routed.json', { connection: routing.connection, checkouts: routing.checkouts.length });
+}
+
+function reinstate(book: Journal, operation: Operation): void {
+  const database = lockedSource(operation.source_path);
+  try {
+    if (stableJson(readSource(database, operation.connection)) !== stableJson(operation.source_rows)) refuse('The source differs from its frozen rows');
+    for (const table of tables) for (const event of ['insert', 'update', 'delete']) database.exec(`DROP TRIGGER IF EXISTS polylinedb_retired_${table}_${event}`);
+    if (stableJson(database.prepare(schemaSql).all()) !== canonicalSourceSchema) refuse('The source schema differs after removing retirement');
+    database.exec('COMMIT');
+  } finally {
+    if (database.isTransaction) database.exec('ROLLBACK');
+    database.close();
+  }
+  book.write('released.json', { connection: operation.connection });
+}
+
+function storedOperation(book: Journal): Operation {
+  if (!book.has('operation.json')) refuse('The journal has no frozen addition');
+  let stored: unknown;
+  try { stored = book.read<unknown>('operation.json'); } catch { return refuse('The journal operation is malformed'); }
+  return frozenOperation(stored);
+}
+
+const outcome = (operation: Operation): AdditionOutcome => ({ outcome: 'routed', operation_id: operation.operation_id, expected_sha256: operation.receipt.expected_sha256, counts: operation.counts, routes: operation.routing.steps.length });
+
+/** `environment` locates the connection settings that routing reads and changes. */
+export function restoredAddition(destination: Batch, journalDirectory: string, environment: NodeJS.ProcessEnv, switches: RouteSwitches = workspaceSwitches) {
+  async function complete(book: Journal, operation: Operation, acceptDestinationEdits: boolean): Promise<AdditionOutcome> {
+    await commit(destination, book, operation);
+    await verify(destination, book, operation, acceptDestinationEdits);
+    route(book, operation, environment, switches);
+    return outcome(operation);
+  }
   return {
-    async run(input: { original: string; source: string; connection: string; maximumStatements?: number }): Promise<AdditionOutcome> {
+    /** Retires the source before the first dispatch, so no local write can follow an uncertain dispatch. */
+    async run(input: { original: string; source: string; connection: string; repositories?: readonly string[]; maximumStatements?: number }): Promise<AdditionOutcome> {
       const maximumStatements = input.maximumStatements ?? maximumStatementLimit;
       if (!Number.isSafeInteger(maximumStatements) || maximumStatements < 1 || maximumStatements > maximumStatementLimit) refuse('The statement limit must be between 1 and 1000');
       if (!isAbsolute(input.original) || !isAbsolute(input.source)) refuse('The original input and source paths must be absolute');
@@ -399,29 +518,42 @@ export function restoredAddition(destination: Batch, journalDirectory: string) {
       try { original = readFileSync(input.original, 'utf8'); } catch { return refuse('The original restore input is missing'); }
       const baseline = restoredBaseline(await capture(destination), original);
       const source = lockedSource(input.source);
+      let operation: Operation;
       try {
-        const sourceRows = readSource(source);
-        const operation = freezeOperation({ operationId: randomUUID(), connection: input.connection, sourcePath: input.source, original, baseline, sourceRows, maximumStatements });
+        const routing = planRouting(input.connection, input.source, input.repositories ?? [], environment);
+        operation = freezeOperation({ operationId: randomUUID(), connection: input.connection, sourcePath: input.source, original, baseline, sourceRows: readSource(source), routing, maximumStatements });
         book.write('operation.json', operation);
-        await commit(destination, book, operation);
-        await verify(destination, book, operation);
         retire(book, operation, source);
-        return outcome(operation);
       } finally {
         if (source.isTransaction) source.exec('ROLLBACK');
         source.close();
       }
+      return complete(book, operation, false);
     },
-    async resume(): Promise<AdditionOutcome> {
+    async resume(options: { acceptDestinationEdits?: boolean } = {}): Promise<AdditionOutcome> {
       const book = journal(journalDirectory, false);
-      if (!book.has('operation.json')) refuse('The journal has no frozen addition');
-      let stored: unknown;
-      try { stored = book.read<unknown>('operation.json'); } catch { return refuse('The journal operation is malformed'); }
-      const operation = frozenOperation(stored);
-      await commit(destination, book, operation);
-      await verify(destination, book, operation);
+      const operation = storedOperation(book);
+      if (book.has('released.json')) refuse('The journal released its source; start a new addition');
       retire(book, operation);
-      return outcome(operation);
+      return complete(book, operation, options.acceptDestinationEdits === true);
+    },
+    /** Lifts the retirement only when destination evidence proves that the frozen packet did not commit and cannot commit. */
+    async releaseSource(): Promise<ReleaseOutcome> {
+      const book = journal(journalDirectory, false);
+      const operation = storedOperation(book);
+      const released: ReleaseOutcome = { outcome: 'released', operation_id: operation.operation_id };
+      if (book.has('released.json')) return released;
+      if (book.has('committed.json')) refuse('The addition committed; the source stays retired');
+      if (!book.has('retired.json')) refuse('This journal did not retire its source');
+      let state: Classification['state'] | 'refused';
+      try { state = await committedState(destination, operation); } catch (error) {
+        if (!(error instanceof AdditionRefused)) throw error;
+        state = 'refused';
+      }
+      if (state === 'committed') refuse('The addition committed; the source stays retired');
+      if (state === 'unchanged') refuse('The frozen addition can still commit; resume it instead');
+      reinstate(book, operation);
+      return released;
     },
   };
 }

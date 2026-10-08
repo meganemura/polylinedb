@@ -13,14 +13,15 @@ import { canonicalSnapshot, canonicalSnapshotV3, convertSnapshotV3 } from '../sr
 import { SCHEMA_V3_SQL, schemaUpgradeStatements } from '../src/records/schema.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { openStore } from '../src/local-store/index.ts';
-import { failAt, isAddition, legacyRestore, rowChange, localStore, loseResponse, originalInput, privateDirectory, sqliteBatch } from './fixtures/restored-addition.ts';
+import { readConnections } from '../src/workspace/index.ts';
+import { failAt, isAddition, legacyRestore, rowChange, localStore, loseResponse, originalInput, privateDirectory, routingEnvironment, sqliteBatch } from './fixtures/restored-addition.ts';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 const schemaSql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
 
 type Fixture = {
-  root: string; original: string; source: string; destinationPath: string; destination: DatabaseSync; batch: Batch;
-  restoreWrites: Statement[]; journal(name?: string): string; state(): string; close(): void;
+  root: string; original: string; source: string; environment: NodeJS.ProcessEnv; destinationPath: string; destination: DatabaseSync; batch: Batch;
+  restoreWrites: Statement[]; journal(name?: string): string; nextSource(): Promise<{ source: string; environment: NodeJS.ProcessEnv }>; state(): string; close(): void;
 };
 
 function query(database: DatabaseSync): Query {
@@ -51,8 +52,14 @@ async function fixture(options: { pauseRestoreAt?: number; emptyOriginal?: boole
   if (options.pauseRestoreAt === undefined) await restore;
   else while (!paused) await new Promise(resolve => setImmediate(resolve));
   let journals = 0;
+  let sources = 0;
   return {
-    root, original: original.path, source: source.path, destinationPath: destinationStore.path, destination, batch: sqliteBatch(destination), restoreWrites,
+    nextSource: async () => {
+      const next = await localStore(root, `source-${sources += 1}`, 'src');
+      next.store.close();
+      return { source: next.path, environment: routingEnvironment(root, next.path) };
+    },
+    root, original: original.path, source: source.path, environment: routingEnvironment(root, source.path), destinationPath: destinationStore.path, destination, batch: sqliteBatch(destination), restoreWrites,
     journal: name => privateDirectory(root, name ?? `journal-${journals += 1}`),
     state: () => JSON.stringify([destination.prepare(schemaSql).all(), ...[...tables, 'polylinedb_snapshot_claim'].map(table => destination.prepare(`SELECT * FROM ${table}`).all())]),
     resumeRestore: async () => { paused?.(); return restore; },
@@ -64,13 +71,15 @@ async function refused(promise: Promise<unknown>, pattern: RegExp): Promise<void
   await assert.rejects(promise, error => error instanceof AdditionRefused && pattern.test(error.message));
 }
 
-test('restored addition commits once, archives the checkpoint, fences old restore SQL, and retires the source', async context => {
+test('restored addition retires the source, commits once, archives the checkpoint, fences old restore SQL, and routes to the cloud connection', async context => {
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  const result = await restoredAddition(f.batch, journal).run({ original: f.original, source: f.source, connection: 'cloud' });
-  assert.equal(result.outcome, 'retired');
-  assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json', 'verified.json']);
+  const result = await restoredAddition(f.batch, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
+  assert.equal(result.outcome, 'routed');
+  assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json', 'route-1.json', 'routed.json', 'verified.json']);
+  assert.equal(result.routes, 1);
+  assert.equal(readConnections(f.environment).defaultName, 'cloud');
   const objects = f.destination.prepare("SELECT type,name FROM sqlite_master WHERE name LIKE 'polylinedb_%' AND type IN ('table','view') ORDER BY name").all().map(row => `${row.type}:${row.name}`);
   assert.deepEqual(objects, ['table:polylinedb_addition_receipt', 'view:polylinedb_snapshot_claim', 'table:polylinedb_snapshot_claim_archive']);
   assert.equal(f.destination.prepare('SELECT COUNT(*) AS n FROM polylinedb_snapshot_claim').get()?.n, 0);
@@ -99,11 +108,11 @@ test('restored addition commits once, archives the checkpoint, fences old restor
   context.after(() => retired.close());
   assert.throws(() => retired.exec("UPDATE issues SET body = 'x'"), /retired\. Use cloud connection cloud/);
 
-  assert.deepEqual(await restoredAddition(f.batch, journal).resume(), result);
+  assert.deepEqual(await restoredAddition(f.batch, journal, f.environment).resume(), result);
   rmSync(join(journal, 'retired.json'));
-  assert.deepEqual(await restoredAddition(f.batch, journal).resume(), result, 'a crash after the retirement commit resumes');
+  assert.deepEqual(await restoredAddition(f.batch, journal, f.environment).resume(), result, 'a crash after the retirement commit resumes');
   assert.ok(readdirSync(journal).includes('retired.json'));
-  await refused(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' }), /already recorded an addition/);
+  await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), /already recorded an addition/);
 });
 
 test('a statement prepared before the barrier writes nothing after it', async context => {
@@ -112,7 +121,7 @@ test('a statement prepared before the barrier writes nothing after it', async co
   const insert = f.restoreWrites.find(statement => statement.sql.startsWith('INSERT INTO comments'));
   assert.ok(insert);
   const prepared = f.destination.prepare(insert.sql.replace('DO NOTHING', 'DO UPDATE SET body = body || \'!\''));
-  await restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' });
+  await restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
   const before = f.state();
   assert.equal(prepared.run(...insert.params).changes, 0);
   assert.equal(f.state(), before);
@@ -128,16 +137,18 @@ test('every failing statement rolls back the whole addition batch', async contex
     count = statements.length;
     throw new Error('not sent');
   };
-  await assert.rejects(restoredAddition(counting, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await assert.rejects(restoredAddition(counting, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   assert.ok(count > 20);
   for (let index = 0; index < count; index += 1) {
     const journal = f.journal();
-    await assert.rejects(restoredAddition(failAt(f.batch, index), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+    const next = await f.nextSource();
+    await assert.rejects(restoredAddition(failAt(f.batch, index), journal, next.environment).run({ original: f.original, source: next.source, connection: 'cloud' }), AdditionUnknown);
     assert.equal(f.state(), before, `statement ${index} left a partial addition`);
   }
   const retried = f.journal();
-  await assert.rejects(restoredAddition(failAt(f.batch, 0), retried).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
-  assert.equal((await restoredAddition(f.batch, retried).resume()).outcome, 'retired');
+  const next = await f.nextSource();
+  await assert.rejects(restoredAddition(failAt(f.batch, 0), retried, next.environment).run({ original: f.original, source: next.source, connection: 'cloud' }), AdditionUnknown);
+  assert.equal((await restoredAddition(f.batch, retried, next.environment).resume()).outcome, 'routed');
   assert.deepEqual(readdirSync(retried).filter(name => name.startsWith('dispatch')).sort(), ['dispatch-1.json', 'dispatch-2.json']);
 });
 
@@ -145,58 +156,101 @@ test('a lost response resumes as committed without a second addition', async con
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
-  const result = await restoredAddition(f.batch, journal).resume();
-  assert.equal(result.outcome, 'retired');
+  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  const result = await restoredAddition(f.batch, journal, f.environment).resume();
+  assert.equal(result.outcome, 'routed');
   assert.deepEqual(readdirSync(journal).filter(name => name.startsWith('dispatch')), ['dispatch-1.json']);
   assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 2);
 });
 
-test('a committed receipt stays committed after later edits, which only block retirement', async context => {
+test('a destination edit after the commit holds routing until an operator accepts the later edits', async context => {
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   f.destination.exec("UPDATE issues SET body = 'edited after commit', body_v = body_v + 1 WHERE id = 'dst-1'");
-  await refused(restoredAddition(f.batch, journal).resume(), /committed, but the destination changed afterward/);
-  assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
+  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /committed, but the destination changed afterward; routing waits until an operator accepts/);
+  assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json']);
+  assert.equal(readConnections(f.environment).defaultName, 'home');
+  await refused(restoredAddition(f.batch, journal, f.environment).releaseSource(), /addition committed; the source stays retired/);
+
+  f.destination.exec("UPDATE memory_store_identity SET incarnation = 'ffffffffffffffffffffffffffffffff'");
+  await refused(restoredAddition(f.batch, journal, f.environment).resume({ acceptDestinationEdits: true }), /destination identity changed/);
+  f.destination.exec("UPDATE memory_store_identity SET incarnation = (SELECT incarnation FROM polylinedb_snapshot_claim_archive)");
+
+  const result = await restoredAddition(f.batch, journal, f.environment).resume({ acceptDestinationEdits: true });
+  assert.equal(result.outcome, 'routed');
+  const verified = JSON.parse(readFileSync(join(journal, 'verified.json'), 'utf8'));
+  assert.equal(verified.expected_sha256, result.expected_sha256);
+  assert.equal(verified.accepted_sha256, digest(canonicalSnapshot(rawToSnapshot(Object.fromEntries(tables.map(table => [table, f.destination.prepare(`SELECT * FROM ${table}`).all().map(row => ({ ...row }))]))))));
+  assert.notEqual(verified.accepted_sha256, result.expected_sha256);
+  assert.equal(readConnections(f.environment).defaultName, 'cloud');
+  assert.equal(f.destination.prepare("SELECT body FROM issues WHERE id = 'dst-1'").get()?.body, 'edited after commit');
 });
 
-test('a source edit after freezing blocks retirement without changing the committed outcome', async context => {
+test('the source is retired before the first dispatch, so no local write follows an uncertain dispatch', async context => {
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   const source = new DatabaseSync(f.source);
   context.after(() => source.close());
+  const retirement = () => source.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'polylinedb_retired_%'").get()?.n;
+  let triggersAtDispatch: unknown;
+  const observing: Batch = async statements => {
+    if (isAddition(statements)) triggersAtDispatch = retirement();
+    return loseResponse(f.batch, isAddition)(statements);
+  };
+  await assert.rejects(restoredAddition(observing, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  assert.equal(triggersAtDispatch, tables.length * 3);
+  assert.throws(() => source.exec("UPDATE comments SET body = 'late edit'"), /retired\. Use cloud connection cloud/);
+  assert.equal((await restoredAddition(f.batch, journal, f.environment).resume()).outcome, 'routed');
+});
+
+test('a crash before the retirement record resumes, and a source edit before retirement is refused before any dispatch', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const journal = f.journal();
+  const result = await restoredAddition(f.batch, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
+  rmSync(join(journal, 'retired.json'));
+  assert.deepEqual(await restoredAddition(f.batch, journal, f.environment).resume(), result);
+
+  const edited = await fixture();
+  context.after(edited.close);
+  const frozen = edited.journal();
+  const unsent: Batch = async statements => { if (isAddition(statements)) throw new Error('not sent'); return edited.batch(statements); };
+  await assert.rejects(restoredAddition(unsent, frozen, edited.environment).run({ original: edited.original, source: edited.source, connection: 'cloud' }), AdditionUnknown);
+  rmSync(join(frozen, 'retired.json'));
+  for (const name of readdirSync(frozen).filter(name => name.startsWith('dispatch'))) rmSync(join(frozen, name));
+  const source = new DatabaseSync(edited.source);
+  context.after(() => source.close());
+  for (const table of tables) for (const event of ['insert', 'update', 'delete']) source.exec(`DROP TRIGGER polylinedb_retired_${table}_${event}`);
   source.exec("UPDATE comments SET body = 'late edit'");
-  await refused(restoredAddition(f.batch, journal).resume(), /source changed after freezing/);
-  assert.ok(readdirSync(journal).includes('verified.json'));
-  assert.equal(source.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'polylinedb_retired_%'").get()?.n, 0);
+  await refused(restoredAddition(edited.batch, frozen, edited.environment).resume(), /source changed after freezing; nothing was dispatched/);
+  assert.equal(edited.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0);
 });
 
 test('unavailable destination evidence leaves the outcome unknown', async context => {
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
-  await assert.rejects(restoredAddition(async () => { throw new Error('offline'); }, journal).resume(), AdditionUnknown);
+  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await assert.rejects(restoredAddition(async () => { throw new Error('offline'); }, journal, f.environment).resume(), AdditionUnknown);
 });
 
 test('a changed preimage without a receipt refuses retry of the frozen packet', async context => {
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(failAt(f.batch, 0), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await assert.rejects(restoredAddition(failAt(f.batch, 0), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   f.destination.exec("UPDATE comments SET body = 'changed'");
-  await refused(restoredAddition(f.batch, journal).resume(), /changed after freezing, and no addition receipt exists/);
+  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /changed after freezing, and no addition receipt exists/);
 });
 
 test('refuses missing, mismatched, edited, unknown, and legacy restore evidence', async context => {
   const f = await fixture();
   context.after(f.close);
   const run = (overrides: Partial<{ original: string; source: string; connection: string }> = {}) =>
-    restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud', ...overrides });
+    restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud', ...overrides });
   await refused(run({ original: join(f.root, 'missing.json') }), /original restore input is missing/);
   const other = await originalInput(f.root, 'oth');
   await refused(run({ original: other.path }), /checkpoint digest differs/);
@@ -206,7 +260,7 @@ test('refuses missing, mismatched, edited, unknown, and legacy restore evidence'
   await refused(run({ connection: 'Bad Name' }), /connection name/);
   const self = await localStore(f.root, 'collision', 'dst');
   self.store.close();
-  await refused(run({ source: self.path }), /share|would be undone/);
+  await refused(restoredAddition(f.batch, f.journal(), routingEnvironment(f.root, self.path)).run({ original: f.original, source: self.path, connection: 'cloud' }), /share|would be undone/);
 
   const before = f.state();
   const checkpointDigest = String(f.destination.prepare('SELECT sha256 FROM polylinedb_snapshot_claim').get()?.sha256);
@@ -238,10 +292,10 @@ test('refuses a snapshot 5 input for the release 0.1.0 checkpoint layout', async
   f.destination.exec('DROP TABLE polylinedb_snapshot_claim');
   f.destination.exec('CREATE TABLE polylinedb_snapshot_claim (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)');
   f.destination.prepare('INSERT INTO polylinedb_snapshot_claim VALUES (1, ?)').run(String(checkpoint?.sha256));
-  await refused(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' }), /two-column checkpoint requires snapshot format 3/);
+  await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), /two-column checkpoint requires snapshot format 3/);
 });
 
-type LegacyFixture = { root: string; original: string; source: string; destination: DatabaseSync; batch: Batch; journal(): string; finishRestore(): void; rows(): Record<string, Record<string, unknown>[]>; state(): string; close(): void };
+type LegacyFixture = { root: string; original: string; source: string; environment: NodeJS.ProcessEnv; destination: DatabaseSync; batch: Batch; journal(): string; finishRestore(): void; rows(): Record<string, Record<string, unknown>[]>; state(): string; close(): void };
 
 /** Applies the first `restoredWrites` recorded release 0.1.0 writes to a schema 3 store, then upgrades it to schema 6 unless told not to. */
 async function legacyFixture(restoredWrites = legacyRestore.writes.length, options: { upgrade?: boolean } = {}): Promise<LegacyFixture> {
@@ -263,7 +317,7 @@ async function legacyFixture(restoredWrites = legacyRestore.writes.length, optio
   let journals = 0;
   const rows = () => Object.fromEntries(tables.map(table => [table, destination.prepare(`SELECT * FROM ${table}`).all().map(row => ({ ...row }))]));
   return {
-    root, original, source: source.path, destination, batch: sqliteBatch(destination),
+    root, original, source: source.path, environment: routingEnvironment(root, source.path), destination, batch: sqliteBatch(destination),
     journal: () => privateDirectory(root, `journal-${journals += 1}`),
     finishRestore: () => apply(legacyRestore.writes.slice(restoredWrites)),
     rows,
@@ -297,8 +351,8 @@ test('a release 0.1.0 restore upgraded to schema 6 accepts one addition and fenc
   const f = await legacyFixture();
   context.after(f.close);
   const journal = f.journal();
-  const result = await restoredAddition(f.batch, journal).run({ original: f.original, source: f.source, connection: 'cloud' });
-  assert.equal(result.outcome, 'retired');
+  const result = await restoredAddition(f.batch, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
+  assert.equal(result.outcome, 'routed');
   const objects = f.destination.prepare("SELECT type,name FROM sqlite_master WHERE name LIKE 'polylinedb_%' AND type IN ('table','view') ORDER BY name").all().map(row => `${row.type}:${row.name}`);
   assert.deepEqual(objects, ['table:polylinedb_addition_receipt', 'view:polylinedb_snapshot_claim', 'table:polylinedb_snapshot_claim_archive']);
   assert.deepEqual(f.destination.prepare('SELECT * FROM polylinedb_snapshot_claim_archive').all().map(row => ({ ...row })), [{ singleton: 1, sha256: legacyRestore.sha256 }]);
@@ -320,8 +374,8 @@ test('a release 0.1.0 restore upgraded to schema 6 accepts one addition and fenc
   assert.deepEqual(refusals.map(message => /cannot modify polylinedb_snapshot_claim because it is a view/.test(message)), [true]);
   assert.equal(f.state(), after);
 
-  assert.deepEqual(await restoredAddition(f.batch, journal).resume(), result);
-  await refused(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' }), /already recorded an addition/);
+  assert.deepEqual(await restoredAddition(f.batch, journal, f.environment).resume(), result);
+  await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), /already recorded an addition/);
 });
 
 test('a release 0.1.0 restore paused at every write boundary keeps the addition refused until restoration completes', async () => {
@@ -330,10 +384,10 @@ test('a release 0.1.0 restore paused at every write boundary keeps the addition 
   for (let pause = 0; pause < total; pause += 1) {
     const f = await legacyFixture(pause);
     try {
-      await assert.rejects(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionRefused, `write ${pause + 1}`);
+      await assert.rejects(restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionRefused, `write ${pause + 1}`);
       f.finishRestore();
       revisions.add(Number(f.destination.prepare("SELECT revision FROM project_memory_revisions WHERE project = 'legacy'").get()?.revision));
-      assert.equal((await restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' })).outcome, 'retired', `write ${pause + 1}`);
+      assert.equal((await restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' })).outcome, 'routed', `write ${pause + 1}`);
     } finally { f.close(); }
   }
   assert.deepEqual([...revisions].sort(), [1, 2], 'memory inserts after the upgrade raise project revisions, which the addition guards but does not compare');
@@ -347,8 +401,8 @@ test('a release 0.1.0 checkpoint change racing the commit rolls back the whole b
     return f.batch(statements);
   };
   const journal = f.journal();
-  await assert.rejects(restoredAddition(racing, journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
-  await refused(restoredAddition(f.batch, journal).resume(), /changed after freezing/);
+  await assert.rejects(restoredAddition(racing, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /changed after freezing/);
   assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive')").get()?.n, 0);
   assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0);
 });
@@ -356,7 +410,7 @@ test('a release 0.1.0 checkpoint change racing the commit rolls back the whole b
 test('refuses missing, invalid, mismatched, edited, and unupgraded release 0.1.0 evidence', async context => {
   const f = await legacyFixture();
   context.after(f.close);
-  const run = (overrides: Partial<{ original: string }> = {}) => restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud', ...overrides });
+  const run = (overrides: Partial<{ original: string }> = {}) => restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud', ...overrides });
   await refused(run({ original: join(f.root, 'missing.json') }), /original restore input is missing/);
   const invalid = join(f.root, 'invalid.json');
   writeFileSync(invalid, JSON.stringify({ ...legacyRestore.input as object, issues: 'not a list' }));
@@ -381,7 +435,7 @@ test('refuses missing, invalid, mismatched, edited, and unupgraded release 0.1.0
 
   const unupgraded = await legacyFixture(legacyRestore.writes.length, { upgrade: false });
   context.after(unupgraded.close);
-  await refused(restoredAddition(unupgraded.batch, unupgraded.journal()).run({ original: unupgraded.original, source: unupgraded.source, connection: 'cloud' }), /not canonical schema 6/);
+  await refused(restoredAddition(unupgraded.batch, unupgraded.journal(), unupgraded.environment).run({ original: unupgraded.original, source: unupgraded.source, connection: 'cloud' }), /not canonical schema 6/);
 });
 
 test('refuses an atomic packet above the statement limit before journaling it', async context => {
@@ -389,7 +443,7 @@ test('refuses an atomic packet above the statement limit before journaling it', 
   context.after(f.close);
   const before = f.state();
   const journal = f.journal();
-  await refused(restoredAddition(f.batch, journal).run({ original: f.original, source: f.source, connection: 'cloud', maximumStatements: 20 }), /above the limit of 20/);
+  await refused(restoredAddition(f.batch, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud', maximumStatements: 20 }), /above the limit of 20/);
   assert.deepEqual(readdirSync(journal), []);
   assert.equal(f.state(), before);
 });
@@ -402,9 +456,9 @@ test('old restore paused at every write boundary keeps the addition refused unti
   for (let pause = 1; pause <= total; pause += 1) {
     const f = await fixture({ pauseRestoreAt: pause });
     try {
-      await assert.rejects(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionRefused, `write ${pause}`);
+      await assert.rejects(restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionRefused, `write ${pause}`);
       await f.resumeRestore();
-      assert.equal((await restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' })).outcome, 'retired', `write ${pause}`);
+      assert.equal((await restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' })).outcome, 'routed', `write ${pause}`);
     } finally { f.close(); }
   }
 });
@@ -431,11 +485,16 @@ test('a destination change racing the commit rolls back the whole batch for ever
         return f.batch(statements);
       };
       const journal = f.journal();
-      await assert.rejects(restoredAddition(racing, journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown, race.name);
+      await assert.rejects(restoredAddition(racing, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown, race.name);
       assert.ok(changed, race.name);
-      await assert.rejects(restoredAddition(f.batch, journal).resume(), (error: unknown) => error instanceof AdditionRefused && /changed after freezing|not canonical schema 6/.test(error.message), race.name);
+      await assert.rejects(restoredAddition(f.batch, journal, f.environment).resume(), (error: unknown) => error instanceof AdditionRefused && /changed after freezing|not canonical schema 6/.test(error.message), race.name);
       assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive')").get()?.n, 0, race.name);
       assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0, race.name);
+      assert.equal((await restoredAddition(f.batch, journal, f.environment).releaseSource()).outcome, 'released', race.name);
+      const source = new DatabaseSync(f.source);
+      try { source.exec("UPDATE comments SET body = body || '!'"); } finally { source.close(); }
+      await refused(restoredAddition(f.batch, journal, f.environment).resume(), /released its source/);
+      assert.equal(readConnections(f.environment).defaultName, 'home', race.name);
     } finally { f.close(); }
   }
 });
@@ -444,7 +503,7 @@ test('an empty original input requires the same checks and atomic barrier', asyn
   const empty = await fixture({ emptyOriginal: true });
   context.after(empty.close);
   assert.deepEqual(empty.restoreWrites, [], 'the current restore treats an empty destination as already identical');
-  await refused(restoredAddition(empty.batch, empty.journal()).run({ original: empty.original, source: empty.source, connection: 'cloud' }), /not canonical schema 6 with a recognized restore checkpoint/);
+  await refused(restoredAddition(empty.batch, empty.journal(), empty.environment).run({ original: empty.original, source: empty.source, connection: 'cloud' }), /not canonical schema 6 with a recognized restore checkpoint/);
 
   const writes = (await fixture()).restoreWrites;
   const emptyDigest = digest(canonicalSnapshot(JSON.parse((await import('node:fs')).readFileSync(empty.original, 'utf8'))));
@@ -452,9 +511,9 @@ test('an empty original input requires the same checks and atomic barrier', asyn
   assert.match(checkpointWrites[2]?.sql ?? '', /^UPDATE memory_store_identity/);
   for (const [index, statement] of checkpointWrites.entries()) {
     empty.destination.prepare(statement.sql).run(...statement.params);
-    const run = restoredAddition(empty.batch, empty.journal()).run({ original: empty.original, source: empty.source, connection: 'cloud' });
+    const run = restoredAddition(empty.batch, empty.journal(), empty.environment).run({ original: empty.original, source: empty.source, connection: 'cloud' });
     if (index < 2) await refused(run, /recognized restore checkpoint|exactly one restore checkpoint|identity differs/);
-    else assert.equal((await run).outcome, 'retired');
+    else assert.equal((await run).outcome, 'routed');
   }
   assert.equal(empty.destination.prepare('SELECT COUNT(*) AS n FROM polylinedb_snapshot_claim').get()?.n, 0);
   assert.equal(empty.destination.prepare('SELECT COUNT(*) AS n FROM polylinedb_snapshot_claim_archive').get()?.n, 1);
@@ -471,7 +530,7 @@ test('the barrier keeps late restore writes from bringing back rows deleted afte
 
   const f = await fixture();
   context.after(f.close);
-  await restoredAddition(f.batch, f.journal()).run({ original: f.original, source: f.source, connection: 'cloud' });
+  await restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
   for (const sql of deletions) assert.equal(f.destination.prepare(sql).run().changes, 1, sql);
   const deleted = f.state();
   replay(f);
@@ -482,10 +541,10 @@ test('a schema change after a lost response still finds the committed receipt', 
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   f.destination.exec('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY)');
-  await refused(restoredAddition(f.batch, journal).resume(), /not canonical schema 6/);
-  assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
+  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /not canonical schema 6/);
+  assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json']);
 });
 
 test('a batch that returns without committing is unknown after one dispatch', async context => {
@@ -493,7 +552,7 @@ test('a batch that returns without committing is unknown after one dispatch', as
   context.after(f.close);
   const journal = f.journal();
   const dropped: Batch = async statements => isAddition(statements) ? [] : f.batch(statements);
-  await assert.rejects(restoredAddition(dropped, journal).run({ original: f.original, source: f.source, connection: 'cloud' }), (error: unknown) => error instanceof AdditionUnknown && /shows no receipt/.test(error.message));
+  await assert.rejects(restoredAddition(dropped, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), (error: unknown) => error instanceof AdditionUnknown && /shows no receipt/.test(error.message));
   assert.deepEqual(readdirSync(journal).filter(name => name.startsWith('dispatch')), ['dispatch-1.json']);
 });
 
@@ -501,27 +560,27 @@ test('a terminal layout without its receipt leaves the outcome unknown', async c
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   f.destination.exec('DROP TRIGGER polylinedb_addition_receipt_immutable_delete');
   f.destination.exec('DELETE FROM polylinedb_addition_receipt');
   f.destination.exec("CREATE TRIGGER polylinedb_addition_receipt_immutable_delete BEFORE DELETE ON polylinedb_addition_receipt BEGIN SELECT RAISE(ABORT, 'The addition receipt is immutable'); END");
-  await assert.rejects(restoredAddition(f.batch, journal).resume(), (error: unknown) => error instanceof AdditionUnknown && /no single addition receipt/.test(error.message));
+  await assert.rejects(restoredAddition(f.batch, journal, f.environment).resume(), (error: unknown) => error instanceof AdditionUnknown && /no single addition receipt/.test(error.message));
 });
 
 test('resume refuses a journal whose frozen packet was edited', async context => {
   const f = await fixture();
   context.after(f.close);
   const journal = f.journal();
-  await assert.rejects(restoredAddition(failAt(f.batch, 0), journal).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await assert.rejects(restoredAddition(failAt(f.batch, 0), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   const path = join(journal, 'operation.json');
   const operation = JSON.parse(readFileSync(path, 'utf8'));
   const insert = operation.statements.findIndex((statement: Statement) => statement.sql.startsWith('INSERT INTO "comments"'));
   assert.ok(insert > 0);
   operation.statements[insert].params[0] = operation.statements[insert].params[0].replace('src comment', 'other comment');
   writeFileSync(path, JSON.stringify(operation));
-  await refused(restoredAddition(f.batch, journal).resume(), /differs from its frozen digest/);
+  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /differs from its frozen digest/);
   writeFileSync(path, '{');
-  await refused(restoredAddition(f.batch, journal).resume(), /malformed/);
+  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /malformed/);
   assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0);
 });
 
@@ -529,6 +588,6 @@ test('a missing source store is refused without creating a file', async context 
   const f = await fixture();
   context.after(f.close);
   const missing = join(f.root, 'missing.sqlite');
-  await refused(restoredAddition(f.batch, f.journal()).run({ original: f.original, source: missing, connection: 'cloud' }), /source store is missing/);
+  await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: missing, connection: 'cloud' }), /source store is missing/);
   assert.equal(existsSync(missing), false);
 });

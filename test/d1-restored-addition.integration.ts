@@ -11,7 +11,7 @@ import { tables } from '../scripts/d1-additive-merge.ts';
 import { canonicalSnapshot } from '../src/records/snapshot.ts';
 import { SCHEMA_STATEMENTS, SCHEMA_V3_SQL, schemaUpgradeStatements } from '../src/records/schema.ts';
 import { d1Relay, d1RelayModule } from './fixtures/d1-relay.ts';
-import { failAt, isAddition, legacyRestore, localStore, loseResponse, originalInput, privateDirectory } from './fixtures/restored-addition.ts';
+import { failAt, isAddition, legacyRestore, localStore, loseResponse, originalInput, privateDirectory, routingEnvironment } from './fixtures/restored-addition.ts';
 
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');
@@ -37,7 +37,15 @@ try {
   const original = await originalInput(root);
   const sha256 = createHash('sha256').update(canonicalSnapshot(original.snapshot)).digest('hex');
   let sources = 0;
-  const source = async () => { const made = await localStore(root, `source-${sources += 1}`, 'src'); made.store.close(); return made.path; };
+  const environments = new Map<string, NodeJS.ProcessEnv>();
+  /** Each run retires its own source, so each gets a fresh source and the routing settings that select it. */
+  const source = async (directory: string) => {
+    const made = await localStore(root, `source-${sources += 1}`, 'src');
+    made.store.close();
+    environments.set(directory, routingEnvironment(root, made.path));
+    return made.path;
+  };
+  const owner = (port: Batch, directory: string) => restoredAddition(port, directory, environments.get(directory) ?? {});
   let journals = 0;
   const journal = () => privateDirectory(root, `journal-${journals += 1}`);
 
@@ -65,13 +73,15 @@ try {
     else while (!release) await new Promise(resolve => setImmediate(resolve));
     return { writes, resume: async () => { release?.(); await done; } };
   };
-  const run = async (port: Batch = batch, directory = journal(), maximumStatements?: number) =>
-    restoredAddition(port, directory).run({ original: original.path, source: await source(), connection: 'cloud', ...(maximumStatements === undefined ? {} : { maximumStatements }) });
+  const run = async (port: Batch = batch, directory = journal(), maximumStatements?: number) => {
+    const path = await source(directory);
+    return owner(port, directory).run({ original: original.path, source: path, connection: 'cloud', ...(maximumStatements === undefined ? {} : { maximumStatements }) });
+  };
 
   const { writes } = await restore();
   const first = journal();
   const result = await run(batch, first);
-  assert.equal(result.outcome, 'retired');
+  assert.equal(result.outcome, 'routed');
   assert.deepEqual(await query({ sql: `${objects} AND name LIKE 'polylinedb_%' ORDER BY name`, params: [] }), [
     { type: 'table', name: 'polylinedb_addition_receipt' }, { type: 'view', name: 'polylinedb_snapshot_claim' }, { type: 'table', name: 'polylinedb_snapshot_claim_archive' },
   ]);
@@ -80,7 +90,7 @@ try {
   assert.equal(await count("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'"), 2);
   assert.equal((await query({ sql: 'SELECT operation_id FROM polylinedb_addition_receipt', params: [] }))[0]?.operation_id, result.operation_id);
   await assert.rejects(query({ sql: 'DELETE FROM polylinedb_addition_receipt', params: [] }), /immutable/);
-  assert.deepEqual(await restoredAddition(batch, first).resume(), result);
+  assert.deepEqual(await owner(batch, first).resume(), result);
   const barrierState = await state();
   let replayed = 0;
   for (const statement of writes) {
@@ -113,14 +123,15 @@ try {
     await restore();
     const directory = journal();
     await assert.rejects(run(async statements => { if (isAddition(statements)) await query({ sql: race, params: [] }); return batch(statements); }, directory), AdditionUnknown, race);
-    await assert.rejects(restoredAddition(batch, directory).resume(), (error: unknown) => error instanceof AdditionRefused, race);
+    await assert.rejects(owner(batch, directory).resume(), (error: unknown) => error instanceof AdditionRefused, race);
     assert.equal(await count("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('polylinedb_addition_receipt','polylinedb_snapshot_claim_archive')"), 0, race);
+    assert.equal((await owner(batch, directory).releaseSource()).outcome, 'released', race);
   }
 
   await restore();
   const lost = journal();
   await assert.rejects(run(loseResponse(batch, isAddition), lost), AdditionUnknown);
-  assert.equal((await restoredAddition(batch, lost).resume()).outcome, 'retired');
+  assert.equal((await owner(batch, lost).resume()).outcome, 'routed');
   assert.deepEqual(readdirSync(lost).filter(name => name.startsWith('dispatch')), ['dispatch-1.json']);
   assert.equal(await count("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'"), 2);
 
@@ -128,18 +139,20 @@ try {
   const edited = journal();
   await assert.rejects(run(loseResponse(batch, isAddition), edited), AdditionUnknown);
   await query({ sql: "UPDATE comments SET body = 'edited after commit'", params: [] });
-  await assert.rejects(restoredAddition(batch, edited).resume(), (error: unknown) => error instanceof AdditionRefused && /committed, but the destination changed afterward/.test(error.message));
-  assert.deepEqual(readdirSync(edited).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
+  await assert.rejects(owner(batch, edited).resume(), (error: unknown) => error instanceof AdditionRefused && /committed, but the destination changed afterward/.test(error.message));
+  assert.deepEqual(readdirSync(edited).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json']);
+  assert.equal((await owner(batch, edited).resume({ acceptDestinationEdits: true })).outcome, 'routed');
+  assert.ok(readdirSync(edited).includes('routed.json'));
 
   await restore();
-  await Promise.all([run(), ...writes.map(statement => query(statement).catch(() => []))]).then(([outcome]) => assert.equal(outcome.outcome, 'retired'));
+  await Promise.all([run(), ...writes.map(statement => query(statement).catch(() => []))]).then(([outcome]) => assert.equal(outcome.outcome, 'routed'));
   assert.equal(await count("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'"), 2);
 
   for (let pause = 1; pause <= writes.length; pause += 1) {
     const paused = await restore(pause);
     await assert.rejects(run(), AdditionRefused, `write ${pause}`);
     await paused.resume();
-    assert.equal((await run()).outcome, 'retired', `write ${pause}`);
+    assert.equal((await run()).outcome, 'routed', `write ${pause}`);
   }
 
   await restore();
@@ -157,11 +170,14 @@ try {
     await batch(schemaUpgradeStatements(3).map(sql => ({ sql, params: [] })));
     return { finishRestore: async () => { for (const statement of legacyRestore.writes.slice(restoredWrites)) await query(statement); } };
   };
-  const runLegacy = async (port: Batch = batch, directory = journal()) => restoredAddition(port, directory).run({ original: legacyOriginal, source: await source(), connection: 'cloud' });
+  const runLegacy = async (port: Batch = batch, directory = journal()) => {
+    const path = await source(directory);
+    return owner(port, directory).run({ original: legacyOriginal, source: path, connection: 'cloud' });
+  };
 
   await legacy();
   const legacyResult = await runLegacy();
-  assert.equal(legacyResult.outcome, 'retired');
+  assert.equal(legacyResult.outcome, 'routed');
   assert.deepEqual(await query({ sql: `${objects} AND name LIKE 'polylinedb_%' ORDER BY name`, params: [] }), [
     { type: 'table', name: 'polylinedb_addition_receipt' }, { type: 'view', name: 'polylinedb_snapshot_claim' }, { type: 'table', name: 'polylinedb_snapshot_claim_archive' },
   ]);
@@ -185,19 +201,19 @@ try {
   await legacy();
   const legacyRace = journal();
   await assert.rejects(runLegacy(async statements => { if (isAddition(statements)) await query({ sql: `UPDATE polylinedb_snapshot_claim SET sha256 = '${'0'.repeat(64)}'`, params: [] }); return batch(statements); }, legacyRace), AdditionUnknown);
-  await assert.rejects(restoredAddition(batch, legacyRace).resume(), (error: unknown) => error instanceof AdditionRefused && /changed after freezing/.test(error.message));
+  await assert.rejects(owner(batch, legacyRace).resume(), (error: unknown) => error instanceof AdditionRefused && /changed after freezing/.test(error.message));
   assert.equal(await count("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('polylinedb_addition_receipt','polylinedb_snapshot_claim_archive')"), 0);
   assert.equal(await count("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'"), 0);
 
   await legacy();
-  await Promise.all([runLegacy(), ...legacyRestore.writes.map(statement => query(statement).catch(() => []))]).then(([outcome]) => assert.equal(outcome.outcome, 'retired'));
+  await Promise.all([runLegacy(), ...legacyRestore.writes.map(statement => query(statement).catch(() => []))]).then(([outcome]) => assert.equal(outcome.outcome, 'routed'));
   assert.equal(await count("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'"), 2);
 
   for (let pause = 0; pause < legacyRestore.writes.length; pause += 1) {
     const paused = await legacy(pause);
     await assert.rejects(runLegacy(), AdditionRefused, `release 0.1.0 write ${pause + 1}`);
     await paused.finishRestore();
-    assert.equal((await runLegacy()).outcome, 'retired', `release 0.1.0 write ${pause + 1}`);
+    assert.equal((await runLegacy()).outcome, 'routed', `release 0.1.0 write ${pause + 1}`);
   }
 
 const deletions = ["DELETE FROM dependencies WHERE dependent_id LIKE 'dst-%'", "DELETE FROM comments WHERE body = 'dst comment'"];
@@ -207,7 +223,7 @@ for (const sql of deletions) await query({ sql, params: [] });
 await replayAll();
 assert.equal(await count("SELECT COUNT(*) AS n FROM comments WHERE body = 'dst comment'"), 1, 'without the barrier the replay restores the comment');
 await restore();
-assert.equal((await run()).outcome, 'retired');
+assert.equal((await run()).outcome, 'routed');
 for (const sql of deletions) await query({ sql, params: [] });
 const deleted = await state();
 await replayAll();
@@ -217,9 +233,9 @@ await restore();
 const migrated = journal();
 await assert.rejects(run(loseResponse(batch, isAddition), migrated), AdditionUnknown);
 await query({ sql: 'CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY)', params: [] });
-await assert.rejects(restoredAddition(batch, migrated).resume(), (error: unknown) => error instanceof AdditionRefused && /not canonical schema 6/.test(error.message));
-assert.deepEqual(readdirSync(migrated).sort(), ['committed.json', 'dispatch-1.json', 'operation.json']);
+await assert.rejects(owner(batch, migrated).resume(), (error: unknown) => error instanceof AdditionRefused && /not canonical schema 6/.test(error.message));
+assert.deepEqual(readdirSync(migrated).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json']);
 await query({ sql: 'DROP TABLE d1_migrations', params: [] });
 
-  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races, deleted rows kept deleted after replay, a receipt found after a schema change, response loss, committed receipt after edits, queued restore SQL, ${writes.length} paused restore boundaries, a snapshot 5 input refused for the release 0.1.0 layout, and the release 0.1.0 route with ${legacyRestore.writes.length} fenced writes, ${legacyPacket} rolled-back statement failures, a checkpoint race, queued release 0.1.0 SQL and ${legacyRestore.writes.length} paused restore boundaries\n`);
+  process.stdout.write(`PASS: workerd D1 restored addition, archive and empty-view barrier, ${writes.length} replayed restore writes, ${packet} rolled-back statement failures, ${races.length} commit races each followed by a source release, deleted rows kept deleted after replay, a receipt found after a schema change, response loss, committed receipt after edits that an operator accepts, queued restore SQL, ${writes.length} paused restore boundaries, a snapshot 5 input refused for the release 0.1.0 layout, and the release 0.1.0 route with ${legacyRestore.writes.length} fenced writes, ${legacyPacket} rolled-back statement failures, a checkpoint race, queued release 0.1.0 SQL and ${legacyRestore.writes.length} paused restore boundaries\n`);
 } finally { rmSync(root, { recursive: true, force: true }); await runtime.dispose(); }
