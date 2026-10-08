@@ -102,7 +102,8 @@ Search matches literal, case-sensitive substrings in bodies or comments.
 A request with `with_matches: true` also returns `matches`, which tells where each issue on the page matched.
 A request without it returns only `issues` and `next_cursor`, so clients of version 0.3.1 and earlier still decode the result.
 The CLI and the MCP `search` tool always request matches. The MCP tool does not take `with_matches` as an input.
-A server that predates this field rejects it as an unknown argument, so update the Worker before the CLI.
+A Worker that predates this field rejects it as an unexpected field.
+The cloud client then sends the search once more without the field and returns that page without `matches`.
 
 ```json
 { "issues": [...], "next_cursor": null, "matches": [
@@ -231,10 +232,11 @@ It also must not send a new discriminator value, a new success shape, or details
 The client rejects each of these.
 The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
 
-Two fields are optional so that the client works with Workers on both sides of a change:
+Three fields are optional so that the client works with Workers on both sides of a change:
 
 - `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
 - `open_blockers` in `claim_acquire`. When it is present, it must be an array of issue IDs in issue order that does not contain the claimed issue. The result does not include it yet.
+- `matches` in `search`. A Worker that predates `with_matches` answers the request with `invalid_input`, and only the error message names the field. The client then sends the search once more without `with_matches` and returns that page without `matches`. If that request fails, the search fails with its error. A successful response to a request with `with_matches` must still contain `matches`.
 
 ## Local repository defaults
 
