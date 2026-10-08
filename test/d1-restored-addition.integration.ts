@@ -237,7 +237,7 @@ await restore();
 const migrated = journal();
 await assert.rejects(run(loseResponse(batch, isAddition), migrated), AdditionUnknown);
 await query({ sql: 'CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY)', params: [] });
-await assert.rejects(owner(batch, migrated).resume(), (error: unknown) => error instanceof AdditionRefused && /not canonical schema 6/.test(error.message));
+await assert.rejects(owner(batch, migrated).resume(), (error: unknown) => error instanceof AdditionRefused && /not canonical schema 7/.test(error.message));
 assert.deepEqual(readdirSync(migrated).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json']);
 await query({ sql: 'DROP TABLE d1_migrations', params: [] });
 

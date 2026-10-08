@@ -33,8 +33,12 @@ export type Operation =
   | ({ op: 'close'; id: string; expected: number; claim_proof?: ClaimProof } & StatusOverride)
   | { op: 'reopen'; id: string; expected: number; claim_proof?: ClaimProof }
   | { op: 'actor' };
+// Both fields describe the current closed state: set on entering closed, cleared on leaving it.
+// A transport that does not report closure leaves both fields out; null means the store holds no close record.
+export type Closure = { closed_at: string | null; closed_by: string | null };
 export type Issue = Values & { id: string; versions: Record<Field, number>;
-  created_at: string; created_by: string; updated_at: string; updated_by: string };
+  created_at: string; created_by: string; updated_at: string; updated_by: string } & Partial<Closure>;
+export type StoredIssue = Issue & Closure;
 export type Comment = { id: string; issue_id: string; body: string; created_at: string; created_by: string };
 export type OperationResult = { issue: Issue } | { issue: Issue; comments: Comment[]; claim: ClaimInspection }
   | { issues: Issue[]; next_cursor: string | null } | { comment: Comment } | { actor: string };
@@ -188,15 +192,22 @@ export function parseOperation(value: unknown): Operation {
   }
 }
 
+export function parseClosure(row: Record<string, unknown>, status: Status): Closure {
+  if (row.closed_at === null && row.closed_by === null) return { closed_at: null, closed_by: null };
+  if (status !== 'closed') return invalid('closure requires status closed');
+  return { closed_at: text(row.closed_at, 'closed_at'), closed_by: name(row.closed_by, 'closed_by') };
+}
 export function issueRow(row: Record<string, unknown>): Issue {
   try {
     const versions = Object.fromEntries(fields.map((field) => [field, integer(row[`${field}_v`], `${field} version`, 1, Number.MAX_SAFE_INTEGER)])) as Record<Field, number>;
     if (typeof row.labels_json !== 'string') throw new Error('labels_json is not text');
-    return { id: id(row.id), tool: name(row.tool, 'tool'), project: name(row.project, 'project'), body: text(row.body, 'body'),
+    const issue: Issue = { id: id(row.id), tool: name(row.tool, 'tool'), project: name(row.project, 'project'), body: text(row.body, 'body'),
       status: enumeration(row.status, 'status', statuses), type: enumeration(row.type, 'type', issueTypes),
       priority: integer(row.priority, 'priority', 0, 4), labels: labels(JSON.parse(row.labels_json)), versions,
       created_at: text(row.created_at, 'created_at'), created_by: name(row.created_by, 'created_by'),
       updated_at: text(row.updated_at, 'updated_at'), updated_by: name(row.updated_by, 'updated_by') };
+    if (!Object.hasOwn(row, 'closed_at') && !Object.hasOwn(row, 'closed_by')) return issue;
+    return { ...issue, ...parseClosure(row, issue.status) };
   } catch (error) {
     throw new PolylinedbError('invalid_store', `Stored issue is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);
   }

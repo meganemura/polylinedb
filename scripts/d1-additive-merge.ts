@@ -132,6 +132,8 @@ function issueRowFromSnapshot(issue: Snapshot['issues'][number]): Row {
   row.created_by = issue.created_by;
   row.updated_at = issue.updated_at;
   row.updated_by = issue.updated_by;
+  row.closed_at = issue.closed_at;
+  row.closed_by = issue.closed_by;
   return row;
 }
 
@@ -187,7 +189,7 @@ function snapshotFromRows(rows: Rows): Snapshot {
   for (const row of rows.memories) if (!projects.has(textField(row, 'project'))) fail('Memory project has no captured revision');
   const snapshot = parseSnapshot({
     format: 'polylinedb.snapshot',
-    version: 5,
+    version: 6,
     issues: rows.issues.map(issueRow),
     comments: rows.comments.map(commentRow),
     counters: rows.counters,

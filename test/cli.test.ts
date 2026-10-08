@@ -590,7 +590,7 @@ test('CLI reports retired stores for writes while reads and exports remain avail
     try {
       assert.deepEqual(destinationCli(['import', '--file', '-'], { input: JSON.stringify(snapshot), status: 4 }).error,
         { code: 'store_retired', message });
-      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 5, issue_claims: [], claim_requests: [],
+      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 6, issue_claims: [], claim_requests: [],
         issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
     } finally { destinationRetirement.close(); }
   } finally {

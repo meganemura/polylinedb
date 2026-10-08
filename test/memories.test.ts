@@ -80,7 +80,7 @@ test('snapshot preserves memories, deletion receipts, and issued numbers', async
   await run({ op: 'memory_delete', project: 'project', id: 'pd-m1', expected: 1 });
   await run(creation({ title: 'Retain' }));
   await run({ op: 'memory_update', project: 'project', id: 'pd-m2', title: 'Retained', body: 'Confirmed', expected: 1 }, 'test:editor');
-  const snapshot = store.exportSnapshot(); assert.equal(snapshot.version, 5);
+  const snapshot = store.exportSnapshot(); assert.equal(snapshot.version, 6);
   const restoredLocation = { directory: join(root, 'restored'), cwd: join(root, 'work') };
   initializeStore(restoredLocation); const restored = openStore(restoredLocation);
   try {
@@ -132,7 +132,7 @@ test('schema upgrade is explicit and v2 snapshot conversion retains issue data',
   try {
     assert.throws(() => parseSnapshot(oldSnapshot), { code: 'invalid_snapshot' });
     assert.equal(canonicalSnapshot(convertSnapshotV2(oldSnapshot)), canonicalSnapshot(store.exportSnapshot()));
-    assert.deepEqual(await executeOperation(store.db, request, 'legacy:creator'), edited);
+    assert.deepEqual(await executeOperation(store.db, request, 'legacy:creator'), { issue: { ...edited.issue, closed_at: null, closed_by: null } });
     assert.equal(store.exportSnapshot().comments[0]?.created_by, 'legacy:commenter');
     const next = await executeOperation(store.db, parseOperation({ op: 'create', prefix: 'old', project: 'legacy', tool: 'tool', request_id: crypto.randomUUID(), body: 'After upgrade' }), 'legacy:creator');
     assert('issue' in next); assert.equal(next.issue.id, 'old-2');

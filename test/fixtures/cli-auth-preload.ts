@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { traceCredentialChild } from './credential-trace.ts';
 import { initializeStore, openStore } from "../../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../../src/records/index.ts"; import { PolylinedbError } from "../../src/records/errors.ts";
+import { withoutClosure } from "../../src/service/released-issues.ts";
 
 const spawn = childProcess.spawn;
 const credentialStore = new URL('./credential-store.sh', import.meta.url).pathname;
@@ -74,10 +75,10 @@ globalThis.fetch = async (input, init) => {
     try {
       const result = await executeOperation(store.db, operation, 'oauth:synthetic-owner');
       if (mode === 'ambiguous') throw new Error('synthetic-private-token');
-      return Response.json(result);
+      return Response.json(withoutClosure(result));
     } catch (error) {
-      if (error instanceof PolylinedbError) return Response.json({ error: { code: error.code, message: error.message,
-        ...(error.details === undefined ? {} : { details: error.details }) } }, { status: error.status });
+      if (error instanceof PolylinedbError) return Response.json(withoutClosure({ error: { code: error.code, message: error.message,
+        ...(error.details === undefined ? {} : { details: error.details }) } }), { status: error.status });
       throw error;
     } finally { store.close(); }
   }

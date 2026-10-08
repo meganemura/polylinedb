@@ -4,7 +4,7 @@ export { SCHEMA_V5_SQL } from './schema-v5.ts';
 export { SCHEMA_V6_SQL } from './schema-v6.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
 export { statuses, issueTypes, fields };
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const MEMORY_SCHEMA_SQL = `
 CREATE TABLE memories (
@@ -143,13 +143,21 @@ export const DEPENDENCY_STATEMENTS = [
       ) SELECT 1 FROM reachable WHERE id = NEW.dependent_id
     ) BEGIN SELECT RAISE(ABORT,'dependency_cycle'); END`,
 ];
-export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5): readonly string[] {
+// A fresh store adds these columns with ALTER as an upgrade does, so both paths store byte-identical issue DDL.
+// Rolling back to a Worker that predates closure makes reopen fail on issues that a newer Worker closed.
+export const CLOSURE_STATEMENTS = [
+  'ALTER TABLE issues ADD COLUMN closed_at TEXT',
+  `ALTER TABLE issues ADD COLUMN closed_by TEXT CONSTRAINT issue_closure CHECK((closed_at IS NULL AND closed_by IS NULL)
+    OR (status = 'closed' AND typeof(closed_at) = 'text' AND length(closed_at) > 0 AND typeof(closed_by) = 'text' AND length(closed_by) > 0))`,
+];
+export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6): readonly string[] {
   return [
     `INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT count(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ${previous})`,
     ...(previous === 2 ? MEMORY_SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean) : []),
     ...(previous < 4 ? MEMORY_REVISION_STATEMENTS : []),
     ...(previous < 5 ? DEPENDENCY_STATEMENTS : []),
-    ...CLAIM_STATEMENTS,
+    ...(previous < 6 ? CLAIM_STATEMENTS : []),
+    ...CLOSURE_STATEMENTS,
     `UPDATE schema_version SET version = ${SCHEMA_VERSION} WHERE version = ${previous}`,
   ];
 }
@@ -159,5 +167,6 @@ export const SCHEMA_STATEMENTS = [
   ...MEMORY_REVISION_STATEMENTS,
   ...DEPENDENCY_STATEMENTS,
   ...CLAIM_STATEMENTS,
+  ...CLOSURE_STATEMENTS,
 ];
 export const SCHEMA_SQL = SCHEMA_STATEMENTS.join(';\n') + ';\n';

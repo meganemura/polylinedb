@@ -12,7 +12,7 @@ import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import type { ClaimReceipt } from '../src/records/index.ts';
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
 import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence.ts';
 const request = () => crypto.randomUUID();
 function fixture(t: test.TestContext) {
@@ -90,9 +90,9 @@ test('claim replay recognizes only complete provider duplicate markers', async t
     await assert.rejects(executeOperation(failing, parseOperation(owner.command), 'test:owner'), value => value === error);
   }
 });
-test('canonical schemas 2 through 5 upgrade without rewriting old records or identity', t => {
+test('canonical schemas 2 through 6 upgrade without rewriting old records or identity', t => {
   const root = mkdtempSync(join(tmpdir(), 'pd-claims-upgrade-')); t.after(() => rmSync(root, { recursive: true, force: true }));
-  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL];
+  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL];
   for (const [index, ddl] of sources.entries()) {
     const directory = join(root, `v${index + 2}`); mkdirSync(directory, { mode: 0o700 }); const path = join(directory, 'polylinedb.sqlite');
     const legacy = new DatabaseSync(path); legacy.exec(ddl);
@@ -101,10 +101,15 @@ test('canonical schemas 2 through 5 upgrade without rewriting old records or ide
     const tables = legacy.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name<>'schema_version' ORDER BY name").all();
     const before = tables.map(row => { assert.equal(typeof row.name, 'string'); if (typeof row.name !== 'string') throw new Error('Invalid table'); return [row.name, legacy.prepare(`SELECT * FROM ${row.name}`).all()]; });
     legacy.close(); chmodSync(path, 0o600);
-    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 6);
+    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 7);
     const current = new DatabaseSync(path); const canonical = new DatabaseSync(':memory:'); canonical.exec(SCHEMA_SQL);
     try {
-      for (const [table, records] of before) { if (typeof table !== 'string') throw new Error('Invalid table'); assert.deepEqual(current.prepare(`SELECT * FROM ${table}`).all(), records); }
+      for (const [table, records] of before) {
+        if (typeof table !== 'string' || !Array.isArray(records)) throw new Error('Invalid table');
+        const rows = current.prepare(`SELECT * FROM ${table}`).all();
+        if (table === 'issues') assert.deepEqual(rows.map(row => ({ ...row })), records.map(row => ({ ...row, closed_at: null, closed_by: null })));
+        else assert.deepEqual(rows, records);
+      }
       const schema = "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
       assert.deepEqual(current.prepare(schema).all(), canonical.prepare(schema).all());
       assert.equal(current.prepare('SELECT payload FROM requests WHERE request_id=?').get(request_id)?.payload, payload);
@@ -132,7 +137,7 @@ test('snapshot5 preserves claim history while restore rotates authority only onc
   await source.run({ op: 'claim_renew', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request(), ttl: 3600 });
   await source.run({ op: 'claim_release', claim_proof: proof(owner.receipt), expected_revision: 2, request_id: request() });
   const active = await acquire(source.run, 'pd-1');
-  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.version, 5); assert.equal(snapshot.issue_claims.length, 1); assert.equal(snapshot.claim_requests.length, 4);
+  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.version, 6); assert.equal(snapshot.issue_claims.length, 1); assert.equal(snapshot.claim_requests.length, 4);
   const bytes = snapshot.claim_requests.map(row => row.payload);
   destination.store.importSnapshot(snapshot); assert.equal(canonicalSnapshot(destination.store.exportSnapshot()), canonicalSnapshot(snapshot));
   assert.deepEqual(destination.store.exportSnapshot().claim_requests.map(row => row.payload), bytes);
@@ -158,9 +163,10 @@ test('snapshot claim closure rejects dangling and future receipts across all inc
 });
 test('snapshot4 conversion is explicit and preserves original creation payload bytes', async t => {
   const source = fixture(t); await create(source.run);
-  const { issue_claims: _, claim_requests: __, ...old } = source.store.exportSnapshot(); const legacy = { ...old, version: 4 };
+  const { issue_claims: _, claim_requests: __, ...old } = source.store.exportSnapshot();
+  const legacy = { ...old, version: 4, issues: old.issues.map(({ closed_at: _at, closed_by: _by, ...issue }) => issue) };
   assert.throws(() => parseSnapshot(legacy), { code: 'invalid_snapshot' });
-  const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 5); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);
+  const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 6); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);
 });
 test('historical schema5 export retains graph records and canonical retirement guards without writes', t => {
   const root = mkdtempSync(join(tmpdir(), 'pd-history5-')); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -174,7 +180,7 @@ test('historical schema5 export retains graph records and canonical retirement g
     database.exec(`CREATE TRIGGER "polylinedb_retired_${row.name}_${operation.toLowerCase()}" BEFORE ${operation} ON "${row.name}" BEGIN SELECT RAISE(ABORT, 'This local database is retired. Use cloud connection archive.'); END`);
   }
   const before = database.prepare('SELECT * FROM memory_store_identity').get(); database.close(); chmodSync(path, 0o600);
-  const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 5); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
+  const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 6); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
   const after = new DatabaseSync(path, { readOnly: true }); try { assert.deepEqual(after.prepare('SELECT * FROM memory_store_identity').get(), before); assert.equal(after.prepare('SELECT version FROM schema_version').get()?.version, 5); } finally { after.close(); }
   assert.throws(() => upgradeStore({ directory, cwd: join(root, 'work') }), { code: 'store_retired' });
 });

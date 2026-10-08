@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cfQuery, parseQueryOutput, parseTarget } from '../scripts/d1-snapshot.ts';
 
-const target = parseTarget({ profile: 'migration', accountId: 'a'.repeat(32), databaseId: '11111111-1111-4111-8111-111111111111', snapshotSha256: 'b'.repeat(64), schemaVersion: 6 });
+const target = parseTarget({ profile: 'migration', accountId: 'a'.repeat(32), databaseId: '11111111-1111-4111-8111-111111111111', snapshotSha256: 'b'.repeat(64), schemaVersion: 7 });
 
 test('cf transport fixes identity, protects bound values, cleans files, and sanitizes failures', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pd-cf-test-'));
@@ -60,7 +60,7 @@ test('D1 schema inspection tolerates reserved storage tables and rejects unrelat
   try {
     database.exec(SCHEMA_SQL);
     database.exec('CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID');
-    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 5, issue_claims: [], claim_requests: [], issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 6, issue_claims: [], claim_requests: [], issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
     const digest = createHash('sha256').update(canonicalSnapshot(snapshot)).digest('hex');
     const migration = snapshotMigration(async statement => database.prepare(statement.sql).all(...statement.params), snapshot, digest);
     assert.equal((await migration.inspect()).state, 'identical');

@@ -17,7 +17,7 @@ import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, 
 import type { RepositoryConfiguration } from "./workspace/index.ts";
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from "./workspace/index.ts";
 import { createCloudClient, OAuthError, CredentialStoreError } from './cloud-client/index.ts';
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4 } from './records/persistence.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5 } from './records/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 import { help } from './cli-help.ts';
@@ -167,14 +167,16 @@ async function main(argv: readonly string[]): Promise<void> {
     let source: unknown;
     try { source = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
     catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
-    if (one('from') !== undefined && one('from') !== '2' && one('from') !== '3' && one('from') !== '4') invalid('Snapshot --from must be 2, 3 or 4');
-    const converted = one('from') === '4' ? convertSnapshotV4(source) : one('from') === '3' ? convertSnapshotV3(source) : convertSnapshotV2(source);
+    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5 };
+    const from = one('from') ?? '2';
+    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4 or 5');
+    const converted = converters[from as keyof typeof converters](source);
     const content = canonicalSnapshot(converted) + '\n';
     const output = one('output') ?? '-';
     if (output === '-') process.stdout.write(content);
     else {
       await writeFile(output, content, { flag: 'wx', mode: 0o600 });
-      process.stdout.write(JSON.stringify({ file: output, version: 5, sha256: createHash('sha256').update(canonicalSnapshot(converted)).digest('hex') }) + '\n');
+      process.stdout.write(JSON.stringify({ file: output, version: converted.version, sha256: createHash('sha256').update(canonicalSnapshot(converted)).digest('hex') }) + '\n');
     }
     return;
   }
