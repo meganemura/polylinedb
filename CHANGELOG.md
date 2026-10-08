@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-09)
 
 - Let an object entry in the cloud `ACCESS_ACTORS` roster carry an optional `label`, such as `Claude` or `owner`. The `/ui` page shows the label in place of the actor ID of the last update and falls back to the actor ID. Operation responses, MCP results, and stored actor IDs do not change. An invalid label makes the Access configuration invalid.
 - Name every unexpected and missing field in `invalid_input` errors, with a path for nested fields (`changes[0].note`) and `<path>: expected <type>` for a wrong structure. A message echoes at most 10 names, each cut to 64 bytes, and prints `<invalid name>` for a key that is not shaped like an identifier. "Unknown field" now reads "Unexpected field".
@@ -18,6 +18,13 @@
 - Print a fixed message for an unexpected CLI failure instead of the underlying error message, so SQLite trigger text and local paths stay out of the output. `error.details.diagnostic` gives the error `code`, SQLite `errcode`, `errno`, and `syscall` when they have a safe shape.
 - Return the claim inspection as `claim` from `show` in the CLI, the Worker API, and MCP, so a caller reads the `store_incarnation` for `claim_acquire` without `claim_show`. The human output adds a `Claim` line. Against a Worker that omits `claim`, the cloud client reads it with one `claim_show` request. The CLI 0.3.1 rejects the new field, so a cloud `pd show` from that release reports `cloud_invalid_response` against an updated Worker. MCP clients are not affected.
 - Accept cloud responses that carry fields the CLI does not know, at the top level and in nested objects, so a Worker can add a response field without breaking the CLI. The CLI ignores such a field and does not print it. A missing required field, a wrong type, an unknown discriminator value, or a mismatched ID still reports `cloud_invalid_response`. An `open_blockers` array in a `claim_acquire` response is checked when it is present. See the response compatibility section of `docs/operations.md`.
+
+### Upgrade from 0.3.1
+
+Version 0.4.0 still uses schema 6 and snapshot 5. No `pd upgrade` is required from 0.3.1.
+Install the new CLI and keep the same local connection.
+Worker deployment remains a separate step.
+This CLI works against the current production Worker and against a Worker built from main that adds `claim` on `show`.
 
 ## 0.3.1 (2026-10-06)
 

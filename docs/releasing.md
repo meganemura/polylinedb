@@ -9,6 +9,7 @@ The GitHub repository can remain private while the npm package is public.
 Version `0.0.1` is the initial version. Version `0.1.0` adds the verified local and cloud workflows.
 Version `0.2.0` adds prerequisites, memory freshness, and automatic host hooks.
 Version `0.3.1` adds session-owned issue claims and explicit human CLI output.
+Version `0.4.0` accepts unknown cloud response fields and completes `show` without `claim` through `claim_show`.
 Database upgrades and Worker deployments require separate verification and approval.
 Verify local installation, persistence, and field conflicts with the installed package.
 Verify the deployed Worker, D1 persistence, Access policy, and cloud-agent OAuth reuse with the [cloud acceptance checks](cloud.md#verify-each-host-and-d1).
@@ -26,7 +27,7 @@ npm test
 npm run test:d1
 npm run test:worker
 npm audit
-npm run test:package -- /absolute/path/polylinedb-0.3.1.tgz
+npm run test:package -- /absolute/path/polylinedb-0.4.0.tgz
 ```
 
 The package check runs `npm pack`, including its `prepack` build.
@@ -68,8 +69,8 @@ npm trust list polylinedb
 Push the reviewed commit to `main` and start the workflow with the exact version:
 
 ```sh
-gh workflow run publish.yml --ref main -f version=0.3.1 -f commit=APPROVED_SHA
-npm view polylinedb@0.3.1 version dist.integrity --registry=https://registry.npmjs.org/
+gh workflow run publish.yml --ref main -f version=0.4.0 -f commit=APPROVED_SHA
+npm view polylinedb@0.4.0 version dist.integrity --registry=https://registry.npmjs.org/
 ```
 
 Replace `APPROVED_SHA` with the full reviewed commit SHA.

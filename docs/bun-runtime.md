@@ -1,6 +1,6 @@
 # Bun runtime findings
 
-polylinedb 0.3.1 does not run under Bun.
+polylinedb 0.4.0 does not run under Bun.
 Every command exits with `unsupported_runtime`, `--help` included.
 A later change lets help and `--version` print on any runtime; every other command still exits with `unsupported_runtime`.
 This page records the measurements behind that result, the reason the version checks are correct to refuse Bun, and the experiments that come next.
@@ -68,7 +68,7 @@ polylinedb 0.3.0 added the bootstrap check that now rejects every command (commi
 2. `node()` in `solarsql/node` calls `nodeVersionError` with the same range.
    `openStore` in `src/local-store/index.ts` calls `node()` for every store command.
    `init` uses `DatabaseSync` directly and does not call `node()`, which explains the older result where `init` passed and `create` failed.
-   Under polylinedb 0.3.1, Bun does not reach this check.
+   Under polylinedb 0.4.0, Bun still does not reach this check for ordinary commands.
 3. The range exists to pin the SQLite build.
    solarsql requires that `node:sqlite` runs the SQLite build that its release tests against in Miniflare.
    The solarsql README records that Node 26.7.0 and workerd both reported SQLite 3.53.4 on September 19, 2026.
@@ -140,7 +140,7 @@ The install and run combinations remain unmeasured: `bun install` with a Node ru
 
 ## Help and version after this measurement
 
-In 0.3.1, the bootstrap check also rejects `--help` and `--version`, and a user on an unsupported runtime gets an error and no help text.
+In 0.4.0, `--help` and `--version` print on an unsupported runtime without loading storage modules. Every other command still exits with `unsupported_runtime`.
 The bootstrap now answers help and `--version` before the check, because neither loads solarsql or opens a store.
 [ADR 0007](adr/0007-cli-runtime-admission.md) lists the forms that bypass the check.
 The measured tables above record 0.3.1 and stay unchanged.

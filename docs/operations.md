@@ -207,7 +207,7 @@ A field that a Worker adds to `memory_context` counts toward `max_bytes`, becaus
 A Worker must not remove, rename, or retype a field that a client requires.
 It also must not send a new discriminator value, a new success shape, or details on an error code that had none.
 The client rejects each of these.
-The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
+Version 0.4.0 accepts unknown response fields. The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
 
 Two fields are optional so that the client works with Workers on both sides of a change:
 
