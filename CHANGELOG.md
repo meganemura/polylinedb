@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Stop the memory context child of the host hook after 10 s instead of 15 s. The host still caps the hook at 15 s, so a slow child now ends with the `unavailable` notice instead of a hook that the host kills without output.
+
 ## 0.4.0 (2026-10-09)
 
 - Let an object entry in the cloud `ACCESS_ACTORS` roster carry an optional `label`, such as `Claude` or `owner`. The `/ui` page shows the label in place of the actor ID of the last update and falls back to the actor ID. Operation responses, MCP results, and stored actor IDs do not change. An invalid label makes the Access configuration invalid.

@@ -18,9 +18,13 @@ type SettingsSnapshot = { bytes: Buffer | null; mode: number; document: Record<s
 type OwnedHook = { event: string; index: number; exact: boolean; collection: unknown[] };
 
 const contextBytes = 8192;
-const hookTimeoutSeconds = 15;
-// Host settings cap the hook at hookTimeoutSeconds, so only tests raise the CLI child limit; a loaded test host
-// can delay the start of a node child for tens of seconds.
+export const hookTimeoutSeconds = 15;
+// The host cap also covers the hook's own Node start, which waited about 2 s under 16 parallel starts on a
+// 10-CPU macOS host. The allowance leaves the hook time to print its failure text after the child limit;
+// 48 parallel starts (about 6.4 s of wait) still exceed it, and only an in-process read would remove that start.
+const outerStartAllowanceMs = 5_000;
+export const contextChildLimitMs = hookTimeoutSeconds * 1000 - outerStartAllowanceMs;
+// A loaded test host can delay the start of a node child for tens of seconds, so tests may raise the child limit.
 const testCliLimitVariable = 'PD_TEST_HOOK_CLI_LIMIT_MS';
 const malformedLockAgeMs = 60_000;
 
@@ -333,7 +337,7 @@ export function removeAgentHost(host: AgentHost) {
 
 function cliLimitMs(): number {
   const value = process.env[testCliLimitVariable];
-  return value !== undefined && /^[1-9][0-9]{0,8}$/.test(value) ? Number(value) : hookTimeoutSeconds * 1000;
+  return value !== undefined && /^[1-9][0-9]{0,8}$/.test(value) ? Number(value) : contextChildLimitMs;
 }
 
 function sessionDirectory(host: AgentHost, event: Record<string, unknown>): string | undefined {

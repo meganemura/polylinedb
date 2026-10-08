@@ -18,6 +18,7 @@ pd agent remove claude
 It returns the host's context JSON and exits successfully when memory retrieval fails.
 The context then carries a short error code and tells the agent to continue without assuming that memory is empty.
 The hook never sends the CLI's standard error to the host.
+The hook stops its memory read after 10 seconds and reports `unavailable`, which leaves time to answer inside the 15-second limit in the installed host settings.
 
 The adapter sends up to 8,192 bytes of memory data to a session.
 It preserves `omitted`, `next_cursor`, and `notices` from the bounded result.
