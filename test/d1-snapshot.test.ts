@@ -88,10 +88,9 @@ test('D1 schema inspection tolerates reserved storage tables and rejects unrelat
   } finally { database.close(); }
 });
 
-test('verify CLI exports the checked remote snapshot privately and refuses overwrite', async () => {
-  const { spawnSync } = await import('node:child_process');
+
+async function remoteD1Fixture() {
   const { createHash, randomUUID } = await import('node:crypto');
-  const { statSync } = await import('node:fs');
   const { initializeStore, openStore } = await import("../src/local-store/index.ts");
   const { executeOperation, parseOperation } = await import("../src/records/issues.ts");
   const { canonicalSnapshot } = await import("../src/records/snapshot.ts");
@@ -99,10 +98,23 @@ test('verify CLI exports the checked remote snapshot privately and refuses overw
   const location = { directory: join(directory, 'database') };
   const { database_path } = initializeStore(location);
   const store = openStore(location);
+  await executeOperation(store.db, parseOperation({ op: 'create', prefix: 'pd', request_id: randomUUID(), tool: 'fixture', project: 'test', body: 'Remote export 日本語' }), 'test:export');
+  const canonical = canonicalSnapshot(store.exportSnapshot());
+  const snapshot = join(directory, 'snapshot.json');
+  const targetFile = join(directory, 'target.json');
+  writeFileSync(snapshot, canonical, { mode: 0o600 });
+  const sha256 = createHash('sha256').update(canonical).digest('hex');
+  writeFileSync(targetFile, JSON.stringify({ ...target, snapshotSha256: sha256 }), { mode: 0o600 });
+  return { directory, database_path, store, canonical, sha256, args: (output: string) => ['verify', '--snapshot', snapshot, '--target', targetFile, '--output', output],
+    close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
+}
+
+test('verify CLI exports the checked remote snapshot privately through cf and sanitizes cf failures', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { statSync } = await import('node:fs');
+  const fixture = await remoteD1Fixture();
   try {
-    await executeOperation(store.db, parseOperation({ op: 'create', prefix: 'pd', request_id: randomUUID(), tool: 'fixture', project: 'test', body: 'Remote export 日本語' }), 'test:export');
-    const canonical = canonicalSnapshot(store.exportSnapshot());
-    const bin = join(directory, 'bin'); mkdirSync(bin);
+    const bin = join(fixture.directory, 'bin'); mkdirSync(bin);
     writeFileSync(join(bin, 'cf'), `#!/usr/bin/env node
 const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
@@ -112,34 +124,47 @@ const database = new DatabaseSync(process.env.PD_TEST_DATABASE, { readOnly: true
 try { process.stdout.write(JSON.stringify({ success: true, result: [{ success: true, results: database.prepare(statement.sql).all(...statement.params) }] })); }
 finally { database.close(); }
 `, { mode: 0o700 });
-    const snapshot = join(directory, 'snapshot.json');
-    const targetFile = join(directory, 'target.json');
-    const output = join(directory, 'verified.json');
-    writeFileSync(snapshot, canonical, { mode: 0o600 });
-    writeFileSync(targetFile, JSON.stringify({ ...target, snapshotSha256: createHash('sha256').update(canonical).digest('hex') }), { mode: 0o600 });
+    const output = join(fixture.directory, 'verified.json');
     // spawnSync counts its limit from spawn, so the cf child gets the fixture's start and run limits together.
-    const run = (outputPath: string, cf = bin) => spawnSync(process.execPath, ['scripts/d1-snapshot.ts', 'verify', '--snapshot', snapshot, '--target', targetFile, '--output', outputPath], {
-      env: { ...process.env, PATH: `${cf}:${process.env.PATH}`, PD_TEST_DATABASE: database_path,
+    const run = (outputPath: string, cf: string) => spawnSync(process.execPath, ['scripts/d1-snapshot.ts', ...fixture.args(outputPath)], {
+      env: { ...process.env, PATH: `${cf}:${process.env.PATH}`, PD_TEST_DATABASE: fixture.database_path,
         POLYLINEDB_D1_CHILD_LIMIT_MS: String(childLimits.startMs + childLimits.runMs) }, encoding: 'utf8',
     });
-    const first = run(output);
+    const first = run(output, bin);
     assert.equal(first.status, 0, first.stderr);
     assert.equal(JSON.parse(first.stdout).result, 'verified');
     assert.equal('snapshot' in JSON.parse(first.stdout), false);
     assert.equal(statSync(output).mode & 0o777, 0o600);
-    assert.equal(readFileSync(output, 'utf8'), canonical + '\n');
-    assert.equal(run(output).status, 1);
-    assert.equal(readFileSync(output, 'utf8'), canonical + '\n');
-    assert.equal(run('relative.json').status, 1);
-    await store.db.batch([{ sql: "UPDATE issues SET body = 'changed remotely'", params: [] }]);
-    const mismatchedOutput = join(directory, 'mismatched.json');
-    assert.equal(run(mismatchedOutput).status, 1);
-    assert.equal(existsSync(mismatchedOutput), false);
-    const failing = join(directory, 'failing'); mkdirSync(failing);
+    assert.equal(readFileSync(output, 'utf8'), fixture.canonical + '\n');
+    const failing = join(fixture.directory, 'failing'); mkdirSync(failing);
     writeFileSync(join(failing, 'cf'), `#!/bin/sh\necho "fetch failed: read ECONNRESET for ${target.accountId}" >&2\nexit 1\n`, { mode: 0o700 });
-    const failed = run(join(directory, 'failed.json'), failing);
+    const failed = run(join(fixture.directory, 'failed.json'), failing);
     assert.equal(failed.status, 1);
     assert.equal(failed.stderr, 'D1 snapshot operation failed: cf query failed: exited with status 1; stderr: fetch failed: read ECONNRESET for [redacted]; '
       + 'the destination may contain a resumable partial import.\n');
-  } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { fixture.close(); }
+});
+
+test('verify refuses overwrite, a relative output, and a differing remote without writing', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { runSnapshotCommand } = await import('../scripts/d1-snapshot.ts');
+  const fixture = await remoteD1Fixture();
+  const connect = () => async (statement: { sql: string; params: (string | number | null)[] }) => {
+    const database = new DatabaseSync(fixture.database_path, { readOnly: true });
+    try { return parseQueryOutput({ success: true, result: [{ success: true, results: database.prepare(statement.sql).all(...statement.params) }] }); }
+    finally { database.close(); }
+  };
+  try {
+    const output = join(fixture.directory, 'verified.json');
+    assert.deepEqual(await runSnapshotCommand(fixture.args(output), connect), { target: { ...target, snapshotSha256: fixture.sha256 }, result: 'verified', sha256: fixture.sha256,
+      counts: { issues: 1, comments: 0, counters: 1, requests: 1, memories: 0, memory_counters: 0, memory_requests: 0, dependencies: 0, dependency_revisions: 1, dependency_requests: 0, issue_claims: 0, claim_requests: 0 } });
+    assert.equal(readFileSync(output, 'utf8'), fixture.canonical + '\n');
+    await assert.rejects(runSnapshotCommand(fixture.args(output), connect), { code: 'EEXIST' });
+    assert.equal(readFileSync(output, 'utf8'), fixture.canonical + '\n');
+    await assert.rejects(runSnapshotCommand(fixture.args('relative.json'), connect), { message: /^Usage: node scripts\/d1-snapshot.ts inspect\|restore\|verify / });
+    await fixture.store.db.batch([{ sql: "UPDATE issues SET body = 'changed remotely'", params: [] }]);
+    const mismatchedOutput = join(fixture.directory, 'mismatched.json');
+    await assert.rejects(runSnapshotCommand(fixture.args(mismatchedOutput), connect), { message: 'Destination issues contains unexpected or differing rows' });
+    assert.equal(existsSync(mismatchedOutput), false);
+  } finally { fixture.close(); }
 });
