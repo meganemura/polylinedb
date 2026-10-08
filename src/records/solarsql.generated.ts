@@ -64,6 +64,10 @@ export type Generated = {
     params: { limit: number };
     row: { id: SqlValue; parent_id: SqlValue | null; sort_key: SqlValue; tool: SqlValue; project: SqlValue; body: SqlValue; status: SqlValue; type: SqlValue; priority: SqlValue; labels_json: SqlValue; tool_v: SqlValue; project_v: SqlValue; body_v: SqlValue; status_v: SqlValue; type_v: SqlValue; priority_v: SqlValue; labels_v: SqlValue; created_at: SqlValue; created_by: SqlValue; updated_at: SqlValue; updated_by: SqlValue };
   };
+  "SELECT id, issue_id, cast(substr(body, max(1, instr(body, :query) - :context), instr(body, :query) - max(1, instr(body, :query) - :context)) AS text) AS before, cast(substr(body, instr(body, :query) + length(:query), :context) AS text) AS after, cast(instr(body, :query) - :context > 1 AS integer) AS more_before, cast(instr(body, :query) + length(:query) + :context <= length(body) AS integer) AS more_after FROM comments WHERE issue_id IN (SELECT value FROM json_each(:ids)) AND instr(body, :query) > 0 ORDER BY issue_id, created_at, id": {
+    params: { query: SqlValue; context: number; ids: readonly SqlValue[] };
+    row: { id: SqlValue; issue_id: SqlValue; before: string | null; after: string | null; more_before: number | null; more_after: number | null };
+  };
 };
 
 export const generated: Meta<Generated> = {
@@ -82,6 +86,7 @@ export const generated: Meta<Generated> = {
   "SELECT * FROM claim_requests WHERE request_id=:request_id": { params: ["request_id"], encode: [], json: [], reads: ["claim_requests"] },
   "SELECT issues.* FROM issues WHERE status = 'closed' ORDER BY updated_at DESC, sort_key DESC LIMIT :limit": { params: ["limit"], encode: [], json: [], reads: ["issues"] },
   "SELECT issues.* FROM issues WHERE status = 'open' AND EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = 'main-wait') ORDER BY updated_at DESC, sort_key DESC LIMIT :limit": { params: ["limit"], encode: [], json: [], reads: ["issues"] },
+  "SELECT id, issue_id, cast(substr(body, max(1, instr(body, :query) - :context), instr(body, :query) - max(1, instr(body, :query) - :context)) AS text) AS before, cast(substr(body, instr(body, :query) + length(:query), :context) AS text) AS after, cast(instr(body, :query) - :context > 1 AS integer) AS more_before, cast(instr(body, :query) + length(:query) + :context <= length(body) AS integer) AS more_after FROM comments WHERE issue_id IN (SELECT value FROM json_each(:ids)) AND instr(body, :query) > 0 ORDER BY issue_id, created_at, id": { params: ["query", "context", "ids"], encode: ["ids"], json: [], reads: ["comments"] },
 };
 
 export const statements = {
@@ -100,4 +105,5 @@ export const statements = {
   ["claimRequest"]: "SELECT * FROM claim_requests WHERE request_id=:request_id",
   ["recentlyClosed"]: "SELECT issues.* FROM issues WHERE status = 'closed' ORDER BY updated_at DESC, sort_key DESC LIMIT :limit",
   ["awaitingMain"]: "SELECT issues.* FROM issues WHERE status = 'open' AND EXISTS (SELECT 1 FROM json_each(issues.labels_json) AS label WHERE label.value = 'main-wait') ORDER BY updated_at DESC, sort_key DESC LIMIT :limit",
+  ["commentMatches"]: "SELECT id, issue_id, cast(substr(body, max(1, instr(body, :query) - :context), instr(body, :query) - max(1, instr(body, :query) - :context)) AS text) AS before, cast(substr(body, instr(body, :query) + length(:query), :context) AS text) AS after, cast(instr(body, :query) - :context > 1 AS integer) AS more_before, cast(instr(body, :query) + length(:query) + :context <= length(body) AS integer) AS more_after FROM comments WHERE issue_id IN (SELECT value FROM json_each(:ids)) AND instr(body, :query) > 0 ORDER BY issue_id, created_at, id",
 } as const;
