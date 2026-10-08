@@ -38,7 +38,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `create` | Required `tool`, `project`, `body`, `prefix`, `request_id`; optional mutable fields and `parent` | `{ "issue": ... }` |
 | `show` | `id` | `{ "issue": ..., "comments": [...] }` |
 | `list` | Optional filters | `{ "issues": [...], "next_cursor": ... }` |
-| `search` | `query`, optional filters | Same as list |
+| `search` | `query`, optional filters, optional `with_matches: true` | Same as list; with `with_matches`, also `"matches": [...]` |
 | `comment` | `id`, `body` | `{ "comment": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
 | `close` | `id`, `expected` status version | `{ "issue": ... }` |
@@ -96,6 +96,27 @@ Pagination does not preserve a snapshot across requests.
 Search matches literal, case-sensitive substrings in bodies or comments.
 `show` returns all comments, ordered by timestamp and ID.
 
+## Search matches
+
+`search` finds literal, case-sensitive text in issue bodies and comments.
+A request with `with_matches: true` also returns `matches`, which tells where each issue on the page matched.
+A request without it returns only `issues` and `next_cursor`, so clients of version 0.3.1 and earlier still decode the result.
+The CLI and the MCP `search` tool always request matches. The MCP tool does not take `with_matches` as an input.
+A server that predates this field rejects it as an unknown argument, so update the Worker before the CLI.
+
+```json
+{ "issues": [...], "next_cursor": null, "matches": [
+  { "issue_id": "pd-3", "location": "body", "excerpt": "…the parser fails on empty input…" },
+  { "issue_id": "pd-3", "location": "comment", "comment_id": "4f0c…", "excerpt": "empty input also fails in the editor" }
+] }
+```
+
+`matches` follows the order of `issues`. For each issue, a body match comes first, then one entry for each matching comment in `show` order.
+The excerpt surrounds the first match in that body or comment and is at most 160 UTF-8 bytes.
+It keeps whole code points, replaces control characters such as line feeds with spaces, and marks removed text with `…` at either end.
+When the query alone exceeds the bound, the excerpt shows the start of the match and ends with `…`.
+Each page reads its matching comments in one additional query, whatever the page size.
+
 ## CLI diagnostic details
 
 The CLI expands issue numbers and memory shorthand with the selected prefix.
@@ -125,6 +146,7 @@ Other commands reject `--human` before the CLI reads connection defaults, opens 
 Errors keep their JSON object on standard error.
 
 `show` prints the complete body and comments. `list` and `search` print full IDs, project and tool names, short body previews, and the next-page cursor when present.
+`search` also prints one `Matched in body` or `Matched in comment ID` line with the excerpt for each match.
 Human output adds no terminal control sequences when standard output is piped.
 On a TTY, color applies only to fixed headings when `NO_COLOR` is absent and `TERM` is not `dumb`.
 
