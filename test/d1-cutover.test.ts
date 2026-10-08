@@ -22,17 +22,26 @@ test('cutover requires a fixed plan and explicit apply flag',()=>{
  assert.equal(result.status,1);
  assert.match(result.stderr,/Usage: node scripts\/d1-cutover.ts/);
 });
-test('cutover names the limit of a child that does not exit',context=>{
+// Shell stubs exec fast under load, so a hanging stub reaches its limit and a quick one answers within it.
+const hang='#!/bin/sh\nexec sleep 30\n';
+const worker=`#!/bin/sh
+if [ "$2" = versions ]; then echo '{"id":"fixed","bindings":[{"name":"DB","database_id":"00000000-0000-0000-0000-000000000000"}]}'
+else echo '{"deployments":[{"versions":[{"version_id":"fixed","percentage":100}]}]}'; fi
+`;
+for(const [stubs,limit,message] of [
+ [{cf:hang},'200','cf did not exit within 200 ms (ETIMEDOUT); inspect the private diagnostic'],
+ [{cf:worker,pd:hang},'5000','pd --connection cloud context did not exit within 5000 ms (ETIMEDOUT); stderr: none'],
+] as const)test(`cutover names the limit of a ${'pd' in stubs?'pd':'cf'} child that does not exit`,context=>{
  const root=realpathSync(mkdtempSync(join(tmpdir(),'pd-cutover-limit-')));
  context.after(()=>rmSync(root,{recursive:true,force:true}));
  const bin=join(root,'bin'),source=join(root,'source');mkdirSync(bin);mkdirSync(source);
- // exec keeps sleep as the cf process itself, so the limit's SIGTERM closes the output pipes.
- writeFileSync(join(bin,'cf'),'#!/bin/sh\nexec sleep 30\n',{mode:0o700});
+ // exec keeps sleep as the stub process itself, so the limit's SIGTERM closes the output pipes.
+ for(const [command,script] of Object.entries(stubs))writeFileSync(join(bin,command),script,{mode:0o700});
  const planPath=join(root,'plan.json');
  writeFileSync(planPath,JSON.stringify({profile:'test',accountId:'0'.repeat(32),databaseId:'00000000-0000-0000-0000-000000000000',workerId:'test',url:'https://test.invalid',connection:'cloud',sourceDirectory:source,receiptsDirectory:join(root,'receipts'),repositories:[root]}),{mode:0o600});
- const result=spawnSync(process.execPath,[executable,'--plan',planPath,'--apply'],{cwd:checkout,env:{...process.env,PATH:bin+':'+process.env.PATH,POLYLINEDB_D1_CHILD_LIMIT_MS:'200'},encoding:'utf8'});
+ const result=spawnSync(process.execPath,[executable,'--plan',planPath,'--apply'],{cwd:checkout,env:{...process.env,PATH:bin+':'+process.env.PATH,POLYLINEDB_D1_CHILD_LIMIT_MS:limit},encoding:'utf8'});
  assert.equal(result.status,1);
- assert.equal(result.stderr,'Cutover stopped. Read private receipts before recovery. cf did not exit within 200 ms (ETIMEDOUT); inspect the private diagnostic\n');
+ assert.equal(result.stderr,`Cutover stopped. Read private receipts before recovery. ${message}\n`);
 });
 const mock=`#!/usr/bin/env node
 import {DatabaseSync} from 'node:sqlite';
