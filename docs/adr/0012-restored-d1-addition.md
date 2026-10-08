@@ -107,6 +107,7 @@ The owner never accepts later edits by itself.
 That proof is a different receipt, or a changed preimage or schema without a matching receipt.
 An unchanged preimage refuses release, because the frozen packet can still commit, and a matching receipt keeps the source retired.
 Release also requires the source rows to equal the frozen rows, and it ends the journal.
+A crash after the retirement record and before the first dispatch leaves a retired source and an unchanged destination. Release refuses that state, and resume sends the frozen packet.
 A changed preimage that later returns to the exact baseline would let a lost packet commit after release; the guards cannot detect that sequence.
 
 ## Routing after a verified addition
@@ -257,6 +258,7 @@ The workerd D1 test also passes these lifecycle gates:
 Gate status:
 
 - Claim validity at commit is bounded, and no further code is required. A claim state depends on the claim row, the store incarnation, and the database clock. The packet guards every claim row and the identity, and it writes no destination claim and no identity. Imported claims keep the source incarnation, so they are invalidated history. A lease that expires between freezing and commit changes no row, and the addition does not read lease states.
+- Claim owner validity is bounded by the eligibility rule, and no further code is required. Restoration gives the destination a new incarnation, so every restored claim is `invalidated` at freezing, and the two-column route has no claims. A new destination owner must acquire a claim, which changes a guarded row, so the addition refuses. The refusal test with a late `claim_acquire` and the imported claim test cover both boundaries.
 - Concurrent operators are closed by the singleton immutable receipt and the source retirement. One receipt commits, and the other operator gets a refusal and a supported release. Two processes on one journal are not supported. Each journal record uses exclusive creation, so a racing duplicate step fails instead of overwriting.
 - Metadata identity readback is closed. Verification and acceptance both compare the destination identity with the receipt.
 - A destination write after the commit has the supported acceptance procedure above. The owner does not stop Worker writers.
