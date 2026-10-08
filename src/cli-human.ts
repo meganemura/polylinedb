@@ -118,6 +118,10 @@ function renderIssuePage(title: string, result: IssuePage, color: boolean): stri
     );
     const preview = bodyPreview(issue.body);
     lines.push('  Body: ' + (preview === '' ? '(empty)' : preview));
+    for (const match of 'matches' in result ? result.matches.filter(match => match.issue_id === issue.id) : []) {
+      const place = match.location === 'body' ? 'body' : 'comment ' + visibleText(match.comment_id, false);
+      lines.push('  Matched in ' + place + ': ' + visibleText(match.excerpt, false));
+    }
   }
   if (result.next_cursor !== null) {
     lines.push('', 'More results. Use this value with --after.', '  ' + visibleText(result.next_cursor, false));

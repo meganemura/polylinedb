@@ -363,6 +363,7 @@ async function main(argv: readonly string[]): Promise<void> {
     return id;
   };
   if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
+  if (command === 'search') raw.with_matches = true;
   if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : command === 'claim_show' || command === 'claim_acquire' ? 'issue_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   const proof = one('claim-proof');
   if (proof !== undefined) {
