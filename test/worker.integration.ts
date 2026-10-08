@@ -233,6 +233,21 @@ try {
   assert.deepEqual(await database.prepare('SELECT actor FROM issue_claims WHERE issue_id = ?').bind(readyIssue.id).first(), { actor: 'service:codex-token' });
   assert.deepEqual(await database.prepare('SELECT created_by FROM comments WHERE issue_id = ?').bind(readyIssue.id).all().then((result: { results: unknown[] }) => result.results),
     [{ created_by: 'service:codex-token' }]);
+  const view = (token: string | null, method = 'GET') => runtime.dispatchFetch('http://polylinedb.test/ui', {
+    method, headers: token === null ? {} : { 'cf-access-jwt-assertion': token },
+  });
+  await database.prepare('UPDATE issues SET status = ?, labels_json = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .bind('closed', '[]', '2026-10-03T10:30:00.000Z', 'service:codex-token', readyIssue.id).run();
+  await database.prepare('UPDATE issues SET labels_json = ?, updated_at = ? WHERE id = ?')
+    .bind('["main-wait"]', '2026-10-04T00:00:00.000Z', draftIssue.id).run();
+  assert.equal((await view(null)).status, 401);
+  assert.equal((await view(viewer, 'POST')).status, 405);
+  const page = await view(viewer);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
+  const html = await page.text();
+  assert.ok(html.indexOf(`${draftIssue.id} · 最終更新`) < html.indexOf('Recently closed'));
+  assert.ok(html.includes(`<span class="secondary">${readyIssue.id} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:codex-token</span>`));
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
@@ -241,6 +256,6 @@ try {
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
-      'read-only roster actor', 'per-token agent actors behind the ready and claim gates',
+      'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

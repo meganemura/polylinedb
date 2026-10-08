@@ -354,3 +354,118 @@ test('tools/list advertises the pinned inputSchema of every MCP tool and require
     assertSnapshot('mcp-input-schemas.json', JSON.stringify(schemas, null, 2) + '\n');
   } finally { sqlite.close(); }
 });
+
+async function seedIssue(env: ReturnType<typeof fixture>['env'], token: string, body: string): Promise<string> {
+  const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token },
+    body: JSON.stringify({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body }),
+  }), env, authenticate);
+  assert.equal(response.status, 200);
+  return (await response.json()).issue.id;
+}
+
+function viewUi(env: ReturnType<typeof fixture>['env'], headers: Record<string, string> = {}, method = 'GET') {
+  return handleRequest(new Request('https://issues.example/ui', { method, headers }), env, authenticate);
+}
+
+test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const older = await seedIssue(env, token, '# Older close\n\ndetails');
+    const newest = await seedIssue(env, token, '\n## Newest close');
+    const hostile = await seedIssue(env, token, '<img src=x onerror=alert(1)>&');
+    const waiting = await seedIssue(env, token, '# Merged locally');
+    const plainOpen = await seedIssue(env, token, '# Still open');
+    const closedWaiting = await seedIssue(env, token, '# Closed with a stale label');
+    const set = sqlite.prepare("UPDATE issues SET status = ?, labels_json = ?, updated_at = ?, updated_by = ? WHERE id = ?");
+    set.run('closed', '[]', '2026-10-01T00:00:00.000Z', 'access:alice', older);
+    set.run('closed', '[]', '2026-10-03T10:30:00.000Z', 'service:agent-7', newest);
+    set.run('closed', '[]', '2026-10-02T00:00:00.000Z', 'access:<b>"x"', hostile);
+    set.run('open', '["main-wait"]', '2026-10-04T00:00:00.000Z', 'access:alice', waiting);
+    set.run('open', '[]', '2026-10-05T00:00:00.000Z', 'access:alice', plainOpen);
+    set.run('closed', '["main-wait"]', '2026-09-30T00:00:00.000Z', 'access:alice', closedWaiting);
+
+    const response = await viewUi(env, { 'cf-access-jwt-assertion': token });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const html = await response.text();
+    const [, waitingPart, closedPart] = html.split(/<h2>/);
+    const ids = (part: string) => [...part.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
+    assert.match(waitingPart, /^main 待ち<\/h2>/);
+    assert.deepEqual(ids(waitingPart), [waiting]);
+    assert.match(closedPart, /^Recently closed<\/h2>/);
+    assert.deepEqual(ids(closedPart), [newest, hostile, older, closedWaiting]);
+    assert.ok(html.includes(`<span class="primary">Newest close</span>\n<span class="secondary">${newest} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:agent-7</span>`));
+    assert.ok(html.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;&amp;</span>'));
+    assert.ok(html.includes('<span class="secondary">access:&lt;b&gt;&quot;x&quot;</span>'));
+    assert.ok(!html.includes('<img'));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
+  } finally { sqlite.close(); }
+});
+
+test('/ui shows quiet notes when nothing waits for main and nothing has closed', async () => {
+  const { sqlite, env } = fixture();
+  try {
+    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
+    assert.ok(html.includes('<p class="quiet-note">Nothing waits for main.</p>'));
+    assert.ok(html.includes('<p class="quiet-note">Nothing has closed yet.</p>'));
+  } finally { sqlite.close(); }
+});
+
+test('/ui requires the Access assertion and the roster, and accepts no writes', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+  const token = await assertion();
+  try {
+    const id = await seedIssue(env, token, '# Secret title');
+    sqlite.prepare("UPDATE issues SET status = 'closed' WHERE id = ?").run(id);
+    const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all());
+
+    const anonymous = await viewUi(env);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Secret title'));
+    const forged = await viewUi(env, { 'cf-access-jwt-assertion': `${token.slice(0, -4)}AAAA` });
+    assert.equal(forged.status, 401);
+    assert.ok(!(await forged.text()).includes('Secret title'));
+    const stranger = await viewUi(env, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) });
+    assert.equal(stranger.status, 403);
+    assert.ok(!(await stranger.text()).includes('Secret title'));
+
+    const reader = await viewUi(env, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
+    assert.equal(reader.status, 200);
+    assert.ok((await reader.text()).includes('<span class="primary">Secret title</span>'));
+
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const write = await handleRequest(new Request('https://issues.example/ui', { method,
+        headers: { 'cf-access-jwt-assertion': token, 'content-type': 'application/json' },
+        body: JSON.stringify({ op: 'close', id, expected: 1 }) }), env, authenticate);
+      assert.equal(write.status, 405, method);
+      assert.equal(write.headers.get('allow'), 'GET');
+    }
+    assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all()), before);
+    assert.equal((await viewUi(env, {})).headers.get('content-type'), 'application/json');
+  } finally { sqlite.close(); }
+});
+
+test('/ui reads no issue before Access accepts the caller, and a misconfigured Access returns 503', async () => {
+  const { sqlite, env } = fixture();
+  const reads: string[] = [];
+  const watched = { ...env, DB: { ...env.DB, prepare: (sql: string) => { reads.push(sql); return env.DB.prepare(sql); } } };
+  try {
+    const token = await assertion();
+    const misconfigured = [{ ACCESS_TEAM_DOMAIN: '' }, { ACCESS_AUD: '' }, { ACCESS_ACTORS: '[]' }];
+    for (const override of misconfigured) {
+      const response = await handleRequest(new Request('https://issues.example/ui', { headers: { 'cf-access-jwt-assertion': token } }),
+        { ...watched, ...override }, authenticate);
+      assert.equal(response.status, 503, JSON.stringify(override));
+      assert.deepEqual(await response.json(), { error: { code: 'invalid_access_configuration', message: 'Authentication unavailable' } });
+    }
+    assert.equal((await viewUi(watched)).status, 401);
+    assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) })).status, 403);
+    assert.deepEqual(reads, []);
+    assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': token })).status, 200);
+    assert.equal(reads.length, 2);
+  } finally { sqlite.close(); }
+});

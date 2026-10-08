@@ -1,6 +1,7 @@
-/** Adapts authenticated HTTP and MCP requests to issue and memory operations. OAuth belongs to Access. */
+/** Adapts authenticated HTTP and MCP requests to issue and memory operations, and serves the read-only /ui page. OAuth belongs to Access. */
 import { AccessError, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
+import { uiResponse } from "./ui.ts";
 import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseOperation } from "../records/index.ts";
 import type { Operation } from "../records/index.ts";
@@ -196,9 +197,13 @@ export async function handleRequest(
 ): Promise<Response> {
   try {
     const path = new URL(request.url).pathname;
-    if (path !== '/mcp' && path !== '/v1/operations') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
+    if (path !== '/mcp' && path !== '/v1/operations' && path !== '/ui') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
     checkOrigin(request, env);
     const caller = await authenticate(request, env);
+    if (path === '/ui') {
+      if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
+      return await uiResponse(d1Executor(env.DB));
+    }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
     if (path === '/mcp') return await mcp(request, env, caller);
     return json(await execute(request, env, parseOperation(await readJson(request)), caller));
