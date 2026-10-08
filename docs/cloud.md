@@ -458,6 +458,30 @@ The agent gates are the same as for a local agent; see [gate agent work](claims.
 The claim lease and the comment author record the actor from authentication.
 The `agent_label` of a claim stays display text.
 
+## Read recent work in a browser
+
+The Worker serves a read-only page at `/ui` for a phone browser.
+The page lists two sections:
+
+- `main 待ち`: open issues with the label `main-wait`. This label marks work that is merged into a local land queue but is not yet on the remote main branch.
+- `Recently closed`: closed issues.
+
+Each row shows the issue ID, the first line of the body, the time of the last update in JST, and the actor of the last update.
+The rows are newest first by `updated_at`.
+The time column has the label `最終更新`.
+It is not the close time, because the store does not record when an issue closed or who closed it.
+A comment does not change `updated_at`.
+
+The Worker code returns the page only after the same Access verification as the operation endpoints.
+A bad Access configuration returns `503 invalid_access_configuration`, a missing or invalid assertion returns `401`, and an actor outside the roster returns `403`.
+Each roster role can read the page.
+The page has no form and no script, and `/ui` accepts only `GET`.
+Serve `/ui` and every file it needs from Worker code. If a later change adds static assets, set `run_worker_first` so that the Access check runs first.
+
+Do not add an Access bypass for local use.
+`test/worker.test.ts` renders `/ui` on Node with SQLite, and `npm run test:worker` renders it in local workerd with D1.
+Both sign a test assertion and check the page content.
+
 ## Use service tokens only from a local client
 
 An operator-controlled local HTTP client may use an Access Service Token with a Service Auth policy. Keep that credential in the local client's protected credential source. Access must produce a verified service assertion whose actor is explicitly allowlisted.
