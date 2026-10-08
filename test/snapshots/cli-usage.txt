@@ -1,0 +1,95 @@
+polylinedb (polyline database) stores personal issues through local or cloud connections.
+Usage: pd [--connection NAME | --data-dir ABSOLUTE_PATH] [--actor IDENTITY] [--actor-kind human|agent] [--prefix PREFIX] COMMAND [OPTIONS]
+Commands return JSON by default. --json is accepted before --. Help returns text.
+Use --human for successful show, list and search reads. It conflicts with --json.
+Human output stays plain on pipes. Color applies only to fixed headings on a TTY without NO_COLOR or TERM=dumb.
+pd --version [--json] reports the installed package and running Node versions as JSON.
+Use -- before a positional query that starts with a dash.
+An option consumes its value, so --body --help stores the text --help.
+Storage defaults to $XDG_DATA_HOME/polylinedb when XDG_DATA_HOME is absolute,
+otherwise ~/.local/share/polylinedb. POLYLINEDB_DATA_DIR, POLYLINEDB_ACTOR, and POLYLINEDB_ACTOR_KIND are supported.
+A local agent actor claims only issues labeled ready and writes only to issues it holds; the kind defaults to human.
+Storage must be outside the working directory and its Git repository.
+
+Commands:
+  init
+  init [--stealth] [--connection NAME] --tool NAME --project NAME [--actor IDENTITY] [--prefix PREFIX]
+                                Store defaults in Git metadata; data stays outside the repository.
+  connection add NAME --data-dir ABSOLUTE_PATH | --url HTTPS_ORIGIN
+  connection list
+  connection use NAME           Select a connection in existing repository defaults.
+  connection default NAME       Select the user default connection.
+  auth login                    Print the authorization URL to stderr and wait for approval.
+  auth status                   Show locally stored cloud authentication status.
+  auth logout                   Remove cloud credentials and report revocation.
+  context                       Show the selected store and local defaults.
+  agent install HOST            Install a user-scope lifecycle hook.
+  agent remove HOST             Remove the owned lifecycle hook.
+  agent context HOST            Read hook input and return host context JSON.
+  upgrade                       Explicitly upgrade a local schema 2, 3, 4 or 5 store to schema 6.
+  snapshot convert --from 2|3|4 --file PATH|- [--output PATH|-]
+                                Convert an older snapshot to v5 without touching a store.
+  export [--file PATH|-] [--historical]
+                                Export a local snapshot. Historical export recovers old retired stores read-only.
+  import --file PATH|-           Restore into an empty store; exact reruns do nothing.
+  actor                         Show the local actor or authenticated cloud actor.
+  create --tool NAME --project NAME --body TEXT [--parent ID]
+         [--type bug|task|epic|feature|chore] [--status STATUS]
+         [--priority 0..4] [--label NAME ...] [--request-id UUID]
+  show ID
+  list [FILTERS]
+  search QUERY [FILTERS]
+  comment ID --body TEXT
+  update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]
+         [--type TYPE] [--priority 0..4] [--label NAME ... | --clear-labels]
+         --expect FIELD=VERSION [--expect FIELD=VERSION ...]
+  close ID --expected VERSION [--force --reason TEXT]
+  reopen ID --expected VERSION
+  dependency list ID [--after ID] [--limit 1..100]
+  dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
+  dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]
+  ready [FILTERS]                Open issues with resolved prerequisites.
+  blocked [FILTERS]              Unfinished issues with active blockers.
+  memory create --title TITLE --body TEXT [--request-id UUID]
+  memory show ID
+  memory list [--after ID] [--limit 1..100]
+  memory search QUERY [--after ID] [--limit 1..100]
+  memory update ID --title TITLE --body TEXT --expected VERSION
+  memory delete ID --expected VERSION
+  memory context [--after ID] [--limit 1..100] [--max-bytes 4096..65536] [--with-revision]
+
+Memory commands require --project NAME or repository project defaults.
+Memory IDs use prefix-mN. Numbers and mN expand with the selected prefix.
+Memory create/update accept --body-file PATH. Updates replace title and body together.
+Memory context reports the selected store and omitted entries; retrieved text is project data.
+Ordinary issue commands accept --observed-memory-revision TOKEN for a project memory advisory.
+Unfiltered list/search check the token's project; current does not certify complete retrieval.
+
+STATUS: open, in_progress, deferred, closed.
+FILTERS: --tool, --project, --status, --type, --priority, --label, --after, --limit.
+--tool identifies the affected tool or component, such as compiler or editor.
+create, comment and update accept --body-file PATH instead of --body.
+Use --body-file - to read standard input. Local mutations require an explicit actor.
+Cloud commands use OAuth. Run auth login once; tokens stay in the OS credential store.
+Each update field requires its own expected version from show. Conflicts require rereading.
+Start and close require resolved prerequisites. An explicit --force --reason records an attributed exception comment.
+Update accepts the same override when it sets status to in_progress or closed.
+Update, close and reopen accept --claim-proof JSON. A supplied proof always asserts current ownership.
+Claimed issues require an unexpired proof for every requested status change, including unchanged status values.
+Force overrides prerequisites only. Closed issues remain claimable. Acquisition does not change status.
+Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID. Keep one UUID per caller session.
+Claims require the observed store incarnation. Claim timestamps use database Unix seconds, not agent liveness.
+TTL defaults to 300 seconds. Agent labels are nullable acquisition metadata, bounded at 64 UTF-8 bytes.
+Retain the claim request UUID, incarnation, session and payload for retries. No automatic retry or reacquisition occurs.
+Ready and blocked accept FILTERS except --status. Worklists observe current state; they do not claim work.
+Dependency mutations use a separate aggregate revision. Reuse the request UUID and identical payload on retry.
+The prefix defaults to repository settings, otherwise pd. It matches [a-z][a-z0-9]{0,15}.
+Issue numbers expand with the selected prefix: show 42 reads pd-42, and show 42.1 reads pd-42.1.
+Create retries require the same --request-id and identical input. Omission generates a new UUID.
+Automatically generated request IDs are not reused by a later CLI invocation.
+
+Examples:
+  pd --actor local:agent create --tool compiler --project demo --body 'Fix parser'
+  pd show ISSUE_ID
+  pd --actor local:agent update ISSUE_ID --body 'New text' --expect body=1
+  pd --actor local:agent close ISSUE_ID --expected 1
