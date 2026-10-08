@@ -126,6 +126,12 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const show = await request('/v1/operations', { op: 'show', id: issue.id });
     const shown = await show.json();
     assert.equal(shown.comments[0].body, 'confirmed');
+    const httpSearch = await (await request('/v1/operations', { op: 'search', query: 'confirmed' })).json();
+    assert.deepEqual(Object.keys(httpSearch), ['issues', 'next_cursor']);
+    const mcpSearch = await request('/mcp', { jsonrpc: '2.0', id: 22, method: 'tools/call', params: { name: 'search', arguments: { query: 'confirmed' } } });
+    const searched = (await mcpSearch.json()).result.structuredContent;
+    assert.deepEqual(searched.issues.map((hit: { id: string }) => hit.id), [issue.id]);
+    assert.deepEqual(searched.matches, [{ issue_id: issue.id, location: 'comment', comment_id: shown.comments[0].id, excerpt: 'confirmed' }]);
     const memoryCreate = await request('/v1/operations', { op: 'memory_create', project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Parser constraint', body: 'Keep empty input valid.' });
     assert.equal(memoryCreate.status, 200);
     const savedMemory = (await memoryCreate.json()).memory;
