@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { executeOperation, parseOperation } from '../../src/records/index.ts';
 import { executeMemoryOperation, parseMemoryOperation } from '../../src/records/memories.ts';
 import { initializeStore, openStore } from '../../src/local-store/index.ts';
+import { addConnection, defaultConnection } from '../../src/workspace/index.ts';
 import type { Snapshot } from '../../src/records/persistence.ts';
 import type { Statement } from '../../scripts/d1-additive-merge.ts';
 import type { Batch } from '../../scripts/d1-restored-addition.ts';
@@ -61,6 +62,15 @@ export function privateDirectory(root: string, name: string): string {
   const path = join(root, name);
   mkdirSync(path, { mode: 0o700 });
   return path;
+}
+
+/** Private connection settings whose user default selects the source store, so routing has one step that tests can observe. */
+export function routingEnvironment(root: string, sourcePath: string): NodeJS.ProcessEnv {
+  const environment = { XDG_CONFIG_HOME: privateDirectory(root, `config-${randomUUID()}`) };
+  addConnection('cloud', { kind: 'cloud', url: 'https://issues.example.invalid' }, environment);
+  addConnection('home', { kind: 'local', data_dir: dirname(sourcePath) }, environment);
+  defaultConnection('home', environment);
+  return environment;
 }
 
 export const failingStatement: Statement = { sql: 'INSERT INTO schema_version(version) VALUES (0)', params: [] };
