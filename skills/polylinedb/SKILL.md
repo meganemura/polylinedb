@@ -46,7 +46,7 @@ This unconditional refetch also applies when the connector supplies no expiry ti
 ## Claim and work
 
 Keep one lowercase session UUID for this caller session and one request UUID for each logical claim mutation.
-Read `claim_show` and retain the observed `store_incarnation`.
+Read `show` for the selected ID and retain its `claim.store_incarnation`; `claim_show` returns the same value.
 Call `claim_acquire` with the selected `issue_id`, `incarnation`, `session_id`, and `request_id`.
 For an agent actor, `claim_acquire` rejects an issue without the `ready` label with `not_ready`.
 The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.

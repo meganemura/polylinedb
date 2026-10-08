@@ -14,15 +14,16 @@ Repository and user defaults do not store session IDs.
 
 ## Acquire and inspect
 
-Read the current store incarnation before acquiring:
+Read the issue and the current store incarnation before acquiring:
 
 ```sh
-pd claim show ISSUE_ID
+pd show ISSUE_ID
 pd claim acquire ISSUE_ID --incarnation OBSERVED_HEX --session-id SESSION_UUID \
   --agent-label Codex --request-id REQUEST_UUID
 ```
 
-Replace the placeholders with the issue ID, returned `store_incarnation`, and retained lowercase UUIDs.
+Replace the placeholders with the issue ID, the returned `claim.store_incarnation`, and retained lowercase UUIDs.
+`show` returns the issue, its comments, and `claim`, the same inspection that `claim show` returns.
 Acquire returns `claim_receipt` with the owner, session, generation, revision, deadline, and acquisition label.
 It leaves the issue status unchanged and can claim a closed issue.
 Concurrent acquisitions elect one winner.
