@@ -70,6 +70,7 @@ test('CLI persists issues, exposes conflicts, and appends comments', t => {
   assert.equal(comment.body, 'needle comment');
   assert.equal(run(['show', issue.id]).comments.length, 1);
   assert.equal(run(['search', 'needle']).issues[0].id, issue.id);
+  assert.deepEqual(run(['search', 'needle']).matches, [{ issue_id: issue.id, location: 'comment', comment_id: comment.id, excerpt: 'needle comment' }]);
   assert.equal(run(['list', '--label', 'urgent', '--tool', 'codex']).issues.length, 1);
   assert.equal(run(['close', issue.id, '--expected', '1']).issue.status, 'closed');
   assert.equal(run(['reopen', issue.id, '--expected', '2']).issue.status, 'open');
@@ -94,7 +95,7 @@ test('CLI human reads show full details and comments, safe previews, and page cu
   run(['init']);
   const body = 'Control ESC:\u001b[31m C1:\u0085 DEL:\u007f LS:\u2028 PS:\u2029\n入力';
   const { issue } = run(['create', '--tool', 'editor', '--project', 'parser', '--body', body]);
-  run(['comment', issue.id, '--body', '確認しました。\n次へ進みます。']);
+  const note = run(['comment', issue.id, '--body', '確認しました。\n次へ進みます。']).comment;
   const second = run(['create', '--tool', 'editor', '--project', 'parser', '--body', 'Second issue']).issue;
 
   const details = run(['show', issue.id, '--human'], { raw: true });
@@ -117,6 +118,9 @@ test('CLI human reads show full details and comments, safe previews, and page cu
   assert.ok(nextPage.endsWith('\nEnd of results.\n'));
   const matches = run(['search', 'Second issue', '--human'], { raw: true });
   assert.ok(matches.startsWith(`Search matches\n${second.id}  open  P2  task\n`));
+  assert.ok(matches.includes('\n  Body: Second issue\n  Matched in body: Second issue\n'));
+  const inComment = run(['search', '次へ', '--human'], { raw: true });
+  assert.ok(inComment.includes(`\n  Matched in comment ${note.id}: 確認しました。 次へ進みます。\n`));
 
   const literalAfterTerminator = run(['search', '--', '--human'], { raw: true });
   assert.deepEqual(JSON.parse(literalAfterTerminator).issues, []);
