@@ -1,6 +1,6 @@
 # Add once to an unchanged restored D1 store
 
-Status: Proposed. The four-column and two-column routes have a tested operator library, and no command runs it yet.
+Status: Proposed. The four-column and two-column routes have a tested operator library and a command entry point. The command needs code review and owner approval before it runs against a real resource.
 
 ## Problem
 
@@ -13,11 +13,11 @@ These observations establish the current ambiguity, rather than support for a ne
 ## Decision and caller contract
 
 Propose one addition of disjoint local records immediately after restoration, while destination rows exactly match the original input.
-One lifecycle owner exposes `run` and `resume` with validated domain arguments and outcomes.
-The caller supplies the original restore file, the source, the destination, and one private journal directory.
-Preparation, commit, recovery, and finish remain private methods.
+One lifecycle owner exposes `run`, `resume`, and `releaseSource` with validated domain arguments and outcomes.
+The caller supplies the original restore file, the source, the destination, the connection settings, the routed repositories, and one private journal directory.
+Preparation, commit, recovery, routing, and finish remain private methods.
 The public API does not expose raw queries or checkpoint layouts.
-This ADR defines implementation conditions, rather than a CLI procedure.
+This ADR defines implementation conditions. The command entry point only validates a plan and adapts `cf` output for the owner.
 Current refusal remains until every implementation gate below passes.
 The proposal changes neither application schema 6 semantics nor the Worker runtime.
 
@@ -84,21 +84,61 @@ Removing the barrier or restoring again requires a separate explicit destructive
 
 ## Durable recovery and transfer order
 
-Before dispatch, durably save the original file, version, canonical digest, source and destination rows, metadata, planned packet, and operation identity.
+Before dispatch, durably save the original file, version, canonical digest, source and destination rows, metadata, planned packet, routing plan, and operation identity.
+The frozen digest in the receipt covers the routing plan, so an edited plan in the journal is refused.
 The private journal records each lifecycle boundary and retains the frozen source through uncertainty.
 Recovery never refreshes captured revisions, overwrites conflicts, or allocates a new operation identity.
+
+The owner commits source retirement in the transaction that read the frozen source rows, before the first dispatch.
+A SQLite lock ends with its process, so only committed retirement triggers keep local writes out between an uncertain dispatch and resume.
+This order follows ADR 0004, which also keeps the source retired after an uncertain cloud response.
+
 A matching receipt with consistent terminal metadata confirms commit, even when later legitimate edits change the live digest.
-Such edits can block source retirement or routing verification without changing the committed outcome to failed.
 An absent receipt with the exact unchanged preimage permits retry of the same packet.
 Changed evidence causes refusal, and unavailable or contradictory evidence leaves the outcome unknown.
-After confirmed commit, verify the complete result and the exact frozen source before committing source retirement.
-Only then change routing, with each completed step recorded for idempotent crash recovery.
+After confirmed commit, the owner verifies the complete result and the destination identity, and then changes routing.
+
+A destination write after the commit changes the result without changing the committed receipt.
+Then routing waits until an operator resumes with `acceptDestinationEdits`.
+That explicit decision still requires the matching receipt and the frozen destination identity, and the journal records the observed digest beside the expected digest.
+The owner never accepts later edits by itself.
+
+`releaseSource` removes the retirement triggers only when destination evidence proves that the frozen packet did not commit and cannot commit.
+That proof is a different receipt, or a changed preimage or schema without a matching receipt.
+An unchanged preimage refuses release, because the frozen packet can still commit, and a matching receipt keeps the source retired.
+Release also requires the source rows to equal the frozen rows, and it ends the journal.
+A changed preimage that later returns to the exact baseline would let a lost packet commit after release; the guards cannot detect that sequence.
+
+## Routing after a verified addition
+
+Routing here means the local connection selection that makes `pd` use the cloud connection instead of the source store.
+It does not change Worker routing or any Cloudflare resource.
+
+Before dispatch, the owner freezes a routing plan from the stored settings.
+The target connection must be a configured cloud connection, and the plan records its URL.
+Each supplied repository must have repository defaults that select the source directory, through a version 2 `data_dir` or a named local connection.
+Repositories that share Git common metadata, such as worktrees, share one routing step.
+The user default becomes a step only when it names a local connection to the source directory.
+A plan with no step is refused, because nothing would move off the source.
+Process overrides such as `POLYLINEDB_CONNECTION` do not affect the plan or its verification.
+
+Each step is one change under the existing workspace locks: `useRepositoryConnection` for repository defaults and `defaultConnection` for the user default.
+A step writes only when the current value equals its frozen value.
+When the current value already equals the target, recovery records the step without a write.
+Any other value is a later decision, so routing refuses and leaves the setting unchanged.
+Earlier recorded steps stay recorded.
+After every step, the owner checks that each supplied checkout selects the cloud connection with its frozen tool, project, prefix, and actor.
+A changed cloud connection URL also refuses routing.
+
+Routing does not cover checkouts that the caller did not supply, other machines, or a legacy default directory without a user default.
+Those clients still reach the retired source, whose triggers refuse writes and name the cloud connection.
 
 ## Tradeoffs and implementation gates
 
 Requiring the original file and unchanged rows limits eligible destinations but gives a bounded proof without a reusable restore completion ledger.
 Permanent archival preserves provenance and fences inspected old SQL, at the cost of one addition per restored destination.
 A permit protocol across all domain writers expands this limited operator change into a broader runtime redesign, so this proposal rejects that alternative.
+Retirement before dispatch costs a release step after every refused addition, and that release needs destination proof. A lock held only in process would cost a possible split between the committed destination and later local writes.
 Adopting an edited baseline requires separate approval and cannot certify original restore completion.
 
 Implementation requires actual D1 tests for atomic DDL, prepared statements created before DDL, and queued SQL from both inspected restore versions.
@@ -112,8 +152,17 @@ The full D1 and lifecycle gates decide whether implementation can enable the rou
 ## Implementation status
 
 `scripts/d1-restored-addition.ts` implements both routes as the `restoredAddition` lifecycle owner.
-Its `run` and `resume` methods take the destination batch port, the journal directory, the original file, the SQLite source, and the cloud connection name.
-The cutover command and the CLI do not call it, so operators still refuse restored destinations.
+The owner takes the destination batch port, the journal directory, and the environment that locates the connection settings.
+Its `run` method takes the original file, the SQLite source, the cloud connection name, and the routed repositories.
+The journal records `operation.json`, `retired.json`, `dispatch-N.json`, `committed.json`, `verified.json`, `route-N.json`, and `routed.json`, in that order.
+
+`scripts/d1-restored-addition-command.ts` runs the owner from a private plan file with `--run`, `--resume`, `--resume --accept-destination-edits`, or `--release-source`.
+The plan names the `cf` profile, the account, the D1 database, the cloud connection and its URL, the original file, the source, the journal, and the repositories.
+The command refuses a plan whose URL differs from the named cloud connection.
+It sends each batch through `cf d1 query --batch`, as the cutover command does, and runs only when the module is the entry point.
+Exit status 2 reports a refusal, and exit status 3 reports an unknown outcome.
+No test spawns `cf`. The command has not run against a real resource.
+The cutover command and the CLI do not call the owner.
 
 The owner recognizes both checkpoint layouts by exact DDL.
 It accepts the four-column layout with a snapshot 5 original input, and the two-column layout with a snapshot 3 original input.
@@ -139,7 +188,7 @@ SQLite tests and local workerd D1 tests both pass these gates:
 - A restore paused at each write boundary keeps the addition refused until the restore completes.
 - Races on the checkpoint row, the identity, an issue, a trailing range, and the schema roll back the commit.
 - A lost response resumes as committed, with one dispatch and no second addition.
-- A receipt stays committed after later edits, and after a later schema change. Those changes block verification and source retirement.
+- A receipt stays committed after later edits, and after a later schema change. Those changes block verification and routing.
 
 The workerd D1 test also passes these gates:
 
@@ -154,8 +203,7 @@ The SQLite tests also pass these gates:
 - A batch that returns without a receipt is unknown after one dispatch.
 - A terminal layout without its receipt is unknown.
 - An edited or malformed journal operation is refused.
-- A source edit after freezing blocks source retirement, and a missing source is refused.
-- A crash after the retirement commit resumes and records the step.
+- A missing source is refused.
 
 The release 0.1.0 route tests replay the writes that the release 0.1.0 operator sent for one snapshot 3 input.
 `test/fixtures/release-0.1.0-restore.json` holds those writes, the input, the digest, and the release schema.
@@ -185,12 +233,39 @@ The SQLite tests also pass these release 0.1.0 gates:
 - A missing, invalid, or different original input is refused.
 - An edited row, checkpoint digest, or checkpoint DDL is refused, and so is a store that has not been upgraded.
 
-These gates remain open:
+The SQLite tests also pass these lifecycle and routing gates:
 
-- Request size, duration, and atomicity of the packet through the D1 REST batch API on a production database.
-- Claim validity at commit time beyond the guards on the captured claim rows.
-- Owner validity boundaries, receipt conflicts between concurrent operators, and metadata identity readback.
-- A supported procedure for an addition whose source retirement waits, because a destination write followed the commit. The owner does not stop Worker writers.
-- A source lock that holds from an uncertain dispatch until resume. The owner releases the lock when the outcome is unknown, so local writes in that window block source retirement. The cutover operator instead retires the source after any dispatch attempt.
-- Routing changes after source retirement, with recovery for each step.
-- A command that runs the owner after review and owner approval.
+- The source has all retirement triggers when the packet is dispatched, and a local write after an uncertain dispatch fails.
+- A crash before the retirement record resumes. A source edit before retirement is refused before any dispatch.
+- A source that another addition retired is refused before freezing.
+- After each commit race, `releaseSource` lifts the retirement, the source accepts writes again, and resume refuses the released journal.
+- Release refuses an unchanged preimage and a committed addition.
+- Two operators frozen against one destination commit one receipt. The other operator's resume refuses the different addition, and it can release its source.
+- A destination edit after the commit holds routing. Release refuses, and acceptance refuses a changed destination identity. Acceptance with the frozen identity records both digests and routes.
+- Routing switches a version 2 repository default, a named local connection, and its worktree with one step, and it keeps the tool, project, prefix, and actor. An unrelated user default stays unchanged.
+- A crash before or after each repository and user default write resumes to the same routes.
+- A setting changed after freezing refuses routing and keeps the change. A changed cloud connection URL refuses routing.
+- A target that is not a cloud connection, a repository without defaults, a repository that selects another store, and an empty plan are refused before the source is retired.
+- A live source claim is `invalidated` in the destination, because its incarnation differs from the destination incarnation. Destination claim states do not change.
+- The command runs, resumes, and refuses release through an injected SQLite batch port. It validates the arguments, the private plan, and the `cf` result shapes.
+
+The workerd D1 test also passes these lifecycle gates:
+
+- After each of the six commit races, `releaseSource` reads the D1 destination and lifts the source retirement.
+- A destination edit after a lost response routes after explicit acceptance.
+
+Gate status:
+
+- Claim validity at commit is bounded, and no further code is required. A claim state depends on the claim row, the store incarnation, and the database clock. The packet guards every claim row and the identity, and it writes no destination claim and no identity. Imported claims keep the source incarnation, so they are invalidated history. A lease that expires between freezing and commit changes no row, and the addition does not read lease states.
+- Concurrent operators are closed by the singleton immutable receipt and the source retirement. One receipt commits, and the other operator gets a refusal and a supported release. Two processes on one journal are not supported. Each journal record uses exclusive creation, so a racing duplicate step fails instead of overwriting.
+- Metadata identity readback is closed. Verification and acceptance both compare the destination identity with the receipt.
+- A destination write after the commit has the supported acceptance procedure above. The owner does not stop Worker writers.
+- The source lock window is closed by retirement before dispatch. A refused addition needs `releaseSource`, which needs destination proof.
+- Routing changes and their recovery are implemented for the stored local selection. The bounds in the routing section still apply.
+- The command entry point exists and needs code review before any use against a real resource.
+
+These gates remain open, and each needs a real D1 database under an owner-approved procedure:
+
+- Request size, duration, and atomicity of the packet through `cf d1 query --batch` on a production database.
+- Whether reads through `cf d1 query` reach the primary database, so that a lagging replica cannot show an old preimage.
+- Whether the Worker behind the plan URL binds the planned D1 database. The command checks the connection URL, but not the Worker binding.
