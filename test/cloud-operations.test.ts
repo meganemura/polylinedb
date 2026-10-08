@@ -89,7 +89,7 @@ test('cloud transport runs every operation against signed Worker requests throug
       { issue: { ...created.issue, versions: {} } },
       { issue: { ...created.issue, priority: undefined } },
       { issue: { ...created.issue, labels: ['duplicate', 'duplicate'] } },
-      { issue: { ...created.issue, extra: true } },
+      { issue: { ...created.issue, versions: { ...created.issue.versions, body: '1' } } },
     ]) {
       await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation(create),
         authorize: async () => 'secret', fetch: async () => Response.json(damaged) }), {
@@ -224,11 +224,11 @@ test('claim cloud decoding rejects malformed authority, state and receipt varian
     const acquire = parseOperation({ op: 'claim_acquire', issue_id: created.issue.id, incarnation: inspection.claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' });
     if (acquire.op !== 'claim_acquire') throw new Error('Invalid acquire');
     const accepted = await run(acquire); assert.ok('claim_receipt' in accepted); const receipt = accepted.claim_receipt;
-    for (const change of [{ issue_id: 'pd-999' }, { incarnation: 'f'.repeat(32) }, { session_id: crypto.randomUUID() }, { generation: 0 }, { revision: Number.MAX_SAFE_INTEGER + 1 }, { agent_label: 'Other' }, { agent_label: 'あ'.repeat(22) }, { expires_at: receipt.expires_at + 1 }, { acquired_at: receipt.acquired_at + 1 }, { outcome: 'released' }, { released_at: receipt.changed_at }, { actor: '' }, { extra: true }]) {
+    for (const change of [{ issue_id: 'pd-999' }, { incarnation: 'f'.repeat(32) }, { session_id: crypto.randomUUID() }, { generation: 0 }, { revision: Number.MAX_SAFE_INTEGER + 1 }, { agent_label: 'Other' }, { agent_label: 'あ'.repeat(22) }, { expires_at: receipt.expires_at + 1 }, { acquired_at: receipt.acquired_at + 1 }, { outcome: 'released' }, { released_at: receipt.changed_at }, { actor: '' }]) {
       await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: acquire, authorize: async () => 'synthetic', fetch: async () => Response.json({ claim_receipt: { ...receipt, ...change } }) }), { code: 'cloud_invalid_response', details: { request_id: acquire.request_id } });
     }
     const shown = await run({ op: 'claim_show', issue_id: created.issue.id }); assert.ok('claim' in shown);
-    for (const change of [{ state: 'released' }, { observed_at: -1 }, { lease: { ...shown.claim.lease, issue_id: 'pd-999' } }, { extra: true }]) await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation({ op: 'claim_show', issue_id: created.issue.id }), authorize: async () => 'synthetic', fetch: async () => Response.json({ claim: { ...shown.claim, ...change } }) }), { code: 'cloud_invalid_response' });
+    for (const change of [{ state: 'released' }, { observed_at: -1 }, { lease: { ...shown.claim.lease, issue_id: 'pd-999' } }]) await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation({ op: 'claim_show', issue_id: created.issue.id }), authorize: async () => 'synthetic', fetch: async () => Response.json({ claim: { ...shown.claim, ...change } }) }), { code: 'cloud_invalid_response' });
     await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation({ op: 'claim_list', limit: 1 }), authorize: async () => 'synthetic', fetch: async () => Response.json({ claims: [shown.claim], next_cursor: 'pd-999' }) }), { code: 'cloud_invalid_response' });
     const claim_proof = { issue_id: receipt.issue_id, incarnation: receipt.incarnation, session_id: receipt.session_id, generation: receipt.generation };
     for (const command of [acquire, parseOperation({ op: 'claim_renew', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() }), parseOperation({ op: 'claim_release', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() })]) {
@@ -240,7 +240,7 @@ test('claim cloud decoding rejects malformed authority, state and receipt varian
 
 test('response boundary rejects HTML, redirects, missing fields, oversized bodies and unsafe error details', async () => {
   const replies = [new Response('<html>secret</html>'), new Response('', { status: 302, headers: { location: 'https://other.example' } }),
-    Response.json({}), Response.json({ actor: 'x', extra: true }), Response.json({ actor: 'x' }, { headers: { 'content-length': String(8 * 1024 * 1024 + 1) } }),
+    Response.json({}), Response.json({ actor: 'x' }, { headers: { 'content-length': String(8 * 1024 * 1024 + 1) } }),
     Response.json({ error: { code: 'invalid_input', message: 'secret', details: { token: 'secret' } } }, { status: 400 }),
     new Response('x'.repeat(8 * 1024 * 1024 + 1), { headers: { 'content-type': 'application/json' } })];
   for (const response of replies) await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: { op: 'actor' },
@@ -277,8 +277,6 @@ test('transport reports unavailable signing keys with fixed guidance and retains
 test('transport rejects malformed JWKS errors and JWKS codes under other statuses', async () => {
   const exact = { error: { code: 'jwks_unavailable', message: 'Authentication unavailable' } };
   const invalidResponses = [
-    { status: 503, body: { ...exact, request_id: 'unexpected' } },
-    { status: 503, body: { error: { ...exact.error, details: {} } } },
     { status: 503, body: { error: { ...exact.error, message: 'x'.repeat(4097) } } },
     { status: 503, body: { error: { ...exact.error, message: 42 } } },
     { status: 502, body: exact },

@@ -215,7 +215,8 @@ test('cloud boundary requires opted-in fields and validates advisory scope', asy
   const token = context.memory_revision;
   const call = (input: unknown, response: unknown) => executeCloudOperation({ origin: cloud.url, operation: parseOperation(input), authorize: async () => 'synthetic', fetch: async () => Response.json(response) });
   assert.deepEqual(await call({ op: 'memory_context', project: 'demo', with_revision: true }, context), context);
-  await assert.rejects(call({ op: 'memory_context', project: 'demo' }, context), { code: 'cloud_invalid_response' });
+  const { memory_revision: _, ...unrevised } = context;
+  assert.deepEqual(await call({ op: 'memory_context', project: 'demo' }, context), unrevised);
   const request = { op: 'list', project: 'demo', observed_memory_revision: token };
   const output = { issues: [], next_cursor: null, memory_freshness: { status: 'current', project: 'demo' } };
   assert.deepEqual(await call(request, output), output);

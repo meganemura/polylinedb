@@ -231,7 +231,7 @@ test('cloud CLI reports unavailable signing keys with fixed guidance and one att
 
 test('cloud CLI rejects malformed JWKS 503 envelopes and unsupported 502 responses', async context => {
   const { run, requests } = await fixture(context);
-  for (const mode of ['jwks-unavailable-wrong-code', 'jwks-unavailable-extra-error-field', 'jwks-unavailable-extra-envelope-field',
+  for (const mode of ['jwks-unavailable-wrong-code',
     'jwks-unavailable-wrong-status-502', 'jwks-unavailable-long-message', 'jwks-unavailable-non-string-message']) {
     const before = requests().length;
     const result = await run(['actor'], { mode, status: 1 });
@@ -243,7 +243,7 @@ test('cloud CLI rejects malformed JWKS 503 envelopes and unsupported 502 respons
 
 test('cloud CLI rejects invalid 503 access configuration envelopes and status codes', async context => {
   const { run } = await fixture(context);
-  for (const mode of ['access-configuration-wrong-code', 'access-configuration-extra-error-field', 'access-configuration-extra-envelope-field',
+  for (const mode of ['access-configuration-wrong-code',
     'access-configuration-wrong-status-409', 'access-configuration-wrong-status-502', 'access-configuration-long-message', 'access-configuration-non-string-message']) {
     const result = await run(['actor'], { mode, status: 1 });
     assert.deepEqual(result.error, { code: 'cloud_invalid_response', message: 'The cloud returned an invalid operation response.' }, mode);
@@ -251,7 +251,19 @@ test('cloud CLI rejects invalid 503 access configuration envelopes and status co
   }
 });
 
-test('cloud CLI completes a show from an older Worker with one claim_show request', async context => {
+test('cloud CLI accepts 503 envelopes with unknown fields and keeps the fixed guidance', async context => {
+  const { run } = await fixture(context);
+  for (const [prefix, code, message] of [['jwks-unavailable', 'jwks_unavailable', 'Cloud signing keys are temporarily unavailable. Retry later with the same request ID when one was returned.'],
+    ['access-configuration', 'invalid_access_configuration', 'Cloud Access is misconfigured. Check the Worker Access configuration.']]) {
+    for (const variant of ['extra-error-field', 'extra-envelope-field']) {
+      const result = await run(['actor'], { mode: `${prefix}-${variant}`, status: 1 });
+      assert.deepEqual(result.error, { code, message }, variant);
+      assert.equal(JSON.stringify(result).includes('synthetic-private-token'), false, variant);
+    }
+  }
+});
+
+test('cloud CLI reads show and claim acquire from older and newer Worker response shapes', async context => {
   const { run, requests } = await fixture(context);
   const { issue } = await run(['create', '--body', 'Compatible shapes']);
   await run(['comment', issue.id, '--body', 'Noted']);
@@ -260,6 +272,19 @@ test('cloud CLI completes a show from an older Worker with one claim_show reques
   const before = requests().length;
   assert.deepEqual(timeless(await run(['show', issue.id], { mode: 'show-without-claim' })), timeless(current));
   assert.deepEqual(requests().slice(before).map(request => request.op), ['show', 'claim_show']);
-  const human = await run(['show', issue.id, '--human'], { mode: 'show-without-claim', raw: true });
-  assert.ok(human.split('\n').includes(`Claim never_claimed · store incarnation ${current.claim.store_incarnation}`));
+  const newer = await run(['show', issue.id], { mode: 'future-fields', raw: true });
+  assert.equal(newer.includes('synthetic-future'), false);
+  assert.deepEqual(timeless(JSON.parse(newer)), timeless(current));
+  assert.deepEqual(requests().slice(before + 2).map(request => request.op), ['show']);
+  const claimLine = `Claim never_claimed · store incarnation ${current.claim.store_incarnation}`;
+  for (const mode of ['show-without-claim', 'future-fields']) {
+    const human = await run(['show', issue.id, '--human'], { mode, raw: true });
+    assert.ok(human.split('\n').includes(claimLine), mode);
+    assert.equal(human.includes('synthetic-future'), false, mode);
+  }
+  assert.deepEqual(await run(['show', '48'], { mode: 'future-fields', status: 3 }), await run(['show', '48'], { status: 3 }));
+  const acquisition = ['claim', 'acquire', issue.id, '--incarnation', current.claim.store_incarnation, '--session-id', crypto.randomUUID(), '--request-id', crypto.randomUUID()];
+  const acquired = await run(acquisition, { mode: 'future-fields', raw: true });
+  assert.equal(acquired.includes('synthetic-future'), false);
+  assert.deepEqual(JSON.parse(acquired), await run(acquisition));
 });

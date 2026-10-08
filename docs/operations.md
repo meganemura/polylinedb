@@ -187,6 +187,33 @@ It contains only these fields, each when the error supplies it in a safe shape:
 
 Known domain and authentication errors keep their codes, messages, and details.
 
+## Response compatibility
+
+The cloud client reads each `/v1/operations` response by the keys that it knows.
+It ignores a field that it does not know, at the top level and in nested objects such as issue rows, field versions, comments, claims, receipts, memories, and error envelopes.
+An ignored field never reaches the CLI output.
+
+The client still rejects a response with `cloud_invalid_response` when a required field is missing or has the wrong type.
+It also keeps these checks:
+
+- Discriminators, such as the claim `state`, the receipt `outcome`, the dependency `outcome`, and the memory freshness `status`, must have a value that the client knows.
+- Echoed IDs and projects must match the request, and labels must round-trip.
+- Claim, prerequisite, and worklist pages must keep their order and their cursor rules.
+- Error details are decoded only for the codes that carry them. Details on another code make the response invalid.
+- The response size limit and the request timeout stay the same.
+
+A Worker can add a response field without breaking a CLI that has this behavior.
+A field that a Worker adds to `memory_context` counts toward `max_bytes`, because the client measures the whole response body.
+A Worker must not remove, rename, or retype a field that a client requires.
+It also must not send a new discriminator value, a new success shape, or details on an error code that had none.
+The client rejects each of these.
+The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
+
+Two fields are optional so that the client works with Workers on both sides of a change:
+
+- `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
+- `open_blockers` in `claim_acquire`. When it is present, it must be an array of issue IDs in issue order that does not contain the claimed issue. The result does not include it yet.
+
 ## Local repository defaults
 
 Run `pd init --stealth --prefix NAME --tool NAME --project NAME --actor IDENTITY` inside a Git working tree.

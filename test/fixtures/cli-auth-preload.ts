@@ -39,6 +39,11 @@ if (listenerCode) {
 }
 syncBuiltinESMExports();
 
+function futureFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(futureFields);
+  if (typeof value !== 'object' || value === null) return value;
+  return { ...Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, futureFields(entry)])), future_field: { nested: ['synthetic-future'] }, labels_json: '["synthetic-future"]' };
+}
 const networkFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : String(input);
@@ -75,10 +80,13 @@ globalThis.fetch = async (input, init) => {
       const result = await executeOperation(store.db, operation, 'oauth:synthetic-owner');
       if (mode === 'ambiguous') throw new Error('synthetic-private-token');
       if (mode === 'show-without-claim' && 'claim' in result && 'comments' in result) { const { claim: _, ...older } = result; return Response.json(older); }
+      if (mode === 'future-fields') return Response.json({ ...futureFields(result) as object, ...(operation.op === 'claim_acquire' ? { open_blockers: [] } : {}) });
       return Response.json(result);
     } catch (error) {
-      if (error instanceof PolylinedbError) return Response.json({ error: { code: error.code, message: error.message,
-        ...(error.details === undefined ? {} : { details: error.details }) } }, { status: error.status });
+      if (error instanceof PolylinedbError) {
+        const body = { error: { code: error.code, message: error.message, ...(error.details === undefined ? {} : { details: error.details }) } };
+        return Response.json(mode === 'future-fields' ? futureFields(body) : body, { status: error.status });
+      }
       throw error;
     } finally { store.close(); }
   }

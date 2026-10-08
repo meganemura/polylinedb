@@ -1,4 +1,4 @@
-/** Decodes real Worker responses in older shapes through the cloud client. */
+/** Decodes real Worker responses in older and newer shapes through the cloud client, and rejects missing or retyped fields. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,6 +8,7 @@ import { handleRequest } from '../src/service/index.ts';
 import { SCHEMA_SQL } from '../src/records/schema.ts';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 import { parseOperation } from '../src/records/index.ts';
+import { PolylinedbError } from '../src/records/errors.ts';
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
   publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -59,6 +60,72 @@ async function worker() {
 const origin = 'https://issues.example';
 const decode = (value: unknown, fetch: typeof globalThis.fetch) => executeCloudOperation({ origin, operation: parseOperation(value), authorize: async () => 'synthetic-secret', fetch });
 const answer = (body: unknown, status = 200): typeof fetch => async () => Response.json(body, { status });
+async function outcome(pending: Promise<unknown>): Promise<unknown> {
+  try { return { result: await pending }; }
+  catch (error) { assert.ok(error instanceof PolylinedbError); return { error: { code: error.code, status: error.status, details: error.details } }; }
+}
+// The names include fields that the issue row decoder reads from storage rows, so a response cannot override them.
+function future(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(future);
+  if (typeof value !== 'object' || value === null) return value;
+  return { ...Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, future(entry)])),
+    future_field: { nested: [{ deeper: true }] }, closed_at: null, labels_json: '["injected"]', body_v: 99 };
+}
+
+test('a newer Worker response with unknown top-level and nested fields decodes to the same result as the current shape', async () => {
+  const { sqlite, wire } = await worker();
+  const decodedAlike = async (value: Record<string, unknown>, extend = (body: Record<string, unknown>) => future(body)) => {
+    const { status, body } = await wire(value);
+    const current = await outcome(decode(value, answer(body, status)));
+    assert.equal(JSON.stringify(current).includes('cloud_invalid_response'), false, `${value.op} ${JSON.stringify(body)}`);
+    assert.deepEqual(await outcome(decode(value, answer(extend(body), status))), current, String(value.op));
+    return current;
+  };
+  try {
+    await decodedAlike({ op: 'actor' });
+    const blocker = { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Blocker' };
+    await decodedAlike(blocker);
+    const dependent = { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Dependent', labels: ['ready'] };
+    await decodedAlike(dependent);
+    await decodedAlike({ op: 'comment', id: 'pd-2', body: 'Noted' });
+    await decodedAlike({ op: 'update', id: 'pd-2', changes: [{ field: 'body', expected: 1, value: 'Edited' }] });
+    await decodedAlike({ op: 'update', id: 'pd-2', changes: [{ field: 'body', expected: 1, value: 'Stale' }] });
+    await decodedAlike({ op: 'show', id: 'pd-2' });
+    await decodedAlike({ op: 'show', id: 'pd-9' });
+    for (const op of ['list', 'search']) await decodedAlike({ op, project: 'compat', ...(op === 'search' ? { query: 'Edited' } : {}) });
+    await decodedAlike({ op: 'dependency_add', dependent_id: 'pd-2', blocker_id: 'pd-1', expected_revision: 1, request_id: crypto.randomUUID() });
+    await decodedAlike({ op: 'dependency_add', dependent_id: 'pd-2', blocker_id: 'pd-1', expected_revision: 1, request_id: crypto.randomUUID() });
+    await decodedAlike({ op: 'dependency_list', dependent_id: 'pd-2' });
+    await decodedAlike({ op: 'dependency_worklist', state: 'blocked' });
+    const shown = await wire({ op: 'claim_show', issue_id: 'pd-2' });
+    await decodedAlike({ op: 'claim_show', issue_id: 'pd-2' });
+    const claim = shown.body.claim as { store_incarnation: string };
+    const acquire = { op: 'claim_acquire', issue_id: 'pd-2', incarnation: claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
+    const acquired = await decodedAlike(acquire, body => ({ ...future(body) as object, open_blockers: ['pd-1'] }));
+    await decodedAlike({ ...acquire, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() });
+    assert.ok(typeof acquired === 'object' && acquired !== null && 'result' in acquired);
+    const claim_proof = { issue_id: 'pd-2', incarnation: claim.store_incarnation, session_id: acquire.session_id, generation: 1 };
+    await decodedAlike({ op: 'claim_renew', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() }, body => ({ ...future(body) as object, open_blockers: 'ignored outside acquisition' }));
+    await decodedAlike({ op: 'claim_list', project: 'compat' });
+    await decodedAlike({ op: 'close', id: 'pd-2', expected: 1, claim_proof });
+    await decodedAlike({ op: 'claim_release', claim_proof, expected_revision: 2, request_id: crypto.randomUUID() });
+    await decodedAlike({ op: 'reopen', id: 'pd-2', expected: 2 });
+    const memory = { op: 'memory_create', project: 'compat', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Fact', body: 'Confirmed' };
+    await decodedAlike(memory);
+    const created = await wire(memory); const id = (created.body.memory as { id: string }).id;
+    await decodedAlike({ op: 'memory_show', project: 'compat', id });
+    await decodedAlike({ op: 'memory_update', project: 'compat', id, title: 'Fact', body: 'Revised', expected: 1 });
+    await decodedAlike({ op: 'memory_update', project: 'compat', id, title: 'Fact', body: 'Stale', expected: 1 });
+    await decodedAlike({ op: 'memory_list', project: 'compat' });
+    await decodedAlike({ op: 'memory_search', project: 'compat', query: 'Revised' });
+    const context = await wire({ op: 'memory_context', project: 'compat', with_revision: true });
+    await decodedAlike({ op: 'memory_context', project: 'compat', with_revision: true });
+    await decodedAlike({ op: 'show', id: 'pd-2', observed_memory_revision: context.body.memory_revision });
+    await decodedAlike({ op: 'memory_delete', project: 'compat', id, expected: 2 });
+    await decodedAlike({ op: 'memory_show', project: 'compat', id });
+  } finally { sqlite.close(); }
+});
+
 test('an older Worker show without claim completes through one claim_show request', async () => {
   const { sqlite, transport, wire } = await worker();
   try {
@@ -84,4 +151,60 @@ test('an older Worker show without claim completes through one claim_show reques
       ? Response.json(withoutClaim) : Response.json({ error: { code: 'not_found', message: 'Missing', details: { id: 'pd-1' } } }, { status: 404 })), { code: 'not_found' });
     await assert.rejects(decode({ op: 'show', id: 'pd-1' }, answer(withoutClaim)), { code: 'cloud_invalid_response' });
   } finally { sqlite.close(); }
+});
+
+test('missing required fields and retyped fields stay cloud_invalid_response at every level', async () => {
+  const { sqlite, wire } = await worker();
+  try {
+    await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Blocker' });
+    await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Dependent' });
+    await wire({ op: 'comment', id: 'pd-2', body: 'Noted' });
+    const shown = (await wire({ op: 'show', id: 'pd-2' })).body as { issue: Record<string, unknown> & { versions: Record<string, unknown> }; comments: Record<string, unknown>[]; claim: Record<string, unknown> };
+    const { body: _, ...issueWithoutBody } = shown.issue;
+    const { labels: __, ...versionsWithoutLabels } = shown.issue.versions;
+    const { created_by: ___, ...commentWithoutAuthor } = shown.comments[0] ?? {};
+    const { lease: ____, ...claimWithoutLease } = shown.claim;
+    const { comments: _____, ...showWithoutComments } = shown;
+    const show = { op: 'show', id: 'pd-2' };
+    for (const damaged of [showWithoutComments, { ...shown, comments: {} }, { ...shown, claim: null }, { ...shown, claim: claimWithoutLease }, { ...shown, claim: { ...shown.claim, observed_at: '1' } },
+      { ...shown, issue: issueWithoutBody }, { ...shown, issue: { ...shown.issue, priority: '2' } }, { ...shown, issue: { ...shown.issue, versions: versionsWithoutLabels } },
+      { ...shown, issue: { ...shown.issue, versions: { ...shown.issue.versions, body: '1' } } }, { ...shown, comments: [commentWithoutAuthor] }]) {
+      let requests = 0;
+      await assert.rejects(decode(show, async () => { requests++; return Response.json(damaged); }), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+      assert.equal(requests, 1);
+    }
+    const listed = (await wire({ op: 'list', project: 'compat' })).body;
+    for (const damaged of [{ issues: listed.issues }, { ...listed, issues: {} }, { ...listed, next_cursor: 5 }]) await assert.rejects(decode({ op: 'list', project: 'compat' }, answer(damaged)), { code: 'cloud_invalid_response' });
+    await wire({ op: 'dependency_add', dependent_id: 'pd-2', blocker_id: 'pd-1', expected_revision: 1, request_id: crypto.randomUUID() });
+    const acquire = { op: 'claim_acquire', issue_id: 'pd-2', incarnation: shown.claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() };
+    const acquired = (await wire(acquire)).body as { claim_receipt: Record<string, unknown> };
+    const { generation: ______, ...receiptWithoutGeneration } = acquired.claim_receipt;
+    for (const damaged of [{}, { claim_receipt: receiptWithoutGeneration }, { claim_receipt: { ...acquired.claim_receipt, outcome: 'renewed' } },
+      { ...acquired, open_blockers: 'pd-1' }, { ...acquired, open_blockers: ['pd-2'] }, { ...acquired, open_blockers: [5] }, { ...acquired, open_blockers: ['pd-3', 'pd-1'] }]) {
+      await assert.rejects(decode(acquire, answer(damaged)), { code: 'cloud_invalid_response', details: { request_id: acquire.request_id } }, JSON.stringify(damaged));
+    }
+    const conflict = await wire({ op: 'update', id: 'pd-2', changes: [{ field: 'body', expected: 9, value: 'Stale' }] });
+    const error = conflict.body.error as Record<string, unknown> & { details: Record<string, unknown> };
+    const { message: _______, ...errorWithoutMessage } = error;
+    for (const damaged of [{ error: errorWithoutMessage }, { error: { ...error, code: 5 } }, { error: { ...error, details: { issue: error.details.issue } } }]) {
+      await assert.rejects(decode({ op: 'update', id: 'pd-2', changes: [{ field: 'body', expected: 9, value: 'Stale' }] }, answer(damaged, conflict.status)), { code: 'cloud_invalid_response' });
+    }
+  } finally { sqlite.close(); }
+});
+
+test('error envelopes accept unknown fields but keep their fixed messages and decoded details', async () => {
+  const actor = { op: 'actor' };
+  await assert.rejects(decode(actor, answer({ error: { code: 'jwks_unavailable', message: 'Unavailable', details: { trace: 'synthetic-private-token' } }, request_id: 'x' }, 503)), error => {
+    assert.ok(error instanceof PolylinedbError);
+    assert.equal(error.code, 'jwks_unavailable');
+    assert.equal(error.message.includes('synthetic-private-token'), false);
+    assert.equal(error.details, undefined);
+    return true;
+  });
+  const comment = { op: 'comment', id: 'pd-1', body: 'note' };
+  await assert.rejects(decode(comment, answer({ error: { code: 'read_only_actor', message: 'Read only', details: { op: 'comment', role: 'reader' }, hint: 'x' } }, 403)),
+    { code: 'read_only_actor', status: 403, details: { op: 'comment' } });
+  await assert.rejects(decode(comment, answer({ error: { code: 'not_found', message: 'Missing', details: { id: 'pd-1', hint: 'x' }, trace: 'x' }, extra: true }, 404)),
+    error => { assert.ok(error instanceof PolylinedbError); assert.deepEqual([error.code, error.details], ['not_found', { id: 'pd-1' }]); return true; });
+  await assert.rejects(decode(comment, answer({ error: { code: 'invalid_input', message: 'Bad', details: { token: 'synthetic-private-token' } } }, 400)), { code: 'cloud_invalid_response' });
 });

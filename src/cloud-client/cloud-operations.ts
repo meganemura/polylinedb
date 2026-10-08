@@ -20,25 +20,27 @@ function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return invalid();
   return value as Record<string, unknown>;
 }
-function exact(value: unknown, keys: readonly string[]): Record<string, unknown> {
-  const result = object(value);
-  if (Object.keys(result).length !== keys.length || keys.some(key => !Object.hasOwn(result, key))) return invalid();
-  return result;
+// A Worker may add response fields before every client knows them, so each decoder names the keys it reads and drops the rest.
+// Required keys, their types, discriminators, and ID echoes stay strict: a Worker must not remove, rename, or retype them.
+function known(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
+  const row = object(value);
+  if (required.some(key => !Object.hasOwn(row, key))) return invalid();
+  return Object.fromEntries([...required, ...optional].filter(key => Object.hasOwn(row, key)).map(key => [key, row[key]]));
 }
 function issue(value: unknown): Issue {
-  const row = exact(value, ['id', ...fields, 'versions', 'created_at', 'created_by', 'updated_at', 'updated_by']);
-  const versions = exact(row.versions, fields);
+  const row = known(value, ['id', ...fields, 'versions', 'created_at', 'created_by', 'updated_at', 'updated_by']);
+  const versions = known(row.versions, fields);
   const parsed = issueRow({ ...row, labels_json: JSON.stringify(row.labels), ...Object.fromEntries(fields.map(field => [`${field}_v`, versions[field]])) });
   if (JSON.stringify(parsed.labels) !== JSON.stringify(row.labels)) return invalid();
   return parsed;
 }
 function memory(value: unknown): Memory {
-  return memoryRow(exact(value, ['id', 'project', 'title', 'body', 'version', 'created_at', 'created_by', 'updated_at', 'updated_by']));
+  return memoryRow(known(value, ['id', 'project', 'title', 'body', 'version', 'created_at', 'created_by', 'updated_at', 'updated_by']));
 }
 const claimKeys = ['issue_id', 'incarnation', 'session_id', 'generation', 'actor', 'agent_label', 'revision', 'acquired_at', 'changed_at', 'expires_at', 'released_at'];
-function claim(value: unknown): Claim { return claimRow(exact(value, claimKeys)); }
+function claim(value: unknown): Claim { return claimRow(known(value, claimKeys)); }
 function claimInspection(value: unknown): ClaimInspection {
-  const row = exact(value, ['issue_id', 'store_incarnation', 'observed_at', 'state', 'lease']);
+  const row = known(value, ['issue_id', 'store_incarnation', 'observed_at', 'state', 'lease']);
   const issue_id = parseIssueId(row.issue_id); const store_incarnation = parseIncarnation(row.store_incarnation);
   if (typeof row.observed_at !== 'number' || !Number.isSafeInteger(row.observed_at) || row.observed_at < 0) return invalid();
   const lease = row.lease === null ? null : claim(row.lease);
@@ -47,13 +49,19 @@ function claimInspection(value: unknown): ClaimInspection {
   if (row.state !== state) return invalid();
   return { issue_id, store_incarnation, observed_at: row.observed_at, state, lease };
 }
+// A Worker that reports blockers on acquisition sends sorted open blocker IDs; the result type does not carry them yet.
+function openBlockers(value: unknown, dependent: string): boolean {
+  if (!Array.isArray(value)) return false;
+  let previous = '';
+  for (const id of value.map(id => parseIssueId(id))) { const sort = issueSortKey(id); if (id === dependent || sort <= previous) return false; previous = sort; }
+  return true;
+}
 function result(operation: Operation, value: unknown): OperationResult {
   if ('observed_memory_revision' in operation && operation.observed_memory_revision !== undefined) {
     const row = object(value);
     const { memory_freshness, ...base } = row;
     const output = basicResult(operation, base);
-    const freshness = object(memory_freshness);
-    exact(freshness, freshness.status === 'stale' ? ['status', 'project', 'reason'] : ['status', 'project']);
+    const freshness = known(memory_freshness, ['status', 'project'], ['reason']);
     if (typeof freshness.project !== 'string' || !freshness.project.trim() || new TextEncoder().encode(freshness.project).length > 256 || /\p{Cc}/u.test(freshness.project)) return invalid();
     const expectedProject = 'issue' in output ? output.issue.project : ('project' in operation ? operation.project : undefined) ?? observedMemoryProject(operation.observed_memory_revision);
     if (operation.op !== 'comment' && freshness.project !== expectedProject) return invalid();
@@ -69,12 +77,12 @@ function result(operation: Operation, value: unknown): OperationResult {
 function basicResult(operation: Operation, value: unknown): OperationResult {
   switch (operation.op) {
     case 'claim_show': {
-      const current = claimInspection(exact(value, ['claim']).claim);
+      const current = claimInspection(known(value, ['claim']).claim);
       if (current.issue_id !== operation.issue_id) return invalid();
       return { claim: current };
     }
     case 'claim_list': {
-      const row = exact(value, ['claims', 'next_cursor']);
+      const row = known(value, ['claims', 'next_cursor']);
       if (!Array.isArray(row.claims) || row.claims.length > operation.limit) return invalid();
       const claims = row.claims.map(claimInspection);
       let previous = operation.after === undefined ? '' : issueSortKey(operation.after);
@@ -84,7 +92,9 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { claims, next_cursor };
     }
     case 'claim_acquire': case 'claim_renew': case 'claim_release': {
-      const row = exact(exact(value, ['claim_receipt']).claim_receipt, [...claimKeys, 'outcome']);
+      const response = known(value, ['claim_receipt'], operation.op === 'claim_acquire' ? ['open_blockers'] : []);
+      if (operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') && !openBlockers(response.open_blockers, operation.issue_id)) return invalid();
+      const row = known(response.claim_receipt, [...claimKeys, 'outcome']);
       const { outcome, ...owner } = row; const parsed = claim(owner);
       const expected = operation.op === 'claim_acquire' ? 'acquired' : operation.op === 'claim_renew' ? 'renewed' : 'released';
       if (outcome !== expected || (outcome === 'released') !== (parsed.released_at !== null)) return invalid();
@@ -99,7 +109,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return invalid();
     }
     case 'dependency_add': case 'dependency_remove': {
-      const row = exact(exact(value, ['dependency']).dependency, ['dependent_id', 'blocker_id', 'revision', 'outcome']);
+      const row = known(known(value, ['dependency']).dependency, ['dependent_id', 'blocker_id', 'revision', 'outcome']);
       if (row.dependent_id !== operation.dependent_id || row.blocker_id !== operation.blocker_id || row.revision !== operation.expected_revision + 1) return invalid();
       if (operation.op === 'dependency_add' && row.outcome !== 'added' && row.outcome !== 'already_present') return invalid();
       if (operation.op === 'dependency_remove' && row.outcome !== 'removed' && row.outcome !== 'already_absent') return invalid();
@@ -107,10 +117,10 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { dependency: { dependent_id: operation.dependent_id, blocker_id: operation.blocker_id, revision: operation.expected_revision + 1, outcome: row.outcome } };
     }
     case 'dependency_list': {
-      const row = exact(value, ['dependent_id', 'revision', 'blockers', 'next_cursor']);
+      const row = known(value, ['dependent_id', 'revision', 'blockers', 'next_cursor']);
       if (row.dependent_id !== operation.dependent_id || typeof row.revision !== 'number' || !Number.isSafeInteger(row.revision) || row.revision < 1 || !Array.isArray(row.blockers) || row.blockers.length > operation.limit) return invalid();
       const blockers = row.blockers.map(value => {
-        const blocker = exact(value, ['id', 'project', 'status']);
+        const blocker = known(value, ['id', 'project', 'status']);
         if (typeof blocker.project !== 'string' || !blocker.project.trim() || /\p{Cc}/u.test(blocker.project) || new TextEncoder().encode(blocker.project).length > 256) return invalid();
         const status = statuses.find(status => status === blocker.status);
         if (status === undefined) return invalid();
@@ -123,34 +133,33 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { dependent_id: operation.dependent_id, revision: row.revision, blockers, next_cursor };
     }
     case 'memory_create': case 'memory_show': case 'memory_update': {
-      const parsed = memory(exact(value, ['memory']).memory);
+      const parsed = memory(known(value, ['memory']).memory);
       if (parsed.project !== operation.project || ('id' in operation && parsed.id !== operation.id)) return invalid();
       return { memory: parsed };
     }
     case 'memory_delete': {
-      const deleted = exact(exact(value, ['deleted']).deleted, ['id', 'project', 'version']);
+      const deleted = known(known(value, ['deleted']).deleted, ['id', 'project', 'version']);
       if (deleted.id !== operation.id || deleted.project !== operation.project || deleted.version !== operation.expected) return invalid();
       return { deleted: { id: operation.id, project: operation.project, version: operation.expected } };
     }
     case 'memory_list': case 'memory_search': {
-      const row = exact(value, ['memories', 'next_cursor']);
+      const row = known(value, ['memories', 'next_cursor']);
       if (!Array.isArray(row.memories) || row.memories.length > operation.limit) return invalid();
       const memories = row.memories.map(memory);
       if (memories.some(entry => entry.project !== operation.project)) return invalid();
       return { memories, next_cursor: row.next_cursor === null ? null : parseMemoryId(row.next_cursor) };
     }
     case 'memory_context': {
-      const row = exact(value, ['project', 'store', 'memories', 'limits', 'omitted', 'next_cursor', 'notices', ...(operation.with_revision ? ['memory_revision'] : [])]);
-      const store = exact(row.store, ['kind', 'url']);
-      const limits = exact(row.limits, ['entries', 'bytes']);
+      const row = known(value, ['project', 'store', 'memories', 'limits', 'omitted', 'next_cursor', 'notices', ...(operation.with_revision ? ['memory_revision'] : [])]);
+      const store = known(row.store, ['kind', 'url']);
+      const limits = known(row.limits, ['entries', 'bytes']);
       if (row.project !== operation.project || store.kind !== 'cloud' || typeof store.url !== 'string' || limits.entries !== operation.limit || limits.bytes !== operation.max_bytes
         || typeof row.omitted !== 'boolean' || !Array.isArray(row.memories) || row.memories.length > operation.limit || !Array.isArray(row.notices) || row.notices.length > 1
         || new TextEncoder().encode(JSON.stringify(value)).length > operation.max_bytes) return invalid();
       const memories = row.memories.map(memory);
       if (memories.some(entry => entry.project !== operation.project)) return invalid();
       const notices: MemoryContext['notices'] = row.notices.map(value => {
-        const notice = object(value);
-        exact(notice, Object.hasOwn(notice, 'skipped_id') ? ['code', 'skipped_id'] : ['code']);
+        const notice = known(value, ['code'], ['skipped_id']);
         if (notice.code !== 'entry_limit' && notice.code !== 'byte_limit') return invalid();
         return { code: notice.code, ...(notice.skipped_id === undefined ? {} : { skipped_id: parseMemoryId(notice.skipped_id) }) };
       });
@@ -164,19 +173,19 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         next_cursor: row.next_cursor === null ? null : parseMemoryId(row.next_cursor), notices, ...(revision === undefined ? {} : { memory_revision: revision }) };
     }
     case 'actor': {
-      const row = exact(value, ['actor']);
+      const row = known(value, ['actor']);
       if (typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)) return invalid();
       return { actor: row.actor };
     }
     case 'show': {
-      const row = exact(value, ['issue', 'comments', 'claim']);
+      const row = known(value, ['issue', 'comments', 'claim']);
       if (!Array.isArray(row.comments)) return invalid();
       const shown = issue(row.issue); const current = claimInspection(row.claim);
       if (current.issue_id !== shown.id) return invalid();
-      return { issue: shown, comments: row.comments.map(entry => commentRow(exact(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))), claim: current };
+      return { issue: shown, comments: row.comments.map(entry => commentRow(known(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))), claim: current };
     }
     case 'list': case 'search': case 'dependency_worklist': {
-      const row = exact(value, ['issues', 'next_cursor']);
+      const row = known(value, ['issues', 'next_cursor']);
       if (!Array.isArray(row.issues)) return invalid();
       const issues = row.issues.map(issue); const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
       if (operation.op === 'dependency_worklist') {
@@ -191,8 +200,8 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       }
       return { issues, next_cursor };
     }
-    case 'comment': return { comment: commentRow(exact(exact(value, ['comment']).comment, ['id', 'issue_id', 'body', 'created_at', 'created_by'])) };
-    case 'create': case 'update': case 'close': case 'reopen': return { issue: issue(exact(value, ['issue']).issue) };
+    case 'comment': return { comment: commentRow(known(known(value, ['comment']).comment, ['id', 'issue_id', 'body', 'created_at', 'created_by'])) };
+    case 'create': case 'update': case 'close': case 'reopen': return { issue: issue(known(value, ['issue']).issue) };
     default: { const exhaustive: never = operation; return exhaustive; }
   }
 }
@@ -201,7 +210,7 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
   switch (code) {
     case 'claim_conflict': {
       if (operation.op !== 'claim_acquire' && operation.op !== 'claim_renew' && operation.op !== 'claim_release') return invalid();
-      const current = claimInspection(exact(value, ['current']).current);
+      const current = claimInspection(known(value, ['current']).current);
       if (current.issue_id !== (operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id)) return invalid();
       return { current };
     }
@@ -210,63 +219,63 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       if (object(value).id !== undefined) {
         const target = operation.op === 'dependency_add' || operation.op === 'dependency_remove' ? operation.dependent_id
           : operation.op === 'update' || operation.op === 'close' || operation.op === 'reopen' || operation.op === 'comment' ? operation.id : invalid();
-        if (exact(value, ['id']).id !== target) return invalid();
+        if (known(value, ['id']).id !== target) return invalid();
         return { id: target };
       }
       if (operation.op !== 'update' && operation.op !== 'close' && operation.op !== 'reopen') return invalid();
-      const current = issue(exact(value, ['issue']).issue); if (current.id !== operation.id) return invalid();
+      const current = issue(known(value, ['issue']).issue); if (current.id !== operation.id) return invalid();
       return { issue: current };
     }
     case 'not_ready': {
-      if (operation.op !== 'claim_acquire' || exact(value, ['id']).id !== operation.issue_id) return invalid();
+      if (operation.op !== 'claim_acquire' || known(value, ['id']).id !== operation.issue_id) return invalid();
       return { id: operation.issue_id };
     }
     case 'dependency_conflict': {
       if (operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') return invalid();
-      const row = exact(value, ['expected_revision', 'current']);
+      const row = known(value, ['expected_revision', 'current']);
       if (row.expected_revision !== operation.expected_revision) return invalid();
       const current = basicResult({ op: 'dependency_list', dependent_id: operation.dependent_id, limit: 50 }, row.current);
       if (!('revision' in current) || current.revision === operation.expected_revision) return invalid();
       return { expected_revision: operation.expected_revision, current };
     }
     case 'dependency_version_exhausted': {
-      const row = exact(value, ['dependent_id']);
+      const row = known(value, ['dependent_id']);
       if ((operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') || row.dependent_id !== operation.dependent_id || operation.expected_revision !== Number.MAX_SAFE_INTEGER) return invalid();
       return { dependent_id: operation.dependent_id };
     }
-    case 'dependency_blocked': return { issue: issue(exact(value, ['issue']).issue) };
+    case 'dependency_blocked': return { issue: issue(known(value, ['issue']).issue) };
     case 'memory_not_found': case 'memory_deleted': {
-      const row = exact(value, ['id', 'project']);
+      const row = known(value, ['id', 'project']);
       if (!operation.op.startsWith('memory_') || !('project' in operation) || row.project !== operation.project
         || ('id' in operation && row.id !== operation.id)) return invalid();
       return { id: parseMemoryId(row.id), project: row.project };
     }
     case 'memory_conflict': {
-      const row = exact(value, ['memory', 'expected']);
+      const row = known(value, ['memory', 'expected']);
       const current = memory(row.memory);
       if ((operation.op !== 'memory_update' && operation.op !== 'memory_delete') || row.expected !== operation.expected
         || current.project !== operation.project || current.id !== operation.id || current.version === operation.expected) return invalid();
       return { memory: current, expected: row.expected };
     }
     case 'memory_version_exhausted': {
-      const current = memory(exact(value, ['memory']).memory);
+      const current = memory(known(value, ['memory']).memory);
       if (operation.op !== 'memory_update' || current.project !== operation.project || current.id !== operation.id
         || current.version !== Number.MAX_SAFE_INTEGER || current.version !== operation.expected) return invalid();
       return { memory: current };
     }
-    case 'not_found': return { id: parseIssueId(exact(value, ['id']).id) };
-    case 'epic_has_children': return { issue: issue(exact(value, ['issue']).issue) };
+    case 'not_found': return { id: parseIssueId(known(value, ['id']).id) };
+    case 'epic_has_children': return { issue: issue(known(value, ['issue']).issue) };
     case 'version_exhausted': {
-      const row = exact(value, ['issue', 'field']);
+      const row = known(value, ['issue', 'field']);
       if (!fields.some(field => field === row.field)) return invalid();
       return { issue: issue(row.issue), field: row.field };
     }
     case 'conflict': {
-      const row = exact(value, ['issue', 'fields']);
+      const row = known(value, ['issue', 'fields']);
       const currentIssue = issue(row.issue);
       if (!Array.isArray(row.fields) || row.fields.length > fields.length) return invalid();
       return { issue: currentIssue, fields: row.fields.map(entry => {
-        const conflict = exact(entry, ['field', 'expected', 'actual', 'current']);
+        const conflict = known(entry, ['field', 'expected', 'actual', 'current']);
         const field = fields.find(field => field === conflict.field);
         if (field === undefined || !Number.isSafeInteger(conflict.expected) || Number(conflict.expected) < 1
           || conflict.actual !== currentIssue.versions[field] || JSON.stringify(conflict.current) !== JSON.stringify(currentIssue[field])) return invalid();
@@ -328,8 +337,8 @@ export async function executeCloudOperation(input: {
       // Access itself answers 403 without this envelope, so only the Worker's read-only rejection keeps its code.
       let readOnly = false;
       try {
-        const error = exact(exact(await readResponse(response, controller.signal), ['error']).error, ['code', 'message', 'details']);
-        readOnly = error.code === 'read_only_actor' && exact(error.details, ['op']).op === input.operation.op;
+        const error = known(known(await readResponse(response, controller.signal), ['error']).error, ['code', 'message', 'details']);
+        readOnly = error.code === 'read_only_actor' && known(error.details, ['op']).op === input.operation.op;
       } catch { controller.signal.throwIfAborted(); }
       if (readOnly) throw new PolylinedbError('read_only_actor', 'This cloud actor can only read.', 403, { op: input.operation.op });
       throw new PolylinedbError('denied', 'Cloud access was denied.', 403);
@@ -338,7 +347,7 @@ export async function executeCloudOperation(input: {
     try { value = await readResponse(response, controller.signal); } catch { controller.signal.throwIfAborted(); return invalid(); }
     if (response.status !== 200) {
       if (response.status === 503) {
-        const error = exact(exact(value, ['error']).error, ['code', 'message']);
+        const error = known(known(value, ['error']).error, ['code', 'message']);
         if ((error.code !== 'invalid_access_configuration' && error.code !== 'jwks_unavailable') || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
         const message = error.code === 'invalid_access_configuration'
           ? 'Cloud Access is misconfigured. Check the Worker Access configuration.'
@@ -346,8 +355,8 @@ export async function executeCloudOperation(input: {
         throw new PolylinedbError(error.code, message, 503);
       }
       if (![400, 404, 409].includes(response.status)) return invalid();
-      const error = object(exact(value, ['error']).error);
-      if (Object.keys(error).some(key => !['code', 'message', 'details'].includes(key)) || typeof error.code !== 'string'
+      const error = known(known(value, ['error']).error, ['code', 'message'], ['details']);
+      if (typeof error.code !== 'string'
         || !/^[a-z][a-z0-9_]{0,63}$/.test(error.code) || error.code === 'invalid_access_configuration' || error.code === 'jwks_unavailable' || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
       let details: unknown;
       try { details = errorDetails(input.operation, error.code, error.details); } catch { return invalid(); }
