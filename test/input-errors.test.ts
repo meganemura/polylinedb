@@ -47,6 +47,25 @@ test('claim_proof names a missing nested field', () => {
   assert.equal(rejection({ op: 'claim_release', claim_proof: partial, expected_revision: 1, request_id: crypto.randomUUID() }), 'Missing field: claim_proof.generation');
 });
 
+test('a rejection echoes at most ten names and counts the rest', () => {
+  const extras = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`extra${index}`, secret]));
+  assert.equal(rejection({ ...memory, ...extras }), 'Unexpected fields: extra0, extra1, extra2, extra3, extra4, extra5, extra6, extra7, extra8, extra9 (+2 more)');
+  const { title: _, body: __, ...input } = memory;
+  assert.equal(rejection({ ...input, ...extras }), 'Unexpected fields: extra0, extra1, extra2, extra3, extra4, extra5, extra6, extra7 (+4 more); missing fields: title, body');
+});
+
+test('a rejection cuts an echoed name to 64 bytes', () => {
+  assert.equal(rejection({ ...memory, ['k'.repeat(65)]: secret }), `Unexpected field: ${'k'.repeat(64)}`);
+  assert.equal(rejection({ op: 'update', id: 'pd-1', changes: [{ ...change, ['n'.repeat(80)]: secret }] }), `Unexpected field: changes[0].${'n'.repeat(64)}`);
+});
+
+test('a rejection hides a name that is not shaped like an identifier', () => {
+  for (const key of [`Bearer ${secret}`, `${secret}=1`, 'tök', '']) {
+    assert.equal(rejection({ ...memory, [key]: 'v' }), 'Unexpected field: <invalid name>');
+  }
+  assert.equal(rejection({ ...memory, tool: 'v', [`Bearer ${secret}`]: 'v' }), 'Unexpected fields: tool, <invalid name>');
+});
+
 test('claim and dependency operations list every field problem', () => {
   assert.equal(rejection({ op: 'claim_show', clock: secret, tool: secret }), 'Unexpected fields: clock, tool; missing field: issue_id');
   assert.equal(rejection({ op: 'dependency_add', dependent_id: 'pd-1', note: secret }), 'Unexpected field: note; missing fields: blocker_id, expected_revision, request_id');
