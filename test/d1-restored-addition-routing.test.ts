@@ -1,17 +1,14 @@
 // Exercises the routing steps of the restored-store addition against temporary Git repositories and private connection settings.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
-import { snapshotMigration, type Query } from '../scripts/d1-snapshot-store.ts';
 import { AdditionRefused, restoredAddition, type RouteSwitches } from '../scripts/d1-restored-addition.ts';
-import { canonicalSnapshot } from '../src/records/snapshot.ts';
 import { addConnection, connectionConfigDirectory, defaultConnection, readConnections, readRepositoryDefaults, useRepositoryConnection, writeRepositoryDefaults } from '../src/workspace/index.ts';
-import { localStore, originalInput, privateDirectory, sqliteBatch } from './fixtures/restored-addition.ts';
+import { localStore, privateDirectory, restoredDestination, sqliteBatch } from './fixtures/restored-addition.ts';
 
 const workspaceSwitches: RouteSwitches = { repository: (connection, root) => { useRepositoryConnection(connection, root); }, userDefault: defaultConnection };
 
@@ -25,13 +22,8 @@ function git(cwd: string, ...args: string[]): void {
 async function fixture(context: TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pd-restored-routing-')));
   context.after(() => rmSync(root, { recursive: true, force: true }));
-  const original = await originalInput(root);
-  const destinationStore = await localStore(root, 'destination');
-  destinationStore.store.close();
-  const destination = new DatabaseSync(destinationStore.path);
+  const { original, destination } = await restoredDestination(root);
   context.after(() => destination.close());
-  const query: Query = async ({ sql, params }) => destination.prepare(sql).all(...params).map(row => ({ ...row }));
-  await snapshotMigration(query, original.snapshot, createHash('sha256').update(canonicalSnapshot(original.snapshot)).digest('hex')).restore();
   const source = await localStore(root, 'source', 'src');
   source.store.close();
   const environment = { XDG_CONFIG_HOME: privateDirectory(root, 'config') };
@@ -49,7 +41,7 @@ async function fixture(context: TestContext) {
   let journals = 0;
   const journal = () => privateDirectory(root, `journal-${journals += 1}`);
   const owner = (directory: string, switches: RouteSwitches = workspaceSwitches) => restoredAddition(sqliteBatch(destination), directory, environment, switches);
-  const input = { original: original.path, source: source.path };
+  const input = { original, source: source.path };
   const run = (directory: string, switches: RouteSwitches = workspaceSwitches, repositories = [local, worktree, named]) =>
     owner(directory, switches).run({ ...input, connection: 'cloud', repositories });
   const resume = (directory: string) => owner(directory).resume();
