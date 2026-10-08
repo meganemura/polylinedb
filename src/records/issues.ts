@@ -230,6 +230,13 @@ const observation = (issueId: string): SqlStatement => ({ sql: `SELECT issues.*,
   EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children
   FROM issues WHERE id = ?`, params: [issueId] });
 
+// SET reads the row before the write, so status still holds the previous status and a closed issue keeps its first closure.
+function closureAssignments(next: Status | undefined, at: string, by: string): { assignments: string[]; params: string[] } {
+  if (next === undefined) return { assignments: [], params: [] };
+  if (next !== 'closed') return { assignments: ['closed_at = NULL', 'closed_by = NULL'], params: [] };
+  return { assignments: ["closed_at = CASE WHEN status = 'closed' THEN closed_at ELSE ? END", "closed_by = CASE WHEN status = 'closed' THEN closed_by ELSE ? END"], params: [at, by] };
+}
+
 async function update(db: SqlExecutor, issueId: string, changes: readonly Change[], caller: Actor, override: StatusOverride = {}, proof?: ClaimProof): Promise<OperationResult> {
   const actor = caller.id;
   const assignments: string[] = [];
@@ -248,8 +255,11 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
     guards.push(change.expected);
     if (change.field === 'type' && change.value !== 'epic') conditions.push('NOT EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id)');
   }
-  assignments.push('updated_by = ?', 'updated_at = ?');
-  params.push(actor, new Date().toISOString(), ...guards);
+  const now = new Date().toISOString();
+  const statusChange = changes.find((change): change is Extract<Change, { field: 'status' }> => change.field === 'status');
+  const closure = closureAssignments(statusChange?.value, now, actor);
+  assignments.push('updated_by = ?', 'updated_at = ?', ...closure.assignments);
+  params.push(actor, now, ...closure.params, ...guards);
   const result = await db.batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
     ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId),
     heldClaimObservation(issueId)]);
@@ -291,13 +301,14 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
       const now = new Date().toISOString();
       const eligible = `NOT EXISTS(SELECT 1 FROM requests WHERE request_id = ?)${operation.parent ? " AND EXISTS(SELECT 1 FROM issues WHERE id = ? AND type = 'epic')" : ''}`;
       const gate = operation.parent ? [operation.request_id, operation.parent] : [operation.request_id];
+      const closure = operation.status === 'closed' ? { columns: ', closed_at, closed_by', values: ', ?, ?', params: [now, actor] } : { columns: '', values: '', params: [] };
       const result = await db.batch([
         { sql: `INSERT INTO counters(scope, last_number) SELECT ?, 1 WHERE ${eligible}
           ON CONFLICT(scope) DO UPDATE SET last_number = last_number + 1`, params: [scope, ...gate] },
-        { sql: `INSERT INTO issues(id, parent_id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-          SELECT ? || last_number, ?, ? || printf('%016d', last_number), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        { sql: `INSERT INTO issues(id, parent_id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by${closure.columns})
+          SELECT ? || last_number, ?, ? || printf('%016d', last_number), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${closure.values}
           FROM counters WHERE scope = ? AND ${eligible}`,
-          params: [base, operation.parent ?? null, sortBase, operation.tool, operation.project, operation.body, operation.status, operation.type, operation.priority, JSON.stringify(operation.labels), now, actor, now, actor, scope, ...gate] },
+          params: [base, operation.parent ?? null, sortBase, operation.tool, operation.project, operation.body, operation.status, operation.type, operation.priority, JSON.stringify(operation.labels), now, actor, now, actor, ...closure.params, scope, ...gate] },
         { sql: `INSERT INTO requests(request_id, actor, payload, issue_id)
           SELECT ?, ?, ?, ? || last_number FROM counters WHERE scope = ? AND ${eligible}`,
           params: [operation.request_id, actor, payload, base, scope, ...gate] },
@@ -365,7 +376,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
   }
 }
 
-// pd records no close time, so a closed issue's last update stands in for it; comments never touch updated_at.
+// Orders by the last update, which an edit after the close can move; comments never touch updated_at.
 export async function recentlyClosedIssues(db: SqlExecutor, limit: number): Promise<Issue[]> {
   return (await db.reads.all(issueQueries.recentlyClosed, { limit })).map(issueRow);
 }
