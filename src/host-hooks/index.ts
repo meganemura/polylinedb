@@ -19,6 +19,9 @@ type OwnedHook = { event: string; index: number; exact: boolean; collection: unk
 
 const contextBytes = 8192;
 const hookTimeoutSeconds = 15;
+// Host settings cap the hook at hookTimeoutSeconds, so only tests raise the CLI child limit; a loaded test host
+// can delay the start of a node child for tens of seconds.
+const testCliLimitVariable = 'PD_TEST_HOOK_CLI_LIMIT_MS';
 const malformedLockAgeMs = 60_000;
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -328,6 +331,11 @@ export function removeAgentHost(host: AgentHost) {
   return updateHostSettings(host, 'remove');
 }
 
+function cliLimitMs(): number {
+  const value = process.env[testCliLimitVariable];
+  return value !== undefined && /^[1-9][0-9]{0,8}$/.test(value) ? Number(value) : hookTimeoutSeconds * 1000;
+}
+
 function sessionDirectory(host: AgentHost, event: Record<string, unknown>): string | undefined {
   if (host === 'cursor') {
     const environmentRoot = process.env.CURSOR_PROJECT_DIR ?? process.env.CLAUDE_PROJECT_DIR;
@@ -415,7 +423,7 @@ export function agentContext(host: AgentHost, input: string): Record<string, unk
   let result: ReturnType<typeof spawnSync>;
   try {
     result = spawnSync(process.execPath, [resolve(entrypoint), 'memory', 'context', '--max-bytes', String(contextBytes), '--with-revision'], {
-      cwd, env: process.env, encoding: 'utf8', timeout: hookTimeoutSeconds * 1000, maxBuffer: 1024 * 1024,
+      cwd, env: process.env, encoding: 'utf8', timeout: cliLimitMs(), maxBuffer: 1024 * 1024,
     });
   } catch { return failure(host, 'cli_unavailable'); }
   if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return failure(host, errorCode(typeof result.stderr === 'string' ? result.stderr : ''));

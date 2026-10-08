@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { childLimits } from './fixtures/child-run.ts';
 
 const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+// The hook's own CLI child pays the same node start wait on a loaded host as the children that child-run.ts limits.
+const hookCliLimitMs = String(childLimits.startMs + childLimits.runMs);
 type Host = 'claude' | 'codex' | 'cursor';
 type JsonObject = Record<string, unknown>;
 
@@ -20,7 +23,7 @@ function settingsPath(home: string, host: Host): string {
 }
 
 function environment(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config') };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config'), PD_TEST_HOOK_CLI_LIMIT_MS: hookCliLimitMs };
   delete env.POLYLINEDB_ACTOR;
   delete env.POLYLINEDB_ACTOR_KIND;
   delete env.POLYLINEDB_DATA_DIR;
@@ -76,6 +79,17 @@ function contextText(host: Host, value: unknown): string {
   return context;
 }
 
+function installedHook(host: Host, settings: unknown): JsonObject {
+  assert.ok(isRecord(settings) && isRecord(settings.hooks));
+  const entries = settings.hooks[host === 'cursor' ? 'sessionStart' : 'SessionStart'];
+  assert.ok(Array.isArray(entries));
+  const handlers = host === 'cursor' ? entries : entries.flatMap(entry => isRecord(entry) && Array.isArray(entry.hooks) ? entry.hooks : []);
+  const owned = handlers.filter(handler => isRecord(handler) && handler.command === `pd agent context ${host}`);
+  assert.equal(owned.length, 1);
+  assert.ok(isRecord(owned[0]));
+  return owned[0];
+}
+
 test('host hooks install, retrieve CLI memory, and remove only their own settings', t => {
   const { home, cwd } = fixture(t);
   const trackedState = git(cwd, ['status', '--porcelain=v1', '--untracked-files=all']);
@@ -96,6 +110,7 @@ test('host hooks install, retrieve CLI memory, and remove only their own setting
     assert.equal(installed.installed, true);
     assert.equal(statSync(path).mode & 0o777, 0o640);
     const afterInstall = readFileSync(path, 'utf8');
+    assert.equal(installedHook(host, JSON.parse(afterInstall)).timeout, 15);
     const repeated = run(home, cwd, ['agent', 'install', host]);
     assert.ok(isRecord(repeated));
     assert.equal(repeated.changed, false);
@@ -146,6 +161,17 @@ test('Codex keeps the full bounded context and its omission metadata', t => {
   assert.equal(data.omitted, true);
   assert.ok(data.notices.length > 0);
   assert.ok(data.memories.some((memory: { body: string }) => memory.body === 'x'.repeat(6000)));
+});
+
+test('a CLI child that outlives the hook limit returns the unavailable status', t => {
+  const { home, cwd } = fixture(t);
+  const result = run(home, cwd, ['agent', 'context', 'claude'], {
+    input: JSON.stringify({ cwd }),
+    env: { PD_TEST_HOOK_CLI_LIMIT_MS: '1' },
+  });
+  const message = contextText('claude', result);
+  assert.equal(message, 'Polylinedb memory retrieval failed (unavailable). No memory was added. Continue without it; do not infer that the selected project has no memory.');
+  assert.doesNotMatch(message, /untrusted project data/);
 });
 
 test('installation refuses symlinked settings and ambiguous owned commands', t => {
