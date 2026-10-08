@@ -58,7 +58,7 @@ export function cfQuery(target: ReturnType<typeof parseTarget>, limitMs = childL
   };
 }
 
-async function main(args: string[]) {
+export async function runSnapshotCommand(args: string[], connect: (target: ReturnType<typeof parseTarget>) => Query = cfQuery) {
   const [action, ...flags] = args;
   const output = flags.length === 6 && action === 'verify' && flags[4] === '--output' ? flags[5] : undefined;
   if (!['inspect', 'restore', 'verify'].includes(action ?? '') || (flags.length !== 4 && !output) || flags[0] !== '--snapshot' || flags[2] !== '--target' || !flags[1] || !flags[3] || (output !== undefined && !isAbsolute(output))) {
@@ -66,15 +66,15 @@ async function main(args: string[]) {
   }
   const target = parseTarget(JSON.parse(readFileSync(flags[3], 'utf8')));
   const snapshot: unknown = JSON.parse(readFileSync(flags[1], 'utf8'));
-  const migration = snapshotMigration(cfQuery(target), snapshot, target.snapshotSha256);
+  const migration = snapshotMigration(connect(target), snapshot, target.snapshotSha256);
   const report = action === 'restore' ? await migration.restore() : action === 'verify' ? await migration.verify() : await migration.inspect();
   if (output && 'snapshot' in report) writeFileSync(output, canonicalSnapshot(report.snapshot) + '\n', { mode: 0o600, flag: 'wx' });
   const { snapshot: _snapshot, ...receipt } = 'snapshot' in report ? report : { ...report, snapshot: undefined };
-  process.stdout.write(JSON.stringify({ target, ...receipt }) + '\n');
+  return { target, ...receipt };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2)).catch((error: unknown) => {
+  runSnapshotCommand(process.argv.slice(2)).then(receipt => { process.stdout.write(JSON.stringify(receipt) + '\n'); }).catch((error: unknown) => {
     const reason = error instanceof Error && !(error instanceof SyntaxError) && !('code' in error)
       ? error.message : 'Check the input files and snapshot format';
     process.stderr.write(`D1 snapshot operation failed: ${reason}.\n`);
