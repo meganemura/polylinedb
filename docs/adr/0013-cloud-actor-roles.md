@@ -27,7 +27,7 @@ Each entry of `ACCESS_ACTORS` gives an actor a role:
 | `agent` | `agent` | Allowed through the `ready` label gate and the claim gate. |
 | `reader` | `human` | Rejected with `read_only_actor`. |
 
-An entry is an actor ID or an object with exactly `actor` and `role`.
+An entry is an actor ID or an object with `actor`, `role`, and an optional display `label` for the `/ui` page.
 An actor ID alone means `human`, so an owner-only allowlist keeps its meaning.
 A duplicate actor ID, an unknown role, or an extra key makes the whole configuration invalid, and every request then gets `invalid_access_configuration`.
 

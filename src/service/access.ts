@@ -1,4 +1,4 @@
-/** Verifies Access assertions and maps each allowlisted actor to its role. Operation access checks belong to the Worker entry. */
+/** Verifies Access assertions and maps each allowlisted actor to its role and optional display label. Operation access checks belong to the Worker entry; labels never reach operation responses. */
 import type { Actor, OperationAccess } from '../records/index.ts';
 
 export interface AccessSettings {
@@ -23,7 +23,8 @@ export const accessRoles = ['human', 'agent', 'reader'] as const;
 export type AccessRole = typeof accessRoles[number];
 export type Caller = { actor: Actor; access: OperationAccess };
 
-type Configuration = { issuer: string; audience: string; roles: ReadonlyMap<string, AccessRole> };
+type RosterEntry = { role: AccessRole; label?: string };
+type Configuration = { issuer: string; audience: string; roster: ReadonlyMap<string, RosterEntry> };
 type Keys = { issuer: string; expires: number; keys: ReadonlyMap<string, CryptoKey> };
 const unauthorized = () => new AccessError(401, 'invalid_assertion');
 const infrastructure = () => new AccessError(503, 'jwks_unavailable');
@@ -42,25 +43,38 @@ function configuration(settings: AccessSettings): Configuration {
       || typeof settings.ACCESS_ACTORS !== 'string' || settings.ACCESS_ACTORS.length > 32768) throw new Error();
     const entries: unknown = JSON.parse(settings.ACCESS_ACTORS);
     if (!Array.isArray(entries) || entries.length === 0 || entries.length > 64) throw new Error();
-    const roles = new Map<string, AccessRole>();
+    const roster = new Map<string, RosterEntry>();
     for (const entry of entries) {
       // A bare actor ID is a human who writes, so an owner-only allowlist needs no roles.
-      const { actor, role } = typeof entry === 'string' ? { actor: entry, role: 'human' } : rosterEntry(entry);
+      const { actor, role, label } = typeof entry === 'string' ? { actor: entry, role: 'human' } : rosterEntry(entry);
       if (typeof actor !== 'string' || !/^(access|service):\S+$/.test(actor) || actor.length > 512
-        || !accessRoles.includes(role as AccessRole) || roles.has(actor)) throw new Error();
-      roles.set(actor, role as AccessRole);
+        || !accessRoles.includes(role as AccessRole) || roster.has(actor)) throw new Error();
+      if (label !== undefined && !displayLabel(label)) throw new Error();
+      roster.set(actor, label === undefined ? { role: role as AccessRole } : { role: role as AccessRole, label: label as string });
     }
-    return { issuer: `https://${settings.ACCESS_TEAM_DOMAIN}`, audience: settings.ACCESS_AUD, roles };
+    return { issuer: `https://${settings.ACCESS_TEAM_DOMAIN}`, audience: settings.ACCESS_AUD, roster };
   } catch {
     throw new AccessError(503, 'invalid_access_configuration');
   }
 }
 
-function rosterEntry(entry: unknown): { actor: unknown; role: unknown } {
+function rosterEntry(entry: unknown): { actor: unknown; role: unknown; label?: unknown } {
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new Error();
   const keys = Object.keys(entry);
-  if (keys.length !== 2 || !keys.includes('actor') || !keys.includes('role')) throw new Error();
-  return entry as { actor: unknown; role: unknown };
+  if (!keys.includes('actor') || !keys.includes('role') || keys.some(key => !['actor', 'role', 'label'].includes(key))) throw new Error();
+  return entry as { actor: unknown; role: unknown; label?: unknown };
+}
+
+// Format characters are refused with control characters because a bidirectional override could make one actor's label read as another's.
+function displayLabel(label: unknown): boolean {
+  return typeof label === 'string' && label.trim() === label && label.length > 0
+    && new TextEncoder().encode(label).byteLength <= 64 && !/\p{C}/u.test(label);
+}
+
+export function actorLabels(settings: AccessSettings): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  for (const [actor, entry] of configuration(settings).roster) if (entry.label !== undefined) labels.set(actor, entry.label);
+  return labels;
 }
 
 function callerFor(id: string, role: AccessRole): Caller {
@@ -196,8 +210,8 @@ export function createAccessVerifier(fetcher: typeof fetch = fetch): (request: R
     } catch { throw unauthorized(); }
     if (!valid) throw unauthorized();
     const actor = actorFrom(claims, config);
-    const role = config.roles.get(actor);
-    if (role === undefined) throw new AccessError(403, 'actor_not_allowed');
-    return callerFor(actor, role);
+    const listed = config.roster.get(actor);
+    if (listed === undefined) throw new AccessError(403, 'actor_not_allowed');
+    return callerFor(actor, listed.role);
   };
 }
