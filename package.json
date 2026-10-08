@@ -78,6 +78,7 @@
     "dist/records/claims.js",
     "dist/records/claims-sql.js",
     "dist/records/schema-v5.js",
+    "dist/records/schema-v6.js",
     "dist/records/operation-policy.js",
     "dist/records/agent-gate.js",
     "dist/transition/"
