@@ -1,7 +1,7 @@
 // Owns prerequisite graphs and immutable mutation receipts; issue fields remain a separate aggregate.
 import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
 import { parseOperation as parseIssue, issueRow } from './issues.ts';
-import { PolylinedbError } from './errors.ts';
+import { PolylinedbError, requireFields } from './errors.ts';
 import type { Operation as IssueOperation, Issue, SqlExecutor, SqlStatement, Status } from './issues.ts';
 import { issueQueries } from './issue-queries.ts';
 import { decidePrerequisiteEdit, decideReplay } from '../transition/index.ts';
@@ -42,8 +42,7 @@ export function parseDependencyOperation(value: unknown): DependencyOperation {
   const op = value.op;
   if (op !== 'dependency_add' && op !== 'dependency_remove' && op !== 'dependency_list' && op !== 'dependency_worklist') return invalid('Unknown dependency operation');
   const schema = dependencySchemas[op];
-  for (const key of Object.keys(value)) if (key !== 'op' && !Object.hasOwn(schema.properties, key)) return invalid(`Unknown field: ${key}`);
-  for (const key of schema.required) if (!Object.hasOwn(value, key)) return invalid(`Missing field: ${key}`);
+  requireFields(value as Record<string, unknown>, ['op', ...Object.keys(schema.properties)], schema.required);
   try {
     if (op === 'dependency_worklist') {
       if (!('state' in value) || (value.state !== 'ready' && value.state !== 'blocked')) return invalid('state must be ready or blocked');

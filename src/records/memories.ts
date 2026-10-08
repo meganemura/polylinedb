@@ -1,5 +1,5 @@
 // Owns current project knowledge, its write conflicts, and bounded retrieval; hosts own invocation and identity.
-import { PolylinedbError } from "./errors.ts";
+import { PolylinedbError, requireFields } from "./errors.ts";
 import type { SqlExecutor, SqlStatement } from "./issues.ts";
 import { parsePrefix, parseRequestId } from "./issue-id.ts";
 import { issueQueries } from "./issue-queries.ts";
@@ -78,7 +78,7 @@ export function parseMemoryOperation(value: unknown): MemoryOperation {
   const op = Object.keys(memorySchemas).find(key => key === input.op);
   if (!op) return invalid('Unknown memory operation');
   const definition = memorySchemas[op as keyof typeof memorySchemas];
-  if (Object.keys(input).some(key => key !== 'op' && !Object.hasOwn(definition.properties, key)) || definition.required.some(key => !Object.hasOwn(input, key))) return invalid('Unexpected or missing memory operation fields');
+  requireFields(input, ['op', ...Object.keys(definition.properties)], definition.required);
   const project = name(input.project, 'project');
   const page = () => ({ project, ...(input.after === undefined ? {} : { after: parseMemoryId(input.after) }), limit: input.limit === undefined ? (op === 'memory_context' ? 20 : 50) : integer(input.limit, 'limit', 1, 100) });
   switch (op) {

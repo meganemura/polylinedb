@@ -1,5 +1,5 @@
 // Owns lease commands, inspection, and immutable replay; issue fields and transports retain their own contracts.
-import { PolylinedbError } from './errors.ts';
+import { PolylinedbError, requireFields } from './errors.ts';
 import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
 import { claimMutationStatements } from './claims-sql.ts';
@@ -38,10 +38,6 @@ function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) return invalid('Claim input must be a plain object');
   return value as Record<string, unknown>;
 }
-function keys(value: Record<string, unknown>, allowed: readonly string[], required: readonly string[]) {
-  for (const key of Object.keys(value)) if (!allowed.includes(key)) invalid(`Unknown field: ${key}`);
-  for (const key of required) if (!Object.hasOwn(value, key)) invalid(`Missing field: ${key}`);
-}
 function identifier(parser: (value: unknown) => string, value: unknown): string {
   try { return parser(value); } catch (error) { return invalid(error instanceof Error ? error.message : 'Invalid identifier'); }
 }
@@ -59,7 +55,7 @@ function name(value: unknown, label: string, maximum = 256): string {
 }
 export function parseClaimProof(value: unknown, target?: string): ClaimProof {
   const input = object(value);
-  keys(input, claimProofSchema.required, claimProofSchema.required);
+  requireFields(input, claimProofSchema.required, claimProofSchema.required, 'claim_proof');
   const issue_id = identifier(parseIssueId, input.issue_id);
   if (target !== undefined && issue_id !== target) return invalid('claim_proof must target the requested issue');
   return { issue_id, incarnation: parseIncarnation(input.incarnation), session_id: identifier(value => parseRequestId(value, 'session_id'), input.session_id), generation: integer(input.generation, 'generation', 1) };
@@ -68,7 +64,7 @@ export function parseClaimOperation(value: unknown): ClaimOperation {
   const input = object(value);
   const op = input.op;
   if (op !== 'claim_show' && op !== 'claim_list' && op !== 'claim_acquire' && op !== 'claim_renew' && op !== 'claim_release') return invalid('Unknown claim operation');
-  const schema = claimSchemas[op]; keys(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
+  const schema = claimSchemas[op]; requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   if (op === 'claim_list') return { op, limit: input.limit === undefined ? 50 : integer(input.limit, 'limit', 1, 100), ...(input.tool === undefined ? {} : { tool: name(input.tool, 'tool') }), ...(input.project === undefined ? {} : { project: name(input.project, 'project') }), ...(input.after === undefined ? {} : { after: identifier(parseIssueId, input.after) }) };
   if (op === 'claim_show') return { op, issue_id: identifier(parseIssueId, input.issue_id) };
   const request_id = identifier(parseRequestId, input.request_id);
