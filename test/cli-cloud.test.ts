@@ -288,3 +288,18 @@ test('cloud CLI reads show and claim acquire from older and newer Worker respons
   assert.equal(acquired.includes('synthetic-future'), false);
   assert.deepEqual(JSON.parse(acquired), await run(acquisition));
 });
+
+test('cloud CLI searches an older Worker that rejects with_matches through one plain search', async context => {
+  const { run, requests } = await fixture(context);
+  const { issue } = await run(['create', '--body', 'Older Worker search']);
+  const { matches, ...page } = await run(['search', 'Older Worker']);
+  assert.equal(matches.length, 1);
+  const before = requests().length;
+  assert.deepEqual(await run(['search', 'Older Worker'], { mode: 'search-without-matches' }), page);
+  assert.deepEqual(requests().slice(before).map(request => [request.op, 'with_matches' in request]), [['search', true], ['search', false]]);
+  const human = await run(['search', 'Older Worker', '--human'], { raw: true });
+  assert.ok(human.includes(`\n  Matched in body: Older Worker search\n`));
+  assert.equal(await run(['search', 'Older Worker', '--human'], { mode: 'search-without-matches', raw: true }),
+    human.split('\n').filter((line: string) => !line.startsWith('  Matched in ')).join('\n'));
+  assert.ok(human.startsWith(`Search matches\n${issue.id}  open  P2  task\n`));
+});
