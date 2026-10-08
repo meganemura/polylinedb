@@ -45,7 +45,11 @@ try {
     environments.set(directory, routingEnvironment(root, made.path));
     return made.path;
   };
-  const owner = (port: Batch, directory: string) => restoredAddition(port, directory, environments.get(directory) ?? {});
+  const owner = (port: Batch, directory: string) => {
+    const environment = environments.get(directory);
+    assert.ok(environment, 'every journal gets its private connection settings from run');
+    return restoredAddition(port, directory, environment);
+  };
   let journals = 0;
   const journal = () => privateDirectory(root, `journal-${journals += 1}`);
 
