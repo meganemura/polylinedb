@@ -3,7 +3,7 @@ import { parseIssueId, issueSortKey, parsePrefix, parseRequestId } from "./issue
 import { fields, issueTypes, statuses } from "./schema.ts";
 import type { Database } from 'solarsql';
 import { issueQueries } from "./issue-queries.ts";
-import { PolylinedbError } from './errors.ts';
+import { expectedType, PolylinedbError, requireFields } from './errors.ts';
 import { claimProofSchema, claimRow, parseClaimProof } from './claims.ts';
 import { decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
@@ -48,10 +48,6 @@ function object(value: unknown, context: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalid(`${context} must be an object`);
   if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return invalid(`${context} must be a plain object`);
   return value as Record<string, unknown>;
-}
-function keys(value: Record<string, unknown>, allowed: readonly string[], required: readonly string[] = []) {
-  for (const key of Object.keys(value)) if (!allowed.includes(key)) invalid(`Unknown field: ${key}`);
-  for (const key of required) if (!Object.hasOwn(value, key)) invalid(`Missing field: ${key}`);
 }
 function text(value: unknown, name: string, maximum = 65536): string {
   if (typeof value !== 'string' || value.trim().length === 0) return invalid(`${name} must be a nonempty string`);
@@ -117,9 +113,11 @@ export const operationSchemas = {
   actor: objectSchema({}),
 };
 
-function parseChange(value: unknown): Change {
-  const input = object(value, 'change');
-  keys(input, ['field', 'value', 'expected'], ['field', 'value', 'expected']);
+function parseChange(value: unknown, index: number): Change {
+  const at = `changes[${index}]`;
+  if (value === null || typeof value !== 'object' || Array.isArray(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) return expectedType(at, 'object');
+  const input = value as Record<string, unknown>;
+  requireFields(input, ['field', 'value', 'expected'], ['field', 'value', 'expected'], at);
   const field = enumeration(input.field, 'field', fields);
   const expected = integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER);
   switch (field) {
@@ -154,7 +152,7 @@ export function parseOperation(value: unknown): Operation {
   const input = object(value, 'operation');
   const op = enumeration(input.op, 'op', ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen', 'actor']);
   const schema = operationSchemas[op];
-  keys(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
+  requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   switch (op) {
     case 'actor': return { op };
     case 'show': return { op, id: id(input.id) };
@@ -176,8 +174,9 @@ export function parseOperation(value: unknown): Operation {
         labels: input.labels === undefined ? [] : labels(input.labels) };
     }
     case 'update': {
-      if (!Array.isArray(input.changes) || input.changes.length === 0 || input.changes.length > 7) return invalid('changes must contain one through seven fields');
-      const changes = input.changes.map(parseChange);
+      if (!Array.isArray(input.changes)) return expectedType('changes', 'array');
+      if (input.changes.length === 0 || input.changes.length > 7) return invalid('changes must contain one through seven fields');
+      const changes = input.changes.map((change, index) => parseChange(change, index));
       const [first, ...rest] = changes;
       if (first === undefined) return invalid('changes must not be empty');
       if (new Set(changes.map((change) => change.field)).size !== changes.length) invalid('changes must not repeat a field');
