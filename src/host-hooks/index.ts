@@ -19,13 +19,10 @@ type OwnedHook = { event: string; index: number; exact: boolean; collection: unk
 
 const contextBytes = 8192;
 export const hookTimeoutSeconds = 15;
-// The host cap also covers the hook's own Node start, which waited about 2 s under 16 parallel starts on a
-// 10-CPU macOS host. The allowance leaves the hook time to print its failure text after the child limit;
-// 48 parallel starts (about 6.4 s of wait) still exceed it, and only an in-process read would remove that start.
-const outerStartAllowanceMs = 5_000;
-export const contextChildLimitMs = hookTimeoutSeconds * 1000 - outerStartAllowanceMs;
-// A loaded test host can delay the start of a node child for tens of seconds, so tests may raise the child limit.
-const testCliLimitVariable = 'PD_TEST_HOOK_CLI_LIMIT_MS';
+// The host timer also covers the Node start of this hook process, which took about 2 s under 16 parallel starts.
+const hookStartAndAnswerMs = 5_000;
+export const defaultContextChildLimitMs = hookTimeoutSeconds * 1000 - hookStartAndAnswerMs;
+const testContextChildLimitVariable = 'PD_TEST_HOOK_CLI_LIMIT_MS';
 const malformedLockAgeMs = 60_000;
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -335,9 +332,9 @@ export function removeAgentHost(host: AgentHost) {
   return updateHostSettings(host, 'remove');
 }
 
-function cliLimitMs(): number {
-  const value = process.env[testCliLimitVariable];
-  return value !== undefined && /^[1-9][0-9]{0,8}$/.test(value) ? Number(value) : contextChildLimitMs;
+export function contextChildLimitMs(env: NodeJS.ProcessEnv): number {
+  const value = env[testContextChildLimitVariable];
+  return value !== undefined && /^[1-9][0-9]{0,8}$/.test(value) ? Number(value) : defaultContextChildLimitMs;
 }
 
 function sessionDirectory(host: AgentHost, event: Record<string, unknown>): string | undefined {
@@ -427,7 +424,7 @@ export function agentContext(host: AgentHost, input: string): Record<string, unk
   let result: ReturnType<typeof spawnSync>;
   try {
     result = spawnSync(process.execPath, [resolve(entrypoint), 'memory', 'context', '--max-bytes', String(contextBytes), '--with-revision'], {
-      cwd, env: process.env, encoding: 'utf8', timeout: cliLimitMs(), maxBuffer: 1024 * 1024,
+      cwd, env: process.env, encoding: 'utf8', timeout: contextChildLimitMs(process.env), maxBuffer: 1024 * 1024,
     });
   } catch { return failure(host, 'cli_unavailable'); }
   if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return failure(host, errorCode(typeof result.stderr === 'string' ? result.stderr : ''));
