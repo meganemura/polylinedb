@@ -21,7 +21,7 @@ export default {
     entrypoint: "./src/service/index.ts",
     compatibilityDate: '2026-09-25',
     previewUrls: false,
-    observability: { enabled: true, logs: { enabled: true } },
+    observability: { enabled: true, logs: { enabled: true, invocationLogs: false } },
     env: {
       DB: { type: 'd1', name: process.env.POLYLINEDB_D1_NAME ?? 'polylinedb' },
       ACCESS_TEAM_DOMAIN: { type: 'text', value: required('POLYLINEDB_ACCESS_TEAM_DOMAIN', '') },
