@@ -13,7 +13,7 @@
     "test": "node --test test/*.test.ts",
     "start": "node src/cli.ts",
     "build:worker": "npm run check:sql && cf build",
-    "dev:worker": "cf dev --local",
+    "dev:worker": "CLOUDFLARE_VITE_FORCE_LOCAL=true vite dev",
     "typecheck": "npm run check:sql && tsc --noEmit",
     "test:d1": "node test/d1.integration.ts && node test/memory-freshness-d1.integration.ts && node test/dependencies-d1.integration.ts && node test/claims-sql.integration.ts && node test/transition-differential-d1.integration.ts && node test/gate-races-d1.integration.ts && node test/d1-relay.integration.ts && node test/d1-snapshot.integration.ts && node test/d1-restored-addition.integration.ts",
     "schema": "node scripts/schema.ts",
