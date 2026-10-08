@@ -1,6 +1,6 @@
 // Builds synthetic stores for restored-D1 addition tests; each engine supplies its own query and batch ports.
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,7 +8,9 @@ import { executeOperation, parseOperation } from '../../src/records/index.ts';
 import { executeMemoryOperation, parseMemoryOperation } from '../../src/records/memories.ts';
 import { initializeStore, openStore } from '../../src/local-store/index.ts';
 import { addConnection, defaultConnection } from '../../src/workspace/index.ts';
+import { canonicalSnapshot } from '../../src/records/persistence.ts';
 import type { Snapshot } from '../../src/records/persistence.ts';
+import { snapshotMigration } from '../../scripts/d1-snapshot-store.ts';
 import type { Statement } from '../../scripts/d1-additive-merge.ts';
 import type { Batch } from '../../scripts/d1-restored-addition.ts';
 
@@ -56,6 +58,17 @@ export async function originalInput(root: string, prefix: string | null = 'dst')
     writeFileSync(path, JSON.stringify(snapshot));
     return { path, snapshot };
   } finally { store.close(); }
+}
+
+/** A SQLite destination that the current restore operator restored from a fresh original input. */
+export async function restoredDestination(root: string): Promise<{ original: string; destination: DatabaseSync }> {
+  const original = await originalInput(root);
+  const made = await localStore(root, 'destination');
+  made.store.close();
+  const destination = new DatabaseSync(made.path);
+  await snapshotMigration(async ({ sql, params }) => destination.prepare(sql).all(...params).map(row => ({ ...row })), original.snapshot,
+    createHash('sha256').update(canonicalSnapshot(original.snapshot)).digest('hex')).restore();
+  return { original: original.path, destination };
 }
 
 export function privateDirectory(root: string, name: string): string {
