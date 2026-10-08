@@ -1,11 +1,11 @@
 // Evaluates cloudflare.config.ts in a fresh Node process per case, because the config reads the environment at import.
-// Also pins the dev:worker script, which keeps the dev server off remote bindings.
+// Also reads the options that vite.config.ts passes to the Cloudflare plugin, which keep the dev server off remote bindings.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 
 const configUrl = new URL('../cloudflare.config.ts', import.meta.url).href;
+const viteConfigUrl = new URL('../vite.config.ts', import.meta.url).href;
 const sentinel = 'sentinel-value-7f3a';
 const complete = {
   POLYLINEDB_ACCESS_TEAM_DOMAIN: `${sentinel}.cloudflareaccess.com`,
@@ -85,9 +85,15 @@ test('the local opt-in accepts only the exact value 1', () => {
   }
 });
 
-test('the dev server runs Vite with remote bindings switched off', () => {
-  // cf dev rejects --local, and its own local delegate needs a newer @cloudflare/vite-plugin.
-  // The plugin reads this variable and then starts no remote proxy session, so it never asks for a login.
-  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(manifest.scripts['dev:worker'], 'CLOUDFLARE_VITE_FORCE_LOCAL=true vite dev');
+test('the Vite config switches remote bindings off for the dev server', () => {
+  // Replaces the plugin with a recorder, because the real plugin keeps its options in a closure.
+  const recorder = 'data:text/javascript,export function cloudflare(options) { globalThis.pluginOptions = options; return []; }';
+  const script = `import { registerHooks } from 'node:module';
+    registerHooks({ resolve: (specifier, context, next) => specifier === '@cloudflare/vite-plugin'
+      ? { url: ${JSON.stringify(recorder)}, shortCircuit: true } : next(specifier, context) });
+    await import(${JSON.stringify(viteConfigUrl)});
+    process.stdout.write(JSON.stringify(globalThis.pluginOptions));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(JSON.parse(result.stdout).remoteBindings, false);
 });
