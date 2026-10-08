@@ -14,11 +14,13 @@ test('a child result carries its status, output, and input', async () => {
   assert.equal((await runChild('exit', process.execPath, node('process.exit(3)'), options)).status, 3);
 });
 
-test('a child that started and hangs fails with its run time and CPU time', async () => {
-  await assert.rejects(runChild('hang', process.execPath, node('setInterval(() => {}, 1000)'),
-    { ...options, limits: { startMs: childLimits.startMs, runMs: 500 } }), error => {
+test('a child that started and hangs fails with its run time, CPU time, and descendants', async () => {
+  // The start signal waits for the descendant's exec, so the run limit cannot stop the child before it exists.
+  const hang = 'require("node:child_process").spawn("sleep", ["30"], { stdio: "ignore" })'
+    + '.once("spawn", () => require("node:fs").writeSync(3, "started")); setInterval(() => {}, 1000)';
+  await assert.rejects(runChild('hang', process.execPath, ['-e', hang], { ...options, limits: { startMs: childLimits.startMs, runMs: 500 } }), error => {
     assert.ok(error instanceof Error);
-    assert.match(error.message, /^hang did not exit within 500 ms after it started: pid \d+, child CPU \S+, started \d+ ms after spawn, \d+ ms in total$/);
+    assert.match(error.message, /^hang did not exit within 500 ms after it started: pid \d+, child CPU \S+, started \d+ ms after spawn, \d+ ms in total, timer -?\d+ ms late, descendants: \d+ \S+ CPU \S+ RSS \d+ KiB \S*sleep$/);
     return true;
   });
 });
@@ -26,7 +28,7 @@ test('a child that started and hangs fails with its run time and CPU time', asyn
 test('a child that never starts fails with the start limit', async () => {
   await assert.rejects(runChild('sleeper', 'sleep', ['30'], { ...options, limits: { startMs: 300, runMs: childLimits.runMs } }), error => {
     assert.ok(error instanceof Error);
-    assert.match(error.message, /^sleeper did not start within 300 ms: pid \d+, child CPU \S+$/);
+    assert.match(error.message, /^sleeper did not start within 300 ms: pid \d+, child CPU \S+, timer -?\d+ ms late$/);
     return true;
   });
 });

@@ -12,9 +12,24 @@ export type ChildResult = { status: number | null; signal: NodeJS.Signals | null
 export const childLimits: ChildLimits = { startMs: 300_000, runMs: 60_000 };
 export const childStarted = new URL('./child-started.ts', import.meta.url).pathname;
 
-function cpuTime(pid: number | undefined): string {
-  try { return execFileSync('ps', ['-o', 'time=', '-p', String(pid)], { encoding: 'utf8' }).trim() || 'unavailable'; }
-  catch { return 'unavailable'; }
+type Process = { pid: number; ppid: number; stat: string; cpu: string; rss: string; command: string };
+
+// A descendant with almost no RSS and no CPU has not finished exec yet; one that runs points at a real hang.
+function processTree(pid: number | undefined): { cpu: string; descendants: string } {
+  let rows: Process[];
+  try {
+    rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,stat=,time=,rss=,comm='], { encoding: 'utf8', timeout: 5000 }).trim().split('\n').map(line => {
+      const [pid, ppid, stat, cpu, rss, ...command] = line.trim().split(/\s+/);
+      return { pid: Number(pid), ppid: Number(ppid), stat, cpu, rss, command: command.join(' ') };
+    });
+  } catch { return { cpu: 'unavailable', descendants: 'unavailable' }; }
+  const descendants: Process[] = [];
+  const parents = [pid];
+  for (let index = 0; index < parents.length; index++) {
+    for (const row of rows) if (row.ppid === parents[index]) { descendants.push(row); parents.push(row.pid); }
+  }
+  return { cpu: rows.find(row => row.pid === pid)?.cpu ?? 'unavailable',
+    descendants: descendants.map(row => `${row.pid} ${row.stat} CPU ${row.cpu} RSS ${row.rss} KiB ${row.command}`).join('; ') || 'none' };
 }
 
 export function runChild(label: string, executable: string, args: string[],
@@ -27,17 +42,22 @@ export function runChild(label: string, executable: string, args: string[],
     const stderr: Buffer[] = [];
     let started: number | undefined;
     let failure: string | undefined;
+    let deadline = spawned + limits.startMs;
+    // A timer that fires minutes late means this test process was paused too, not only the child.
     const stop = () => {
-      const elapsed = Math.round(performance.now() - spawned);
+      const now = performance.now();
+      const tree = processTree(child.pid);
+      const timing = `timer ${Math.round(now - deadline)} ms late`;
       failure = started === undefined
-        ? `${label} did not start within ${limits.startMs} ms: pid ${child.pid}, child CPU ${cpuTime(child.pid)}`
-        : `${label} did not exit within ${limits.runMs} ms after it started: pid ${child.pid}, child CPU ${cpuTime(child.pid)}, `
-          + `started ${Math.round(started - spawned)} ms after spawn, ${elapsed} ms in total`;
+        ? `${label} did not start within ${limits.startMs} ms: pid ${child.pid}, child CPU ${tree.cpu}, ${timing}`
+        : `${label} did not exit within ${limits.runMs} ms after it started: pid ${child.pid}, child CPU ${tree.cpu}, `
+          + `started ${Math.round(started - spawned)} ms after spawn, ${Math.round(now - spawned)} ms in total, ${timing}, descendants: ${tree.descendants}`;
       child.kill('SIGKILL');
     };
     let timer = setTimeout(stop, limits.startMs);
     (child.stdio[3] as Readable).once('data', () => {
       started = performance.now();
+      deadline = started + limits.runMs;
       clearTimeout(timer);
       timer = setTimeout(stop, limits.runMs);
     });
