@@ -43,30 +43,30 @@ for(const [stubs,limit,message] of [
  assert.equal(result.status,1);
  assert.equal(result.stderr,`Cutover stopped. Read private receipts before recovery. ${message}\n`);
 });
-const mock=`#!/usr/bin/env node
-import {DatabaseSync} from 'node:sqlite';
+const cfStub=`#!/bin/sh
+if [ "$1" = workers ] && [ "$2" = deployments ]; then
+ if [ "$TEST_MODE" = staged ]; then version=active-old; else version=fixed; fi
+ printf '{"deployments":[{"versions":[{"version_id":"%s","percentage":100}]}]}' "$version"
+elif [ "$1" = workers ]; then printf '%s' '{"id":"fixed","bindings":[{"name":"DB","database_id":"00000000-0000-0000-0000-000000000000"}]}'
+else exec "$TEST_NODE" "$TEST_D1" "$@"; fi
+`;
+const pdStub=`#!/bin/sh
+for argument in "$@"; do if [ "$argument" = actor ]; then printf '%s' '{"actor":"test"}'; exit 0; fi; done
+exec "$TEST_NODE" "$TEST_CLI" "$@"
+`;
+const d1Query=`import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,writeFileSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
-import {basename,join} from 'node:path';
-const args=process.argv.slice(2), kind=basename(process.argv[1]);
-const out=x=>process.stdout.write(JSON.stringify(x));
-if(kind==='pd'){
- if(args.includes('actor'))out({actor:'test'});
- else process.stdout.write(execFileSync(process.execPath,[process.env.TEST_CLI,...args],{encoding:'utf8',env:process.env}));
-}else if(args[0]==='workers'&&args[1]==='deployments')out({deployments:[{versions:[{version_id:process.env.TEST_MODE==='staged'?'active-old':'fixed',percentage:100}]}]});
-else if(args[0]==='workers')out({id:'fixed',bindings:[{name:'DB',database_id:'00000000-0000-0000-0000-000000000000'}]});
-else {
- const path=args[args.indexOf('--batch')+1].slice(1), statements=JSON.parse(readFileSync(path,'utf8'));
- const db=new DatabaseSync(process.env.TEST_CLOUD);db.exec('PRAGMA foreign_keys=ON;BEGIN IMMEDIATE');
- const results=[];
- try{for(const s of statements){const q=db.prepare(s.sql);results.push({success:true,results:q.all(...s.params)});}db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}finally{db.close();}
- if(path.endsWith('/merge-batch.json')&&process.env.TEST_MODE==='lost')process.exit(1);
- if(path.endsWith('/cloud-after-batch.json')&&process.env.TEST_MODE==='cas'){
-  const c=JSON.parse(readFileSync(process.env.TEST_CONFIG,'utf8'));c.project='changed';writeFileSync(process.env.TEST_CONFIG,JSON.stringify(c));
- }
- if(path.endsWith('/cloud-after-batch.json')&&process.env.TEST_MODE==='stale')writeFileSync(process.env.TEST_CONFIG+'.migration.tmp','foreign recovery artifact');
- out(results);
+const args=process.argv.slice(2);
+const path=args[args.indexOf('--batch')+1].slice(1), statements=JSON.parse(readFileSync(path,'utf8'));
+const db=new DatabaseSync(process.env.TEST_CLOUD);db.exec('PRAGMA foreign_keys=ON;BEGIN IMMEDIATE');
+const results=[];
+try{for(const s of statements){const q=db.prepare(s.sql);results.push({success:true,results:q.all(...s.params)});}db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}finally{db.close();}
+if(path.endsWith('/merge-batch.json')&&process.env.TEST_MODE==='lost')process.exit(1);
+if(path.endsWith('/cloud-after-batch.json')&&process.env.TEST_MODE==='cas'){
+ const c=JSON.parse(readFileSync(process.env.TEST_CONFIG,'utf8'));c.project='changed';writeFileSync(process.env.TEST_CONFIG,JSON.stringify(c));
 }
+if(path.endsWith('/cloud-after-batch.json')&&process.env.TEST_MODE==='stale')writeFileSync(process.env.TEST_CONFIG+'.migration.tmp','foreign recovery artifact');
+process.stdout.write(JSON.stringify(results));
 `;
 test('cutover routes named local stores and linked worktrees, retires uncertain writes, and preserves concurrent defaults',async context=>{
 const base=realpathSync(mkdtempSync(join(tmpdir(),'pd-cutover-test-')));
@@ -75,7 +75,8 @@ const outcomes=[];
 for(const mode of ['success','lost','cas','staged','stale']){
  const root=join(base,mode);mkdirSync(root,{mode:0o700});
  const bin=join(root,'bin');mkdirSync(bin,{mode:0o700});
- for(const command of ['cf','pd']){writeFileSync(join(bin,command),mock);chmodSync(join(bin,command),0o700);}
+ for(const [command,script] of [['cf',cfStub],['pd',pdStub]] as const){writeFileSync(join(bin,command),script);chmodSync(join(bin,command),0o700);}
+ const d1=join(root,'d1-query.mjs');writeFileSync(d1,d1Query,{mode:0o600});
  const source=join(root,'source');mkdirSync(source,{mode:0o700});
  const location={directory:source,cwd:checkout};const {database_path:sourcePath}=initializeStore(location);
  const store=openStore(location);
@@ -102,7 +103,7 @@ for(const mode of ['success','lost','cas','staged','stale']){
  writeFileSync(configPath,JSON.stringify(config),{mode:0o600});
  const receipts=join(root,'receipts'),planPath=join(root,'plan.json');
  writeFileSync(planPath,JSON.stringify({profile:'test',accountId:'0'.repeat(32),databaseId:'00000000-0000-0000-0000-000000000000',workerId:'test',url:'https://test.invalid',connection:'cloud',sourceDirectory:source,receiptsDirectory:receipts,repositories:[alias,repository]}),{mode:0o600});
- const result=spawnSync(process.execPath,[executable,'--plan',planPath,'--apply'],{cwd:checkout,env:{...process.env,PATH:bin+':'+process.env.PATH,XDG_CONFIG_HOME:configHome,TEST_CLI:join(checkout,'src','cli.ts'),TEST_CLOUD:cloudPath,TEST_CONFIG:configPath,TEST_MODE:mode,POLYLINEDB_D1_CHILD_LIMIT_MS:String(childLimits.startMs+childLimits.runMs)},encoding:'utf8',maxBuffer:1024*1024});
+ const result=spawnSync(process.execPath,[executable,'--plan',planPath,'--apply'],{cwd:checkout,env:{...process.env,PATH:bin+':'+process.env.PATH,XDG_CONFIG_HOME:configHome,TEST_NODE:process.execPath,TEST_D1:d1,TEST_CLI:join(checkout,'src','cli.ts'),TEST_CLOUD:cloudPath,TEST_CONFIG:configPath,TEST_MODE:mode,POLYLINEDB_D1_CHILD_LIMIT_MS:String(childLimits.startMs+childLimits.runMs)},encoding:'utf8',maxBuffer:1024*1024});
  assert.equal(result.status,mode==='success'?0:1,result.stderr);
  if(mode==='staged'){
   assert.match(result.stderr,/Latest Worker version is not the active deployment/);
