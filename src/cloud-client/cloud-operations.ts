@@ -1,12 +1,12 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
-import { PolylinedbError, type Issue } from '../records/index.ts';
+import { PolylinedbError, type Issue, type SearchMatch } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
 import { memoryRow } from '../records/persistence.ts';
 import { parseMemoryId, parseMemoryRevision, observedMemoryProject } from '../records/index.ts';
 import type { Memory, MemoryContext } from '../records/index.ts';
 import { fields } from '../records/persistence.ts';
-import { parseIssueId } from '../records/index.ts';
+import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence.ts';
 import { claimRow } from '../records/persistence.ts';
 import { parseIncarnation } from '../records/index.ts';
@@ -33,6 +33,15 @@ function issue(value: unknown): Issue {
 }
 function memory(value: unknown): Memory {
   return memoryRow(exact(value, ['id', 'project', 'title', 'body', 'version', 'created_at', 'created_by', 'updated_at', 'updated_by']));
+}
+function searchMatch(value: unknown, issues: readonly Issue[]): SearchMatch {
+  const row = object(value);
+  const located = exact(row, row.location === 'comment' ? ['issue_id', 'location', 'comment_id', 'excerpt'] : ['issue_id', 'location', 'excerpt']);
+  const issue_id = parseIssueId(located.issue_id);
+  if (!issues.some(issue => issue.id === issue_id) || typeof located.excerpt !== 'string' || /\p{Cc}/u.test(located.excerpt)) return invalid();
+  if (located.location === 'comment') return { issue_id, location: 'comment', comment_id: parseRequestId(located.comment_id), excerpt: located.excerpt };
+  if (located.location !== 'body') return invalid();
+  return { issue_id, location: 'body', excerpt: located.excerpt };
 }
 const claimKeys = ['issue_id', 'incarnation', 'session_id', 'generation', 'actor', 'agent_label', 'revision', 'acquired_at', 'changed_at', 'expires_at', 'released_at'];
 function claim(value: unknown): Claim { return claimRow(exact(value, claimKeys)); }
@@ -175,7 +184,8 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { issue: shown, comments: row.comments.map(entry => commentRow(exact(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))), claim: current };
     }
     case 'list': case 'search': case 'dependency_worklist': {
-      const row = exact(value, ['issues', 'next_cursor']);
+      const withMatches = operation.op === 'search' && operation.with_matches === true;
+      const row = exact(value, withMatches ? ['issues', 'next_cursor', 'matches'] : ['issues', 'next_cursor']);
       if (!Array.isArray(row.issues)) return invalid();
       const issues = row.issues.map(issue); const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
       if (operation.op === 'dependency_worklist') {
@@ -187,6 +197,10 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
           previous = sort;
         }
         if (next_cursor !== null && (issues.length !== operation.limit || next_cursor !== issues.at(-1)?.id)) return invalid();
+      }
+      if (withMatches) {
+        if (!Array.isArray(row.matches)) return invalid();
+        return { issues, next_cursor, matches: row.matches.map(match => searchMatch(match, issues)) };
       }
       return { issues, next_cursor };
     }

@@ -120,6 +120,21 @@ test('cloud transport runs every operation against signed Worker requests throug
       assert.equal(listed.issues.length, 1);
       assert.equal(listed.next_cursor, null);
     }
+    const located = await run({ op: 'search', project: 'cloud', query: 'confirmed', with_matches: true });
+    assert.ok('matches' in located);
+    assert.deepEqual(located.matches, [{ issue_id: id, location: 'comment', comment_id: shown.comments[0]?.id, excerpt: 'confirmed' }]);
+    const located_page = { issues: located.issues, next_cursor: null };
+    for (const [operation, damaged] of [
+      [{ op: 'search', query: 'confirmed', with_matches: true }, located_page],
+      [{ op: 'search', query: 'confirmed' }, { ...located_page, matches: [] }],
+      [{ op: 'search', query: 'confirmed', with_matches: true }, { ...located_page, matches: [{ issue_id: 'pd-999', location: 'body', excerpt: 'confirmed' }] }],
+      [{ op: 'search', query: 'confirmed', with_matches: true }, { ...located_page, matches: [{ issue_id: id, location: 'body', excerpt: 'line\nfeed' }] }],
+      [{ op: 'search', query: 'confirmed', with_matches: true }, { ...located_page, matches: [{ issue_id: id, location: 'comment', excerpt: 'confirmed' }] }],
+      [{ op: 'search', query: 'confirmed', with_matches: true }, { ...located_page, matches: [{ issue_id: id, location: 'title', excerpt: 'confirmed' }] }],
+    ]) {
+      await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation(operation),
+        authorize: async () => 'secret', fetch: async () => Response.json(damaged) }), { code: 'cloud_invalid_response' });
+    }
     await assert.rejects(run({ op: 'show', id: 'pd-999' }), { code: 'not_found', details: { id: 'pd-999' } });
     const inspection = await run({ op: 'claim_show', issue_id: id }); assert.ok('claim' in inspection);
     const claimCommand = { op: 'claim_acquire', issue_id: id, incarnation: inspection.claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
