@@ -12,13 +12,16 @@ export type Environment = AccessSettings & {
 };
 
 const verifyAccess = createAccessVerifier();
+// MCP search always reports where each hit matched, so the /v1/operations opt-in is not an MCP input.
+const { with_matches: _, ...searchProperties } = operationSchemas.search.properties;
+const mcpSchemas = { ...operationSchemas, search: { ...operationSchemas.search, properties: searchProperties } };
 const protocolVersion = '2025-11-25';
 const requestLimit = 128 * 1024;
 const descriptions: Record<string, string> = {
   create: 'Create an issue. Supply tool, project, and body. An optional parent must be an epic. Retain the request UUID and payload for retries.',
   show: 'Read an issue, its field versions, its comments, and its claim before editing. claim.store_incarnation is the incarnation for claim_acquire.',
   list: 'List issues with optional filters and ID pagination.',
-  search: 'Find literal, case-sensitive text in issue bodies and comments.',
+  search: 'Find literal, case-sensitive text in issue bodies and comments. matches names the body or comment IDs of each hit, with a short excerpt.',
   comment: 'Append a comment. Does not change issue field versions. Do not blindly retry after a network failure.',
   update: 'Change fields using their observed versions. On conflict, read again and reconsider the edit. Never silently retry with new versions.',
   close: 'Set status to closed using its observed version. Does not close children.',
@@ -186,7 +189,7 @@ async function mcp(request: Request, env: Environment, caller: Caller): Promise<
     case 'ping': return result({});
     case 'tools/list':
       if (params.cursor !== undefined) return rpcError(id, -32602, 'Tool-list cursors are not supported.');
-      return result({ tools: Object.entries(operationSchemas).map(([name, inputSchema]) => ({
+      return result({ tools: Object.entries(mcpSchemas).map(([name, inputSchema]) => ({
         name, description: descriptions[name], inputSchema,
           annotations: mcpAnnotationsFor(name),
       })) });
@@ -196,7 +199,7 @@ async function mcp(request: Request, env: Environment, caller: Caller): Promise<
       const args = params.arguments ?? {};
       try {
         if ('op' in args) throw new PolylinedbError('invalid_input', 'Tool arguments cannot override the operation.', 400);
-        const operation = parseRequested('/mcp', { ...args, op: params.name }, caller);
+        const operation = parseRequested('/mcp', { ...args, op: params.name, ...(params.name === 'search' ? { with_matches: true } : {}) }, caller);
         const output = await execute(request, env, operation, caller);
         return result({ content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output, isError: false });
       } catch (error) {
