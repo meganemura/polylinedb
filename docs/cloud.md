@@ -81,6 +81,13 @@ Set `POLYLINEDB_BUILD_WITHOUT_ACCESS=1` for them. `npm run test:worker` and the 
 The build then ignores the four variables and uses empty Access settings, so the Worker refuses every request with `503`.
 Do not set this variable in a deployment environment.
 
+`npm run dev:worker` runs `vite dev` with `CLOUDFLARE_VITE_FORCE_LOCAL=true`.
+The Cloudflare Vite plugin then turns off remote bindings and starts no remote proxy session.
+D1 and every other binding use local Miniflare state under `.wrangler/state`, and the server needs no Cloudflare login.
+The script does not use `cf dev`, because `cf dev` rejects `--local`.
+`cf` forwards a local option only to its Vite dev-server delegate, and that delegate requires `@cloudflare/vite-plugin` 2.x. This project uses 1.x.
+Pass Vite options after `--`, for example `npm run dev:worker -- --port 8799 --strictPort`.
+
 The default Worker name and D1 database name are `polylinedb`. Override them with `POLYLINEDB_WORKER_NAME` and `POLYLINEDB_D1_NAME` before build or deployment. The D1 binding is `DB`. The entry point is `src/service/index.ts`. Preview URLs are disabled in the project configuration.
 
 A `workers.dev` hostname can use hostname-based Access without a custom domain. Protect the complete hostname as a self-hosted Access application. See [Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/). Check the actual deployment's routes and preview settings before acceptance.
