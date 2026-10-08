@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const configUrl = new URL('../cloudflare.config.ts', import.meta.url).href;
 const sentinel = 'sentinel-value-7f3a';
@@ -81,4 +82,11 @@ test('the local opt-in accepts only the exact value 1', () => {
   for (const value of ['true', 'yes', '0', '']) {
     refused(evaluate({ POLYLINEDB_ACCESS_AUD: undefined, POLYLINEDB_BUILD_WITHOUT_ACCESS: value }), 'POLYLINEDB_ACCESS_AUD');
   }
+});
+
+test('the dev server runs Vite with remote bindings switched off', () => {
+  // cf dev rejects --local, and its own local delegate needs a newer @cloudflare/vite-plugin.
+  // The plugin reads this variable and then starts no remote proxy session, so it never asks for a login.
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.scripts['dev:worker'], 'CLOUDFLARE_VITE_FORCE_LOCAL=true vite dev');
 });
