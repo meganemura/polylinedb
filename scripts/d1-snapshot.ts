@@ -58,7 +58,7 @@ export function cfQuery(target: ReturnType<typeof parseTarget>, limitMs = childL
   };
 }
 
-export async function runSnapshotCommand(args: string[], connect: (target: ReturnType<typeof parseTarget>) => Query = cfQuery) {
+export async function runSnapshotCommand(args: string[], connectForTests: (target: ReturnType<typeof parseTarget>) => Query = cfQuery) {
   const [action, ...flags] = args;
   const output = flags.length === 6 && action === 'verify' && flags[4] === '--output' ? flags[5] : undefined;
   if (!['inspect', 'restore', 'verify'].includes(action ?? '') || (flags.length !== 4 && !output) || flags[0] !== '--snapshot' || flags[2] !== '--target' || !flags[1] || !flags[3] || (output !== undefined && !isAbsolute(output))) {
@@ -66,7 +66,7 @@ export async function runSnapshotCommand(args: string[], connect: (target: Retur
   }
   const target = parseTarget(JSON.parse(readFileSync(flags[3], 'utf8')));
   const snapshot: unknown = JSON.parse(readFileSync(flags[1], 'utf8'));
-  const migration = snapshotMigration(connect(target), snapshot, target.snapshotSha256);
+  const migration = snapshotMigration(connectForTests(target), snapshot, target.snapshotSha256);
   const report = action === 'restore' ? await migration.restore() : action === 'verify' ? await migration.verify() : await migration.inspect();
   if (output && 'snapshot' in report) writeFileSync(output, canonicalSnapshot(report.snapshot) + '\n', { mode: 0o600, flag: 'wx' });
   const { snapshot: _snapshot, ...receipt } = 'snapshot' in report ? report : { ...report, snapshot: undefined };
