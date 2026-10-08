@@ -53,6 +53,16 @@ else process.stdout.write(JSON.stringify({ success: true, result: [{ success: tr
   }
 });
 
+test('cf transport refuses a child limit that is not a positive number of milliseconds', () => {
+  const original = process.env.POLYLINEDB_D1_CHILD_LIMIT_MS;
+  try {
+    for (const value of ['abc', '0', '-5', '1.5', '']) {
+      process.env.POLYLINEDB_D1_CHILD_LIMIT_MS = value;
+      assert.throws(() => cfQuery(target), { message: 'POLYLINEDB_D1_CHILD_LIMIT_MS must be a positive number of milliseconds' });
+    }
+  } finally { if (original === undefined) delete process.env.POLYLINEDB_D1_CHILD_LIMIT_MS; else process.env.POLYLINEDB_D1_CHILD_LIMIT_MS = original; }
+});
+
 test('cf envelopes fail closed and targets reject ambiguous extra fields', () => {
   for (const value of [null, {}, { success: false, result: [] }, [{ success: false, results: [] }], [], [{ success: true, results: [null] }]]) assert.throws(() => parseQueryOutput(value));
   assert.throws(() => parseTarget({ ...target, account: 'other' }));
