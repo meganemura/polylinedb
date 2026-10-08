@@ -14,7 +14,6 @@ import { PolylinedbError } from '../src/records/index.ts';
 export type Batch = (statements: readonly Statement[]) => Promise<readonly (readonly Record<string, unknown>[])[]>;
 export type AdditionOutcome = { outcome: 'routed'; operation_id: string; expected_sha256: string; counts: Counts; routes: number };
 export type ReleaseOutcome = { outcome: 'released'; operation_id: string };
-/** Writes one routing change. Tests wrap it to crash after the write. */
 export type RouteSwitches = { repository(connection: string, root: string): void; userDefault(connection: string, environment: NodeJS.ProcessEnv): void };
 const workspaceSwitches: RouteSwitches = { repository: (connection, root) => { useRepositoryConnection(connection, root); }, userDefault: defaultConnection };
 
@@ -499,7 +498,6 @@ function storedOperation(book: Journal): Operation {
 
 const outcome = (operation: Operation): AdditionOutcome => ({ outcome: 'routed', operation_id: operation.operation_id, expected_sha256: operation.receipt.expected_sha256, counts: operation.counts, routes: operation.routing.steps.length });
 
-/** `environment` locates the connection settings that routing reads and changes. */
 export function restoredAddition(destination: Batch, journalDirectory: string, environment: NodeJS.ProcessEnv, switches: RouteSwitches = workspaceSwitches) {
   async function complete(book: Journal, operation: Operation, acceptDestinationEdits: boolean): Promise<AdditionOutcome> {
     await commit(destination, book, operation);
