@@ -310,6 +310,7 @@ function retiredSourceSchema(connection: string): string {
 /** Reads the source rows. Retirement and release pass `retiredFor`, because a crash can follow the retirement commit. */
 function readSource(database: DatabaseSync, retiredFor?: string): RawRows {
   const schema = stableJson(database.prepare(schemaSql).all());
+  if (retiredFor === undefined && database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'polylinedb_retired_%'").get()) refuse('The source store is retired; another addition or cutover owns it');
   if (schema !== canonicalSourceSchema && (retiredFor === undefined || schema !== retiredSourceSchema(retiredFor))) refuse('Source schema differs from canonical schema 6');
   return normalizedRows(Object.fromEntries(tables.map(table => [table, database.prepare(`SELECT * FROM ${table}`).all().map(row => ({ ...row }))])));
 }
@@ -520,8 +521,9 @@ export function restoredAddition(destination: Batch, journalDirectory: string, e
       const source = lockedSource(input.source);
       let operation: Operation;
       try {
+        const sourceRows = readSource(source);
         const routing = planRouting(input.connection, input.source, input.repositories ?? [], environment);
-        operation = freezeOperation({ operationId: randomUUID(), connection: input.connection, sourcePath: input.source, original, baseline, sourceRows: readSource(source), routing, maximumStatements });
+        operation = freezeOperation({ operationId: randomUUID(), connection: input.connection, sourcePath: input.source, original, baseline, sourceRows, routing, maximumStatements });
         book.write('operation.json', operation);
         retire(book, operation, source);
       } finally {
