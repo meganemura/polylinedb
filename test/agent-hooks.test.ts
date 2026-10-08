@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { contextChildLimitMs, hookTimeoutSeconds } from '../src/host-hooks/index.ts';
+import { contextChildLimitMs, defaultContextChildLimitMs, hookTimeoutSeconds } from '../src/host-hooks/index.ts';
 import { childLimits } from './fixtures/child-run.ts';
 
 const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -166,8 +166,12 @@ test('Codex keeps the full bounded context and its omission metadata', t => {
 
 test('the context child limit leaves the hook time to answer before the host cap', () => {
   assert.equal(hookTimeoutSeconds, 15);
-  assert.equal(contextChildLimitMs, 10_000);
-  assert.ok(contextChildLimitMs < hookTimeoutSeconds * 1000);
+  assert.equal(defaultContextChildLimitMs, 10_000);
+  assert.ok(defaultContextChildLimitMs < hookTimeoutSeconds * 1000);
+  assert.equal(contextChildLimitMs({}), 10_000);
+  assert.equal(contextChildLimitMs({ PD_TEST_HOOK_CLI_LIMIT_MS: '60000' }), 60_000);
+  assert.equal(contextChildLimitMs({ PD_TEST_HOOK_CLI_LIMIT_MS: '0' }), 10_000);
+  assert.equal(contextChildLimitMs({ PD_TEST_HOOK_CLI_LIMIT_MS: '10s' }), 10_000);
 });
 
 test('a CLI child that outlives the hook limit returns the unavailable status', t => {
