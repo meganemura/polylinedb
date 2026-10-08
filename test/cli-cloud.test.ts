@@ -250,3 +250,16 @@ test('cloud CLI rejects invalid 503 access configuration envelopes and status co
     assert.equal(JSON.stringify(result).includes('synthetic-private-token'), false, mode);
   }
 });
+
+test('cloud CLI completes a show from an older Worker with one claim_show request', async context => {
+  const { run, requests } = await fixture(context);
+  const { issue } = await run(['create', '--body', 'Compatible shapes']);
+  await run(['comment', issue.id, '--body', 'Noted']);
+  const current = await run(['show', issue.id]);
+  const timeless = (shown: { claim: { observed_at: number } }) => ({ ...shown, claim: { ...shown.claim, observed_at: 0 } });
+  const before = requests().length;
+  assert.deepEqual(timeless(await run(['show', issue.id], { mode: 'show-without-claim' })), timeless(current));
+  assert.deepEqual(requests().slice(before).map(request => request.op), ['show', 'claim_show']);
+  const human = await run(['show', issue.id, '--human'], { mode: 'show-without-claim', raw: true });
+  assert.ok(human.split('\n').includes(`Claim never_claimed · store incarnation ${current.claim.store_incarnation}`));
+});

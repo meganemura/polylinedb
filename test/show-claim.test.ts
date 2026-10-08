@@ -93,15 +93,14 @@ test('MCP show returns the claim inspection that claim_acquire needs', async () 
   } finally { sqlite.close(); }
 });
 
-test('cloud client accepts the claim in show and rejects a missing or foreign claim', async () => {
+test('cloud client accepts the claim in show and rejects a foreign or inconsistent claim', async () => {
   const { sqlite, post } = await worker();
   const transport: typeof fetch = (_, options) => post('/v1/operations', JSON.parse(String(options?.body)));
   const cloud = (value: unknown, fetch = transport) => executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation(value), authorize: async () => 'synthetic-secret', fetch });
   try {
     await runShowClaimFlow(value => cloud(value));
     const shown = await (await post('/v1/operations', { op: 'show', id: 'pd-1' })).json();
-    const { claim: _, ...withoutClaim } = shown;
-    for (const damaged of [withoutClaim, { ...shown, claim: { ...shown.claim, issue_id: 'pd-2' } }, { ...shown, claim: { ...shown.claim, state: 'released' } }]) {
+    for (const damaged of [{ ...shown, claim: { ...shown.claim, issue_id: 'pd-2' } }, { ...shown, claim: { ...shown.claim, state: 'released' } }]) {
       await assert.rejects(cloud({ op: 'show', id: 'pd-1' }, async () => Response.json(damaged)), { code: 'cloud_invalid_response' });
     }
   } finally { sqlite.close(); }

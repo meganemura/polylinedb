@@ -74,6 +74,7 @@ globalThis.fetch = async (input, init) => {
     try {
       const result = await executeOperation(store.db, operation, 'oauth:synthetic-owner');
       if (mode === 'ambiguous') throw new Error('synthetic-private-token');
+      if (mode === 'show-without-claim' && 'claim' in result && 'comments' in result) { const { claim: _, ...older } = result; return Response.json(older); }
       return Response.json(result);
     } catch (error) {
       if (error instanceof PolylinedbError) return Response.json({ error: { code: error.code, message: error.message,

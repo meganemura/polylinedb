@@ -1,4 +1,5 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
+// The one exception is a show answered without `claim`, which a single claim_show request completes.
 import { PolylinedbError, type Issue } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
@@ -351,6 +352,12 @@ export async function executeCloudOperation(input: {
       let details: unknown;
       try { details = errorDetails(input.operation, error.code, error.details); } catch { return invalid(); }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);
+    }
+    if (input.operation.op === 'show' && !Object.hasOwn(object(value), 'claim')) {
+      // A Worker released before show returned `claim` omits it, and claim_show reads the same inspection, so a show result always has one.
+      const inspected = await executeCloudOperation({ ...input, operation: { op: 'claim_show', issue_id: input.operation.id } });
+      if (!('claim' in inspected)) return invalid();
+      value = { ...object(value), claim: inspected.claim };
     }
     try {
       const parsed = result(input.operation, value);
