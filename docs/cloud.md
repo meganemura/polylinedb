@@ -85,7 +85,7 @@ Do not set this variable in a deployment environment.
 The Cloudflare Vite plugin then turns off remote bindings and starts no remote proxy session.
 D1 and every other binding use local Miniflare state under `.wrangler/state`, and the server needs no Cloudflare login.
 The script does not use `cf dev`, because `cf dev` rejects `--local`.
-`cf` forwards a local option only to its Vite dev-server delegate, and that delegate requires `@cloudflare/vite-plugin` 2.x. This project uses 1.x.
+In this project, `cf` forwards a local option only to its Vite dev-server delegate, and that delegate requires `@cloudflare/vite-plugin` 2.x. This project uses 1.x.
 Pass Vite options after `--`, for example `npm run dev:worker -- --port 8799 --strictPort`.
 
 The default Worker name and D1 database name are `polylinedb`. Override them with `POLYLINEDB_WORKER_NAME` and `POLYLINEDB_D1_NAME` before build or deployment. The D1 binding is `DB`. The entry point is `src/service/index.ts`. Preview URLs are disabled in the project configuration.
