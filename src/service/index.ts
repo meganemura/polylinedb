@@ -3,7 +3,7 @@ import { AccessError, createAccessVerifier, type AccessSettings, type Caller } f
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { uiResponse } from "./ui.ts";
 import { PolylinedbError } from "../records/index.ts";
-import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseOperation } from "../records/index.ts";
+import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseOperation, parseRequestId } from "../records/index.ts";
 import type { Operation } from "../records/index.ts";
 
 export type Environment = AccessSettings & {
@@ -120,6 +120,24 @@ function accepts(request: Request, type: string): boolean {
   });
 }
 
+type Route = '/mcp' | '/v1/operations';
+
+function hasSession(value: unknown): boolean {
+  try { parseRequestId(value, 'session_id'); return true; } catch { return false; }
+}
+
+// Decided from the raw input, not the error message, so validation wording can change without silencing the signal.
+function parseRequested(route: Route, input: unknown, caller: Caller): Operation {
+  try { return parseOperation(input); }
+  catch (error) {
+    if (error instanceof PolylinedbError && error.code === 'invalid_input' && object(input)
+      && input.op === 'claim_acquire' && !hasSession(input.session_id)) {
+      console.warn({ event: 'claim_session_id_missing', route, tool: 'claim_acquire', actor: caller.actor.id });
+    }
+    throw error;
+  }
+}
+
 function execute(request: Request, env: Environment, operation: Operation, caller: Caller) {
   if (caller.access === 'read' && operationAccess(operation.op) === 'write') {
     throw new PolylinedbError('read_only_actor', 'This actor can only read', 403, { op: operation.op });
@@ -178,7 +196,7 @@ async function mcp(request: Request, env: Environment, caller: Caller): Promise<
       const args = params.arguments ?? {};
       try {
         if ('op' in args) throw new PolylinedbError('invalid_input', 'Tool arguments cannot override the operation.', 400);
-        const operation = parseOperation({ ...args, op: params.name });
+        const operation = parseRequested('/mcp', { ...args, op: params.name }, caller);
         const output = await execute(request, env, operation, caller);
         return result({ content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output, isError: false });
       } catch (error) {
@@ -206,7 +224,7 @@ export async function handleRequest(
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
     if (path === '/mcp') return await mcp(request, env, caller);
-    return json(await execute(request, env, parseOperation(await readJson(request)), caller));
+    return json(await execute(request, env, parseRequested('/v1/operations', await readJson(request), caller), caller));
   } catch (error) {
     const failure = publicError(error);
     return json(failure.body, failure.status, failure.status === 401 ? { 'www-authenticate': 'Bearer' } : {});
