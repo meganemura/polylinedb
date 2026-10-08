@@ -415,8 +415,8 @@ test('/ui shows quiet notes when nothing waits for main and nothing has closed',
   } finally { sqlite.close(); }
 });
 
-test('/ui requires the Access assertion and the roster, and accepts no writes', async () => {
-  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+test('/ui requires the Access assertion and the roster, lets owner, agent, and reader view it, and accepts no writes', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"},{"actor":"service:robot","role":"agent"}]');
   const token = await assertion();
   try {
     const id = await seedIssue(env, token, '# Secret title');
@@ -433,17 +433,28 @@ test('/ui requires the Access assertion and the roster, and accepts no writes', 
     assert.equal(stranger.status, 403);
     assert.ok(!(await stranger.text()).includes('Secret title'));
 
-    const reader = await viewUi(env, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
-    assert.equal(reader.status, 200);
-    assert.ok((await reader.text()).includes('<span class="primary">Secret title</span>'));
-
-    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-      const write = await handleRequest(new Request('https://issues.example/ui', { method,
-        headers: { 'cf-access-jwt-assertion': token, 'content-type': 'application/json' },
-        body: JSON.stringify({ op: 'close', id, expected: 1 }) }), env, authenticate);
-      assert.equal(write.status, 405, method);
-      assert.equal(write.headers.get('allow'), 'GET');
+    const roles = { owner: token, reader: await assertion({ sub: 'viewer' }), agent: await assertion({ sub: '', common_name: 'robot' }) };
+    for (const [role, roleToken] of Object.entries(roles)) {
+      const view = await viewUi(env, { 'cf-access-jwt-assertion': roleToken });
+      assert.equal(view.status, 200, role);
+      assert.ok((await view.text()).includes('<span class="primary">Secret title</span>'), role);
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        const write = await handleRequest(new Request('https://issues.example/ui', { method,
+          headers: { 'cf-access-jwt-assertion': roleToken, 'content-type': 'application/json' },
+          body: JSON.stringify({ op: 'reopen', id, expected: 1 }) }), env, authenticate);
+        assert.equal(write.status, 405, `${role} ${method}`);
+        assert.equal(write.headers.get('allow'), 'GET');
+      }
     }
+    for (const operation of [{ op: 'reopen', id, expected: 1 }, { op: 'comment', id, body: 'From a reader' },
+      { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'From a reader' }]) {
+      const write = await handleRequest(new Request('https://issues.example/v1/operations', { method: 'POST',
+        headers: { 'cf-access-jwt-assertion': roles.reader, 'content-type': 'application/json' },
+        body: JSON.stringify(operation) }), env, authenticate);
+      assert.equal(write.status, 403, operation.op);
+      assert.equal((await write.json()).error.code, 'read_only_actor');
+    }
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments').get()?.count, 0);
     assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all()), before);
     assert.equal((await viewUi(env, {})).headers.get('content-type'), 'application/json');
   } finally { sqlite.close(); }
