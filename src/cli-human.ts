@@ -142,6 +142,7 @@ function renderIssueDetails(result: IssueDetails, color: boolean): string {
       ? '(none)'
       : issue.labels.map(label => visibleText(label, false)).join(', ')),
     'Versions ' + VERSION_FIELDS.map(field => field + '=' + issue.versions[field]).join(' '),
+    'Claim ' + result.claim.state + ' · store incarnation ' + result.claim.store_incarnation,
     'Created ' + visibleText(issue.created_at, false) + ' by ' + visibleText(issue.created_by, false),
     'Updated ' + visibleText(issue.updated_at, false) + ' by ' + visibleText(issue.updated_by, false),
     heading('Body', color),

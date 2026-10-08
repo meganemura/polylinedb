@@ -42,7 +42,7 @@ function renderShow(
 ): string {
   return renderHumanIssueRead({
     command: 'show',
-    result: { issue: record, comments, ...(freshness === undefined ? {} : { memory_freshness: freshness }) },
+    result: { issue: record, comments, claim: { issue_id: record.id, store_incarnation: '0123456789abcdef0123456789abcdef', observed_at: 1, state: 'never_claimed', lease: null }, ...(freshness === undefined ? {} : { memory_freshness: freshness }) },
   }, terminal);
 }
 
@@ -70,7 +70,7 @@ test('show renders every issue field and full Japanese comment bodies without a 
   const before = structuredClone({ record, comments });
   assert.equal(
     renderShow(record, comments),
-    'Issue details\nID pd-17\nStatus open\nPriority P2\nType bug\nTool compiler\nProject parser\nLabels human, urgent\nVersions tool=1 project=2 body=3 status=4 type=5 priority=6 labels=7\nCreated 2026-10-06T01:02:03.000Z by Megan\nUpdated 2026-10-06T02:03:04.000Z by codex\nBody\n  入力が空です\n  次の行です\nComments (2)\n  c-1 · pd-17 · 2026-10-06T03:04:05.000Z · 玲奈\n    入力条件を確認しました。\n    次の手順へ進みます。\n  c-2 · pd-17 · 2026-10-06T04:05:06.000Z · Sam\n    再現しました。',
+    'Issue details\nID pd-17\nStatus open\nPriority P2\nType bug\nTool compiler\nProject parser\nLabels human, urgent\nVersions tool=1 project=2 body=3 status=4 type=5 priority=6 labels=7\nClaim never_claimed · store incarnation 0123456789abcdef0123456789abcdef\nCreated 2026-10-06T01:02:03.000Z by Megan\nUpdated 2026-10-06T02:03:04.000Z by codex\nBody\n  入力が空です\n  次の行です\nComments (2)\n  c-1 · pd-17 · 2026-10-06T03:04:05.000Z · 玲奈\n    入力条件を確認しました。\n    次の手順へ進みます。\n  c-2 · pd-17 · 2026-10-06T04:05:06.000Z · Sam\n    再現しました。',
   );
   assert.deepEqual({ record, comments }, before);
 });
@@ -100,6 +100,7 @@ Tool tool\u0007
 Project scope\u001B\u0000
 Labels label\u009B
 Versions tool=1 project=2 body=3 status=4 type=5 priority=6 labels=7
+Claim never_claimed · store incarnation 0123456789abcdef0123456789abcdef
 Created 2026-10-06T01:02:03.000Z by writer\u0001
 Updated 2026-10-06T02:03:04.000Z by codex
 Body
@@ -121,7 +122,7 @@ test('list bounds previews to forty code points and show retains the complete bo
   );
   assert.equal(
     renderShow(record, []),
-    'Issue details\nID pd-17\nStatus open\nPriority P2\nType bug\nTool compiler\nProject parser\nLabels human, urgent\nVersions tool=1 project=2 body=3 status=4 type=5 priority=6 labels=7\nCreated 2026-10-06T01:02:03.000Z by Megan\nUpdated 2026-10-06T02:03:04.000Z by codex\nBody\n  123456789012345678901234567890123456789😀rest\nComments (0)',
+    'Issue details\nID pd-17\nStatus open\nPriority P2\nType bug\nTool compiler\nProject parser\nLabels human, urgent\nVersions tool=1 project=2 body=3 status=4 type=5 priority=6 labels=7\nClaim never_claimed · store incarnation 0123456789abcdef0123456789abcdef\nCreated 2026-10-06T01:02:03.000Z by Megan\nUpdated 2026-10-06T02:03:04.000Z by codex\nBody\n  123456789012345678901234567890123456789😀rest\nComments (0)',
   );
 });
 
@@ -150,7 +151,7 @@ test('issue reads preserve current, stale, and unavailable memory freshness advi
   );
   assert.equal(
     renderShow(issue, [], stale),
-    'Issue details\nMemory freshness: stale · project parser · memory changed\nRetrieve project memory before acting.\nID pd-17\nStatus open\nPriority P2\nType bug\nTool compiler\nProject parser\nLabels human, urgent\nVersions tool=1 project=2 body=3 status=4 type=5 priority=6 labels=7\nCreated 2026-10-06T01:02:03.000Z by Megan\nUpdated 2026-10-06T02:03:04.000Z by codex\nBody\n  Failure when parsing empty input\nComments (0)',
+    'Issue details\nMemory freshness: stale · project parser · memory changed\nRetrieve project memory before acting.\nID pd-17\nStatus open\nPriority P2\nType bug\nTool compiler\nProject parser\nLabels human, urgent\nVersions tool=1 project=2 body=3 status=4 type=5 priority=6 labels=7\nClaim never_claimed · store incarnation 0123456789abcdef0123456789abcdef\nCreated 2026-10-06T01:02:03.000Z by Megan\nUpdated 2026-10-06T02:03:04.000Z by codex\nBody\n  Failure when parsing empty input\nComments (0)',
   );
   assert.equal(
     renderPage('search', [issue], null, unavailable),

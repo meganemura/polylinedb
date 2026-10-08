@@ -4,7 +4,8 @@ import { fields, issueTypes, statuses } from "./schema.ts";
 import type { Database } from 'solarsql';
 import { issueQueries } from "./issue-queries.ts";
 import { expectedType, PolylinedbError, requireFields } from './errors.ts';
-import { claimProofSchema, claimRow, parseClaimProof } from './claims.ts';
+import { claimProofSchema, claimRow, inspectClaim, parseClaimProof } from './claims.ts';
+import type { ClaimInspection } from './claims.ts';
 import { decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
@@ -35,7 +36,7 @@ export type Operation =
 export type Issue = Values & { id: string; versions: Record<Field, number>;
   created_at: string; created_by: string; updated_at: string; updated_by: string };
 export type Comment = { id: string; issue_id: string; body: string; created_at: string; created_by: string };
-export type OperationResult = { issue: Issue } | { issue: Issue; comments: Comment[] }
+export type OperationResult = { issue: Issue } | { issue: Issue; comments: Comment[]; claim: ClaimInspection }
   | { issues: Issue[]; next_cursor: string | null } | { comment: Comment } | { actor: string };
 export type SqlStatement = { sql: string; params: readonly (string | number | null)[] };
 export type SqlExecutor = {
@@ -315,7 +316,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
       return { issue: issueRow(row), comments: rows.filter(row => row.comment_id !== null).map(row => commentRow({
         id: row.comment_id, issue_id: row.id, body: row.comment_body,
         created_at: row.comment_created_at, created_by: row.comment_created_by,
-      })) };
+      })), claim: await inspectClaim(db, operation.id) };
     }
     case 'comment': {
       const gate = agentHoldsClaim(operation.id, caller);

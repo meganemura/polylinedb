@@ -101,6 +101,11 @@ function inspection(row: Record<string, unknown>): ClaimInspection {
   const lease = row.generation === null ? null : claimRow(row);
   return { issue_id, store_incarnation, observed_at, state: claimState(lease, store_incarnation, observed_at), lease };
 }
+export async function inspectClaim(db: SqlExecutor, issue_id: string): Promise<ClaimInspection> {
+  const row = (await db.reads.all(issueQueries.claimShow, { issue_id }))[0];
+  if (!row) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
+  return inspection(row);
+}
 function duplicateReceipt(error: unknown): boolean {
   let cause = error; const seen = new Set<unknown>();
   for (let depth = 0; depth < 8 && cause instanceof Error && !seen.has(cause); depth++) {
@@ -121,11 +126,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     const all = (await db.reads.all(issueQueries.claimList, { tool: operation.tool ?? null, project: operation.project ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 })).map(inspection);
     const claims = all.slice(0, operation.limit); return { claims, next_cursor: all.length > operation.limit ? claims.at(-1)?.issue_id ?? null : null };
   }
-  if (operation.op === 'claim_show') {
-    const row = (await db.reads.all(issueQueries.claimShow, { issue_id: operation.issue_id }))[0];
-    if (!row) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: operation.issue_id });
-    return { claim: inspection(row) };
-  }
+  if (operation.op === 'claim_show') return { claim: await inspectClaim(db, operation.issue_id) };
   name(actor, 'actor');
   const payload = JSON.stringify(operation);
   let results;

@@ -11,6 +11,7 @@ import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from "../src/records/snapshot.ts";
 import { SCHEMA_V2_SQL } from "../src/records/schema.ts";
 import type { SqlExecutor } from "../src/records/issues.ts";
+import { issueRow } from "../src/records/persistence.ts";
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-memory-'));
@@ -116,8 +117,8 @@ test('schema upgrade is explicit and v2 snapshot conversion retains issue data',
   await executeOperation(legacy, request, 'legacy:creator');
   await executeOperation(legacy, parseOperation({ op: 'comment', id: 'old-1', body: 'Original comment' }), 'legacy:commenter');
   old.exec("UPDATE issues SET body = 'Edited before upgrade', body_v = 2, updated_by = 'legacy:editor' WHERE id = 'old-1'");
-  const shown = await executeOperation(legacy, parseOperation({ op: 'show', id: 'old-1' }), 'legacy:editor');
-  assert('issue' in shown); const edited = { issue: shown.issue };
+  // show also reads the store identity, which schema 2 lacks.
+  const edited = { issue: issueRow(old.prepare("SELECT * FROM issues WHERE id = 'old-1'").get() ?? {}) };
   const oldComments = old.prepare('SELECT * FROM comments').all();
   const oldCounters = old.prepare('SELECT * FROM counters').all();
   const oldRequests = old.prepare('SELECT * FROM requests').all();

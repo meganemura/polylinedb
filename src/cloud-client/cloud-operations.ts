@@ -168,9 +168,11 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { actor: row.actor };
     }
     case 'show': {
-      const row = exact(value, ['issue', 'comments']);
+      const row = exact(value, ['issue', 'comments', 'claim']);
       if (!Array.isArray(row.comments)) return invalid();
-      return { issue: issue(row.issue), comments: row.comments.map(entry => commentRow(exact(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))) };
+      const shown = issue(row.issue); const current = claimInspection(row.claim);
+      if (current.issue_id !== shown.id) return invalid();
+      return { issue: shown, comments: row.comments.map(entry => commentRow(exact(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))), claim: current };
     }
     case 'list': case 'search': case 'dependency_worklist': {
       const row = exact(value, ['issues', 'next_cursor']);

@@ -103,7 +103,7 @@ test('issue observation scope, replay receipts, opted-out JSON and advisory fail
   const success = await f.run({ op: 'comment', id: created.issue.id, body: 'Completed', observed_memory_revision: newToken }, failed);
   assert('comment' in success); assert.deepEqual(freshness(success), { status: 'unavailable', project: 'demo' });
   const shown = await f.run({ op: 'show', id: created.issue.id }); assert('comments' in shown); assert.equal(shown.comments[0]?.body, 'Completed');
-  assert.deepEqual(Object.keys(shown), ['issue', 'comments']);
+  assert.deepEqual(Object.keys(shown), ['issue', 'comments', 'claim']);
   assert.deepEqual(Object.keys(await f.run({ op: 'list' })), ['issues', 'next_cursor']);
   assert.deepEqual(Object.keys(await f.run({ op: 'search', query: 'Issue' })), ['issues', 'next_cursor']);
   assert.deepEqual(Object.keys(await f.run({ op: 'actor' })), ['actor']);

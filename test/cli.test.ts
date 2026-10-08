@@ -123,7 +123,8 @@ test('CLI human reads show full details and comments, safe previews, and page cu
   assert.deepEqual(run(['show', '99', '--human'], { status: 3 }), {
     error: { code: 'not_found', message: 'Issue was not found', details: { id: 'pd-99', prefix: 'pd', prefix_source: 'builtin' } },
   });
-  assert.deepEqual(run(['show', issue.id]), run(['--json', 'show', issue.id]));
+  const unobserved = (shown: { claim: object }) => ({ ...shown, claim: { ...shown.claim, observed_at: 0 } });
+  assert.deepEqual(unobserved(run(['show', issue.id])), unobserved(run(['--json', 'show', issue.id])));
 });
 test('CLI rejects unsupported human commands and explicit JSON before opening a store', t => {
   const { run, directory } = fixture(t);
