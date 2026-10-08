@@ -51,6 +51,9 @@ Issues, comments, and memories retain one-record pages to bound large text respo
 Its optional `--output` writes that verified remote snapshot to a new file with mode 0600.
 The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts.
 Each command prints a receipt with target identity, counts, and digest. The receipt excludes snapshot content.
+Each `cf d1 query` child has a 60-second limit. `POLYLINEDB_D1_CHILD_LIMIT_MS` replaces it.
+A failed query reports the limit, exit status, or signal, and the end of the `cf` stderr.
+The excerpt replaces each run of 20 or more identifier characters with `[redacted]`, so account IDs, database IDs, and tokens stay out.
 
 <a id="upgrade-an-existing-schema-2-3-or-4-deployment"></a>
 
