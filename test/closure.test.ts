@@ -16,6 +16,8 @@ import { handleRequest } from '../src/service/index.ts';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 import { SCHEMA_SQL } from '../src/records/schema.ts';
 import { runClosureFlow } from './fixtures/closure-flow.ts';
+import { snapshotMigration } from '../scripts/d1-snapshot-store.ts';
+import { createHash } from 'node:crypto';
 import { canonicalSnapshot, canonicalSnapshotV5, convertSnapshotV5, parseSnapshot, SCHEMA_V6_SQL } from '../src/records/persistence.ts';
 import type { Snapshot, SqlExecutor } from '../src/records/persistence.ts';
 
@@ -174,4 +176,15 @@ test('/v1/operations keeps the released issue shape, which the cloud decoder sti
   assert.equal(Object.hasOwn(decoded.issue, 'closed_at'), false, 'the cloud transport does not report closure');
   const reopened = await cloud({ op: 'reopen', id, expected: 2 }); assert.ok('issue' in reopened);
   await assert.rejects(cloud({ op: 'reopen', id, expected: 2 }), { code: 'conflict' });
+});
+
+test('the D1 operator restore writes and verifies recorded and empty closures', async t => {
+  const input = parseSnapshot(snapshot([closed, legacyClosed, open]));
+  const database = new DatabaseSync(':memory:'); database.exec(SCHEMA_SQL); t.after(() => database.close());
+  const migration = snapshotMigration(async ({ sql, params }) => database.prepare(sql).all(...params), input, createHash('sha256').update(canonicalSnapshot(input)).digest('hex'));
+  assert.equal((await migration.restore()).result, 'restored');
+  assert.deepEqual(database.prepare('SELECT id, closed_at, closed_by FROM issues ORDER BY id').all().map(row => ({ ...row })), [
+    { id: 'pd-1', closed_at: '2026-01-03T03:04:05.000Z', closed_by: 'closer' }, { id: 'pd-2', closed_at: null, closed_by: null }, { id: 'pd-3', closed_at: null, closed_by: null }]);
+  database.prepare("UPDATE issues SET closed_by = 'someone else' WHERE id = 'pd-1'").run();
+  await assert.rejects(migration.verify(), /differing rows/);
 });
