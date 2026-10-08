@@ -1,8 +1,8 @@
 // Owns portable snapshot validation and canonical form; storage and file access belong to callers.
-import { commentRow, issueRow, parseOperation } from "./issues.ts";
+import { commentRow, issueRow, parseClosure, parseOperation } from "./issues.ts";
 import { PolylinedbError } from './errors.ts';
 import { issueSortKey, parseIssueId, parsePrefix, parseRequestId } from "./issue-id.ts";
-import type { Comment, Issue } from "./issues.ts";
+import type { Comment, Issue, StoredIssue } from "./issues.ts";
 import { fields } from "./schema.ts";
 import { memoryRow, memorySortKey, parseMemoryId, parseMemoryOperation } from "./memories.ts";
 import type { Memory, MemoryCounter, MemoryRequest } from "./memories.ts";
@@ -17,7 +17,8 @@ type SnapshotV2 = { format: 'polylinedb.snapshot'; version: 2; issues: readonly 
   counters: readonly Counter[]; requests: readonly CreateRequest[] };
 type SnapshotV3 = Omit<SnapshotV2, 'version'> & { version: 3; memories: readonly Memory[]; memory_counters: readonly MemoryCounter[]; memory_requests: readonly MemoryRequest[] };
 type SnapshotV4 = Omit<SnapshotV3, 'version'> & { version: 4; dependencies: readonly Dependency[]; dependency_revisions: readonly DependencyRevision[]; dependency_requests: readonly DependencyRequest[] };
-export type Snapshot = Omit<SnapshotV4, 'version'> & { version: 5; issue_claims: readonly Claim[]; claim_requests: readonly ClaimRequest[] };
+type SnapshotV5 = Omit<SnapshotV4, 'version'> & { version: 5; issue_claims: readonly Claim[]; claim_requests: readonly ClaimRequest[] };
+export type Snapshot = Omit<SnapshotV5, 'version' | 'issues'> & { version: 6; issues: readonly StoredIssue[] };
 export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
@@ -217,10 +218,11 @@ function parseSnapshotV4(input: unknown): SnapshotV4 {
   }
 }
 export function convertSnapshotV4(input: unknown): Snapshot {
-  return { ...parseSnapshotV4(input), version: 5, issue_claims: [], claim_requests: [] };
+  return convertSnapshotV5({ ...parseSnapshotV4(input), version: 5, issue_claims: [], claim_requests: [] });
 }
-export function parseSnapshot(input: unknown): Snapshot {
-  const source = record(input, ['format', 'version', 'issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests']);
+const snapshotKeys = ['format', 'version', 'issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests'];
+function parseSnapshotV5(input: unknown): SnapshotV5 {
+  const source = record(input, snapshotKeys);
   if (source.version !== 5) return fail('Unsupported snapshot version; convert versions 2, 3 and 4 explicitly');
   const { issue_claims: claims, claim_requests: requests, ...legacy } = source;
   const old = parseSnapshotV4({ ...legacy, version: 4 });
@@ -257,4 +259,29 @@ export function parseSnapshot(input: unknown): Snapshot {
     return fail(error instanceof Error ? error.message : 'Invalid claim snapshot');
   }
 }
+// Snapshot 5 holds no close records, so conversion leaves every closure empty instead of guessing one.
+export function convertSnapshotV5(input: unknown): Snapshot {
+  const old = parseSnapshotV5(input);
+  return { ...old, version: 6, issues: old.issues.map(issue => ({ ...issue, closed_at: null, closed_by: null })) };
+}
+const issueKeys = ['id', ...fields, 'versions', 'created_at', 'created_by', 'updated_at', 'updated_by'];
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, snapshotKeys);
+  if (source.version !== 6) return fail('Unsupported snapshot version; convert versions 2, 3, 4 and 5 explicitly');
+  if (!Array.isArray(source.issues)) return fail('Snapshot collections must be arrays');
+  const closures = new Map<unknown, Record<string, unknown>>();
+  const issues = source.issues.map(value => {
+    const { closed_at, closed_by, ...issue } = record(value, [...issueKeys, 'closed_at', 'closed_by']);
+    if (closed_at !== null) timestamp(closed_at);
+    closures.set(issue.id, { closed_at, closed_by });
+    return issue;
+  });
+  const old = parseSnapshotV5({ ...source, version: 5, issues });
+  try {
+    return { ...old, version: 6, issues: old.issues.map(issue => ({ ...issue, ...parseClosure(closures.get(issue.id) ?? {}, issue.status) })) };
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : 'Invalid issue closure');
+  }
+}
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }
+export function canonicalSnapshotV5(input: unknown): string { return JSON.stringify(parseSnapshotV5(input)); }

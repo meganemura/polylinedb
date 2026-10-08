@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { traceCredentialChild } from './credential-trace.ts';
 import { initializeStore, openStore } from "../../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../../src/records/index.ts"; import { PolylinedbError } from "../../src/records/errors.ts";
+import { withoutClosure } from "../../src/service/released-issues.ts";
 
 const spawn = childProcess.spawn;
 const credentialStore = new URL('./credential-store.sh', import.meta.url).pathname;
@@ -103,13 +104,13 @@ globalThis.fetch = async (input, init) => {
         : operation;
       const result = await executeOperation(store.db, executed, 'oauth:synthetic-owner');
       if (mode === 'ambiguous') throw new Error('synthetic-private-token');
-      if (mode === 'show-without-claim' && 'claim' in result && 'comments' in result) { const { claim: _, ...older } = result; return Response.json(older); }
-      if (mode === 'acquire-without-blockers' && operation.op === 'claim_acquire' && 'open_blockers' in result) { const { open_blockers: _, ...older } = result; return Response.json(older); }
-      if (mode === 'future-fields') return Response.json({ ...futureFields(result) as object, ...(operation.op === 'claim_acquire' ? { open_blockers: [] } : {}) });
-      return Response.json(result);
+      if (mode === 'show-without-claim' && 'claim' in result && 'comments' in result) { const { claim: _, ...older } = result; return Response.json(withoutClosure(older)); }
+      if (mode === 'acquire-without-blockers' && operation.op === 'claim_acquire' && 'open_blockers' in result) { const { open_blockers: _, ...older } = result; return Response.json(withoutClosure(older)); }
+      if (mode === 'future-fields') return Response.json({ ...futureFields(withoutClosure(result)) as object, ...(operation.op === 'claim_acquire' ? { open_blockers: [] } : {}) });
+      return Response.json(withoutClosure(result));
     } catch (error) {
       if (error instanceof PolylinedbError) {
-        const body = { error: { code: error.code, message: error.message, ...(error.details === undefined ? {} : { details: error.details }) } };
+        const body = withoutClosure({ error: { code: error.code, message: error.message, ...(error.details === undefined ? {} : { details: error.details }) } });
         return Response.json(mode === 'future-fields' ? futureFields(body) : body, { status: error.status });
       }
       throw error;

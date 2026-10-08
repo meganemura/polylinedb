@@ -6,7 +6,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, rea
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import type { Counts, Statement } from './d1-additive-merge.ts';
-import { canonicalSnapshot, canonicalSnapshotV3, convertSnapshotV3, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
+import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV5, convertSnapshotV3, convertSnapshotV5, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
 import { defaultConnection, readConnections, readRepositoryDefaults, repositoryConfigPath, selectConnection, useRepositoryConnection } from '../src/workspace/index.ts';
 import type { RepositoryConfiguration, RepositorySelection } from '../src/workspace/index.ts';
 import { PolylinedbError } from '../src/records/index.ts';
@@ -44,7 +44,7 @@ type CheckpointLayout = {
   ddl: string;
   /** In table order, which the barrier view keeps. */
   columns: readonly string[];
-  snapshotVersion: number;
+  snapshotVersions: readonly number[];
   original(input: unknown): OriginalForms;
   valid(row: Record<string, unknown>): boolean;
   /** The destination incarnation that the checkpoint records, when the layout records one. */
@@ -56,7 +56,7 @@ const checkpointLayouts = {
   'two-column': {
     ddl: `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)`,
     columns: ['singleton', 'sha256'],
-    snapshotVersion: 3,
+    snapshotVersions: [3],
     original: input => ({ canonical: canonicalSnapshotV3(input), projected: canonicalSnapshot(convertSnapshotV3(input)) }),
     valid: () => true,
     target: () => undefined,
@@ -64,8 +64,12 @@ const checkpointLayouts = {
   'four-column': {
     ddl: `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL, original_incarnation TEXT NOT NULL, incarnation TEXT NOT NULL CHECK(length(incarnation)=32 AND incarnation NOT GLOB '*[^a-f0-9]*' AND incarnation<>original_incarnation))`,
     columns: ['singleton', 'sha256', 'original_incarnation', 'incarnation'],
-    snapshotVersion: 5,
-    original(input) { const canonical = canonicalSnapshot(parseSnapshot(input)); return { canonical, projected: canonical }; },
+    // Snapshot 5 restores into schema 6 or 7; the schema 8 upgrade leaves what convertSnapshotV5 produces.
+    snapshotVersions: [5, 6],
+    original(input) {
+      if (input !== null && typeof input === 'object' && 'version' in input && input.version === 5) return { canonical: canonicalSnapshotV5(input), projected: canonicalSnapshot(convertSnapshotV5(input)) };
+      const canonical = canonicalSnapshot(parseSnapshot(input)); return { canonical, projected: canonical };
+    },
     valid: row => hexIncarnation(row.original_incarnation) && hexIncarnation(row.incarnation) && row.original_incarnation !== row.incarnation,
     target: checkpoint => String(checkpoint.incarnation),
   },
@@ -170,7 +174,8 @@ function originalInput(text: string, layout: Layout): { projected: string; diges
   let input: unknown;
   try { input = JSON.parse(text); } catch { return refuse('Original restore input is not JSON'); }
   const declared = input !== null && typeof input === 'object' && 'version' in input ? input.version : undefined;
-  if (declared !== checkpointLayouts[layout].snapshotVersion) refuse(`The ${layout} checkpoint requires snapshot format ${checkpointLayouts[layout].snapshotVersion}`);
+  const accepted: readonly unknown[] = checkpointLayouts[layout].snapshotVersions;
+  if (!accepted.includes(declared)) refuse(`The ${layout} checkpoint requires snapshot format ${checkpointLayouts[layout].snapshotVersions.join(' or ')}`);
   let forms: OriginalForms;
   try { forms = checkpointLayouts[layout].original(input); } catch { return refuse('Original restore input is not a valid snapshot'); }
   return { projected: forms.projected, digest: sha256(forms.canonical) as OriginalDigest };
