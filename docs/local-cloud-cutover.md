@@ -116,6 +116,10 @@ The entire API batch still has Cloudflare's [30-second deadline](https://develop
 Do not split the batch into separate requests and assume the same atomic guarantee.
 
 Successful output contains `result: "VERIFIED"`, collection counts, and configuration counts.
+The operator stops a `cf` child after 120 seconds and a `pd` child after 60 seconds.
+`POLYLINEDB_D1_CHILD_LIMIT_MS` replaces both limits.
+A stopped or failed child names its limit, exit status, or signal.
+The full `cf` diagnostic stays in a private `cf-failure-*.txt` receipt.
 The receipt directory contains the final snapshots, digest manifest, complete cloud verification, and routing verification.
 Keep these files for recovery.
 
