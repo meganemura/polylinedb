@@ -6,7 +6,7 @@ export type { Operation, OperationResult } from './operations.ts';
 export type { OperationAccess } from './operation-policy.ts';
 export { PolylinedbError } from './errors.ts';
 export type { Actor } from '../transition/index.ts';
-export type { Status, IssueType, Field, Values, Change, Issue, Comment } from './issues.ts';
+export type { Status, IssueType, Field, Values, Change, Issue, Comment, SearchMatch } from './issues.ts';
 export { parseIssueId, parsePrefix, parseRequestId } from './issue-id.ts';
 export { parseMemoryId, parseMemoryRevision, observedMemoryProject } from './memories.ts';
 export type { Memory, MemoryStore, MemoryOperation, MemoryContext, MemoryRevision, MemoryFreshness, MemoryResult } from './memories.ts';

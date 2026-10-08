@@ -27,7 +27,7 @@ export type Operation =
   | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
   | { op: 'show'; id: string }
   | ({ op: 'list' } & Filters)
-  | ({ op: 'search'; query: string } & Filters)
+  | ({ op: 'search'; query: string; with_matches?: true } & Filters)
   | { op: 'comment'; id: string; body: string }
   | ({ op: 'update'; id: string; changes: [Change, ...Change[]]; claim_proof?: ClaimProof } & StatusOverride)
   | ({ op: 'close'; id: string; expected: number; claim_proof?: ClaimProof } & StatusOverride)
@@ -36,8 +36,10 @@ export type Operation =
 export type Issue = Values & { id: string; versions: Record<Field, number>;
   created_at: string; created_by: string; updated_at: string; updated_by: string };
 export type Comment = { id: string; issue_id: string; body: string; created_at: string; created_by: string };
+export type SearchMatch = { issue_id: string; excerpt: string } & ({ location: 'body' } | { location: 'comment'; comment_id: string });
 export type OperationResult = { issue: Issue } | { issue: Issue; comments: Comment[]; claim: ClaimInspection }
-  | { issues: Issue[]; next_cursor: string | null } | { comment: Comment } | { actor: string };
+  | { issues: Issue[]; next_cursor: string | null } | { issues: Issue[]; next_cursor: string | null; matches: SearchMatch[] }
+  | { comment: Comment } | { actor: string };
 export type SqlStatement = { sql: string; params: readonly (string | number | null)[] };
 export type SqlExecutor = {
   reads: Pick<Database, 'all'>;
@@ -104,7 +106,7 @@ export const operationSchemas = {
   create: objectSchema({ ...valueSchemas, parent: idSchema, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid', description: 'Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry.' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
   show: objectSchema({ id: idSchema }, ['id']),
   list: objectSchema(filterSchemas),
-  search: objectSchema({ ...filterSchemas, query: bodySchema }, ['query']),
+  search: objectSchema({ ...filterSchemas, query: bodySchema, with_matches: { const: true, description: 'Also return where each issue matched, with a short excerpt.' } }, ['query']),
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
     oneOf: fields.map((field) => objectSchema({ field: { const: field }, value: fieldRegistry[field].schema, expected: versionSchema }, ['field', 'value', 'expected']))
@@ -158,7 +160,10 @@ export function parseOperation(value: unknown): Operation {
     case 'actor': return { op };
     case 'show': return { op, id: id(input.id) };
     case 'list': return { op, ...parseFilters(input) };
-    case 'search': return { op, ...parseFilters(input), query: text(input.query, 'query') };
+    case 'search': {
+      if (input.with_matches !== undefined && input.with_matches !== true) return invalid('with_matches must be true when present');
+      return { op, ...parseFilters(input), query: text(input.query, 'query'), ...(input.with_matches === true ? { with_matches: true } : {}) };
+    }
     case 'comment': return { op, id: id(input.id), body: text(input.body, 'body') };
     case 'close': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...parseOverride(input), ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
     case 'reopen': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
@@ -348,7 +353,9 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
       });
       const all = rows.map(issueRow);
       const issues = all.slice(0, operation.limit);
-      return { issues, next_cursor: all.length > operation.limit ? issues[issues.length - 1]?.id ?? null : null };
+      const next_cursor = all.length > operation.limit ? issues[issues.length - 1]?.id ?? null : null;
+      if (operation.op === 'search' && operation.with_matches) return { issues, next_cursor, matches: await searchMatches(db, issues, operation.query) };
+      return { issues, next_cursor };
     }
     default: { const unreachable: never = operation; return unreachable; }
   }
@@ -362,4 +369,43 @@ export async function recentlyClosedIssues(db: SqlExecutor, limit: number): Prom
 // `main-wait` keeps an issue open while its merge sits in a local land queue that the remote trunk does not yet contain.
 export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promise<Issue[]> {
   return (await db.reads.all(issueQueries.awaitingMain, { limit })).map(issueRow);
+}
+
+// The excerpt bound counts UTF-8 bytes, including the ellipses; the SQL window counts code points, and each code point costs at least one byte.
+const excerptBytes = 160;
+const ellipsis = '…';
+type MatchWindow = { before: string; match: string; after: string; more_before: boolean; more_after: boolean };
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
+function fit(points: readonly string[], budget: number): string[] {
+  const kept: string[] = [];
+  for (const point of points) {
+    budget -= utf8Bytes(point);
+    if (budget < 0) break;
+    kept.push(point);
+  }
+  return kept;
+}
+function excerpt(window: MatchWindow): string {
+  const visible = (part: string) => Array.from(part.replace(/\p{Cc}/gu, ' '));
+  const before = visible(window.before).reverse(); const match = visible(window.match); const after = visible(window.after);
+  const room = excerptBytes - 2 * utf8Bytes(ellipsis);
+  const shown = fit(match, room);
+  const lead = (kept: number) => kept < before.length || window.more_before ? ellipsis : '';
+  if (shown.length < match.length) return lead(0) + shown.join('') + ellipsis;
+  const left = room - utf8Bytes(shown.join(''));
+  const tail = fit(after, left - Math.min(utf8Bytes(before.join('')), Math.floor(left / 2)));
+  const head = fit(before, left - utf8Bytes(tail.join('')));
+  return lead(head.length) + head.reverse().join('') + shown.join('') + tail.join('')
+    + (tail.length < after.length || window.more_after ? ellipsis : '');
+}
+async function searchMatches(db: SqlExecutor, issues: readonly Issue[], query: string): Promise<SearchMatch[]> {
+  const comments = await db.reads.all(issueQueries.commentMatches, { query, context: excerptBytes, ids: issues.map(issue => issue.id) });
+  return issues.flatMap((issue): SearchMatch[] => {
+    const at = issue.body.indexOf(query);
+    const body: SearchMatch[] = at < 0 ? [] : [{ issue_id: issue.id, location: 'body', excerpt: excerpt({
+      before: issue.body.slice(0, at), match: query, after: issue.body.slice(at + query.length), more_before: false, more_after: false }) }];
+    return [...body, ...comments.filter(row => row.issue_id === issue.id).map((row): SearchMatch => ({
+      issue_id: issue.id, location: 'comment', comment_id: validated(parseRequestId, row.id),
+      excerpt: excerpt({ before: row.before ?? '', match: query, after: row.after ?? '', more_before: row.more_before === 1, more_after: row.more_after === 1 }) }))];
+  });
 }

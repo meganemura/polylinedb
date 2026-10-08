@@ -77,6 +77,12 @@ try {
   const filtered = await run({ op: 'search', query: 'alpha', label: 'quote"slash\\', priority: 0 });
   assert('issues' in filtered);
   assert.deepEqual(filtered.issues.map(issue => issue.id), [id]);
+  const multibyte = await run({ op: 'comment', id, body: 'あ'.repeat(200) + 'needleD1' + '😀'.repeat(200) });
+  assert('comment' in multibyte);
+  const located = await run({ op: 'search', query: 'needleD1', with_matches: true });
+  assert('matches' in located);
+  assert.deepEqual(located.matches, [{ issue_id: id, location: 'comment', comment_id: multibyte.comment.id,
+    excerpt: '…' + 'あ'.repeat(24) + 'needleD1' + '😀'.repeat(18) + '…' }]);
   const request = { op: 'create', prefix: 'seq', request_id: crypto.randomUUID(), tool: 't', project: 'p', body: 'retry', type: 'epic' };
   const duplicates = await Promise.all([run(request), run(request), run(request)]);
   assert.deepEqual(duplicates[0], duplicates[1]); assert.deepEqual(duplicates[1], duplicates[2]);
