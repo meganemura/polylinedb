@@ -81,9 +81,10 @@ Set `POLYLINEDB_BUILD_WITHOUT_ACCESS=1` for them. `npm run test:worker` and the 
 The build then ignores the four variables and uses empty Access settings, so the Worker refuses every request with `503`.
 Do not set this variable in a deployment environment.
 
-`npm run dev:worker` runs `vite dev` with `CLOUDFLARE_VITE_FORCE_LOCAL=true`.
-The Cloudflare Vite plugin then turns off remote bindings and starts no remote proxy session.
+`npm run dev:worker` runs `vite dev`.
+`vite.config.ts` sets the Cloudflare Vite plugin option `remoteBindings: false`, so the plugin starts no remote proxy session.
 D1 and every other binding use local Miniflare state under `.wrangler/state`, and the server needs no Cloudflare login.
+The option also applies to `vite preview`. The Worker build and deploy do not read it.
 The script does not use `cf dev`, because `cf dev` rejects `--local`.
 In this project, `cf` forwards a local option only to its Vite dev-server delegate, and that delegate requires `@cloudflare/vite-plugin` 2.x. This project uses 1.x.
 Pass Vite options after `--`, for example `npm run dev:worker -- --port 8799 --strictPort`.
