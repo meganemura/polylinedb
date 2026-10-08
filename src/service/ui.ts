@@ -21,21 +21,21 @@ function japanTime(iso: string): string {
   return `${new Date(time + 9 * 3600_000).toISOString().slice(0, 16).replace('T', ' ')} JST`;
 }
 
-function row(issue: Issue): string {
+function row(issue: Issue, labels: ReadonlyMap<string, string>): string {
   return `<li class="quiet-row">
 <span class="primary">${escape(title(issue.body))}</span>
 <span class="secondary">${escape(issue.id)} · 最終更新 <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
-<span class="secondary">${escape(issue.updated_by)}</span>
+<span class="secondary">${escape(labels.get(issue.updated_by) ?? issue.updated_by)}</span>
 </li>`;
 }
 
-function section(heading: string, issues: readonly Issue[], empty: string, note?: string): string {
+function section(heading: string, issues: readonly Issue[], labels: ReadonlyMap<string, string>, empty: string, note?: string): string {
   const notice = note === undefined ? '' : `<p class="section-note">${note}</p>`;
-  const body = issues.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${issues.map(row).join('')}</ul>`;
+  const body = issues.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${issues.map(issue => row(issue, labels)).join('')}</ul>`;
   return `<section class="quiet-section"><h2>${heading}</h2>${notice}${body}</section>`;
 }
 
-export function uiPage(lists: { awaitingMain: readonly Issue[]; recentlyClosed: readonly Issue[] }): string {
+export function uiPage(lists: { awaitingMain: readonly Issue[]; recentlyClosed: readonly Issue[] }, labels: ReadonlyMap<string, string>): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -50,18 +50,18 @@ export function uiPage(lists: { awaitingMain: readonly Issue[]; recentlyClosed: 
 <body>
 <main class="paper">
 <h1>Recent work</h1>
-${section('main 待ち', lists.awaitingMain, 'Nothing waits for main.', 'Open issues labelled main-wait.')}
-${section('Recently closed', lists.recentlyClosed, 'Nothing has closed yet.', 'Ordered by 最終更新. pd does not record when an issue closed.')}
+${section('main 待ち', lists.awaitingMain, labels, 'Nothing waits for main.', 'Open issues labelled main-wait.')}
+${section('Recently closed', lists.recentlyClosed, labels, 'Nothing has closed yet.', 'Ordered by 最終更新. pd does not record when an issue closed.')}
 </main>
 </body>
 </html>`;
 }
 
-export async function uiResponse(db: SqlExecutor): Promise<Response> {
+export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, string>): Promise<Response> {
   const [awaitingMain, recentlyClosed] = await Promise.all([
     issuesAwaitingMain(db, listLimit), recentlyClosedIssues(db, listLimit),
   ]);
-  return new Response(uiPage({ awaitingMain, recentlyClosed }), {
+  return new Response(uiPage({ awaitingMain, recentlyClosed }, labels), {
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',

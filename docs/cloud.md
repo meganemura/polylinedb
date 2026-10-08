@@ -444,7 +444,7 @@ Local SQLite tests and the local workerd D1 check in `test/d1.integration.ts` pr
 
 ## Give each actor a role
 
-Each `ACCESS_ACTORS` entry is an actor ID or an object with exactly `actor` and `role`.
+Each `ACCESS_ACTORS` entry is an actor ID or an object with `actor`, `role`, and an optional `label`.
 An actor ID alone has the role `human`.
 
 | Role | The Worker treats the actor as | Writes |
@@ -476,6 +476,28 @@ The agent gates are the same as for a local agent; see [gate agent work](claims.
 The claim lease and the comment author record the actor from authentication.
 The `agent_label` of a claim stays display text.
 
+### Label an actor for the `/ui` page
+
+The `label` names the actor on the [`/ui` page](#read-recent-work-in-a-browser), such as `Claude` or `owner`.
+Only the operator sets it, in the roster.
+The Worker never takes a label from an email address or an assertion claim.
+
+```sh
+export POLYLINEDB_ACCESS_ACTORS='[
+  {"actor": "access:OWNER_SUBJECT", "role": "human", "label": "owner"},
+  {"actor": "service:CODEX_CLIENT_ID", "role": "agent", "label": "Codex"},
+  {"actor": "service:CLAUDE_CLIENT_ID", "role": "agent"}
+]'
+```
+
+A label has 1 to 64 UTF-8 bytes, no leading or trailing whitespace, and no character from the Unicode category Other (`\p{C}`), such as a control character or a bidirectional override.
+An invalid label makes the whole configuration invalid, as an unknown role does.
+To label an actor that has the role `human`, write the object form with `"role": "human"`, because a bare actor ID cannot carry a label.
+
+The label is display text for `/ui` only.
+The store keeps the actor ID in `created_by`, `updated_by`, and claim leases, and every operation response and MCP result returns the actor ID.
+A change to a label therefore changes `/ui` for past updates too.
+
 ## Read recent work in a browser
 
 The Worker serves a read-only page at `/ui` for a phone browser.
@@ -485,6 +507,7 @@ The page lists two sections:
 - `Recently closed`: closed issues.
 
 Each row shows the issue ID, the first line of the body, the time of the last update in JST, and the actor of the last update.
+The actor shows as its roster [label](#label-an-actor-for-the-ui-page), or as the actor ID when the roster gives it no label or no longer lists it.
 The rows are newest first by `updated_at`.
 The time column has the label `最終更新`.
 It is not the close time, because the store does not record when an issue closed or who closed it.
