@@ -17,7 +17,7 @@
     "typecheck": "npm run check:sql && tsc --noEmit",
     "test:d1": "node test/d1.integration.ts && node test/memory-freshness-d1.integration.ts && node test/dependencies-d1.integration.ts && node test/claims-sql.integration.ts && node test/transition-differential-d1.integration.ts && node test/gate-races-d1.integration.ts && node test/d1-snapshot.integration.ts && node test/d1-restored-addition.integration.ts",
     "schema": "node scripts/schema.ts",
-    "test:worker": "npm run build:worker && node test/worker.integration.ts",
+    "test:worker": "POLYLINEDB_BUILD_WITHOUT_ACCESS=1 npm run build:worker && node test/worker.integration.ts",
     "build:cli": "npm run check:sql && tsc -p tsconfig.cli.json",
     "prepack": "npm run build:cli",
     "test:package": "node scripts/test-package.ts",

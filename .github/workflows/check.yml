@@ -30,6 +30,7 @@ jobs:
       - run: npm run test:d1
       - run: npm exec -- vite build
         env:
+          POLYLINEDB_BUILD_WITHOUT_ACCESS: '1'
           CLOUDFLARE_VITE_FORCE_BUILD_OUTPUT: 'true'
       - run: node test/worker.integration.ts
       - run: npm run test:package
