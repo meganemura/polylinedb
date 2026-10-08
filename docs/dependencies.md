@@ -30,6 +30,13 @@ The owner approved a release-age exception for this security fix.
 The CLI runtime dependency list remains unchanged.
 The subsequent audit reported zero known vulnerabilities on October 6, 2026.
 
+The October 9, 2026 audit found high-severity advisories in two development dependencies.
+Miniflare selected sharp 0.35.4; the exact override selects 0.35.5, which fixes a [librsvg vulnerability](https://github.com/advisories/GHSA-wq5f-xc86-pv6w).
+archstrict selected @modelcontextprotocol/sdk 1.30.0; the exact override selects 1.31.0, which fixes an [OAuth client that could send credentials to an authorization server chosen by the MCP server](https://github.com/advisories/GHSA-6qxp-vccf-f47h).
+Versions 0.35.5 and 1.31.0 were published on September 27 and September 28, 2026, and had been available for at least seven days.
+The CLI runtime dependency list remains unchanged.
+The subsequent audit reported zero known vulnerabilities on October 9, 2026.
+
 Install with `npm ci --ignore-scripts`, then run the checks in the README.
 Review registry release dates and current advisories before changing versions.
 Run both workerd integration checks after changing the Cloudflare plugin or its HTTP dependency.
