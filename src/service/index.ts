@@ -1,5 +1,5 @@
 /** Adapts authenticated HTTP and MCP requests to issue and memory operations, and serves the read-only /ui page. OAuth belongs to Access. */
-import { AccessError, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
+import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { uiResponse } from "./ui.ts";
 import { PolylinedbError } from "../records/index.ts";
@@ -220,7 +220,7 @@ export async function handleRequest(
     const caller = await authenticate(request, env);
     if (path === '/ui') {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
-      return await uiResponse(d1Executor(env.DB));
+      return await uiResponse(d1Executor(env.DB), actorLabels(env));
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
     if (path === '/mcp') return await mcp(request, env, caller);

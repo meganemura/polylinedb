@@ -406,6 +406,26 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
   } finally { sqlite.close(); }
 });
 
+test('/ui names the last updater by its roster label, and by the raw actor ID without one', async () => {
+  const { sqlite, env } = fixture(JSON.stringify(['access:owner', { actor: 'service:claude-token', role: 'agent', label: 'Claude' },
+    { actor: 'service:hostile-token', role: 'agent', label: `<b>"Codex"&'` }, { actor: 'service:cursor-token', role: 'agent' }]));
+  const token = await assertion();
+  try {
+    const updaters = ['service:claude-token', 'service:hostile-token', 'service:cursor-token', 'access:departed'];
+    const ids: string[] = [];
+    for (const updater of updaters) ids.push(await seedIssue(env, token, `# Closed by ${updater}`));
+    const set = sqlite.prepare("UPDATE issues SET status = 'closed', updated_at = ?, updated_by = ? WHERE id = ?");
+    updaters.forEach((updater, index) => set.run(`2026-10-0${4 - index}T00:00:00.000Z`, updater, ids[index]));
+    const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all());
+
+    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
+    const updatedBy = [...html.matchAll(/<\/time><\/span>\n<span class="secondary">([^<]*)<\/span>/g)].map(match => match[1]);
+    assert.deepEqual(updatedBy, ['Claude', '&lt;b&gt;&quot;Codex&quot;&amp;&#39;', 'service:cursor-token', 'access:departed']);
+    assert.ok(!html.includes('<b>'));
+    assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all()), before);
+  } finally { sqlite.close(); }
+});
+
 test('/ui shows quiet notes when nothing waits for main and nothing has closed', async () => {
   const { sqlite, env } = fixture();
   try {

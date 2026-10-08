@@ -35,7 +35,7 @@ const runtime = new Miniflare({
         ACCESS_TEAM_DOMAIN: { type: 'text', value: 'polylinedb-integration.cloudflareaccess.com' },
         ACCESS_AUD: { type: 'text', value: audience },
         ACCESS_ACTORS: { type: 'text', value: JSON.stringify(['access:owner', { actor: 'access:viewer', role: 'reader' },
-          { actor: 'service:codex-token', role: 'agent' }, { actor: 'service:claude-token', role: 'agent' }]) },
+          { actor: 'service:codex-token', role: 'agent', label: 'Codex' }, { actor: 'service:claude-token', role: 'agent' }]) },
         ALLOWED_ORIGINS: { type: 'text', value: '["https://local-client.example"]' },
       },
     },
@@ -247,7 +247,7 @@ try {
   assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
   const html = await page.text();
   assert.ok(html.indexOf(`${draftIssue.id} · 最終更新`) < html.indexOf('Recently closed'));
-  assert.ok(html.includes(`<span class="secondary">${readyIssue.id} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:codex-token</span>`));
+  assert.ok(html.includes(`<span class="secondary">${readyIssue.id} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">Codex</span>`));
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
