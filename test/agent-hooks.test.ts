@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { contextChildLimitMs, hookTimeoutSeconds } from '../src/host-hooks/index.ts';
 import { childLimits } from './fixtures/child-run.ts';
 
 const executable = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -161,6 +162,12 @@ test('Codex keeps the full bounded context and its omission metadata', t => {
   assert.equal(data.omitted, true);
   assert.ok(data.notices.length > 0);
   assert.ok(data.memories.some((memory: { body: string }) => memory.body === 'x'.repeat(6000)));
+});
+
+test('the context child limit leaves the hook time to answer before the host cap', () => {
+  assert.equal(hookTimeoutSeconds, 15);
+  assert.equal(contextChildLimitMs, 10_000);
+  assert.ok(contextChildLimitMs < hookTimeoutSeconds * 1000);
 });
 
 test('a CLI child that outlives the hook limit returns the unavailable status', t => {

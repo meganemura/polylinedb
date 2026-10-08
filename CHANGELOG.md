@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Stop the memory context child of the host hook after 10 s instead of 15 s. The host still caps the hook at 15 s, so a slow child now ends with the `unavailable` notice instead of a hook that the host kills without output.
 - Let an object entry in the cloud `ACCESS_ACTORS` roster carry an optional `label`, such as `Claude` or `owner`. The `/ui` page shows the label in place of the actor ID of the last update and falls back to the actor ID. Operation responses, MCP results, and stored actor IDs do not change. An invalid label makes the Access configuration invalid.
 - Name every unexpected and missing field in `invalid_input` errors, with a path for nested fields (`changes[0].note`) and `<path>: expected <type>` for a wrong structure. A message echoes at most 10 names, each cut to 64 bytes, and prints `<invalid name>` for a key that is not shaped like an identifier. "Unknown field" now reads "Unexpected field".
 - Name the session in claim acquisition errors. Without `--session-id` or `POLYLINEDB_SESSION_ID`, `pd claim acquire` exits with a usage error, and the Worker and MCP `claim_acquire` report `session_id` instead of `request_id` for a missing or malformed session UUID. A malformed `session_id` in a claim proof is reported the same way. No session UUID is generated, because a generated UUID would leave other processes unable to renew or release the claim.
