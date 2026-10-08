@@ -5,6 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { childFailure, childLimitMs, stderrExcerpt } from './d1-child.ts';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import { canonicalSnapshot } from '../src/records/persistence.ts';
 import { SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
@@ -41,10 +42,12 @@ for(const key of ['CLOUDFLARE_API_TOKEN','CLOUDFLARE_API_KEY','CLOUDFLARE_EMAIL'
 const save=(name:string,value:unknown)=>writeFileSync(join(base,name),JSON.stringify(value),{mode:0o600,flag:'wx'});
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 function cf(args:string[]) {
-  const result=spawnSync('cf',[...args,'--profile',target.profile],{cwd:base,env,encoding:'utf8',timeout:120000,maxBuffer:64*1024*1024});
-  if(result.status!==0 || result.error) {
-    writeFileSync(join(base,`cf-failure-${Date.now()}.txt`),result.stderr,{mode:0o600,flag:'wx'});
-    throw new Error('cf failed; inspect the private diagnostic');
+  const limit=childLimitMs(120000);
+  const result=spawnSync('cf',[...args,'--profile',target.profile],{cwd:base,env,encoding:'utf8',timeout:limit,maxBuffer:64*1024*1024});
+  const failure=childFailure(result,limit);
+  if(failure) {
+    writeFileSync(join(base,`cf-failure-${Date.now()}.txt`),result.stderr??'',{mode:0o600,flag:'wx'});
+    throw new Error(`cf ${failure}; inspect the private diagnostic`);
   }
   return JSON.parse(result.stdout);
 }
@@ -67,7 +70,11 @@ function remoteRows(label:string) {
   return Object.fromEntries(tables.map((table,index)=>[table,results[index+2].results]));
 }
 function pdRun(args:string[],cwd=base) {
-  return JSON.parse(execFileSync(pd,args,{cwd,env,encoding:'utf8',timeout:60000,maxBuffer:16*1024*1024}));
+  const limit=childLimitMs(60000);
+  const result=spawnSync(pd,args,{cwd,env,encoding:'utf8',timeout:limit,maxBuffer:16*1024*1024});
+  const failure=childFailure(result,limit);
+  if(failure)throw new Error(`pd ${args.join(' ')} ${failure}; stderr: ${stderrExcerpt(result.stderr)}`);
+  return JSON.parse(result.stdout);
 }
 function sourceRows(db:DatabaseSync) {return Object.fromEntries(tables.map(table=>[table,db.prepare(`SELECT * FROM ${table}`).all().map(r=>({...r}))]));}
 function deployedWorker() {

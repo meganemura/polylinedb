@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { childFailure, childLimitMs, stderrExcerpt } from './d1-child.ts';
 import { snapshotMigration, type Query } from './d1-snapshot-store.ts';
 import { canonicalSnapshot, SCHEMA_VERSION } from '../src/records/persistence.ts';
 
@@ -34,7 +35,7 @@ export function parseQueryOutput(value: unknown): Record<string, unknown>[] {
   });
 }
 
-export function cfQuery(target: ReturnType<typeof parseTarget>): Query {
+export function cfQuery(target: ReturnType<typeof parseTarget>, limitMs = childLimitMs(60_000)): Query {
   return async statement => {
     if (Buffer.byteLength(statement.sql) > 100_000 || statement.params.length > 100) throw new Error('D1 statement limit exceeded');
     const directory = mkdtempSync(join(tmpdir(), 'pd-d1-query-'));
@@ -45,10 +46,11 @@ export function cfQuery(target: ReturnType<typeof parseTarget>): Query {
       // Ambient token variables must not replace the explicitly selected profile.
       for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_API_KEY', 'CLOUDFLARE_EMAIL', 'CF_API_TOKEN', 'CF_API_KEY', 'CF_EMAIL']) delete env[name];
       const result = spawnSync('cf', ['d1', 'query', target.databaseId, '--profile', target.profile, '--batch', `@${file}`], {
-        cwd: directory, env, encoding: 'utf8', timeout: 60_000, maxBuffer: 8 * 1024 * 1024,
+        cwd: directory, env, encoding: 'utf8', timeout: limitMs, maxBuffer: 8 * 1024 * 1024,
       });
-      // cf diagnostics can include SQL or credentials. Report status without echoing either stream.
-      if (result.error || result.status !== 0) throw new Error('cf query failed; the destination may contain a resumable partial import');
+      const failure = childFailure(result, limitMs);
+      // main reports only messages of errors without a code, so the cause travels in the message text.
+      if (failure) throw new Error(`cf query failed: ${failure}; stderr: ${stderrExcerpt(result.stderr)}; the destination may contain a resumable partial import`);
       let parsed: unknown;
       try { parsed = JSON.parse(result.stdout); } catch { throw new Error('cf query returned invalid JSON'); }
       return parseQueryOutput(parsed);
