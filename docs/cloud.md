@@ -70,7 +70,16 @@ If the selected cloud product cannot broker the connection without exposing cred
 | `POLYLINEDB_ACCESS_TEAM_DOMAIN` | `ACCESS_TEAM_DOMAIN` | A single DNS label followed by `.cloudflareaccess.com`, without a scheme or path. |
 | `POLYLINEDB_ACCESS_AUD` | `ACCESS_AUD` | The exact Access application audience. |
 | `POLYLINEDB_ACCESS_ACTORS` | `ACCESS_ACTORS` | A nonempty JSON array of allowed actors, such as `["access:OWNER_SUBJECT"]`. An entry can also give the actor a role; see [Give each actor a role](#give-each-actor-a-role). |
-| `POLYLINEDB_ALLOWED_ORIGINS` | `ALLOWED_ORIGINS` | A JSON array of exact allowed Origin header values. The default is `[]`. |
+| `POLYLINEDB_ALLOWED_ORIGINS` | `ALLOWED_ORIGINS` | A JSON array of exact allowed Origin header values. Set `[]` explicitly when no origin is allowed. |
+
+The build stops when one of these four variables is unset or empty, or when `POLYLINEDB_ACCESS_ACTORS` is `[]`.
+The error names the variable and does not print any value.
+A deploy replaces the deployed Worker variables with the built values, so an empty value would overwrite a working setting.
+
+A local build, `npm run dev:worker`, and `npm run test:worker` can run without Access settings.
+Set `POLYLINEDB_BUILD_WITHOUT_ACCESS=1` for them.
+The build then ignores the four variables and uses empty Access settings, so the Worker refuses every request with `503`.
+Do not set this variable in a deployment environment.
 
 The default Worker name and D1 database name are `polylinedb`. Override them with `POLYLINEDB_WORKER_NAME` and `POLYLINEDB_D1_NAME` before build or deployment. The D1 binding is `DB`. The entry point is `src/service/index.ts`. Preview URLs are disabled in the project configuration.
 
@@ -266,18 +275,20 @@ The connected Cursor Cloud actor matched the configured Access user ID in the ac
 If the owner has not signed in to Access, use this bootstrap sequence.
 This sequence is proposed and has not yet been exercised from a new account:
 
-1. Set `POLYLINEDB_ACCESS_ACTORS='[]'` and deploy using the build and inspection steps below.
+1. Set `POLYLINEDB_ACCESS_ACTORS='["access:BOOTSTRAP_PLACEHOLDER"]'` and deploy using the build and inspection steps below. The build refuses an empty allowlist. Access subject IDs are UUIDs, so this placeholder matches no actor.
 2. Confirm that Access protects the complete Worker hostname. Open that hostname in your browser. Sign in as the owner.
 3. Run the users-list command again. Confirm that it returns the owner. Record the Access user ID outside Git.
 4. Set the actor allowlist to that candidate and repeat the build and deployment.
 5. Confirm the exact actor through the host connector before acceptance.
 
-The empty allowlist refuses application operations even after a successful Access sign-in.
-An origin `503` does not prove that Access registered the owner.
+The placeholder allowlist refuses application operations even after a successful Access sign-in.
+The owner receives `403`, because the owner is not in the allowlist.
+An origin `403` does not prove that Access registered the owner.
 The users-list result supplies the candidate subject before the Worker can authorize the `actor` tool.
 Keep the owner-only Access policy in place throughout bootstrap.
 
-An isolated deployment in an existing account verified this refusal after CLI OAuth login.
+An isolated deployment in an existing account verified a refusal after CLI OAuth login.
+That run used an earlier configuration, which accepted an empty actor allowlist.
 The Worker returned `503` with `invalid_access_configuration` while the actor allowlist was empty.
 After the owner actor was configured and the Worker redeployed, the same CLI grant could read and write issues and memories.
 The CLI reports `invalid_access_configuration`: `Cloud Access is misconfigured. Check the Worker Access configuration.`
@@ -298,6 +309,13 @@ Do not use a wildcard.
 
 Inspect the generated `.cloudflare/output/v0/workers/default/worker.config.json` before deployment.
 Check the Worker name, `DB` database name, Access domain, audience, actors, and `previewUrls: false`.
+
+Complete this checklist before each deployment:
+
+1. Run the deployment as a dry run first. Find the dry-run flag with `cf deploy --help`. Confirm that the output shows nonempty values for `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_ACTORS`, and `ALLOWED_ORIGINS`. For `ALLOWED_ORIGINS`, the value `[]` is correct when no connector sends an Origin header.
+2. Confirm that the deployed Worker has no secrets. This configuration supplies every setting as text, and the inspection above does not show secrets.
+3. Record the current version ID outside Git with `cf workers versions get latest --worker-id "$POLYLINEDB_WORKER_NAME"`. A rollback is manual: you restore that version yourself.
+
 After approving those values, deploy:
 
 ```sh
