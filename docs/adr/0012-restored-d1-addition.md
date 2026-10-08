@@ -166,7 +166,8 @@ No test spawns `cf`. The command has not run against a real resource.
 The cutover command and the CLI do not call the owner.
 
 The owner recognizes both checkpoint layouts by exact DDL.
-It accepts the four-column layout with a snapshot 5 original input, and the two-column layout with a snapshot 3 original input.
+It accepts the four-column layout with a snapshot 5 or snapshot 6 original input, and the two-column layout with a snapshot 3 original input.
+Schema 7 adds issue close records, and the upgrade from schema 6 leaves them null, so a snapshot 5 input projects through the snapshot 5 conversion.
 It refuses each layout with the other input version.
 For the two-column layout, the owner takes the destination identity from the store, because the checkpoint records none.
 The barrier view keeps the visible columns of each layout.

@@ -23,6 +23,10 @@ Names exclude control characters.
 Bodies exclude NUL and whitespace-only content.
 Each label follows the same rules as a tool name.
 An issue also contains `versions`, `created_at`, `created_by`, `updated_at`, and `updated_by`.
+Local results and MCP add `closed_at` and `closed_by`: the time and actor of the transition into `closed`.
+Both are null while the issue is not closed, and for an issue closed before schema 7.
+Reopen and any other status change away from `closed` clear them, and other edits keep them.
+`/v1/operations` responses omit both fields, so released cloud clients keep reading the same issue shape.
 Timestamps use UTC ISO strings.
 
 Use `tool` for the affected tool or component, such as `compiler`, `editor`, or `polylinedb`.
@@ -228,12 +232,13 @@ Export uses one read transaction for a consistent snapshot.
 These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
 
-Version 0.3.0 uses physical schema 6 and portable snapshot 5.
+The current source uses physical schema 7 and portable snapshot 6, which record who closed an issue and when.
+Versions 0.3.0 and 0.3.1 use schema 6 and snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, or 5 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, or 6 store after making a private backup.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3 or v4 snapshot, use `--from 3` or `--from 4` instead.
+For a v3, v4, or v5 snapshot, use `--from 3`, `--from 4`, or `--from 5` instead.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.
