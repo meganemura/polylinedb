@@ -591,3 +591,64 @@ test('a missing source store is refused without creating a file', async context 
   await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: missing, connection: 'cloud' }), /source store is missing/);
   assert.equal(existsSync(missing), false);
 });
+
+test('concurrent operators against one destination commit exactly one receipt, and the other operator can release its source', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const second = await f.nextSource();
+  let winner: Awaited<ReturnType<ReturnType<typeof restoredAddition>['run']>> | undefined;
+  const interleaved: Batch = async statements => {
+    if (isAddition(statements) && !winner) winner = await restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
+    return f.batch(statements);
+  };
+  const losing = f.journal();
+  await assert.rejects(restoredAddition(interleaved, losing, second.environment).run({ original: f.original, source: second.source, connection: 'cloud' }), AdditionUnknown);
+  assert.equal(winner?.outcome, 'routed');
+  assert.deepEqual(f.destination.prepare('SELECT operation_id FROM polylinedb_addition_receipt').all().map(row => row.operation_id), [winner?.operation_id]);
+  await refused(restoredAddition(f.batch, losing, second.environment).resume(), /Destination recorded a different addition/);
+  assert.equal(readConnections(second.environment).defaultName, 'home');
+  assert.equal((await restoredAddition(f.batch, losing, second.environment).releaseSource()).outcome, 'released');
+  const reopened = new DatabaseSync(second.source);
+  context.after(() => reopened.close());
+  reopened.exec("UPDATE comments SET body = 'written after release'");
+  assert.equal((await restoredAddition(f.batch, losing, second.environment).releaseSource()).outcome, 'released', 'a repeated release returns the same outcome');
+  await refused(restoredAddition(f.batch, losing, second.environment).resume(), /released its source/);
+});
+
+test('release refuses while the frozen packet can still commit, and after a commit', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const journal = f.journal();
+  await assert.rejects(restoredAddition(failAt(f.batch, 0), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
+  await refused(restoredAddition(f.batch, journal, f.environment).releaseSource(), /can still commit; resume it instead/);
+  assert.equal((await restoredAddition(f.batch, journal, f.environment).resume()).outcome, 'routed');
+  await refused(restoredAddition(f.batch, journal, f.environment).releaseSource(), /addition committed; the source stays retired/);
+});
+
+test('an imported live source claim is invalidated in the destination, and destination claim states stay unchanged', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  const states = async (directory: string, ids: string[]) => {
+    const store = openStore({ directory });
+    try {
+      return await Promise.all(ids.map(async issue_id => {
+        const shown = await executeOperation(store.db, parseOperation({ op: 'claim_show', issue_id }), 'observer');
+        assert.ok('claim' in shown);
+        return shown.claim.state;
+      }));
+    } finally { store.close(); }
+  };
+  const sourceStore = openStore({ directory: join(f.root, 'source') });
+  const scope = await executeOperation(sourceStore.db, parseOperation({ op: 'claim_show', issue_id: 'src-1.1' }), 'holder');
+  assert.ok('claim' in scope);
+  await executeOperation(sourceStore.db, parseOperation({ op: 'claim_acquire', issue_id: 'src-1.1', incarnation: scope.claim.store_incarnation, session_id: randomUUID(), request_id: randomUUID(), ttl: 3600, agent_label: null }), 'holder');
+  sourceStore.close();
+  assert.deepEqual(await states(join(f.root, 'source'), ['src-1', 'src-1.1']), ['released', 'active']);
+  const destinationBefore = await states(join(f.root, 'destination'), ['dst-1', 'dst-1.1']);
+  assert.deepEqual(destinationBefore, ['invalidated', 'never_claimed'], 'restoration already gave the destination a new incarnation');
+
+  await restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
+  assert.deepEqual(await states(join(f.root, 'destination'), ['src-1', 'src-1.1']), ['invalidated', 'invalidated']);
+  assert.deepEqual(await states(join(f.root, 'destination'), ['dst-1', 'dst-1.1']), destinationBefore);
+  assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issue_claims WHERE issue_id = 'src-1.1' AND released_at IS NULL").get()?.n, 1, 'the live lease row is kept as history');
+});
