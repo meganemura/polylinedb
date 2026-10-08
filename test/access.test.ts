@@ -1,7 +1,7 @@
 /** Exercises the trust boundary with generated RSA keys and real signed assertions. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAccessVerifier, AccessError } from "../src/service/access.ts";
+import { actorLabels, createAccessVerifier, AccessError } from "../src/service/access.ts";
 import type { AccessSettings } from "../src/service/access.ts";
 
 const settings: AccessSettings = {
@@ -138,6 +138,10 @@ test('invalid configuration fails closed before fetching keys', async () => {
     { ACCESS_ACTORS: '[{"actor":"access:owner","role":"human","kind":"agent"}]' }, { ACCESS_ACTORS: '[{"actor":"owner","role":"human"}]' },
     { ACCESS_ACTORS: '[null]' }, { ACCESS_ACTORS: '[["access:owner","human"]]' },
     { ACCESS_ACTORS: '["access:owner",{"actor":"access:owner","role":"reader"}]' },
+    ...[123, null, '', ' Claude', 'Claude\n', 'Cl\u0000aude', 'Cl\u007faude', 'Cl‮aude', '\ud800', 'x'.repeat(65), 'あ'.repeat(22)]
+      .map(label => ({ ACCESS_ACTORS: JSON.stringify([{ actor: 'access:owner', role: 'human', label }]) })),
+    { ACCESS_ACTORS: '[{"actor":"access:owner","label":"owner"}]' },
+    { ACCESS_ACTORS: '[{"actor":"access:owner","role":"human","label":"owner","kind":"human"}]' },
   ]) await rejects(verify(request(await signed()), { ...settings, ...patch }), 503, 'invalid_access_configuration');
 });
 
@@ -238,4 +242,24 @@ test('rejects malformed, oversized, wrong-purpose and duplicate JWKS keys', asyn
     () => jwks({ kty: 'RSA', kid: 'initial', n: 'broken', e: 'broken' }),
   ];
   for (const respond of responses) await rejects(createAccessVerifier(async () => respond())(request(await signed()), settings), 503, 'jwks_unavailable');
+});
+
+test('roster labels are display text that leaves the authenticated caller unchanged', async () => {
+  const verify = verifier();
+  const roster = { ...settings, ACCESS_ACTORS: JSON.stringify([
+    { actor: 'access:owner', role: 'reader', label: 'owner' },
+    { actor: 'service:codex-token', role: 'agent', label: 'x'.repeat(64) },
+    { actor: 'service:claude-token', role: 'agent', label: 'クロード 5' },
+    { actor: 'service:cursor-token', role: 'agent' },
+    'service:owner-cli',
+  ]) };
+  assert.deepEqual(await verify(request(await signed()), roster), { actor: { id: 'access:owner', kind: 'human' }, access: 'read' });
+  assert.deepEqual(await verify(request(await signed({ sub: '', common_name: 'codex-token' })), roster),
+    { actor: { id: 'service:codex-token', kind: 'agent' }, access: 'write' });
+  assert.deepEqual([...actorLabels(roster)], [
+    ['access:owner', 'owner'], ['service:codex-token', 'x'.repeat(64)], ['service:claude-token', 'クロード 5'],
+  ]);
+  assert.deepEqual([...actorLabels(settings)], []);
+  assert.throws(() => actorLabels({ ...settings, ACCESS_ACTORS: '[{"actor":"access:owner","role":"human","label":""}]' }),
+    (error: unknown) => error instanceof AccessError && error.status === 503 && error.code === 'invalid_access_configuration');
 });
