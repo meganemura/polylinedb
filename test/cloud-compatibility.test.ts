@@ -153,6 +153,52 @@ test('an older Worker show without claim completes through one claim_show reques
   } finally { sqlite.close(); }
 });
 
+test('an older Worker that rejects with_matches answers a search through one plain search request', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Old Worker search' });
+    const context = await wire({ op: 'memory_context', project: 'compat', with_revision: true });
+    const rejection = (details?: unknown) => Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: with_matches', ...(details === undefined ? {} : { details }) } }, { status: 400 });
+    const recorded = (reply: (operation: Record<string, unknown>) => Response | Promise<Response>) => {
+      const sent: Record<string, unknown>[] = [];
+      const fetch: typeof globalThis.fetch = async (_url, options) => { const operation = JSON.parse(String(options?.body)); sent.push(operation); return reply(operation); };
+      return { sent, fetch };
+    };
+    const forwarded = (operation: Record<string, unknown>) => transport('https://issues.example/v1/operations', { body: JSON.stringify(operation) });
+    const sentForm = (value: unknown) => JSON.parse(JSON.stringify(parseOperation(value)));
+    for (const plain of [{ op: 'search', query: 'Old Worker' }, { op: 'search', query: 'Old Worker', project: 'compat', limit: 1, observed_memory_revision: context.body.memory_revision }]) {
+      const search = { ...plain, with_matches: true };
+      const older = recorded(operation => 'with_matches' in operation ? rejection() : forwarded(operation));
+      const answered = await decode(search, older.fetch);
+      assert.equal('matches' in answered, false);
+      assert.deepEqual(answered, await decode(plain, transport));
+      assert.deepEqual(older.sent, [search, plain].map(sentForm));
+    }
+    const search = { op: 'search', query: 'Old Worker', with_matches: true };
+    const rejectsEvery = recorded(() => rejection());
+    await assert.rejects(decode(search, rejectsEvery.fetch), { code: 'invalid_input', status: 400 });
+    assert.deepEqual(rejectsEvery.sent, [search, { op: 'search', query: 'Old Worker' }].map(sentForm));
+    const retryUnavailable = recorded(operation => 'with_matches' in operation ? rejection() : Response.json({ error: { code: 'jwks_unavailable', message: 'Unavailable' } }, { status: 503 }));
+    await assert.rejects(decode(search, retryUnavailable.fetch), { code: 'jwks_unavailable', status: 503 });
+    assert.equal(retryUnavailable.sent.length, 2);
+    const reauthorization = new Error('synthetic grant expired');
+    let authorizations = 0;
+    const expiring = recorded(() => rejection());
+    await assert.rejects(executeCloudOperation({ origin, operation: parseOperation(search), fetch: expiring.fetch,
+      authorize: async () => { authorizations++; if (authorizations > 1) throw reauthorization; return 'synthetic-secret'; } }), error => error === reauthorization);
+    assert.deepEqual([authorizations, expiring.sent.length], [2, 1]);
+    const otherField = recorded(() => Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: future_filter' } }, { status: 400 }));
+    await assert.rejects(decode(search, otherField.fetch), { code: 'invalid_input', status: 400 });
+    assert.equal(otherField.sent.length, 1);
+    const unrequested = recorded(() => rejection());
+    await assert.rejects(decode({ op: 'search', query: 'Old Worker' }, unrequested.fetch), { code: 'invalid_input', status: 400 });
+    assert.equal(unrequested.sent.length, 1);
+    const detailed = recorded(() => rejection({ field: 'with_matches' }));
+    await assert.rejects(decode(search, detailed.fetch), { code: 'cloud_invalid_response' });
+    assert.equal(detailed.sent.length, 1);
+  } finally { sqlite.close(); }
+});
+
 test('missing required fields and retyped fields stay cloud_invalid_response at every level', async () => {
   const { sqlite, wire } = await worker();
   try {

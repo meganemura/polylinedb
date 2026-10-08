@@ -1,5 +1,6 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
-// The one exception is a show answered without `claim`, which a single claim_show request completes.
+// Two older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
+// and a search rejected for `with_matches` runs once more without that field.
 import { PolylinedbError, type Issue, type SearchMatch } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
@@ -340,6 +341,7 @@ export async function executeCloudOperation(input: {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response | undefined;
+  let retried = false;
   try {
     response = await (input.fetch ?? globalThis.fetch)(new URL('/v1/operations', origin), {
       method: 'POST', redirect: 'error', signal: controller.signal,
@@ -374,6 +376,12 @@ export async function executeCloudOperation(input: {
         || !/^[a-z][a-z0-9_]{0,63}$/.test(error.code) || error.code === 'invalid_access_configuration' || error.code === 'jwks_unavailable' || typeof error.message !== 'string' || error.message.length > 4096) return invalid();
       let details: unknown;
       try { details = errorDetails(input.operation, error.code, error.details); } catch { return invalid(); }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'search' && input.operation.with_matches === true && /\bwith_matches\b/.test(error.message)) {
+        // A Worker released before search matches names the unknown field only in this message. Its page without matches still answers the search.
+        const { with_matches: _, ...plain } = input.operation;
+        retried = true;
+        return await executeCloudOperation({ ...input, operation: plain });
+      }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);
     }
     if (input.operation.op === 'show' && !Object.hasOwn(object(value), 'claim')) {
@@ -388,6 +396,8 @@ export async function executeCloudOperation(input: {
       return parsed;
     } catch { return invalid(); }
   } catch (error) {
+    // The retry is a whole request, so its errors reach the caller as a first request's would. An authorization failure keeps its code.
+    if (retried) throw error;
     if (error instanceof PolylinedbError) {
       if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
       throw error;

@@ -74,6 +74,10 @@ globalThis.fetch = async (input, init) => {
       if (variant === 'non-string-message') error.message = 42;
       return Response.json(body, { status });
     }
+    // Workers released before search matches answer the opt-in with this envelope and no details.
+    if (mode === 'search-without-matches' && operation.op === 'search' && operation.with_matches) {
+      return Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: with_matches' } }, { status: 400 });
+    }
     initializeStore({ directory });
     const store = openStore({ directory });
     try {
