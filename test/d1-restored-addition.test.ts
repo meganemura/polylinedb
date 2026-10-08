@@ -652,3 +652,15 @@ test('an imported live source claim is invalidated in the destination, and desti
   assert.deepEqual(await states(join(f.root, 'destination'), ['dst-1', 'dst-1.1']), destinationBefore);
   assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issue_claims WHERE issue_id = 'src-1.1' AND released_at IS NULL").get()?.n, 1, 'the live lease row is kept as history');
 });
+
+test('a source that another addition retired is refused before freezing', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  await restoredAddition(f.batch, f.journal(), f.environment).run({ original: f.original, source: f.source, connection: 'cloud' });
+  const other = await fixture();
+  context.after(other.close);
+  const journal = other.journal();
+  await refused(restoredAddition(other.batch, journal, f.environment).run({ original: other.original, source: f.source, connection: 'cloud' }), /source store is retired; another addition or cutover owns it/);
+  assert.deepEqual(readdirSync(journal), []);
+  assert.equal(other.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0);
+});
