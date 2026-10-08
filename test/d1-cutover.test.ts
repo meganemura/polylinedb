@@ -14,12 +14,25 @@ import { executeMemoryOperation, parseMemoryOperation } from "../src/records/mem
 import { addConnection } from "../src/workspace/connections.ts";
 import { rawToSnapshot, tables, additiveMerge } from '../scripts/d1-additive-merge.ts';
 import { canonicalSnapshot } from "../src/records/snapshot.ts";
+import { childLimits } from './fixtures/child-run.ts';
 const executable=fileURLToPath(new URL('../scripts/d1-cutover.ts',import.meta.url));
 const checkout=fileURLToPath(new URL('..',import.meta.url));
 test('cutover requires a fixed plan and explicit apply flag',()=>{
  const result=spawnSync(process.execPath,[executable],{cwd:checkout,encoding:'utf8'});
  assert.equal(result.status,1);
  assert.match(result.stderr,/Usage: node scripts\/d1-cutover.ts/);
+});
+test('cutover names the limit of a child that does not exit',context=>{
+ const root=realpathSync(mkdtempSync(join(tmpdir(),'pd-cutover-limit-')));
+ context.after(()=>rmSync(root,{recursive:true,force:true}));
+ const bin=join(root,'bin'),source=join(root,'source');mkdirSync(bin);mkdirSync(source);
+ // exec keeps sleep as the cf process itself, so the limit's SIGTERM closes the output pipes.
+ writeFileSync(join(bin,'cf'),'#!/bin/sh\nexec sleep 30\n',{mode:0o700});
+ const planPath=join(root,'plan.json');
+ writeFileSync(planPath,JSON.stringify({profile:'test',accountId:'0'.repeat(32),databaseId:'00000000-0000-0000-0000-000000000000',workerId:'test',url:'https://test.invalid',connection:'cloud',sourceDirectory:source,receiptsDirectory:join(root,'receipts'),repositories:[root]}),{mode:0o600});
+ const result=spawnSync(process.execPath,[executable,'--plan',planPath,'--apply'],{cwd:checkout,env:{...process.env,PATH:bin+':'+process.env.PATH,POLYLINEDB_D1_CHILD_LIMIT_MS:'200'},encoding:'utf8'});
+ assert.equal(result.status,1);
+ assert.equal(result.stderr,'Cutover stopped. Read private receipts before recovery. cf did not exit within 200 ms (ETIMEDOUT); inspect the private diagnostic\n');
 });
 const mock=`#!/usr/bin/env node
 import {DatabaseSync} from 'node:sqlite';
@@ -80,7 +93,7 @@ for(const mode of ['success','lost','cas','staged','stale']){
  writeFileSync(configPath,JSON.stringify(config),{mode:0o600});
  const receipts=join(root,'receipts'),planPath=join(root,'plan.json');
  writeFileSync(planPath,JSON.stringify({profile:'test',accountId:'0'.repeat(32),databaseId:'00000000-0000-0000-0000-000000000000',workerId:'test',url:'https://test.invalid',connection:'cloud',sourceDirectory:source,receiptsDirectory:receipts,repositories:[alias,repository]}),{mode:0o600});
- const result=spawnSync(process.execPath,[executable,'--plan',planPath,'--apply'],{cwd:checkout,env:{...process.env,PATH:bin+':'+process.env.PATH,XDG_CONFIG_HOME:configHome,TEST_CLI:join(checkout,'src','cli.ts'),TEST_CLOUD:cloudPath,TEST_CONFIG:configPath,TEST_MODE:mode},encoding:'utf8',maxBuffer:1024*1024});
+ const result=spawnSync(process.execPath,[executable,'--plan',planPath,'--apply'],{cwd:checkout,env:{...process.env,PATH:bin+':'+process.env.PATH,XDG_CONFIG_HOME:configHome,TEST_CLI:join(checkout,'src','cli.ts'),TEST_CLOUD:cloudPath,TEST_CONFIG:configPath,TEST_MODE:mode,POLYLINEDB_D1_CHILD_LIMIT_MS:String(childLimits.startMs+childLimits.runMs)},encoding:'utf8',maxBuffer:1024*1024});
  assert.equal(result.status,mode==='success'?0:1,result.stderr);
  if(mode==='staged'){
   assert.match(result.stderr,/Latest Worker version is not the active deployment/);

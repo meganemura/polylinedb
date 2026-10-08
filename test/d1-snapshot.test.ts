@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cfQuery, parseQueryOutput, parseTarget } from '../scripts/d1-snapshot.ts';
+import { childLimits } from './fixtures/child-run.ts';
 
 const target = parseTarget({ profile: 'migration', accountId: 'a'.repeat(32), databaseId: '11111111-1111-4111-8111-111111111111', snapshotSha256: 'b'.repeat(64), schemaVersion: 6 });
 
@@ -12,14 +13,15 @@ test('cf transport fixes identity, protects bound values, cleans files, and sani
   const directory = mkdtempSync(join(tmpdir(), 'pd-cf-test-'));
   const bin = join(directory, 'bin'); mkdirSync(bin);
   const capture = join(directory, 'capture.json');
-  const original = { PATH: process.env.PATH, CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN, PD_TEST_CAPTURE: process.env.PD_TEST_CAPTURE, PD_TEST_FAIL: process.env.PD_TEST_FAIL };
+  const original = { PATH: process.env.PATH, CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN, PD_TEST_CAPTURE: process.env.PD_TEST_CAPTURE, PD_TEST_FAIL: process.env.PD_TEST_FAIL, PD_TEST_HANG: process.env.PD_TEST_HANG };
   writeFileSync(join(bin, 'cf'), `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const path = args[args.indexOf('--batch') + 1].slice(1);
 fs.writeFileSync(process.env.PD_TEST_CAPTURE, JSON.stringify({ args, path, body: JSON.parse(fs.readFileSync(path, 'utf8')), mode: fs.statSync(path).mode & 511, account: process.env.CLOUDFLARE_ACCOUNT_ID, token: process.env.CLOUDFLARE_API_TOKEN }));
-if (process.env.PD_TEST_FAIL) { process.stderr.write('secret-token private SQL'); process.exit(1); }
-process.stdout.write(JSON.stringify({ success: true, result: [{ success: true, results: [{ answer: 42 }] }] }));
+if (process.env.PD_TEST_HANG) setTimeout(() => {}, 60_000);
+else if (process.env.PD_TEST_FAIL) { process.stderr.write(process.env.PD_TEST_FAIL); process.exit(1); }
+else process.stdout.write(JSON.stringify({ success: true, result: [{ success: true, results: [{ answer: 42 }] }] }));
 `, { mode: 0o700 });
   try {
     process.env.PATH = `${bin}:${original.PATH}`;
@@ -35,9 +37,16 @@ process.stdout.write(JSON.stringify({ success: true, result: [{ success: true, r
     assert.equal(captured.mode, 0o600);
     assert.deepEqual(captured.body, [statement]);
     assert.equal(existsSync(captured.path), false);
-    process.env.PD_TEST_FAIL = '1';
-    await assert.rejects(cfQuery(target)(statement), { message: 'cf query failed; the destination may contain a resumable partial import' });
+    const token = 'cfut_' + 'Q7'.repeat(20);
+    process.env.PD_TEST_FAIL = `account ${target.accountId} database ${target.databaseId}\nAuthorization: Bearer ${token}\n\u001b[31mfetch failed: read ECONNRESET\u001b[0m\n`;
+    const failure = await cfQuery(target)(statement).then(() => assert.fail('cf query succeeded'), (error: Error) => error.message);
+    assert.equal(failure, 'cf query failed: exited with status 1; stderr: account [redacted] database [redacted] Authorization: Bearer [redacted] fetch failed: read ECONNRESET; '
+      + 'the destination may contain a resumable partial import');
     assert.equal(existsSync(JSON.parse(readFileSync(capture, 'utf8')).path), false);
+    delete process.env.PD_TEST_FAIL;
+    process.env.PD_TEST_HANG = '1';
+    await assert.rejects(cfQuery(target, 200)(statement),
+      { message: 'cf query failed: did not exit within 200 ms (ETIMEDOUT); stderr: none; the destination may contain a resumable partial import' });
   } finally {
     for (const [name, value] of Object.entries(original)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
     rmSync(directory, { recursive: true, force: true });
@@ -98,8 +107,10 @@ finally { database.close(); }
     const output = join(directory, 'verified.json');
     writeFileSync(snapshot, canonical, { mode: 0o600 });
     writeFileSync(targetFile, JSON.stringify({ ...target, snapshotSha256: createHash('sha256').update(canonical).digest('hex') }), { mode: 0o600 });
-    const run = (outputPath: string) => spawnSync(process.execPath, ['scripts/d1-snapshot.ts', 'verify', '--snapshot', snapshot, '--target', targetFile, '--output', outputPath], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PD_TEST_DATABASE: database_path }, encoding: 'utf8',
+    // spawnSync counts its limit from spawn, so the cf child gets the fixture's start and run limits together.
+    const run = (outputPath: string, cf = bin) => spawnSync(process.execPath, ['scripts/d1-snapshot.ts', 'verify', '--snapshot', snapshot, '--target', targetFile, '--output', outputPath], {
+      env: { ...process.env, PATH: `${cf}:${process.env.PATH}`, PD_TEST_DATABASE: database_path,
+        POLYLINEDB_D1_CHILD_LIMIT_MS: String(childLimits.startMs + childLimits.runMs) }, encoding: 'utf8',
     });
     const first = run(output);
     assert.equal(first.status, 0, first.stderr);
@@ -114,5 +125,11 @@ finally { database.close(); }
     const mismatchedOutput = join(directory, 'mismatched.json');
     assert.equal(run(mismatchedOutput).status, 1);
     assert.equal(existsSync(mismatchedOutput), false);
+    const failing = join(directory, 'failing'); mkdirSync(failing);
+    writeFileSync(join(failing, 'cf'), `#!/bin/sh\necho "fetch failed: read ECONNRESET for ${target.accountId}" >&2\nexit 1\n`, { mode: 0o700 });
+    const failed = run(join(directory, 'failed.json'), failing);
+    assert.equal(failed.status, 1);
+    assert.equal(failed.stderr, 'D1 snapshot operation failed: cf query failed: exited with status 1; stderr: fetch failed: read ECONNRESET for [redacted]; '
+      + 'the destination may contain a resumable partial import.\n');
   } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
 });
