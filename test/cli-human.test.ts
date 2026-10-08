@@ -158,3 +158,11 @@ test('issue reads preserve current, stale, and unavailable memory freshness advi
     'Search matches\nMemory freshness: unavailable · project parser\nRetrieve project memory before acting.\npd-17  open  P2  bug\n  Project: parser · Tool: compiler\n  Body: Failure when parsing empty input\n\nEnd of results.',
   );
 });
+
+test('show prints the closure line only for a recorded closure', () => {
+  const closed: Issue = { ...issue, status: 'closed', closed_at: '2026-10-06T05:06:07.000Z', closed_by: 'Sam' };
+  assert.ok(renderShow(closed, []).includes('\nUpdated 2026-10-06T02:03:04.000Z by codex\nClosed 2026-10-06T05:06:07.000Z by Sam\nBody\n'));
+  for (const record of [{ ...issue, closed_at: null, closed_by: null }, { ...issue, status: 'closed' as const, closed_at: null, closed_by: null }]) {
+    assert.equal(renderShow(record, []), renderShow({ ...issue, status: record.status }, []));
+  }
+});
