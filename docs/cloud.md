@@ -76,8 +76,8 @@ The build stops when one of these four variables is unset or empty, or when `POL
 The error names the variable and does not print any value.
 A deploy replaces the deployed Worker variables with the built values, so an empty value would overwrite a working setting.
 
-A local build, `npm run dev:worker`, and `npm run test:worker` can run without Access settings.
-Set `POLYLINEDB_BUILD_WITHOUT_ACCESS=1` for them.
+A local build and `npm run dev:worker` can run without Access settings.
+Set `POLYLINEDB_BUILD_WITHOUT_ACCESS=1` for them. `npm run test:worker` and the CI build set it themselves.
 The build then ignores the four variables and uses empty Access settings, so the Worker refuses every request with `503`.
 Do not set this variable in a deployment environment.
 
