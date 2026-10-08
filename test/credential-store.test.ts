@@ -132,6 +132,17 @@ test('real child receives secrets only through a non-TTY stdin pipe', async () =
   assert.deepEqual(JSON.parse(result.stdout), { args: ['echo'], stdin: value, tty: false, environment: null });
 });
 
+test('real child without input reads an empty non-TTY stdin', async () => {
+  const result = await runCredentialCommand({ executable, args: [path, 'echo'] });
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), { args: ['echo'], stdin: '', tty: false, environment: null });
+});
+
+test('real child that exits without reading its input fails the command', async () => {
+  const input = 'x'.repeat(4 * 1024 * 1024);
+  await assert.rejects(runCredentialCommand({ executable, args: [path, 'unread-input'], input }), /OS credential store/);
+});
+
 test('real child timeouts, output overflow, invalid bytes and missing executable produce sanitized errors', async () => {
   for (const mode of ['hang', 'overflow', 'invalid-utf8']) {
     await assert.rejects(runCredentialCommand({ executable, args: [path, mode] }, { timeoutMs: mode === 'hang' ? 150 : 2000, outputBytes: 65536 }), /OS credential store/);
