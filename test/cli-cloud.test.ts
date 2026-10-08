@@ -72,6 +72,11 @@ test('synthetic credential diagnostics capture rejection without exposing child 
   assert.deepEqual(run(['actor'], { trace: root }), { actor: 'oauth:synthetic-owner' });
 });
 
+test('a credential read succeeds when the child closes stdin before the CLI reaches it', context => {
+  const { run } = fixture(context);
+  assert.deepEqual(run(['actor'], { auth: 'stdin-closed-early' }), { actor: 'oauth:synthetic-owner' });
+});
+
 test('cloud CLI executes all nine operations with defaults, actor ownership, body input, and field conflicts', context => {
   const { root, run, requests } = fixture(context);
   assert.deepEqual(run(['actor']), { actor: 'oauth:synthetic-owner' });

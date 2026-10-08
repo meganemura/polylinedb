@@ -4,7 +4,8 @@ import type { SpawnOptions } from 'node:child_process';
 import http from 'node:http';
 import type { RequestListener, ServerOptions } from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { traceCredentialChild } from './credential-trace.ts';
 import { initializeStore, openStore } from "../../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../../src/records/index.ts"; import { PolylinedbError } from "../../src/records/errors.ts";
@@ -17,6 +18,7 @@ Object.defineProperty(childProcess, 'spawn', { value: (executable: string, args:
   const code = `
     const fs = require('node:fs');
     const mode = process.env.PD_AUTH_FIXTURE_MODE;
+    if (mode === 'stdin-closed-early') { fs.closeSync(0); fs.writeFileSync(process.argv[2], ''); }
     if (mode === 'denied') { process.stderr.write('synthetic-private-token'); process.exit(1); }
     const args = JSON.parse(process.argv[1]);
     const path = process.env.PD_AUTH_FIXTURE_STATE;
@@ -39,7 +41,14 @@ Object.defineProperty(childProcess, 'spawn', { value: (executable: string, args:
       });
     }
   `;
-  return traceCredentialChild(spawn, process.execPath, ['-e', code, JSON.stringify(args)], options, args);
+  if (mode !== 'stdin-closed-early') return traceCredentialChild(spawn, process.execPath, ['-e', code, JSON.stringify(args)], options, args);
+  // A loaded host can deschedule the runner between spawn and its first stdin write while the child runs to exit.
+  const closed = `${process.env.PD_AUTH_FIXTURE_STATE}.stdin-closed-${randomUUID()}`;
+  const child = traceCredentialChild(spawn, process.execPath, ['-e', code, JSON.stringify(args), closed], options, args);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(closed) && Date.now() < deadline) Atomics.wait(pause, 0, 0, 5);
+  return child;
 } });
 const listenerCode = process.env.PD_OAUTH_LISTENER_CODE;
 if (listenerCode) {
