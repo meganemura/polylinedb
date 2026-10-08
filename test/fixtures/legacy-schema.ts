@@ -1,4 +1,4 @@
-// Holds records in an older schema: current operations as an earlier release issued them, and a schema 6 store made from a current one.
+// Holds records in an older schema: current operations as an earlier release issued them, and schema 6 or 7 stores made from a current one.
 import type { DatabaseSync } from 'node:sqlite';
 import { CHANGE_STATEMENTS } from '../../src/records/changes-sql.ts';
 import type { SqlExecutor } from '../../src/records/persistence.ts';
@@ -15,7 +15,13 @@ export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
   };
 }
 
+// The closure check belongs to closed_by, so dropping closed_by first leaves closed_at unreferenced.
+export function downgradeToSchema7(database: DatabaseSync): void {
+  database.exec('BEGIN; ALTER TABLE issues DROP COLUMN closed_by; ALTER TABLE issues DROP COLUMN closed_at; UPDATE schema_version SET version = 7; COMMIT');
+}
+
 export function downgradeToSchema6(database: DatabaseSync): void {
+  downgradeToSchema7(database);
   const objects = CHANGE_STATEMENTS.map(sql => /^CREATE (TABLE|TRIGGER) (\w+)/.exec(sql)).map(match => {
     if (!match?.[1] || !match[2]) throw new Error('Unexpected change feed statement');
     return { type: match[1], name: match[2] };

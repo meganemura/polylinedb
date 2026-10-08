@@ -30,7 +30,7 @@ function expectedRows(input: unknown): { canonical: string; rows: Rows } {
       return { id: issue.id, parent_id: split < 0 ? null : issue.id.slice(0, split), sort_key: issueSortKey(issue.id),
         ...Object.fromEntries(fields.map(field => [field === 'labels' ? 'labels_json' : field, field === 'labels' ? JSON.stringify(issue.labels) : issue[field]])),
         ...Object.fromEntries(fields.map(field => [`${field}_v`, issue.versions[field]])),
-        created_at: issue.created_at, created_by: issue.created_by, updated_at: issue.updated_at, updated_by: issue.updated_by };
+        created_at: issue.created_at, created_by: issue.created_by, updated_at: issue.updated_at, updated_by: issue.updated_by, closed_at: issue.closed_at, closed_by: issue.closed_by };
     }), comments: snapshot.comments.map(row => ({ ...row })), counters: snapshot.counters.map(row => ({ ...row })), requests: snapshot.requests.map(row => ({ ...row })),
     memories: snapshot.memories.map(row => ({ ...row, sort_key: memorySortKey(row.id) })), memory_counters: snapshot.memory_counters.map(row => ({ ...row })), memory_requests: snapshot.memory_requests.map(row => ({ ...row })),
     dependencies: snapshot.dependencies.map(row => ({ ...row })), dependency_revisions: snapshot.dependency_revisions.map(row => ({ ...row })), dependency_requests: snapshot.dependency_requests.map(row => ({ ...row })),
@@ -137,7 +137,7 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     await inspect();
     const actual = await readRows(query);
     if (!compareRows(rows, actual)) fail('Destination snapshot is incomplete');
-    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 5,
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 6,
       issues: actual.issues.map(issueRow), comments: actual.comments.map(commentRow), counters: actual.counters, requests: actual.requests,
       memories: actual.memories.map(memoryRow), memory_counters: actual.memory_counters, memory_requests: actual.memory_requests,
       dependencies: actual.dependencies, dependency_revisions: actual.dependency_revisions, dependency_requests: actual.dependency_requests,
