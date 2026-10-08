@@ -145,6 +145,8 @@ function renderIssueDetails(result: IssueDetails, color: boolean): string {
     'Claim ' + result.claim.state + ' · store incarnation ' + result.claim.store_incarnation,
     'Created ' + visibleText(issue.created_at, false) + ' by ' + visibleText(issue.created_by, false),
     'Updated ' + visibleText(issue.updated_at, false) + ' by ' + visibleText(issue.updated_by, false),
+    ...(typeof issue.closed_at === 'string' && typeof issue.closed_by === 'string'
+      ? ['Closed ' + visibleText(issue.closed_at, false) + ' by ' + visibleText(issue.closed_by, false)] : []),
     heading('Body', color),
     indentedLines(issue.body, 2),
     heading('Comments', color) + ' (' + result.comments.length + ')',
