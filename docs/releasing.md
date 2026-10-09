@@ -77,9 +77,58 @@ Replace `APPROVED_SHA` with the full reviewed commit SHA.
 Open the workflow run and review its commit and version before you approve the `publish` environment.
 The workflow checks its source commit and the requested version before tests.
 It compares the version with the manifest and lockfile.
+It reads the release notes from `CHANGELOG.md` before installation, so a missing section stops the run before publication.
 It builds and installs the tarball, publishes that same tarball, and compares its integrity with the registry.
 Keep the workflow filename consistent with the trusted publisher configuration.
 See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for the OIDC requirements.
-Then install the published version in a clean prefix and check `pd --help`.
 Publish the tested tarball without another pack or build step.
 Choose a new version for later changes, and update both the manifest and lockfile before packing.
+
+## Tag and GitHub Release
+
+When the publish job and its registry integrity check succeed, the `release` job tags that commit and creates the GitHub Release.
+The annotated tag is `v<version>` with the message `polylinedb <version>`.
+The release title is `polylinedb <version>`, and the release is marked latest when it is created.
+The notes are the `CHANGELOG.md` section for that version, followed by:
+
+```sh
+npm install -g polylinedb@<version>
+pd --help
+```
+
+The version heading may be `## 0.4.0` or `## 0.4.0 (2026-10-09)`.
+The heading line is omitted because the release title carries the version.
+Every later line up to the next `## ` heading is included, so `###` subsections stay in the section.
+A missing or empty section fails the publish job before `npm publish`.
+Preview the notes from a source checkout:
+
+```sh
+RELEASE_VERSION=0.4.0 node scripts/release-notes.ts
+```
+
+The release job requests `contents: write` only.
+`id-token: write` stays on the publish job.
+The release job does not use the `publish` environment.
+That environment is the owner approval gate for npm publication, and the release job has no environment secrets.
+It runs only after the approved publish job in the same workflow run.
+A failed tag or release step can then be re-run by itself, without a second approval and without publishing the package again.
+
+The tag is created through the GitHub API as an annotated tag.
+Its tagger is `github-actions[bot]`.
+When `v<version>` already exists, the job reads it.
+An annotated tag whose commit is the approved commit is left unchanged, including one created by hand.
+The existing tag message is not compared.
+A lightweight tag fails the job, as does an annotated tag that points at another commit.
+The workflow does not delete or move a tag.
+Replace a lightweight tag with an annotated tag on the approved commit, or move an annotated tag onto that commit, then re-run the failed release job.
+
+The job then looks for a GitHub Release on that tag.
+A published release whose title and notes match is left in place, so a re-run does not create a duplicate.
+That re-run does not change which release is marked latest.
+A draft, a prerelease, a different title, or different notes fails the job.
+The workflow does not edit or delete the existing release.
+Correct it, or remove it, then re-run the failed release job.
+
+Re-running the whole workflow after npm has accepted the version repeats `npm publish`.
+When the package is already in the registry, re-run only the failed release job.
+Install the published version in a clean prefix and check `pd --help` before announcing the release.
