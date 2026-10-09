@@ -401,9 +401,11 @@ test('protocol rejection cancels response streams without waiting for cancellati
   }
 });
 
-function child(directory: string, mode: string): Promise<{ code: number | null; output: string }> {
+function child(directory: string, mode: string, lockTimeoutMs?: number): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
-    const process = spawn(globalThis.process.execPath, [new URL('./fixtures/oauth-client.ts', import.meta.url).pathname, directory, mode], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const args = [new URL('./fixtures/oauth-client.ts', import.meta.url).pathname, directory, mode];
+    if (lockTimeoutMs !== undefined) args.push(String(lockTimeoutMs));
+    const process = spawn(globalThis.process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; process.stdout.on('data', chunk => { output += chunk; });
     process.on('error', reject); process.on('close', code => resolve({ code, output }));
   });
@@ -416,9 +418,10 @@ test('independent processes share one refresh transaction', async t => {
   await mkdir(join(directory, 'locks'), { mode: 0o700 });
   const key = credentialKey(resource, await realpath(join(directory, 'locks')));
   await writeFile(join(directory, 'test-store.json'), JSON.stringify({ [key]: [...f.store.entries.values()][0] }));
-  const results = await Promise.all([child(directory, 'refresh'), child(directory, 'refresh')]);
+  const results = await Promise.all([child(directory, 'share'), child(directory, 'share')]);
   assert.deepEqual(results, [{ code: 0, output: 'child-access' }, { code: 0, output: 'child-access' }]);
   assert.equal(await readFile(join(directory, 'refreshes'), 'utf8'), 'refresh\n');
+  assert.equal(await readFile(join(directory, 'waiting'), 'utf8'), 'waiting\n');
 });
 
 test('a crash leaves the lock owned and the spent refresh grant unusable after manual recovery', async t => {
@@ -429,7 +432,7 @@ test('a crash leaves the lock owned and the spent refresh grant unusable after m
   const key = credentialKey(resource, await realpath(locks));
   await writeFile(join(directory, 'test-store.json'), JSON.stringify({ [key]: [...f.store.entries.values()][0] }));
   assert.equal((await child(directory, 'crash')).code, 42);
-  assert.deepEqual(await child(directory, 'refresh'), { code: 1, output: 'auth_busy' });
+  assert.deepEqual(await child(directory, 'refresh', 150), { code: 1, output: 'auth_busy' });
   await rm(join(locks, `${key}.lock`), { recursive: true });
   assert.deepEqual(await child(directory, 'refresh'), { code: 1, output: 'auth_reauthorization_required' });
   assert.equal(await readFile(join(directory, 'refreshes'), 'utf8'), 'refresh\n');
