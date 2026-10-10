@@ -240,6 +240,7 @@ try {
     .bind('closed', '[]', '2026-10-03T10:30:00.000Z', 'service:codex-token', readyIssue.id).run();
   await database.prepare('UPDATE issues SET labels_json = ?, updated_at = ? WHERE id = ?')
     .bind('["main-wait"]', '2026-10-04T00:00:00.000Z', draftIssue.id).run();
+  await database.prepare("UPDATE issues SET updated_at = ? WHERE tool = 'compiler' AND project IN ('parser', 'other')").bind('2026-10-02T00:00:00.000Z').run();
   assert.equal((await view(null)).status, 401);
   assert.equal((await view(viewer, 'POST')).status, 405);
   const page = await view(viewer);
@@ -256,6 +257,8 @@ try {
   assert.ok(gatedHtml.includes(`<span class="secondary">${readyIssue.id} · Last updated <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">Codex</span>`));
   assert.ok(html.includes('<h2>Projects</h2>'));
   for (const project of ['parser', 'other', 'gated']) assert.ok(html.includes(`href="/ui/p/compiler/${project}"`), project);
+  assert.deepEqual([...html.matchAll(/href="(\/ui\/p\/[^"]+)"/g)].map(match => match[1]), ['/ui/p/compiler/gated', '/ui/p/compiler/other', '/ui/p/compiler/parser']);
+  assert.ok(html.includes('Updated <time datetime="2026-10-04T00:00:00.000Z">2026-10-04 09:00 JST</time>'));
   const projectPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/parser', { headers: { 'cf-access-jwt-assertion': viewer } });
   assert.equal(projectPage.status, 200);
   const projectHtml = await projectPage.text();
@@ -270,5 +273,6 @@ try {
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
       'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
+      'projects by latest update',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }
