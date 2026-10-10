@@ -1,7 +1,7 @@
 /** Adapts authenticated HTTP and MCP requests to issue and memory operations, and serves the read-only /ui page. OAuth belongs to Access. */
 import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
-import { uiResponse } from "./ui.ts";
+import { uiResponse, type UiRoute } from "./ui.ts";
 import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseOperation, parseRequestId } from "../records/index.ts";
 import type { Operation } from "../records/index.ts";
@@ -211,22 +211,53 @@ async function mcp(request: Request, env: Environment, caller: Caller): Promise<
   }
 }
 
+function scopeName(value: string): boolean {
+  return value.trim().length > 0 && !value.includes('\u0000') && !/\p{Cc}/u.test(value) && new TextEncoder().encode(value).length <= 256;
+}
+
+function projectRoute(pathname: string): UiRoute | null {
+  const segments = pathname.slice('/ui/p/'.length).split('/');
+  if (segments.length < 2) return null;
+  const decoded: string[] = [];
+  for (const segment of segments) {
+    if (segment.length === 0) return null;
+    let value: string;
+    try { value = decodeURIComponent(segment); } catch { return null; }
+    if (!scopeName(value)) return null;
+    decoded.push(value);
+  }
+  const tool = decoded[0];
+  if (tool === undefined) return null;
+  return { page: 'project', tool, project: decoded.slice(1).join('/') };
+}
+
+function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'ui'; route: UiRoute } | { kind: 'missing' } {
+  if (pathname === '/mcp') return { kind: 'mcp' };
+  if (pathname === '/v1/operations') return { kind: 'operations' };
+  if (pathname === '/ui') return { kind: 'ui', route: { page: 'home' } };
+  if (pathname.startsWith('/ui/p/')) {
+    const route = projectRoute(pathname);
+    return route === null ? { kind: 'missing' } : { kind: 'ui', route };
+  }
+  return { kind: 'missing' };
+}
+
 export async function handleRequest(
   request: Request,
   env: Environment,
   authenticate: ReturnType<typeof createAccessVerifier> = verifyAccess,
 ): Promise<Response> {
   try {
-    const path = new URL(request.url).pathname;
-    if (path !== '/mcp' && path !== '/v1/operations' && path !== '/ui') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
+    const target = requestTarget(new URL(request.url).pathname);
+    if (target.kind === 'missing') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
     checkOrigin(request, env);
     const caller = await authenticate(request, env);
-    if (path === '/ui') {
+    if (target.kind === 'ui') {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
-      return await uiResponse(d1Executor(env.DB), actorLabels(env));
+      return await uiResponse(d1Executor(env.DB), actorLabels(env), target.route);
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
-    if (path === '/mcp') return await mcp(request, env, caller);
+    if (target.kind === 'mcp') return await mcp(request, env, caller);
     return json(await execute(request, env, parseRequested('/v1/operations', await readJson(request), caller), caller));
   } catch (error) {
     const failure = publicError(error);

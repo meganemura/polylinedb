@@ -371,6 +371,35 @@ export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promis
   return (await db.reads.all(issueQueries.awaitingMain, { limit })).map(issueRow);
 }
 
+export type ProjectSummary = {
+  tool: string;
+  project: string;
+  counts: { open: number; in_progress: number; deferred: number; closed: number };
+};
+
+function storedCount(value: number | null): number {
+  if (value === null || !Number.isSafeInteger(value) || value < 0) throw new PolylinedbError('invalid_store', 'Stored project count is invalid', 500);
+  return value;
+}
+
+export async function projectSummaries(db: SqlExecutor, limit: number): Promise<ProjectSummary[]> {
+  return (await db.reads.all(issueQueries.projectSummaries, { limit })).map(row => {
+    try {
+      return { tool: name(row.tool, 'tool'), project: name(row.project, 'project'), counts: {
+        open: storedCount(row.open_count), in_progress: storedCount(row.in_progress_count),
+        deferred: storedCount(row.deferred_count), closed: storedCount(row.closed_count),
+      } };
+    } catch (error) {
+      if (error instanceof PolylinedbError && error.status === 500) throw error;
+      throw new PolylinedbError('invalid_store', `Stored project is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);
+    }
+  });
+}
+
+export async function projectIssues(db: SqlExecutor, tool: string, project: string, limit: number): Promise<Issue[]> {
+  return (await db.reads.all(issueQueries.projectIssues, { tool, project, limit })).map(issueRow);
+}
+
 // The excerpt bound counts UTF-8 bytes, including the ellipses; the SQL window counts code points, and each code point costs at least one byte.
 const excerptBytes = 160;
 const ellipsis = '…';

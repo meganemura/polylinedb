@@ -253,8 +253,8 @@ try {
   const projectPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/parser', { headers: { 'cf-access-jwt-assertion': viewer } });
   assert.equal(projectPage.status, 200);
   const projectHtml = await projectPage.text();
-  assert.ok(projectHtml.includes(id));
-  assert.ok(!projectHtml.includes(draftIssue.id));
+  assert.ok(projectHtml.includes(`${id}`));
+  assert.ok(!projectHtml.includes(`${draftIssue.id}`));
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
