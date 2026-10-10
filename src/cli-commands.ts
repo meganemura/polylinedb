@@ -378,6 +378,11 @@ async function main(argv: readonly string[]): Promise<void> {
   if (proof !== undefined) {
     if (new TextEncoder().encode(proof).length > 1024) invalid('Claim proof exceeds 1024 UTF-8 bytes');
     try { raw.claim_proof = JSON.parse(proof); } catch { invalid('Claim proof must contain valid JSON'); }
+    const parsed = raw.claim_proof;
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      raw.claim_proof = Object.fromEntries((['issue_id', 'incarnation', 'session_id', 'generation'] as const).filter(key => Object.hasOwn(record, key)).map(key => [key, record[key]]));
+    }
   }
   if (command === 'claim_acquire') {
     raw.incarnation = one('incarnation'); raw.session_id = one('session-id') ?? process.env.POLYLINEDB_SESSION_ID;

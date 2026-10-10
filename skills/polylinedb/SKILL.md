@@ -56,6 +56,7 @@ Start work only after successful acquisition and a fresh readiness check.
 If the candidate becomes blocked, release the acquired claim and select again.
 
 Retain `issue_id`, `incarnation`, `session_id`, and `generation` from `claim_receipt` as `claim_proof`.
+The CLI `--claim-proof` flag accepts that object or the whole receipt.
 Read field versions with `show` before `update` or `close`.
 Pass the proof to issue mutations wherever their schemas accept it.
 Use `update` to record `in_progress` with the observed status version.
