@@ -38,7 +38,7 @@ const schemaSql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name N
 const maximumStatementLimit = 1000;
 
 type Checkpoint = Record<string, string | 1> & { singleton: 1; sha256: string };
-/** The original input as the restore checkpoint digested it, and as the schema 6 rows that restoration leaves. */
+/** The original input as the restore checkpoint digested it, and as the current-schema rows that restoration and later upgrades leave. */
 type OriginalForms = { canonical: string; projected: string };
 type CheckpointLayout = {
   ddl: string;
@@ -52,7 +52,7 @@ type CheckpointLayout = {
 };
 
 const checkpointLayouts = {
-  // Release 0.1.0 restored snapshot 3 into schema 3. The schema 3 to 6 upgrade leaves what convertSnapshotV3 produces in the 12 application tables.
+  // Release 0.1.0 restored snapshot 3 into schema 3. The upgrade from schema 3 leaves what convertSnapshotV3 produces in the 12 application tables.
   'two-column': {
     ddl: `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL)`,
     columns: ['singleton', 'sha256'],
@@ -117,7 +117,7 @@ const profiles = new Map(layouts.flatMap((layout): [string, Profile][] => [
 ]));
 
 function classifySchema(schema: readonly SchemaEntry[]): Profile {
-  return profiles.get(stableJson(schema)) ?? refuse('Destination schema is not canonical schema 6 with a recognized restore checkpoint layout');
+  return profiles.get(stableJson(schema)) ?? refuse(`Destination schema is not canonical schema ${SCHEMA_VERSION} with a recognized restore checkpoint layout`);
 }
 
 type Capture = { profile: Profile; schema: SchemaEntry[]; version: unknown; checkpoint: Record<string, unknown>[]; receipt: Record<string, unknown>[]; visibleCheckpoint: Record<string, unknown>[]; rows: RawRows };
@@ -310,7 +310,7 @@ function retiredSourceSchema(connection: string): string {
 function readSource(database: DatabaseSync, retiredFor?: string): RawRows {
   const schema = stableJson(database.prepare(schemaSql).all());
   if (retiredFor === undefined && database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'polylinedb_retired_%'").get()) refuse('The source store is retired; another addition or cutover owns it');
-  if (schema !== canonicalSourceSchema && (retiredFor === undefined || schema !== retiredSourceSchema(retiredFor))) refuse('Source schema differs from canonical schema 6');
+  if (schema !== canonicalSourceSchema && (retiredFor === undefined || schema !== retiredSourceSchema(retiredFor))) refuse(`Source schema differs from canonical schema ${SCHEMA_VERSION}`);
   return normalizedRows(Object.fromEntries(tables.map(table => [table, database.prepare(`SELECT * FROM ${table}`).all().map(row => ({ ...row }))])));
 }
 
