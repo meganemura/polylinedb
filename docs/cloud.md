@@ -668,7 +668,8 @@ The page has no theme control of its own.
 Serve `/ui` and every file it needs from Worker code.
 If a later change adds static assets, set `run_worker_first` so that the Access check runs first.
 Do not add an Access bypass for local use.
-`test/worker.test.ts` renders `/ui` on Node with SQLite, and `npm run test:worker` renders it in local workerd with D1.
+`test/worker.test.ts` renders these pages on Node with SQLite.
+`npm run test:worker` renders `/ui` and a project page in local workerd with D1.
 Both sign a test assertion and check the page content.
 
 ## Use service tokens only from a local client
