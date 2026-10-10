@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- When `update`, `close`, or `reopen` includes a `claim_proof` and the store rejects it with `claim_required`, `details.claim` sits next to `details.issue`. A lease reports `state`, `generation`, and `expires_at`. An issue that was never claimed reports `state` `never_claimed`. A rejection with no proof still returns only the issue. The cloud CLI drops `claim`, so a released CLI still accepts the response. MCP and a direct HTTP client see `claim`.
+- Reject a `reason` sent without `force` with `reason is accepted only with force: true`. The MCP schema for `reason` on `update` and `close` says the same thing. `force` without a nonempty `reason` still reports `force requires true and a nonempty reason`. The call stays refused, and the text is not stored.
 - Stop the memory context child of the host hook after 10 s instead of 15 s. The host still caps the hook at 15 s, so a slow child now ends with the `unavailable` notice instead of a hook that the host kills without output.
 - Tell where each search hit matched. A `search` request with `with_matches: true` also returns `matches`: for each issue, the body and each matching comment ID, with an excerpt of at most 160 UTF-8 bytes around the first match. A request without the field keeps the 0.3.1 result, so older CLIs still decode it. `pd search` and the MCP `search` tool always request matches, and `--human` prints a `Matched in` line for each. A Worker that predates the field rejects it. The cloud client then sends the search once more without the field and returns that page without `matches`, so the CLI and the Worker can be updated in either order.
 
