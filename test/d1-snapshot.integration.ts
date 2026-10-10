@@ -35,7 +35,7 @@ try {
     return result.results;
   };
   const reset = async () => {
-    for (const table of ['claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
+    for (const table of ['change_events', 'change_writer', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
     await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
   };
   await reset();

@@ -295,8 +295,10 @@ test('retirement blocks every DML operation on an already open SQLite connection
       assert.throws(() => database.prepare(`UPDATE ${quotedTable} SET ${quotedKey} = ${quotedKey}`).all(), /Use cloud connection archive/, `${table} update`);
       assert.throws(() => database.prepare(`DELETE FROM ${quotedTable}`).all(), /Use cloud connection archive/, `${table} delete`);
     }
-    const tableCount = database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get();
-    assert.equal(tableCount?.count, tables.length + 1);
+    const unretired = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()
+      .map(row => String(row.name)).filter(name => !(tables as readonly string[]).includes(name));
+    // Only the change feed triggers on the retired tables write the change tables.
+    assert.deepEqual(unretired, ['change_events', 'change_writer', 'schema_version']);
     for (const table of ['memory_store_identity', 'project_memory_revisions']) {
       assert.throws(() => database.exec(`INSERT INTO ${table} SELECT * FROM ${table} LIMIT 1`), /Use cloud connection archive/);
       assert.throws(() => database.exec(`DELETE FROM ${table}`), /Use cloud connection archive/);

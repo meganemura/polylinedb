@@ -12,8 +12,9 @@ import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation, PolylinedbError } from '../src/records/index.ts';
 import type { ClaimReceipt } from '../src/records/index.ts';
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
 import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence.ts';
+import { downgradeToSchema6 } from './fixtures/schema-v6-store.ts';
 const request = () => crypto.randomUUID();
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-claim-'));
@@ -128,9 +129,9 @@ test('claim replay recognizes only complete provider duplicate markers', async t
     await assert.rejects(executeOperation(failing, parseOperation(owner.command), 'test:owner'), value => value === error);
   }
 });
-test('canonical schemas 2 through 5 upgrade without rewriting old records or identity', t => {
+test('canonical schemas 2 through 6 upgrade without rewriting old records or identity', t => {
   const root = mkdtempSync(join(tmpdir(), 'pd-claims-upgrade-')); t.after(() => rmSync(root, { recursive: true, force: true }));
-  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL];
+  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL];
   for (const [index, ddl] of sources.entries()) {
     const directory = join(root, `v${index + 2}`); mkdirSync(directory, { mode: 0o700 }); const path = join(directory, 'polylinedb.sqlite');
     const legacy = new DatabaseSync(path); legacy.exec(ddl);
@@ -139,7 +140,7 @@ test('canonical schemas 2 through 5 upgrade without rewriting old records or ide
     const tables = legacy.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name<>'schema_version' ORDER BY name").all();
     const before = tables.map(row => { assert.equal(typeof row.name, 'string'); if (typeof row.name !== 'string') throw new Error('Invalid table'); return [row.name, legacy.prepare(`SELECT * FROM ${row.name}`).all()]; });
     legacy.close(); chmodSync(path, 0o600);
-    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 6);
+    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 7);
     const current = new DatabaseSync(path); const canonical = new DatabaseSync(':memory:'); canonical.exec(SCHEMA_SQL);
     try {
       for (const [table, records] of before) { if (typeof table !== 'string') throw new Error('Invalid table'); assert.deepEqual(current.prepare(`SELECT * FROM ${table}`).all(), records); }
@@ -215,6 +216,22 @@ test('historical schema5 export retains graph records and canonical retirement g
   const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 5); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
   const after = new DatabaseSync(path, { readOnly: true }); try { assert.deepEqual(after.prepare('SELECT * FROM memory_store_identity').get(), before); assert.equal(after.prepare('SELECT version FROM schema_version').get()?.version, 5); } finally { after.close(); }
   assert.throws(() => upgradeStore({ directory, cwd: join(root, 'work') }), { code: 'store_retired' });
+});
+test('historical schema6 export reads claim history from a canonical schema 6 store without writes', async t => {
+  const source = fixture(t); const issue = await create(source.run); const owner = await acquire(source.run, issue.id, { agent_label: 'Codex' });
+  await source.run({ op: 'claim_release', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request() });
+  const expected = source.store.exportSnapshot();
+  const database = new DatabaseSync(source.database_path); downgradeToSchema6(database);
+  const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_V6_SQL);
+  const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
+  assert.deepEqual(database.prepare(schema).all(), reference.prepare(schema).all()); reference.close();
+  const before = database.prepare('SELECT * FROM sqlite_master ORDER BY name').all(); database.close();
+  const location = { directory: join(source.database_path, '..'), cwd: join(source.database_path, '..', '..', 'work') };
+  const snapshot = exportHistoricalSnapshot(location);
+  assert.equal(canonicalSnapshot(snapshot), canonicalSnapshot(expected)); assert.equal(snapshot.claim_requests.length, 2);
+  const after = new DatabaseSync(source.database_path, { readOnly: true });
+  try { assert.deepEqual(after.prepare('SELECT * FROM sqlite_master ORDER BY name').all(), before); } finally { after.close(); }
+  assert.equal(upgradeStore(location).result, 'upgraded'); assert.throws(() => exportHistoricalSnapshot(location), { code: 'unsupported_schema' });
 });
 test('completed D1 restore requires its recorded target incarnation for verify and replay', async t => {
   const source = fixture(t); await create(source.run); const snapshot = source.store.exportSnapshot();
