@@ -100,6 +100,19 @@ The version heading may be `## 0.4.0` or `## 0.4.0 (2026-10-09)`.
 The heading line is omitted because the release title carries the version.
 Every later line up to the next `## ` heading is included, so `###` subsections stay in the section.
 A missing or empty section fails the publish job before `npm publish`.
+
+A release body has no repository base, so a relative link target in the section becomes an absolute URL at the release tag.
+The repository URL comes from `repository.url` in `package.json`.
+`docs/claims.md`, `./docs/claims.md`, and `/docs/claims.md` all become `https://github.com/meganemura/polylinedb/blob/v<version>/docs/claims.md`.
+A `#anchor` or `?query` stays on the rewritten URL.
+Reference definitions, such as `[claims]: docs/claims.md`, are rewritten the same way.
+A directory target uses `tree` instead of `blob`, and an image uses `raw`.
+In-page anchors such as `#upgrade-from-020`, absolute URLs, and other schemes such as `mailto:` stay unchanged.
+Text in inline code spans and fenced code blocks stays unchanged.
+Indented code blocks and raw HTML are not recognized, so use fenced code and Markdown links in the section.
+A link that leaves the repository, such as `../other.md`, fails the publish job before `npm publish`.
+`CHANGELOG.md` keeps its relative links, so it still reads correctly on GitHub and in the npm package.
+
 Preview the notes from a source checkout:
 
 ```sh
