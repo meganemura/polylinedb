@@ -248,6 +248,13 @@ try {
   const html = await page.text();
   assert.ok(html.indexOf(`${draftIssue.id} · 最終更新`) < html.indexOf('Recently closed'));
   assert.ok(html.includes(`<span class="secondary">${readyIssue.id} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">Codex</span>`));
+  assert.ok(html.includes('<h2>Projects</h2>'));
+  for (const project of ['parser', 'other', 'gated']) assert.ok(html.includes(`href="/ui/p/compiler/${project}"`), project);
+  const projectPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/parser', { headers: { 'cf-access-jwt-assertion': viewer } });
+  assert.equal(projectPage.status, 200);
+  const projectHtml = await projectPage.text();
+  assert.ok(projectHtml.includes(id));
+  assert.ok(!projectHtml.includes(draftIssue.id));
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
