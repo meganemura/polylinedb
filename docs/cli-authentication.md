@@ -79,8 +79,12 @@ The Worker can return `jwks_unavailable` with HTTP 503 when Cloudflare Access si
 
 Connections with the same origin and configuration directory share credentials and an authentication lock.
 Login, refresh, logout, and credential reads acquire that lock before reading the current entry.
-If lock creation returns `EACCES` or `EPERM`, the CLI reports `auth_state_access_denied`.
+If creating the authentication state directory or the lock returns `EACCES`, `EPERM`, or `EROFS`, the CLI reports `auth_state_access_denied`.
+A filesystem sandbox that denies writes to the configuration directory typically produces this error.
 Allow access to the authentication state directory, then retry the command.
+Another filesystem error reports `auth_lock_failed`, and its message names the error code, such as `ENOSPC`.
+Neither error means lock contention, so waiting for another pd process does not help.
+Both errors put the code in `error.details.diagnostic.code` without a path.
 A command that finds an existing lock waits up to ten seconds, then returns `auth_busy`.
 Another pd process may still hold that lock while it works, for example during a token refresh or an interactive `pd auth login`.
 `pd auth login` can wait up to 300 seconds for the browser callback.
@@ -134,7 +138,7 @@ Each machine should perform its own initial authorization.
 
 ## Verification scope
 
-Synthetic OAuth tests cover PKCE, callback checks, failed repeat login, refresh contention, interrupted refresh, failed lock release, and logout.
+Synthetic OAuth tests cover PKCE, callback checks, failed repeat login, refresh contention, denied or failed lock creation, interrupted refresh, failed lock release, and logout.
 Credential tests cover command arguments, size limits, denied or unavailable stores, and write verification.
 The macOS Keychain and a disposable Linux Secret Service both passed save, read, overwrite, delete, and missing-entry checks with synthetic credentials.
 The Linux test also verified errors when the service was unavailable.
