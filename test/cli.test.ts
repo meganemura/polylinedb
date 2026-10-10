@@ -391,6 +391,44 @@ test('help and version answer on an unsupported runtime while commands stay reje
   assert.deepEqual(readdirSync(root), ['work']);
 });
 
+test('a local command leaves the cloud client unloaded', t => {
+  const { root, cwd, directory } = fixture(t);
+  const tracePreload = fileURLToPath(new URL('./fixtures/cli-import-trace.mjs', import.meta.url));
+  const invoke = (name: string, args: string[]) => {
+    const trace = join(root, `${name}.json`);
+    const env = { ...isolatedEnvironment(cwd), HOME: join(root, 'home'), XDG_DATA_HOME: join(root, 'data'), PD_IMPORT_TRACE: trace };
+    const result = spawnSync(process.execPath, ['--import', tracePreload, executable, ...args], { cwd, env, encoding: 'utf8' });
+    const urls = JSON.parse(readFileSync(trace, 'utf8')) as string[];
+    const loads = urls.map(url => {
+      const marker = '/cloud-client/';
+      const index = url.indexOf(marker);
+      return index === -1 ? url : url.slice(index);
+    });
+    return { result, loads };
+  };
+  const init = invoke('init', ['--data-dir', directory, '--actor', 'local:test', 'init']);
+  assert.equal(init.result.status, 0, init.result.stderr);
+  assert.deepEqual(init.loads, []);
+  const added = invoke('add', ['connection', 'add', 'cloud', '--url', 'https://issues.example.invalid']);
+  assert.equal(added.result.status, 0, added.result.stderr);
+  assert.deepEqual(added.loads, []);
+  const context = invoke('context', ['context', '--connection', 'cloud']);
+  assert.equal(context.result.status, 0, context.result.stderr);
+  assert.equal(JSON.parse(context.result.stdout).mode, 'cloud');
+  assert.deepEqual(context.loads, []);
+  const auth = invoke('auth', ['auth', 'status', '--connection', 'cloud']);
+  assert.equal(auth.result.status, 1, auth.result.stdout);
+  assert.equal(JSON.parse(auth.result.stderr).error.code, 'auth_store_unavailable');
+  assert.deepEqual(auth.loads, [
+    '/cloud-client/index.ts',
+    '/cloud-client/oauth.ts',
+    'node:http',
+    '/cloud-client/credential-session.ts',
+    '/cloud-client/credential-store.ts',
+    '/cloud-client/cloud-operations.ts',
+  ]);
+});
+
 function plainCli(cwd: string, args: string[], options: { status?: number; input?: string; env?: Record<string, string> } = {}) {
   const env = isolatedEnvironment(cwd);
   const result = spawnSync(process.execPath, [executable, ...args], {
