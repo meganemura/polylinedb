@@ -435,6 +435,7 @@ export type ProjectSummary = {
   tool: string;
   project: string;
   counts: { open: number; in_progress: number; deferred: number; closed: number };
+  updatedAt: string;
 };
 
 function storedCount(value: number | null): number {
@@ -448,7 +449,7 @@ export async function projectSummaries(db: SqlExecutor, limit: number): Promise<
       return { tool: name(row.tool, 'tool'), project: name(row.project, 'project'), counts: {
         open: storedCount(row.open_count), in_progress: storedCount(row.in_progress_count),
         deferred: storedCount(row.deferred_count), closed: storedCount(row.closed_count),
-      } };
+      }, updatedAt: text(row.last_updated_at, 'updated_at') };
     } catch (error) {
       if (error instanceof PolylinedbError && error.status === 500) throw error;
       throw new PolylinedbError('invalid_store', `Stored project is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);

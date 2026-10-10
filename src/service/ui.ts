@@ -56,6 +56,7 @@ function projectSummaryItem(summary: ProjectSummary): string {
 <span class="primary">${escape(summary.tool)}</span>
 <span class="secondary">${escape(summary.project)}</span>
 <span class="secondary">open ${counts.open} · in_progress ${counts.in_progress} · deferred ${counts.deferred} · closed ${counts.closed}</span>
+<span class="secondary">Updated <time datetime="${escape(summary.updatedAt)}">${escape(japanTime(summary.updatedAt))}</time></span>
 </a></li>`;
 }
 
