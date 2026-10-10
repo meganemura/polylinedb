@@ -268,6 +268,15 @@ try {
   const etag = page.headers.get('etag');
   assert.match(etag ?? '', /^"[0-9a-f]{32}"$/);
   const html = await page.text();
+  const rulesBody = html.match(/<script type="speculationrules">([\s\S]*?)<\/script>/)?.[1];
+  assert.equal(html.match(/<script\b/g)?.length, 1);
+  assert.equal(typeof rulesBody, 'string');
+  assert.deepEqual(JSON.parse(rulesBody ?? ''), {
+    prefetch: [{ source: 'document', where: { or: [{ href_matches: '/ui' }, { href_matches: '/ui/*' }] }, eagerness: 'moderate', referrer_policy: 'no-referrer' }],
+  });
+  const rulesHash = createHash('sha256').update(rulesBody ?? '').digest('base64');
+  assert.equal(page.headers.get('content-security-policy'), `default-src 'none'; script-src 'sha256-${rulesHash}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
+  assert.equal(page.headers.get('cache-control')?.includes('public'), false);
   const revalidated = await runtime.dispatchFetch('http://polylinedb.test/ui', { headers: { 'cf-access-jwt-assertion': viewer, 'if-none-match': `W/${etag}` } });
   assert.equal(revalidated.status, 304);
   assert.equal(await revalidated.text(), '');
@@ -276,7 +285,9 @@ try {
   const anonymousRevalidation = await runtime.dispatchFetch('http://polylinedb.test/ui', { headers: { 'if-none-match': `${etag}` } });
   assert.equal(anonymousRevalidation.status, 401);
   assert.equal(anonymousRevalidation.headers.get('etag'), null);
-  assert.ok(!(await anonymousRevalidation.text()).includes(`${draftIssue.id}`));
+  const anonymousBody = await anonymousRevalidation.text();
+  assert.equal(anonymousBody.includes(`${draftIssue.id}`), false);
+  assert.equal(anonymousBody.includes('speculationrules'), false);
   assert.ok(html.includes(`${draftIssue.id} · Last updated`));
   assert.ok(!html.includes('Recently closed'));
   assert.ok(!html.includes('Ready work'));
@@ -305,5 +316,6 @@ try {
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
       'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
       'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
+      '/ui speculation rules prefetch behind a CSP hash',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

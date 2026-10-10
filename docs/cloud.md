@@ -535,7 +535,8 @@ A change to a label therefore changes `/ui` for past updates too.
 
 The Worker serves HTML pages under `/ui` for a phone browser.
 The pages do not change the store.
-They contain no script.
+They contain no application JavaScript.
+The only script is the prefetch hint described under [Speed](#speed).
 Every page accepts only `GET`.
 The same Access check as the operation endpoints runs before any page is returned.
 A bad Access configuration returns `503 invalid_access_configuration`.
@@ -707,6 +708,20 @@ The Access check runs first, so a caller that Access rejects gets `401`, `403`, 
 The Worker still reads D1 to build the page before it compares the tag, so a `304` saves only the transfer of the HTML.
 A browser may also restore a page from its back-forward cache without asking the Worker.
 The not-found page has no `ETag`.
+
+Each page also carries a fixed `<script type="speculationrules">` block.
+The block is JSON, not a program.
+It asks the browser to prefetch a link to `/ui` or to a page under `/ui/`.
+The eagerness is `moderate`.
+On a desktop, Chrome starts that prefetch after the pointer has rested on the link for about 200 ms, or on pointer down if that comes first.
+On a phone, Chrome's moderate heuristic prefetches a small number of likely links after scrolling stops, and it keeps at most two of those prefetches.
+The prefetch is an ordinary `GET`.
+Access runs first, so a rejected caller still receives `401`, `403`, or `503` and no HTML.
+The rules set `referrer_policy` to `no-referrer`, and they do not prerender a page.
+`Content-Security-Policy` names the SHA-256 hash of that JSON in `script-src`.
+No other script is allowed, and `script-src` does not use `'unsafe-inline'`.
+The pages do not use `<link rel="prefetch">`.
+A speculation-rules prefetch stays in the document's memory and still applies when the response is `private, no-cache`.
 
 [Measure `/ui` latency](ui-latency.md) sets the latency budget and describes how to measure it.
 
