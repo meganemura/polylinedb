@@ -4,8 +4,10 @@ export function parsePrefix(value: unknown): string {
   return value;
 }
 export function parseRequestId(value: unknown, label = 'request_id'): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error(`${label} must be a lowercase UUID`);
-  return value;
+  if (typeof value !== 'string') throw new Error(`${label} must be a lowercase UUID`);
+  const normalized = value.toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(normalized)) throw new Error(`${label} must be a lowercase UUID`);
+  return normalized;
 }
 export function parseIssueId(value: unknown, label = 'id'): string {
   if (typeof value !== 'string' || !/^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$/.test(value)) throw new Error(`Invalid ${label}`);

@@ -80,7 +80,7 @@ Allocation at that limit fails with `counter_exhausted` and changes nothing.
 Numbers are not padded or reused; `pd-99` is followed by `pd-100`.
 The prefix is independent of the mutable project field.
 
-`request_id` is a lowercase UUID required by HTTP and MCP create requests.
+`request_id` is a UUID required by HTTP and MCP create requests. The parser stores the lowercase form, so an uppercase UUID and its lowercase spelling are the same request ID.
 The CLI accepts `--request-id` and generates one when omitted.
 To retry across CLI invocations, specify the same request ID explicitly.
 The same request ID, normalized creation arguments, and actor return the current state of the original issue.
