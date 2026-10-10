@@ -1,6 +1,6 @@
 // Runs an operator-only D1 transfer through cf; authentication remains in the selected cf profile.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -64,6 +64,7 @@ export async function runSnapshotCommand(args: string[], connectForTests: (targe
   if (!['inspect', 'restore', 'verify'].includes(action ?? '') || (flags.length !== 4 && !output) || flags[0] !== '--snapshot' || flags[2] !== '--target' || !flags[1] || !flags[3] || (output !== undefined && !isAbsolute(output))) {
     throw new Error('Usage: node scripts/d1-snapshot.ts inspect|restore|verify --snapshot FILE --target FILE [verify only: --output ABS_PATH]');
   }
+  if (output !== undefined && existsSync(output)) throw new Error('The output file already exists');
   const target = parseTarget(JSON.parse(readFileSync(flags[3], 'utf8')));
   const snapshot: unknown = JSON.parse(readFileSync(flags[1], 'utf8'));
   const migration = snapshotMigration(connectForTests(target), snapshot, target.snapshotSha256);
