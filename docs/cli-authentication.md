@@ -82,6 +82,12 @@ Login, refresh, logout, and credential reads acquire that lock before reading th
 If lock creation returns `EACCES` or `EPERM`, the CLI reports `auth_state_access_denied`.
 Allow access to the authentication state directory, then retry the command.
 A command that finds an existing lock waits up to ten seconds, then returns `auth_busy`.
+Another pd process may still hold that lock while it works, for example during a token refresh or an interactive `pd auth login`.
+`pd auth login` can wait up to 300 seconds for the browser callback.
+Wait and retry the command.
+Do not delete the lock directory while another pd process may still be running.
+Remove it only after verifying that no pd process is running for this configuration.
+If the lock directory already contains an entry named `login`, the message says that the holder is an interactive login.
 The CLI does not steal a lock based on its age.
 When lock removal fails and the directory remains, the command still returns the operation result.
 It reports `auth_lock_release_failed` on standard error.
@@ -93,8 +99,8 @@ If the process stops after spending the old token, another process cannot unknow
 Run `auth login` again after such an interrupted refresh.
 
 An interrupted process can leave `oauth-HASH.lock` under `$XDG_CONFIG_HOME/polylinedb/auth`, or `~/.config/polylinedb/auth` with the default configuration.
-Before removing that directory, verify that no `pd auth` or cloud operation is still running for this configuration.
-Do not remove another process's active lock.
+A running token refresh or `pd auth login` can hold that same directory.
+Remove it only after verifying that no pd process is running for this configuration.
 If the registered callback port is in use, the CLI reports `auth_callback_unavailable` rather than silently registering another client.
 If the environment denies loopback access, the same code explains that the callback is not permitted.
 Other listener failures use generic guidance without printing the operating system error.

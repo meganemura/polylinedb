@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Change `auth_busy` so it says another pd process may still hold the authentication lock, for example during a token refresh or `pd auth login`, which can wait up to 300 seconds for the browser callback. Wait and retry. Delete the lock directory only after no pd process is running for this configuration. The 10 second wait is unchanged. If the lock directory already contains an entry named `login`, the message says that the holder is an interactive login.
 - Keep the result of a credential operation when removing the authentication lock fails. If the lock directory remains, the command reports `auth_lock_release_failed` on standard error, and a later command can return `auth_busy` until that directory is removed.
 - Wait up to 5 seconds when a local command meets another command's database lock. If the lock is still held, the command reports `store_busy` instead of `internal_error`. Retry the command.
 - Stop the memory context child of the host hook after 10 s instead of 15 s. The host still caps the hook at 15 s, so a slow child now ends with the `unavailable` notice instead of a hook that the host kills without output.

@@ -1,6 +1,6 @@
 /** Serializes a resource's secure credential replacement. Lock files never contain credentials. */
 import { createHash } from 'node:crypto';
-import { mkdir, lstat, realpath, rmdir } from 'node:fs/promises';
+import { mkdir, lstat, realpath, rmdir, readdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 
@@ -18,6 +18,20 @@ export class OAuthError extends Error {
 
 export function credentialKey(resource: string, namespace: string): string {
   return `oauth-${createHash('sha256').update(JSON.stringify([namespace, resource])).digest('hex')}`;
+}
+
+const authBusyWait = 'Wait and retry. Do not delete the lock directory while another pd process may still be running. Remove the lock directory only after you verify that no pd process is running for this configuration.';
+
+function authBusyMessage(login: boolean): string {
+  const holder = login
+    ? 'The lock contents show that the holder is an interactive pd auth login, which can wait up to 300 seconds for the browser callback.'
+    : 'Another pd process may still hold the authentication lock while it works, for example during a token refresh or an interactive pd auth login, which can wait up to 300 seconds for the browser callback.';
+  return `Authentication is busy. ${holder} ${authBusyWait}`;
+}
+
+async function lockShowsLogin(lock: string): Promise<boolean> {
+  try { return (await readdir(lock)).includes('login'); }
+  catch { return false; }
 }
 
 export async function credentialTransaction<T>(options: {
@@ -41,7 +55,7 @@ export async function credentialTransaction<T>(options: {
         throw new OAuthError('auth_state_access_denied', 'Authentication state is not writable. Allow access to the authentication state directory and retry.');
       }
       if (code !== 'EEXIST') throw new OAuthError('auth_lock_failed', 'Could not acquire the authentication lock.');
-      if (Date.now() >= deadline) throw new OAuthError('auth_busy', 'Authentication is busy. If a prior process stopped, remove its lock directory after verifying that no authentication process is running.');
+      if (Date.now() >= deadline) throw new OAuthError('auth_busy', authBusyMessage(await lockShowsLogin(lock)));
       await setTimeout(25);
     }
   }
