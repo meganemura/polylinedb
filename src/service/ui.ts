@@ -176,6 +176,7 @@ function document(pageTitle: string, body: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f5f1e8">
+<meta name="theme-color" content="#1c1916" media="(prefers-color-scheme: dark)">
 <meta name="robots" content="noindex">
 <title>${escape(pageTitle)}</title>
 <link rel="icon" href="data:,">
@@ -410,9 +411,14 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
 const styles = `
 :root {
   color-scheme: light;
+  --ink: #393730;
+  --paper: #f5f1e8;
+  --muted: #716b60;
+  --line: #ddd7cb;
+  --chip: #cfc6b8;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
-  color: #393730;
-  background: #f5f1e8;
+  color: var(--ink);
+  background: var(--paper);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
@@ -443,24 +449,42 @@ h1 {
   font-weight: 500;
   line-height: 1.4;
 }
-.section-note, .quiet-note { margin: 0; color: #716b60; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.section-note, .quiet-note { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .quiet-note { margin-top: 18px; font-size: 18px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
-.chips a { border: 1px solid #cfc6b8; border-radius: 999px; padding: 4px 10px; color: inherit; text-decoration: none; font-size: 14px; line-height: 1.4; }
-.chips a[aria-current="page"] { background: #393730; color: #f5f1e8; }
+.chips a { border: 1px solid var(--chip); border-radius: 999px; padding: 4px 10px; color: inherit; text-decoration: none; font-size: 14px; line-height: 1.4; }
+.chips a[aria-current="page"] { background: var(--ink); color: var(--paper); }
 .views { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 28px; }
 .views a { color: inherit; font-size: 15px; line-height: 1.4; }
 .quiet-list { list-style: none; margin: 0; padding: 0; }
 .quiet-row { display: block; padding: 18px 0 20px; }
-.quiet-row + .quiet-row { border-top: 1px solid #ddd7cb; }
+.quiet-row + .quiet-row { border-top: 1px solid var(--line); }
 .quiet-row .primary { display: block; font-size: 19px; line-height: 1.45; overflow-wrap: anywhere; }
-.quiet-row .secondary { display: block; margin-top: 4px; color: #716b60; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.quiet-row .secondary { display: block; margin-top: 4px; color: var(--muted); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .quiet-row:has(> a) { padding: 0; }
 .quiet-row > a { display: block; padding: 18px 0 20px; color: inherit; text-decoration: none; }
 .quiet-row a .primary { text-decoration: underline; text-underline-offset: 0.18em; }
 a { color: inherit; }
 .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 18px 0 0; font-size: 18px; line-height: 1.5; }
+@media (max-width: 420px) {
+  .paper { padding-top: 32px; }
+  .views { gap: 6px 12px; margin-bottom: 20px; }
+  h1 { margin-bottom: 16px; }
+}
 @media (max-width: 340px) {
   .paper { padding-right: max(24px, env(safe-area-inset-right)); padding-left: max(24px, env(safe-area-inset-left)); }
+}
+@media (min-width: 900px) {
+  .paper { width: min(100%, 720px); }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ink: #f3ece3;
+    --paper: #1c1916;
+    --muted: #c8bfb2;
+    --line: #3d362e;
+    --chip: #5c5348;
+  }
 }
 `;
