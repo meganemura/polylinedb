@@ -1,6 +1,7 @@
 // Subprocesses verify the executable contract against real persistent storage.
 import assert from 'node:assert/strict';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,6 +42,21 @@ function fixture(t: TestContext) {
     return options.raw ? result.stdout : JSON.parse(output);
   }
   return { root, cwd, directory, run };
+}
+function startCommand(cwd: string, directory: string, args: readonly string[]) {
+  const child = spawn(process.execPath, [executable, '--data-dir', directory, '--actor', 'local:bench', ...args], {
+    cwd, env: isolatedEnvironment(cwd),
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+  return new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', status => resolve({ status, stdout, stderr: stderr.replace(/^.*ExperimentalWarning.*\n(?:.*\n)?/gm, '') }));
+  });
 }
 function retire(directory: string, connectionName = 'archive'): DatabaseSync {
   const database = new DatabaseSync(join(directory, 'polylinedb.sqlite'));
@@ -728,4 +744,55 @@ test('CLI exposes named prerequisite endpoints, natural shorthand, worklists, an
   run(['--prefix', 'demo', 'close', '1', '--expected', '1', '--force', '--reason', 'Accepted exception']);
   assert.equal(run(['--prefix', 'demo', 'show', '1']).comments[0].body, 'Accepted exception');
   assert.equal(run(['--prefix', 'demo', 'dependency', 'remove', '--dependent', '1', '--blocker', '2', '--expected-revision', '2']).dependency.outcome, 'removed');
+});
+
+test('concurrent local creates and reads all succeed', async t => {
+  const { cwd, directory, run } = fixture(t);
+  run(['init']);
+  const tasks = [];
+  for (let i = 0; i < 4; i++) {
+    tasks.push(startCommand(cwd, directory, ['create', '--tool', 'bench', '--project', 'synthetic', '--body', 'x']));
+    tasks.push(startCommand(cwd, directory, ['list']));
+  }
+  const results = await Promise.all(tasks);
+  for (const result of results) assert.equal(result.status, 0, result.stderr);
+  assert.equal(run(['list']).issues.length, 4);
+});
+
+test('a local command waits for another process lock and then succeeds', async t => {
+  const { cwd, directory, run } = fixture(t);
+  run(['init']);
+  const database = new DatabaseSync(join(directory, 'polylinedb.sqlite'));
+  t.after(() => database.close());
+  database.exec('BEGIN EXCLUSIVE');
+  const pending = Promise.all([
+    startCommand(cwd, directory, ['list']),
+    startCommand(cwd, directory, ['create', '--tool', 'bench', '--project', 'synthetic', '--body', 'after lock']),
+    startCommand(cwd, directory, ['export', '--historical']),
+  ]);
+  await delay(300);
+  database.exec('COMMIT');
+  const [listed, created, exported] = await pending;
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.ok(Array.isArray(JSON.parse(listed.stdout).issues));
+  assert.equal(created.status, 0, created.stderr);
+  assert.equal(JSON.parse(created.stdout).issue.body, 'after lock');
+  assert.equal(exported.status, 4, exported.stderr);
+  assert.equal(JSON.parse(exported.stderr).error.code, 'unsupported_schema');
+});
+
+test('a local command reports store_busy when the database lock outlasts the wait', async t => {
+  const { cwd, directory, run } = fixture(t);
+  run(['init']);
+  const database = new DatabaseSync(join(directory, 'polylinedb.sqlite'));
+  t.after(() => database.close());
+  database.exec('BEGIN EXCLUSIVE');
+  const started = Date.now();
+  const result = await startCommand(cwd, directory, ['list']);
+  const elapsed = Date.now() - started;
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(JSON.parse(result.stderr), {
+    error: { code: 'store_busy', message: 'The local database is busy. Retry the command.' },
+  });
+  assert.ok(elapsed >= 4500 && elapsed < 12000, `waited ${elapsed} ms`);
 });
