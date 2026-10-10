@@ -28,10 +28,18 @@ type Repository = { root: string; common: string };
 const maximumBytes = 16384;
 const invalid = (message: string): never => { throw new PolylinedbError('invalid_repository_config', message, 400); };
 const missing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
+const repositoryAnswers = new Map<string, Repository | undefined>();
 
 function repository(cwd: string): Repository | undefined {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
   const location = realpathSync(cwd);
+  if (repositoryAnswers.has(location)) return repositoryAnswers.get(location);
+  const answer = lookupRepository(location);
+  repositoryAnswers.set(location, answer);
+  return answer;
+}
+
+function lookupRepository(location: string): Repository | undefined {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
   try {
     const result = execFileSync('git', ['-C', location, 'rev-parse', '--is-inside-work-tree', '--show-toplevel', '--git-common-dir'], {
       env: { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },

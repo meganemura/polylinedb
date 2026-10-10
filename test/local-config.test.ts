@@ -229,3 +229,66 @@ test('CLI stealth initialization accepts canonical aliases on repeated invocatio
     assert.equal(JSON.parse(output).database_path, join(realpathSync(data), 'polylinedb.sqlite'));
   }
 });
+
+test('named local create and list start Git once', context => {
+  const { root, repo, data } = fixture(context);
+  const outside = join(root, 'outside');
+  mkdirSync(outside);
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(root, 'package.json'), '{ "type": "module" }\n');
+  const wrapper = join(bin, 'git');
+  writeFileSync(wrapper, `#!${process.execPath}
+import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const log = process.env.PD_GIT_START_LOG;
+if (log) appendFileSync(log, JSON.stringify(process.argv.slice(2)) + '\\n');
+const result = spawnSync(${JSON.stringify(realGit)}, process.argv.slice(2), { stdio: 'inherit', env: process.env });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`);
+  chmodSync(wrapper, 0o755);
+  const cli = new URL('../src/cli.ts', import.meta.url).pathname;
+  const environment: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'),
+    PATH: `${bin}:${process.env.PATH ?? ''}` };
+  for (const name of ['POLYLINEDB_CONNECTION', 'POLYLINEDB_DATA_DIR', 'POLYLINEDB_ACTOR', 'POLYLINEDB_ACTOR_KIND', 'POLYLINEDB_SESSION_ID']) delete environment[name];
+  for (const name of Object.keys(environment)) if (name.startsWith('GIT_')) delete environment[name];
+  const invoke = (args: string[], cwd: string, log?: string) => {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd, env: log === undefined ? { ...environment, PATH: process.env.PATH } : { ...environment, PD_GIT_START_LOG: log }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    return JSON.parse(result.stdout) as { issue?: { id: string }; issues?: { id: string }[] };
+  };
+  invoke(['connection', 'add', 'home', '--data-dir', data], repo);
+  invoke(['init', '--connection', 'home', '--tool', 'demo', '--project', 'demo', '--actor', 'local:owner', '--prefix', 'pd'], repo);
+  const starts = (name: string, args: string[], cwd: string) => {
+    const log = join(root, `${name}.log`);
+    const body = invoke(args, cwd, log);
+    return { body, starts: readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]) };
+  };
+  const revParse = (directory: string) => ['-C', directory, 'rev-parse', '--is-inside-work-tree', '--show-toplevel', '--git-common-dir'];
+  const created = starts('create', ['--connection', 'home', 'create', '--tool', 'demo', '--project', 'demo', '--body', 'Synthetic issue', '--actor', 'local:owner'], repo);
+  assert.deepEqual(created.starts, [revParse(realpathSync(repo))]);
+  const listed = starts('list', ['--connection', 'home', 'list', '--actor', 'local:owner'], repo);
+  assert.deepEqual(listed.starts, [revParse(realpathSync(repo))]);
+  assert.equal(listed.body.issues?.[0]?.id, created.body.issue?.id);
+  const away = starts('outside', ['--connection', 'home', 'list', '--actor', 'local:owner'], outside);
+  assert.deepEqual(away.starts, [revParse(realpathSync(outside))]);
+  assert.equal(away.body.issues?.[0]?.id, created.body.issue?.id);
+});
+
+test('a failed Git start is not reused and another directory keeps its own answer', context => {
+  const { root, repo, path } = fixture(context);
+  const saved = process.env.PATH;
+  process.env.PATH = join(root, 'without-git');
+  try {
+    assert.throws(() => readRepositoryDefaults(repo), error => error instanceof PolylinedbError && error.code === 'git_unavailable');
+    assert.throws(() => repositoryConfigPath(repo), error => error instanceof PolylinedbError && error.code === 'git_unavailable');
+  } finally { process.env.PATH = saved; }
+  assert.equal(repositoryConfigPath(repo), path);
+  assert.equal(repositoryConfigPath(root), undefined);
+  assert.equal(repositoryConfigPath(repo), path);
+});
