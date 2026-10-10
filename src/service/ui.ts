@@ -15,6 +15,8 @@ export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; q
 const inboxLabels = ['owner-decision', 'owner-action', 'main-wait'] as const;
 const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox'], ['/ui/working', 'Working'], ['/ui/blocked', 'Blocked'], ['/ui/recent', 'Recent'], ['/ui/search', 'Search']];
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+// Fixed prefetch hint. It is not application code: the page policy allows this text by hash and no other script.
+const speculationRules = '{"prefetch":[{"source":"document","where":{"or":[{"href_matches":"/ui"},{"href_matches":"/ui/*"}]},"eagerness":"moderate","referrer_policy":"no-referrer"}]}';
 
 function escape(value: string): string {
   return value.replace(/[&<>"']/g, character => escapes[character] ?? character);
@@ -204,6 +206,7 @@ function document(pageTitle: string, body: string): string {
 <meta name="robots" content="noindex">
 <title>${escape(pageTitle)}</title>
 <link rel="icon" href="data:,">
+<script type="speculationrules">${speculationRules}</script>
 <style>${styles}</style>
 </head>
 <body>
@@ -374,7 +377,7 @@ const htmlHeaders = {
   'cache-control': 'private, no-cache',
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'none'; script-src 'sha256-wN5fn7M/0mts3B5WgddVicrWGcNvCBQK0rFn0GgjQx8='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
 const { 'content-type': _, ...revalidationHeaders } = htmlHeaders;
 

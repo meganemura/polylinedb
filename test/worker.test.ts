@@ -467,6 +467,32 @@ function uiSection(html: string, heading: string): string {
   return part;
 }
 
+function speculationRules(html: string): string {
+  const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0][1], ' type="speculationrules"');
+  const body = scripts[0][2] ?? '';
+  assert.deepEqual(JSON.parse(body), {
+    prefetch: [{
+      source: 'document',
+      where: { or: [{ href_matches: '/ui' }, { href_matches: '/ui/*' }] },
+      eagerness: 'moderate',
+      referrer_policy: 'no-referrer',
+    }],
+  });
+  return body;
+}
+
+function assertNoApplicationControls(html: string): void {
+  assert.equal(/<(form|input|button)\b/.test(html), false);
+  speculationRules(html);
+}
+
+function uiPolicy(html: string): string {
+  const hash = createHash('sha256').update(speculationRules(html)).digest('base64');
+  return `default-src 'none'; script-src 'sha256-${hash}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+}
+
 function projectPath(tool: string, project: string): string {
   return `/ui/p/${encodeURIComponent(tool)}/${project.split('/').map(segment => encodeURIComponent(segment)).join('/')}`;
 }
@@ -621,6 +647,41 @@ test('ui: a page revalidates with its ETag only after Access accepts the caller,
   } finally { sqlite.close(); }
 });
 
+test('ui: speculation rules prefetch only /ui links under a CSP hash, and a private 304 still hides the page', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Prefetch title' });
+    const first = await viewUi(env, auth);
+    assert.equal(first.status, 200);
+    const html = await first.text();
+    const policy = uiPolicy(html);
+    assert.equal(first.headers.get('content-security-policy'), policy);
+    assert.match(policy, /script-src 'sha256-[A-Za-z0-9+/]+=';/);
+    assert.equal(/script-src[^;]*unsafe-inline/.test(policy), false);
+    assert.equal(policy.includes('inline-speculation-rules'), false);
+    assert.equal(first.headers.get('cache-control'), 'private, no-cache');
+    assert.equal(first.headers.get('cache-control')?.includes('public'), false);
+    assert.equal(html.includes('prerender'), false);
+    assert.equal(html.includes(id), false);
+    const etag = first.headers.get('etag') ?? '';
+    const again = await viewUi(env, { ...auth, 'if-none-match': etag });
+    assert.equal(again.status, 304);
+    assert.equal(await again.text(), '');
+    assert.equal(again.headers.get('content-security-policy'), policy);
+    assert.equal(again.headers.get('cache-control'), 'private, no-cache');
+    assert.equal(again.headers.get('etag'), etag);
+    const denied = await viewUi(env, { 'if-none-match': etag });
+    assert.equal(denied.status, 401);
+    assert.equal(denied.headers.get('etag'), null);
+    assert.equal(denied.headers.get('cache-control'), 'no-store');
+    const deniedBody = await denied.text();
+    assert.equal(deniedBody.includes('speculationrules'), false);
+    assert.equal(deniedBody.includes('Prefetch title'), false);
+  } finally { sqlite.close(); }
+});
+
 test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
@@ -650,7 +711,7 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     assert.deepEqual(ids(waitingPart), [waiting]);
     assert.equal(html.indexOf('<h2>Recently closed</h2>'), -1);
     assert.ok(!html.includes('Newest close'));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
     assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
     const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': token })).text();
     const closedPart = uiSection(project, 'Recently closed');
@@ -660,7 +721,7 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     assert.ok(project.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;&amp;</span>'));
     assert.ok(project.includes('<span class="secondary">access:&lt;b&gt;&quot;x&quot;</span>'));
     assert.ok(!project.includes('<img'));
-    assert.ok(!/<(form|input|button|script)\b/.test(project));
+    assertNoApplicationControls(project);
   } finally { sqlite.close(); }
 });
 
@@ -809,7 +870,7 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     assert.ok(html.includes('href="/ui/p/poly/q%3Cb%3E%26"'));
     assert.ok(html.includes('q&lt;b&gt;&amp;'));
     assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
     const waitingPart = uiSection(html, 'Waiting for main');
     assert.match(waitingPart, /^Waiting for main<\/h2>/);
     assert.ok(waitingPart.includes(polyline));
@@ -827,8 +888,9 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     const reader = await viewProject(env, 'nukadoko', 'meganemura/nukadoko', { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
     assert.equal(reader.status, 200);
     const page = await reader.text();
-    assert.equal(reader.headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    assert.equal(reader.headers.get('content-security-policy'), uiPolicy(page));
     assert.equal(reader.headers.get('cache-control'), 'private, no-cache');
+    assert.equal(reader.headers.get('cache-control')?.includes('public'), false);
     assert.ok(page.indexOf('Started') < page.indexOf('Hold'));
     assert.ok(page.indexOf('Hold') < page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;'));
     assert.ok(page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;') < page.indexOf('Later'));
@@ -852,7 +914,7 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     assert.ok(page.includes(hostile));
     assert.ok(page.includes('<span class="secondary">priority 0</span>'));
     assert.ok(page.includes('<span class="secondary">bug</span>'));
-    assert.ok(!/<(form|input|button|script)\b/.test(page));
+    assertNoApplicationControls(page);
     const encoded = await handleRequest(new Request('https://issues.example/ui/p/polylinedb/meganemura%2Fpolylinedb', { headers: { 'cf-access-jwt-assertion': token } }), env, authenticate);
     assert.equal(encoded.status, 200);
     assert.ok((await encoded.text()).includes(polyline));
@@ -962,7 +1024,7 @@ test('pd-135: project rows link to an issue detail page that escapes body and co
     assert.ok(!html.includes(session));
     assert.ok(!html.includes(incarnation));
     assert.ok(html.includes('white-space: pre-wrap'));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
     const dotted = await viewIssue(env, 'pd-51.6', { 'cf-access-jwt-assertion': token });
     assert.equal(dotted.status, 200);
     const dottedHtml = await dotted.text();
@@ -1153,7 +1215,7 @@ test('ui: owner inbox lists owner-decision, owner-action, and main-wait across p
     assert.ok(!html.includes('Ready only'));
     assert.ok(!html.includes(readyOnly));
     assert.ok(!html.includes('Closed decision'));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
   } finally { sqlite.close(); }
 });
 
@@ -1178,7 +1240,7 @@ test('ui: search finds an issue by id or by words in the text', async () => {
     assert.ok(blank.includes('Type an issue id or words from the text.'));
     assert.ok(blank.includes('<form method="get" action="/ui/search">'));
     assert.ok(!blank.includes('method="post"'));
-    assert.ok(!/<(script)\b/.test(blank));
+    speculationRules(blank);
 
     const byWords = await (await search('lantern')).text();
     assert.ok(byWords.includes('Unique lantern phrase'));
@@ -1238,7 +1300,7 @@ test('ui: working now lists active claims and hides released ones', async () => 
     assert.ok(!html.includes(activeClaim.session));
     assert.ok(!html.includes(activeClaim.incarnation));
     assert.ok(!html.includes(releasedClaim.session));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
   } finally { sqlite.close(); }
 });
 
@@ -1281,7 +1343,7 @@ test('ui: blocked lists unfinished issues that still have an open blocker', asyn
     assert.ok(html.includes(`href="/ui/i/${stuck}"`));
     assert.ok(!html.includes('Only a closed blocker'));
     assert.ok(html.indexOf('Stuck on two') < html.indexOf('Stuck on a deferral'));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
   } finally { sqlite.close(); }
 });
 
@@ -1311,7 +1373,7 @@ test('ui: recent updates lists the newest changes, open and closed', async () =>
     assert.ok(html.includes('2026-10-03 10:00 JST'));
     assert.ok(html.includes('<span class="secondary">closed</span>'));
     assert.ok(html.includes('meganemura/nukadoko'));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
   } finally { sqlite.close(); }
 });
 
@@ -1373,7 +1435,7 @@ test('ui: project filter chips link to a status or a label', async () => {
     assert.ok(ready.includes(`href="${path}?label=ready" aria-current="page"`));
     assert.ok(ready.includes('Chip ready'));
     assert.ok(!ready.split('<h2>Recently closed</h2>')[0]?.includes('Chip started'));
-    assert.ok(!/<(form|input|button|script)\b/.test(ready));
+    assertNoApplicationControls(ready);
   } finally { sqlite.close(); }
 });
 
@@ -1395,7 +1457,7 @@ test('ui: night theme follows the phone color scheme and the page widens on a de
     assert.ok(html.includes('@media (max-width: 420px)'));
     assert.ok(html.includes('content="#1c1916" media="(prefers-color-scheme: dark)"'));
     assert.ok(html.includes('<h1>Projects</h1>'));
-    assert.ok(!/<script\b/.test(html));
+    assertNoApplicationControls(html);
     const project = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth)).text();
     assert.ok(project.includes('Night title'));
     assert.ok(project.includes('<span class="secondary">open</span>'));
@@ -1436,7 +1498,7 @@ test('ui: an epic lists its children and a child links back to the parent', asyn
     assert.ok(children.indexOf('First child') < children.indexOf('&lt;img'));
     assert.ok(!epicHtml.includes('>Parent <'));
     assert.ok(!epicHtml.includes('Unrelated leaf'));
-    assert.ok(!/<(form|input|button|script)\b/.test(epicHtml));
+    assertNoApplicationControls(epicHtml);
 
     const childHtml = await (await viewIssue(env, first, auth)).text();
     assert.ok(childHtml.includes(`Parent <a href="/ui/i/${epic}">Tree epic</a>`));
