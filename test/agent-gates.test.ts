@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeStore, openStore } from '../src/local-store/index.ts';
-import { executeOperation, parseOperation } from '../src/records/index.ts';
+import { executeOperation, parseOperation, PolylinedbError } from '../src/records/index.ts';
 import { admitAgentWrite } from '../src/transition/index.ts';
 import { runGateRaces } from './fixtures/gate-races.ts';
 import { runMainLockFlow } from './fixtures/main-lock-flow.ts';
@@ -35,7 +35,7 @@ function fixture(t: test.TestContext) {
     const result = await run({ op: 'claim_acquire', issue_id, incarnation: await incarnation(), session_id: session, request_id: crypto.randomUUID(), ttl: 300 }, actor);
     assert.ok('claim_receipt' in result); return result.claim_receipt;
   };
-  return { run, create, acquire, incarnation };
+  return { run, create, acquire, incarnation, db: store.db };
 }
 
 test('an agent cannot claim an issue without the ready label', async t => {
@@ -97,6 +97,32 @@ test('an agent reads only labeled issues from the ready worklist', async t => {
   await assert.rejects(run({ op: 'dependency_worklist', state: 'ready', label: 'p' }, codex), { code: 'invalid_input' });
   const all = await run({ op: 'dependency_worklist', state: 'ready' });
   assert.ok('issues' in all); assert.equal(all.issues.length, 3);
+});
+
+test('an agent whose own lease expired hears that and sees the claim', async t => {
+  const { run, create, acquire, db } = fixture(t);
+  const id = await create(['ready']);
+  const receipt = await acquire(id, codex);
+  await db.batch([{ sql: 'UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?', params: [id] }]);
+  await assert.rejects(run({ op: 'update', id, changes: [{ field: 'body', value: 'after expiry', expected: 1 }] }, codex), (error: unknown) => {
+    assert.ok(error instanceof PolylinedbError);
+    assert.equal(error.code, 'claim_required');
+    assert.equal(error.status, 409);
+    assert.equal(error.message, "The agent's own claim expired");
+    assert.deepEqual(error.details, { id, claim: { state: 'expired', generation: receipt.generation, expires_at: 1000 } });
+    return true;
+  });
+  await assert.rejects(run({ op: 'comment', id, body: 'not mine' }, claude), (error: unknown) => {
+    assert.ok(error instanceof PolylinedbError);
+    assert.equal(error.code, 'claim_required');
+    assert.equal(error.message, 'An agent needs its own active claim on this issue before it writes');
+    assert.deepEqual(error.details, { id });
+    return true;
+  });
+  const shown = await run({ op: 'show', id });
+  assert.ok('issue' in shown);
+  assert.equal(shown.issue.body, 'work');
+  assert.equal(shown.issue.versions.body, 1);
 });
 
 test('an expired lease no longer admits the agent', () => {
