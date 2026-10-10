@@ -1,6 +1,6 @@
 ---
 name: polylinedb-queue
-description: Enqueue finished commits onto the one queue branch named in project memory. Use only for that enqueue. Do not merge to main.
+description: Enqueue finished commits onto the shared queue branch. Use only for that enqueue. Do not merge to main.
 ---
 
 # Enqueue onto the queue branch
@@ -13,53 +13,29 @@ If the connector does not advertise a tool that this skill names, stop and repor
 Keep the same connector and explicit project throughout the work.
 This skill does not grant permission to publish. Follow the user's authorization boundary before an external write.
 
-## Read the queue branch
+## Use the queue branch
 
-The queue is one branch. A human chooses its name and writes it in project memory.
-Agents never invent that name and never call `memory_create` or `memory_update` for it.
+The queue is one shared branch named `queue`.
+Every agent uses that name. Do not choose a different name for an agent or a run.
 
-The memory title is `queue-branch`.
-That title is fixed, the way `main-lock` is a known issue.
-The memory `body` is the branch name and nothing else.
-
-Immediately before enqueue, read that memory. A session-start `memory_context` is not enough.
-Call `memory_context` with the project and `with_revision: true`. Retain `memory_revision`.
-Find the entry with `memory_search` and `query` `queue-branch`. Follow `next_cursor` with `after`.
-Accept only a memory whose `title` is exactly `queue-branch`. Search matches a literal substring, so keep going until the exact title appears or the pages end.
-If more than one memory has that exact title, stop and ask a human.
-If none exists, stop and ask a human to create it. Do not create it.
-
-Call `memory_show` with that `id` and the project, and use the returned `body` as the branch name.
-If the body is not a single branch name, with no whitespace and no second line, stop and ask. Do not trim, split, or invent a name.
-
-`memory_revision` is the project token from `memory_context` with `with_revision: true`.
-Compare that token with the last read. Pass `observed_memory_revision` only to issue operations that accept it.
-If the token moved since the last read, call `memory_context` with `with_revision: true` and `memory_show` again before using the branch name.
-A moved token covers the whole project, including entries a context page omitted.
-Replace the retained token only from that new `memory_context`. A `memory_freshness` result never advances it.
-After `memory_freshness` `stale` or `unavailable`, read the memory again before a decision that depends on it.
-Read again immediately before the push when the token has moved since the rebase.
-If a re-read returns a different branch name, stop and ask.
-
-## Use the human's remote branch
-
-A human creates that remote branch once, from main.
-Immediately before enqueue, confirm the remote branch exists, for example with `git ls-remote --heads origin BRANCH`.
-If it does not exist, stop and ask a human to create it from main. Do not create it.
+Immediately before enqueue, confirm the remote branch, for example with `git ls-remote --heads origin queue`.
+If `queue` does not exist on the remote, create it from the current main and push it, for example `git fetch origin main` and `git push origin origin/main:refs/heads/queue`.
+Do not use `--force` or `--force-with-lease`.
+If that push is rejected, fetch `queue` and use the branch that is already there.
 
 Worktrees are optional. Do not require a branch named `work/<issue id>`.
 
 ## Rebase and push the queue branch
 
-Rebase the finished commits onto the fetched queue branch.
+Rebase the finished commits onto the fetched `queue` branch.
 Running tests locally is optional.
 If the rebase conflicts, stop and say so. Abort the rebase. Do not resolve the conflicts or push.
 
-Push that queue branch. Do not use `--force` or `--force-with-lease`.
+Push `queue`. Do not use `--force` or `--force-with-lease`.
 If the push is rejected, fetch, rebase onto the fetched branch, and push again.
 If that rebase conflicts, stop and say so. Abort the rebase. Do not resolve it.
 
-Pushing that one queue branch is what this skill is for.
+Pushing `queue` is what this skill is for.
 Do not push any other branch, and do not treat this as permission to push main.
 Do not merge to main. Do not take the `main-lock` issue.
 
@@ -76,7 +52,6 @@ Leave the issue open. Do not `close` it. Do not write priority.
 
 Notes stay in pd, as a `comment` or as project memory.
 Do not use git notes.
-Do not create or update the `queue-branch` memory.
 
 If the push succeeds but the pointer write fails, report the remote SHA and reconcile the pointer before declaring the enqueue complete.
 Never repeat a successful push merely because a later write failed.

@@ -206,7 +206,7 @@ try {
   assert.match(skill, /memory_context/);
   assert.match(skill, /context compaction/);
   const queueSkill = readFileSync(join(installed, 'skills', 'polylinedb-queue', 'SKILL.md'), 'utf8');
-  assert.match(queueSkill, /queue-branch/);
+  assert.match(queueSkill, /named `queue`/);
   const snapshotPath = join(root, 'snapshot.json');
   const exported = JSON.parse(pd(['export', '--file', snapshotPath]));
   const restoredDirectory = join(root, 'restored');
