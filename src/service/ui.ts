@@ -1,5 +1,5 @@
 /** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
-import { claimDisplay, executeOperation, issuesAwaitingMain, projectClosedIssues, projectIssues, projectSummaries, PolylinedbError, type Actor, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { claimDisplay, executeOperation, issuesAwaitingMain, ownerInboxIssues, projectClosedIssues, projectIssues, projectSummaries, PolylinedbError, type Actor, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 
 const listLimit = 50;
@@ -9,7 +9,9 @@ const projectIssueLimit = 101;
 const shownProjectIssues = 100;
 const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
 
-export type UiRoute = { page: 'home' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
+export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
+const inboxLabels = ['owner-decision', 'owner-action', 'main-wait'] as const;
+const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox']];
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 function escape(value: string): string {
@@ -163,6 +165,10 @@ export function uiNotFoundResponse(): Response {
   return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
 }
 
+function viewNav(): string {
+  return `<nav class="views">${viewLinks.map(([href, label]) => `<a href="${href}">${label}</a>`).join('')}</nav>`;
+}
+
 function document(pageTitle: string, body: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -177,6 +183,7 @@ function document(pageTitle: string, body: string): string {
 </head>
 <body>
 <main class="paper">
+${viewNav()}
 ${body}
 </main>
 </body>
@@ -187,6 +194,27 @@ export function uiPage(lists: { projects: readonly ProjectSummary[]; moreProject
   return document('Projects', `<h1>Projects</h1>
 ${projectsSection(lists.projects, lists.moreProjects)}
 ${section('Waiting for main', lists.awaitingMain, labels, 'Nothing is waiting for main.', 'Open issues with the main-wait label.')}`);
+}
+
+function inboxItem(issue: Issue): string {
+  const shown = inboxLabels.filter(label => issue.labels.includes(label));
+  return `<li class="quiet-row"><a href="${escape(issueHref(issue.id))}">
+<span class="primary">${escape(title(issue.body))}</span>
+<span class="secondary">${escape(issue.id)}</span>
+<span class="secondary">${escape(issue.status)}</span>
+<span class="secondary">${escape(issue.tool)}</span>
+<span class="secondary">${escape(issue.project)}</span>
+${shown.length === 0 ? '' : `<span class="secondary">${shown.map(label => escape(label)).join(' ')}</span>\n`}<span class="secondary">Last updated <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
+</a></li>`;
+}
+
+function inboxPage(issues: readonly Issue[], more: boolean): string {
+  const note = more ? '<p class="section-note">More issues are not shown.</p>' : '';
+  const body = issues.length === 0 ? '<p class="quiet-note">Nothing is waiting for you.</p>' : `<ul class="quiet-list">${issues.map(inboxItem).join('')}</ul>`;
+  return document('Inbox', `<h1>Inbox</h1>
+<p class="section-note">Open issues labeled owner-decision, owner-action, or main-wait.</p>
+${body}
+${note}`);
 }
 
 function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], closed: readonly Issue[], labels: ReadonlyMap<string, string>, more: boolean, filtered: boolean): string {
@@ -234,6 +262,10 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
       if (error instanceof PolylinedbError && error.code === 'not_found') return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
       throw error;
     }
+  }
+  if (route.page === 'inbox') {
+    const issues = await ownerInboxIssues(db, listLimit + 1);
+    return new Response(inboxPage(issues.slice(0, listLimit), issues.length > listLimit), { headers: htmlHeaders });
   }
   if (route.page === 'project') {
     const [issues, closed] = await Promise.all([
@@ -286,6 +318,8 @@ h1 {
 }
 .section-note, .quiet-note { margin: 0; color: #716b60; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .quiet-note { margin-top: 18px; font-size: 18px; }
+.views { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 28px; }
+.views a { color: inherit; font-size: 15px; line-height: 1.4; }
 .quiet-list { list-style: none; margin: 0; padding: 0; }
 .quiet-row { display: block; padding: 18px 0 20px; }
 .quiet-row + .quiet-row { border-top: 1px solid #ddd7cb; }
