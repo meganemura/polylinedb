@@ -423,6 +423,61 @@ function viewIssue(env: ReturnType<typeof fixture>['env'], id: string, headers: 
   return handleRequest(new Request(`https://issues.example/ui/i/${id}`, { method, headers }), env, authenticate);
 }
 
+// Holds each D1 call until the current wave is released, so a page's sequential database round trips can be counted.
+function roundTrips(env: ReturnType<typeof fixture>['env']) {
+  type Statement = ReturnType<typeof env.DB.prepare>;
+  const waiting: (() => void)[] = [];
+  const hold = <T>(work: () => Promise<T>) => new Promise<T>((resolve, reject) => { waiting.push(() => { work().then(resolve, reject); }); });
+  const wrap = (statement: Statement): Statement => ({ ...statement, bind: (...values: (string | number | null)[]) => wrap(statement.bind(...values)), all: () => hold(() => statement.all()) });
+  const DB = { prepare: (sql: string) => wrap(env.DB.prepare(sql)), batch: (statements: Statement[]) => hold(() => env.DB.batch(statements)) };
+  return {
+    env: { ...env, DB },
+    async count(pending: Promise<Response>): Promise<{ response: Response; rounds: number }> {
+      let settled = false;
+      pending.then(() => { settled = true; }, () => { settled = true; });
+      let rounds = 0;
+      for (let turn = 0; !settled; turn += 1) {
+        assert.ok(turn < 10_000, 'The page never finished');
+        await new Promise(resolve => setImmediate(resolve));
+        if (waiting.length === 0) continue;
+        rounds += 1;
+        for (const release of waiting.splice(0)) release();
+      }
+      return { response: await pending, rounds };
+    },
+  };
+}
+
+test('ui: the issue page and an ID search start their independent reads together', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel epic', type: 'epic' });
+    const child = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel child', parent: epic });
+    const blocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel blocker' });
+    await handleRequest(new Request('https://issues.example/v1/operations', { method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'dependency_add', dependent_id: child, blocker_id: blocker, expected_revision: 1, request_id: crypto.randomUUID() }) }), env, authenticate);
+    const counted = roundTrips(env);
+
+    const detail = await counted.count(handleRequest(new Request(`https://issues.example/ui/i/${child}`, { headers: auth }), counted.env, authenticate));
+    assert.equal(detail.response.status, 200);
+    const html = await detail.response.text();
+    assert.ok(html.includes(`Parent <a href="/ui/i/${epic}">Parallel epic</a>`));
+    assert.ok(uiSection(html, 'Open blockers').includes(`href="/ui/i/${blocker}"`));
+    assert.equal(detail.rounds, 2);
+
+    const missing = await counted.count(handleRequest(new Request('https://issues.example/ui/i/pd-999', { headers: auth }), counted.env, authenticate));
+    assert.equal(missing.response.status, 404);
+    assert.ok((await missing.response.text()).includes('Issue was not found.'));
+
+    const search = await counted.count(handleRequest(new Request(`https://issues.example/ui/search?q=${child}`, { headers: auth }), counted.env, authenticate));
+    assert.equal(search.response.status, 200);
+    assert.ok((await search.response.text()).includes(`href="/ui/i/${child}"`));
+    assert.equal(search.rounds, 2);
+  } finally { sqlite.close(); }
+});
+
 test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
