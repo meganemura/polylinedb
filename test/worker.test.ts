@@ -1560,7 +1560,7 @@ test('pd-144: /ui orders projects by their latest issue update', async () => {
     assert.ok(alpha);
     assert.ok(alpha.includes('2026-10-09 12:00 JST'));
     assert.ok(!alpha.includes('2026-10-08 09:00 JST'));
-    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    assertNoApplicationControls(html);
   } finally { sqlite.close(); }
 });
 
