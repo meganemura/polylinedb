@@ -264,7 +264,19 @@ try {
   assert.equal(page.status, 200);
   assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
   assert.match(page.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/);
+  assert.equal(page.headers.get('cache-control'), 'private, no-cache');
+  const etag = page.headers.get('etag');
+  assert.match(etag ?? '', /^"[0-9a-f]{32}"$/);
   const html = await page.text();
+  const revalidated = await runtime.dispatchFetch('http://polylinedb.test/ui', { headers: { 'cf-access-jwt-assertion': viewer, 'if-none-match': `W/${etag}` } });
+  assert.equal(revalidated.status, 304);
+  assert.equal(await revalidated.text(), '');
+  assert.equal(revalidated.headers.get('etag'), etag);
+  assert.equal(revalidated.headers.get('content-security-policy'), page.headers.get('content-security-policy'));
+  const anonymousRevalidation = await runtime.dispatchFetch('http://polylinedb.test/ui', { headers: { 'if-none-match': `${etag}` } });
+  assert.equal(anonymousRevalidation.status, 401);
+  assert.equal(anonymousRevalidation.headers.get('etag'), null);
+  assert.ok(!(await anonymousRevalidation.text()).includes(`${draftIssue.id}`));
   assert.ok(html.includes(`${draftIssue.id} · Last updated`));
   assert.ok(!html.includes('Recently closed'));
   assert.ok(!html.includes('Ready work'));
@@ -292,6 +304,6 @@ try {
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
       'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
-      'projects by latest update', '/ui Server-Timing',
+      'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

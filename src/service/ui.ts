@@ -371,11 +371,12 @@ ${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered
 
 const htmlHeaders = {
   'content-type': 'text/html; charset=utf-8',
-  'cache-control': 'no-store',
+  'cache-control': 'private, no-cache',
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
   'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
+const { 'content-type': _, ...revalidationHeaders } = htmlHeaders;
 
 async function issueBlockers(db: SqlExecutor, id: string, actor: Actor): Promise<{ id: string; status: Status }[]> {
   const blockers: { id: string; status: Status }[] = [];
@@ -392,7 +393,7 @@ async function issueBlockers(db: SqlExecutor, id: string, actor: Actor): Promise
   }
 }
 
-export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, actor: Actor): Promise<Response> {
+async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, actor: Actor): Promise<string | null> {
   if (route.page === 'issue') {
     try {
       const [result, blockers, parent, children] = await Promise.all([
@@ -402,43 +403,63 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
         issueChildren(db, route.id, childLimit),
       ]);
       if (!('comments' in result)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
-      return new Response(detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, parent, children.slice(0, shownChildren), children.length > shownChildren, labels), { headers: htmlHeaders });
+      return detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, parent, children.slice(0, shownChildren), children.length > shownChildren, labels);
     } catch (error) {
-      if (error instanceof PolylinedbError && error.code === 'not_found') return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
+      if (error instanceof PolylinedbError && error.code === 'not_found') return null;
       throw error;
     }
   }
   if (route.page === 'recent') {
     const issues = await recentUpdates(db, listLimit);
-    return new Response(recentPage(issues, labels), { headers: htmlHeaders });
+    return recentPage(issues, labels);
   }
   if (route.page === 'blocked') {
     const rows = await blockedIssues(db, listLimit);
-    return new Response(blockedPage(rows), { headers: htmlHeaders });
+    return blockedPage(rows);
   }
   if (route.page === 'working') {
     const rows = await activeClaimIssues(db, listLimit);
-    return new Response(workingPage(rows, labels), { headers: htmlHeaders });
+    return workingPage(rows, labels);
   }
   if (route.page === 'search') {
     const found = await searchHits(db, route.query, actor);
-    return new Response(searchPage(route.query, found.hits, found.more, found.rejected), { headers: htmlHeaders });
+    return searchPage(route.query, found.hits, found.more, found.rejected);
   }
   if (route.page === 'inbox') {
     const issues = await ownerInboxIssues(db, listLimit + 1);
-    return new Response(inboxPage(issues.slice(0, listLimit), issues.length > listLimit), { headers: htmlHeaders });
+    return inboxPage(issues.slice(0, listLimit), issues.length > listLimit);
   }
   if (route.page === 'project') {
     const [issues, closed] = await Promise.all([
       projectIssues(db, route.tool, route.project, projectIssueLimit, route.status ?? null, route.label ?? null),
       projectClosedIssues(db, route.tool, route.project, listLimit),
     ]);
-    return new Response(projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), closed, labels, issues.length > shownProjectIssues, { status: route.status, label: route.label }), { headers: htmlHeaders });
+    return projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), closed, labels, issues.length > shownProjectIssues, { status: route.status, label: route.label });
   }
   const [projects, awaitingMain] = await Promise.all([
     projectSummaries(db, projectSummaryLimit), issuesAwaitingMain(db, listLimit),
   ]);
-  return new Response(uiPage({ projects: projects.slice(0, shownProjects), moreProjects: projects.length > shownProjects, awaitingMain }, labels), { headers: htmlHeaders });
+  return uiPage({ projects: projects.slice(0, shownProjects), moreProjects: projects.length > shownProjects, awaitingMain }, labels);
+}
+
+async function entityTag(html: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(html)));
+  return `"${[...digest.slice(0, 16)].map(byte => byte.toString(16).padStart(2, '0')).join('')}"`;
+}
+
+// If-None-Match uses the weak comparison, and a compressing proxy may weaken a strong tag on the way to the browser.
+function revalidates(ifNoneMatch: string | null, etag: string): boolean {
+  if (ifNoneMatch === null) return false;
+  if (ifNoneMatch.trim() === '*') return true;
+  return ifNoneMatch.split(',').some(tag => tag.trim().replace(/^W\//, '') === etag);
+}
+
+export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, actor: Actor, ifNoneMatch: string | null): Promise<Response> {
+  const html = await pageHtml(db, labels, route, actor);
+  if (html === null) return uiNotFoundResponse();
+  const etag = await entityTag(html);
+  if (revalidates(ifNoneMatch, etag)) return new Response(null, { status: 304, headers: { ...revalidationHeaders, etag } });
+  return new Response(html, { headers: { ...htmlHeaders, etag } });
 }
 
 const styles = `
