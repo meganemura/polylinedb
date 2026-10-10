@@ -467,8 +467,9 @@ export async function runCli(argv: readonly string[]): Promise<void> {
     const known = error instanceof PolylinedbError;
     const loaded = cloudClientModule;
     const authentication = loaded !== undefined && (error instanceof loaded.OAuthError || error instanceof loaded.CredentialStoreError);
+    const details = known || (loaded !== undefined && error instanceof loaded.OAuthError) ? error.details : undefined;
     const reported = known || authentication
-      ? { code: error.code, message: error.message, ...(known && error.details !== undefined ? { details: error.details } : {}) }
+      ? { code: error.code, message: error.message, ...(details !== undefined ? { details } : {}) }
       : describeUnexpectedError(error);
     process.stderr.write(JSON.stringify({ error: reported }) + '\n');
     process.exitCode = known ? ({ 400: 2, 404: 3, 409: 4 }[error.status] ?? 1) : 1;
