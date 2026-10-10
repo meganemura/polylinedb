@@ -546,6 +546,7 @@ Projects with the same time are ordered by project name, then by tool name.
 It shows at most 200 projects.
 Those 200 are the most recently updated.
 When more exist, the page says that more projects are not shown.
+The projects left out are the ones updated longest ago.
 A row opens `/ui/p/<tool>/<project>`.
 A slash in the project name is its own path segment.
 
