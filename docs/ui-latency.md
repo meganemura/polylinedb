@@ -42,6 +42,7 @@ A local proxy adds the Access assertion to every request, as the Access edge doe
 Each run follows the same path: home, the largest project, its `open` chip, an issue, back, **Inbox**, an inbox issue, and **Projects**.
 It plays the path once with the pointer resting 300 ms on each link before the click, as a mouse does, and once with an immediate click.
 `--dwell-ms` changes the rest time.
+Before the pointer moves, the script waits until the page has no running animation, so a view-transition crossfade has finished and the click can reach the link.
 Each run uses a fresh browser profile.
 
 For each step, the visible time is the first contentful paint of the new page minus its `activationStart`.

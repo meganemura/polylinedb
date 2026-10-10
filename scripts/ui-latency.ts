@@ -332,6 +332,12 @@ async function scenario(cdp: Cdp, base: string, projectPath: string, dwell: numb
     await cdp.send('Runtime.evaluate', { expression: restoreProbe }, sessionId);
   };
   const follow = async (step: string, selector: string) => {
+    // The crossfade covers the new page for its duration, and a click during it does not reach the link.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.getAnimations().some(animation => animation.playState === "running")', returnByValue: true }, sessionId);
+      if (result.value !== true) break;
+      await sleep(20);
+    }
     const { result } = await cdp.send('Runtime.evaluate', { expression: `(() => { const link = document.querySelector(${JSON.stringify(selector)}); link.scrollIntoView({ block: 'center' }); const box = link.getBoundingClientRect(); return { x: box.left + Math.min(box.width / 2, 40), y: box.top + box.height / 2, href: link.href }; })()`, returnByValue: true }, sessionId);
     const { x, y, href } = result.value as { x: number; y: number; href: string };
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId);

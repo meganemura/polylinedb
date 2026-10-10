@@ -700,7 +700,9 @@ A speculation-rules prefetch stays in the document's memory and still applies wh
 
 A same-origin navigation uses a cross-document view transition.
 The style rule is `@view-transition { navigation: auto; }`.
-It applies only when the browser is not asking for reduced motion, and the crossfade lasts 80 ms.
+It applies only when the browser is not asking for reduced motion.
+The crossfade lasts 80 ms, including the transition group, so it does not keep the browser's longer default.
+A tap during that crossfade may not reach the new page.
 The transition does not skip Access and does not change the page the Worker returns.
 
 [Measure `/ui` latency](ui-latency.md) sets the latency budget and describes how to measure it.
