@@ -699,6 +699,16 @@ The page has no theme control of its own.
 Each page carries a `Server-Timing` header with one entry named `worker`.
 Its duration is the time in milliseconds that the Worker waited on the Access keys and D1 for that page.
 A rejected caller gets no `Server-Timing` header.
+
+A page is sent with `Cache-Control: private, no-cache` and an `ETag`.
+The browser may keep the page, but it asks the Worker before showing it again, and no shared cache keeps it.
+The `ETag` is a hash of the HTML.
+When the browser sends that tag in `If-None-Match`, the Worker answers `304 Not Modified` with no body.
+The Access check runs first, so a caller that Access rejects gets `401`, `403`, or `503` as before, never `304`.
+The Worker still reads D1 to build the page before it compares the tag, so a `304` saves only the transfer of the HTML.
+A browser may also restore a page from its back-forward cache without asking the Worker.
+The not-found page has no `ETag`.
+
 [Measure `/ui` latency](ui-latency.md) sets the latency budget and describes how to measure it.
 
 Serve `/ui` and every file it needs from Worker code.
