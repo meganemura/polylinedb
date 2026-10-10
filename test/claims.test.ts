@@ -151,8 +151,9 @@ test('canonical schemas 2 through 5 upgrade without rewriting old records or ide
   }
 });
 test('property: successful claims retain requested TTL and replay after a generated renewal', async () => {
+  const ttls = gs.oneOf(gs.sampledFrom([30, 3600]), gs.integers({ minValue: 30, maxValue: 3600 })); const drawn = new Set<number>();
   await hegel.testAsync(async tc => {
-    const ttl = tc.draw(gs.integers({ minValue: 30, maxValue: 3600 })); const renewedTTL = tc.draw(gs.integers({ minValue: 30, maxValue: 3600 }));
+    const ttl = tc.draw(ttls); const renewedTTL = tc.draw(ttls); drawn.add(ttl); drawn.add(renewedTTL);
     const root = mkdtempSync(join(tmpdir(), 'pd-claim-property-')); const location = { directory: join(root, 'store'), cwd: join(root, 'work') }; initializeStore(location); const store = openStore(location);
     const run = (value: unknown) => executeOperation(store.db, parseOperation(value), 'test:owner');
     try {
@@ -163,6 +164,7 @@ test('property: successful claims retain requested TTL and replay after a genera
       assert.deepEqual(await run(first.command), { claim_receipt: first.receipt });
     } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
   }, { testCases: 30 });
+  assert.ok(drawn.has(30) && drawn.has(3600), 'the generated TTLs include the minimum and the maximum');
 });
 test('snapshot5 preserves claim history while restore rotates authority only once', async t => {
   const source = fixture(t); const destination = fixture(t); await create(source.run);
