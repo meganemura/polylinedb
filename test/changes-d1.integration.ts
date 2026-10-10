@@ -12,7 +12,7 @@ const binding = (name: string) => ({ type: 'd1', name });
 const runtime = new Miniflare({ workers: [{ config: { name: 'changes-test', compatibilityDate: '2026-09-25', manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: 'export default { fetch() { return new Response(null); } }' } } }, env: { DB: binding('changes-test'), DB6: binding('changes-v6-test') } } }] });
 try {
   const database = await runtime.getD1Database('DB'); await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
-  assert.equal((await runChangeFeedFlow(d1Executor(database))).length, 41);
+  assert.equal((await runChangeFeedFlow(d1Executor(database))).length, 63);
 
   const legacy = await runtime.getD1Database('DB6'); await legacy.batch(SCHEMA_V6_STATEMENTS.map(sql => legacy.prepare(sql)));
   const schema = "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name";

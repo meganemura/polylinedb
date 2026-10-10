@@ -252,6 +252,71 @@ test('missing required fields and retyped fields stay cloud_invalid_response at 
   } finally { sqlite.close(); }
 });
 
+const issueShape = {
+  id: 'string', tool: 'string', project: 'string', body: 'string', status: 'string', type: 'string', priority: 'number', labels: ['string'],
+  versions: { tool: 'number', project: 'number', body: 'number', status: 'number', type: 'number', priority: 'number', labels: 'number' },
+  created_at: 'string', created_by: 'string', updated_at: 'string', updated_by: 'string',
+};
+const commentShape = { id: 'string', issue_id: 'string', body: 'string', created_at: 'string', created_by: 'string' };
+const claimShape = { issue_id: 'string', incarnation: 'string', session_id: 'string', generation: 'number', actor: 'string', agent_label: 'string|null', revision: 'number', acquired_at: 'number', changed_at: 'number', expires_at: 'number', released_at: 'number|null' };
+const inspectionShape = { issue_id: 'string', store_incarnation: 'string', observed_at: 'number', state: 'string', lease: claimShape };
+function assertShape(value: unknown, shape: unknown, path = 'response'): void {
+  if (shape === null) { assert.equal(value, null, path); return; }
+  if (shape === 'string|null') { assert.ok(value === null || typeof value === 'string', path); return; }
+  if (shape === 'number|null') { assert.ok(value === null || typeof value === 'number', path); return; }
+  if (Array.isArray(shape)) {
+    assert.ok(Array.isArray(value), path);
+    const item = shape[0];
+    if (item !== undefined) for (const [index, entry] of value.entries()) assertShape(entry, item, `${path}[${index}]`);
+    return;
+  }
+  if (shape === 'string' || shape === 'number' || shape === 'boolean') { assert.equal(typeof value, shape, path); return; }
+  assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value), path);
+  const row = value as Record<string, unknown>;
+  const expected = shape as Record<string, unknown>;
+  assert.deepEqual(Object.keys(row).sort(), Object.keys(expected).sort(), path);
+  for (const key of Object.keys(expected)) assertShape(row[key], expected[key], `${path}.${key}`);
+}
+
+test('existing operation responses keep the keys a released client decodes', async () => {
+  const { sqlite, wire } = await worker();
+  try {
+    const created = await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Released shape' });
+    assertShape(created.body, { issue: issueShape });
+    const id = (created.body.issue as { id: string }).id;
+    assertShape((await wire({ op: 'comment', id, body: 'Noted' })).body, { comment: commentShape });
+    assertShape((await wire({ op: 'update', id, changes: [{ field: 'body', expected: 1, value: 'Edited' }] })).body, { issue: issueShape });
+    const conflict = await wire({ op: 'update', id, changes: [{ field: 'body', expected: 1, value: 'Stale' }] });
+    assertShape(conflict.body, { error: { code: 'string', message: 'string', details: { issue: issueShape, fields: [{ field: 'string', expected: 'number', actual: 'number', current: 'string' }] } } });
+    const shown = await wire({ op: 'show', id });
+    assertShape(shown.body, { issue: issueShape, comments: [commentShape], claim: { ...inspectionShape, lease: null } });
+    assertShape((await wire({ op: 'list', project: 'compat' })).body, { issues: [issueShape], next_cursor: 'string|null' });
+    assertShape((await wire({ op: 'search', query: 'Edited' })).body, { issues: [issueShape], next_cursor: 'string|null' });
+    const matched = await wire({ op: 'search', query: 'Edited', with_matches: true });
+    assertShape(matched.body, { issues: [issueShape], next_cursor: 'string|null', matches: [{ issue_id: 'string', location: 'string', excerpt: 'string' }] });
+    assertShape((await wire({ op: 'dependency_add', dependent_id: id, blocker_id: id, expected_revision: 1, request_id: crypto.randomUUID() })).body, { error: { code: 'string', message: 'string' } });
+    const blocker = (await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Blocker' })).body.issue as { id: string };
+    assertShape((await wire({ op: 'dependency_add', dependent_id: id, blocker_id: blocker.id, expected_revision: 1, request_id: crypto.randomUUID() })).body, { dependency: { dependent_id: 'string', blocker_id: 'string', revision: 'number', outcome: 'string' } });
+    assertShape((await wire({ op: 'dependency_list', dependent_id: id })).body, { dependent_id: 'string', revision: 'number', blockers: [{ id: 'string', project: 'string', status: 'string' }], next_cursor: 'string|null' });
+    assertShape((await wire({ op: 'dependency_worklist', state: 'blocked' })).body, { issues: [issueShape], next_cursor: 'string|null' });
+    const inspection = await wire({ op: 'claim_show', issue_id: id });
+    assertShape(inspection.body, { claim: { ...inspectionShape, lease: null } });
+    const acquire = { op: 'claim_acquire', issue_id: id, incarnation: (inspection.body.claim as { store_incarnation: string }).store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
+    assertShape((await wire(acquire)).body, { claim_receipt: { ...claimShape, outcome: 'string' } });
+    assert.equal(Object.hasOwn((await wire(acquire)).body, 'open_blockers'), false);
+    const replay = await wire({ ...acquire, agent_label: 'Other' });
+    assertShape(replay.body, { error: { code: 'string', message: 'string' } });
+    assert.equal((replay.body.error as { code: string }).code, 'claim_request_conflict');
+    const active = await wire({ op: 'show', id });
+    assertShape(active.body, { issue: issueShape, comments: [commentShape], claim: inspectionShape });
+    assertShape((await wire({ op: 'actor' })).body, { actor: 'string' });
+    const memoryRequest = { op: 'memory_create', project: 'compat', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Fact', body: 'Confirmed' };
+    assertShape((await wire(memoryRequest)).body, { memory: { id: 'string', project: 'string', title: 'string', body: 'string', version: 'number', created_at: 'string', created_by: 'string', updated_at: 'string', updated_by: 'string' } });
+    const feed = await wire({ op: 'changes', since: 0, limit: 1 });
+    assertShape(feed.body, { incarnation: 'string', changes: [{ seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' }], next_since: 'number' });
+  } finally { sqlite.close(); }
+});
+
 test('error envelopes accept unknown fields but keep their fixed messages and decoded details', async () => {
   const actor = { op: 'actor' };
   await assert.rejects(decode(actor, answer({ error: { code: 'jwks_unavailable', message: 'Unavailable', details: { trace: 'synthetic-private-token' } }, request_id: 'x' }, 503)), error => {
