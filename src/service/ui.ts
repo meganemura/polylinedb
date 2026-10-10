@@ -1,5 +1,5 @@
 /** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
-import { claimDisplay, executeOperation, issuesAwaitingMain, ownerInboxIssues, projectClosedIssues, projectIssues, projectSummaries, PolylinedbError, type Actor, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { claimDisplay, executeOperation, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, PolylinedbError, type Actor, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 
 const listLimit = 50;
@@ -9,9 +9,9 @@ const projectIssueLimit = 101;
 const shownProjectIssues = 100;
 const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
 
-export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
+export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
 const inboxLabels = ['owner-decision', 'owner-action', 'main-wait'] as const;
-const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox']];
+const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox'], ['/ui/search', 'Search']];
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 function escape(value: string): string {
@@ -208,6 +208,51 @@ ${shown.length === 0 ? '' : `<span class="secondary">${shown.map(label => escape
 </a></li>`;
 }
 
+function searchItem(issue: Issue): string {
+  return `<li class="quiet-row"><a href="${escape(issueHref(issue.id))}">
+<span class="primary">${escape(title(issue.body))}</span>
+<span class="secondary">${escape(issue.id)}</span>
+<span class="secondary">${escape(issue.status)}</span>
+<span class="secondary">${escape(issue.project)}</span>
+</a></li>`;
+}
+
+function searchPage(query: string, hits: readonly Issue[], more: boolean, rejected: boolean): string {
+  const form = `<form method="get" action="/ui/search"><label>Search <input name="q" value="${escape(query)}"></label> <button type="submit">Search</button></form>`;
+  const note = query.trim() === '' ? '<p class="quiet-note">Type an issue id or words from the text.</p>'
+    : rejected ? '<p class="quiet-note">That search is too long or contains a null character.</p>'
+    : hits.length === 0 ? '<p class="quiet-note">Nothing matches.</p>'
+    : '';
+  const extra = more ? '<p class="section-note">More issues are not shown.</p>' : '';
+  const list = hits.length === 0 ? '' : `<ul class="quiet-list">${hits.map(searchItem).join('')}</ul>`;
+  return document('Search', `<h1>Search</h1>
+${form}
+${note}
+${list}
+${extra}`);
+}
+
+async function searchHits(db: SqlExecutor, query: string, actor: Actor): Promise<{ hits: Issue[]; more: boolean; rejected: boolean }> {
+  const trimmed = query.trim();
+  if (trimmed.length === 0) return { hits: [], more: false, rejected: false };
+  let direct: Issue | null = null;
+  let id: string | null = null;
+  try { id = parseIssueId(trimmed); } catch { id = null; }
+  if (id !== null) {
+    try {
+      const result = await executeOperation(db, { op: 'show', id }, actor);
+      if ('comments' in result) direct = result.issue;
+    } catch (error) {
+      if (!(error instanceof PolylinedbError && error.code === 'not_found')) throw error;
+    }
+  }
+  if (trimmed.includes('\u0000') || new TextEncoder().encode(trimmed).length > 65536) return { hits: direct === null ? [] : [direct], more: false, rejected: direct === null };
+  const result = await executeOperation(db, { op: 'search', query: trimmed, limit: 50 }, actor);
+  if (!('issues' in result) || !('next_cursor' in result)) throw new PolylinedbError('storage_error', 'Search is unavailable', 500);
+  const rest = result.issues.filter(issue => issue.id !== direct?.id);
+  return { hits: direct === null ? rest : [direct, ...rest], more: result.next_cursor !== null, rejected: false };
+}
+
 function inboxPage(issues: readonly Issue[], more: boolean): string {
   const note = more ? '<p class="section-note">More issues are not shown.</p>' : '';
   const body = issues.length === 0 ? '<p class="quiet-note">Nothing is waiting for you.</p>' : `<ul class="quiet-list">${issues.map(inboxItem).join('')}</ul>`;
@@ -233,7 +278,7 @@ const htmlHeaders = {
   'cache-control': 'no-store',
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
 
 async function issueBlockers(db: SqlExecutor, id: string, actor: Actor): Promise<{ id: string; status: Status }[]> {
@@ -262,6 +307,10 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
       if (error instanceof PolylinedbError && error.code === 'not_found') return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
       throw error;
     }
+  }
+  if (route.page === 'search') {
+    const found = await searchHits(db, route.query, actor);
+    return new Response(searchPage(route.query, found.hits, found.more, found.rejected), { headers: htmlHeaders });
   }
   if (route.page === 'inbox') {
     const issues = await ownerInboxIssues(db, listLimit + 1);

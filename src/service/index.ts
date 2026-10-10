@@ -262,6 +262,7 @@ function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations'
   if (pathname === '/v1/operations') return { kind: 'operations' };
   if (pathname === '/ui') return { kind: 'ui', route: { page: 'home' } };
   if (pathname === '/ui/inbox') return { kind: 'ui', route: { page: 'inbox' } };
+  if (pathname === '/ui/search') return { kind: 'ui', route: { page: 'search', query: '' } };
   if (pathname.startsWith('/ui/p/')) {
     const route = projectRoute(pathname);
     return route === null ? { kind: 'missing' } : { kind: 'ui', route };
@@ -291,6 +292,7 @@ export async function handleRequest(
         if (filters === 'invalid') return uiNotFoundResponse();
         route = { ...route, ...filters };
       }
+      if (route.page === 'search') route = { page: 'search', query: new URL(request.url).searchParams.get('q') ?? '' };
       return await uiResponse(d1Executor(env.DB), actorLabels(env), route, caller.actor);
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
