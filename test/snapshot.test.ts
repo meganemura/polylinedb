@@ -7,6 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeStore, openStore } from "../src/local-store/index.ts";
+import { issueSortKey } from "../src/records/issue-id.ts";
 import { canonicalSnapshot, parseSnapshot } from "../src/records/snapshot.ts";
 import type { Snapshot } from "../src/records/snapshot.ts";
 import { executeOperation, parseOperation } from "../src/records/issues.ts";
@@ -84,6 +85,17 @@ test('validation rejects malformed shape, versions, dates, parents and comments'
     { ...base, requests: [{ request_id: crypto.randomUUID(), actor: 'x', payload: '{}', issue_id: parent }] },
   ];
   for (const input of bad) assert.throws(() => parseSnapshot(input), { code: 'invalid_snapshot' });
+});
+test('a snapshot orders issues by sort key and comments by id', () => {
+  const parsed = fixture();
+  const comment = parsed.comments[0];
+  assert.ok(comment);
+  const low = { ...comment, id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
+  const mid = { ...comment, id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' };
+  const ordered = parseSnapshot({ ...parsed, issues: [...parsed.issues].reverse(), comments: [comment, low, mid] });
+  const bySortKey = (left: string, right: string) => issueSortKey(left) < issueSortKey(right) ? -1 : 1;
+  assert.deepEqual(ordered.issues.map(issue => issue.id), parsed.issues.map(issue => issue.id).sort(bySortKey));
+  assert.deepEqual(ordered.comments.map(item => item.id), [low.id, mid.id, comment.id]);
 });
 test('canonical form ignores array order and label set order but retains metadata', () => {
   const snapshot = fixture();
