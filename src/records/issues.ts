@@ -6,7 +6,7 @@ import { issueQueries } from "./issue-queries.ts";
 import { expectedType, PolylinedbError, requireFields } from './errors.ts';
 import { claimProofSchema, claimRow, inspectClaim, parseClaimProof } from './claims.ts';
 import type { ClaimInspection } from './claims.ts';
-import { decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
+import { claimState, decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 import { issueClaimGuard } from './claims-sql.ts';
@@ -263,7 +263,13 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   switch (rejection.code) {
     case 'conflict': throw new PolylinedbError('conflict', 'Read the current issue before deciding on a new update', 409,
       { issue, fields: rejection.fields.map(conflict => ({ ...conflict, current: issue[conflict.field] })) });
-    case 'claim_required': throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue });
+    case 'claim_required': {
+      if (proof === undefined) throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue });
+      const lease = ownershipRow.generation === null ? null : claimRow(ownershipRow);
+      const state = claimState(lease, ownershipRow.store_incarnation, ownershipRow.observed_at);
+      const claim = lease === null ? { state } : { state, generation: lease.generation, expires_at: lease.expires_at };
+      throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue, claim });
+    }
     case 'dependency_blocked': throw new PolylinedbError('dependency_blocked', 'The issue has active prerequisites', 409, { issue });
     case 'version_exhausted': throw new PolylinedbError('version_exhausted', 'The field version cannot increase', 409, { field: rejection.field, issue });
     case 'epic_has_children': throw new PolylinedbError('epic_has_children', 'An epic with children must remain an epic', 409, { issue });

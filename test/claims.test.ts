@@ -10,7 +10,7 @@ import { snapshotMigration } from '../scripts/d1-snapshot-store.ts';
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
-import { executeOperation, parseOperation } from '../src/records/index.ts';
+import { executeOperation, parseOperation, PolylinedbError } from '../src/records/index.ts';
 import type { ClaimReceipt } from '../src/records/index.ts';
 import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
 import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence.ts';
@@ -63,6 +63,44 @@ test('force overrides prerequisites while the claim guard stays atomic', async t
   await assert.rejects(run({ op: 'close', id: issue.id, expected: 1, claim_proof: proof(owner.receipt) }), { code: 'dependency_blocked' });
   await run({ op: 'close', id: issue.id, expected: 1, force: true, reason: 'Accepted prerequisite risk', claim_proof: proof(owner.receipt) });
   const output = await run({ op: 'show', id: issue.id }); assert.ok('comments' in output); assert.equal(output.issue.status, 'closed'); assert.equal(output.comments[0]?.body, 'Accepted prerequisite risk');
+});
+test('a supplied claim_proof that the store rejects names the observed claim', async t => {
+  const { run, db } = fixture(t); const issue = await create(run); const owner = await acquire(run, issue.id);
+  const current = proof(owner.receipt);
+  const rejected = async (claim_proof: ReturnType<typeof proof>, expected: { state: string; generation: number; expires_at: number }) => {
+    await assert.rejects(run({ op: 'update', id: issue.id, changes: [{ field: 'labels', value: ['ready'], expected: 1 }], claim_proof }), (error: unknown) => {
+      assert.ok(error instanceof PolylinedbError);
+      assert.equal(error.code, 'claim_required');
+      assert.equal(error.message, 'A current ownership proof is required for this update');
+      const details = error.details as { issue: { id: string; labels: string[]; versions: { labels: number } }; claim: unknown };
+      assert.equal(details.issue.id, issue.id);
+      assert.deepEqual(details.issue.labels, []);
+      assert.equal(details.issue.versions.labels, 1);
+      assert.deepEqual(details.claim, expected);
+      return true;
+    });
+  };
+  const active = { state: 'active', generation: 1, expires_at: owner.receipt.expires_at };
+  await rejected({ ...current, session_id: crypto.randomUUID() }, active);
+  await rejected({ ...current, generation: current.generation + 1 }, active);
+  await db.batch([{ sql: 'UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?', params: [issue.id] }]);
+  await rejected(current, { state: 'expired', generation: 1, expires_at: 1000 });
+  const fresh = await create(run);
+  const inspection = await run({ op: 'claim_show', issue_id: fresh.id }); assert.ok('claim' in inspection);
+  await assert.rejects(run({ op: 'update', id: fresh.id, changes: [{ field: 'body', value: 'no lease', expected: 1 }], claim_proof: { issue_id: fresh.id, incarnation: inspection.claim.store_incarnation, session_id: crypto.randomUUID(), generation: 1 } }), (error: unknown) => {
+    assert.ok(error instanceof PolylinedbError);
+    assert.deepEqual((error.details as { claim: unknown }).claim, { state: 'never_claimed' });
+    return true;
+  });
+  await assert.rejects(run({ op: 'update', id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] }), (error: unknown) => {
+    assert.ok(error instanceof PolylinedbError);
+    assert.equal(error.code, 'claim_required');
+    const details = error.details as { issue: { id: string }; claim?: unknown };
+    assert.equal(details.issue.id, issue.id);
+    assert.equal(details.claim, undefined);
+    return true;
+  });
+  const shown = await run({ op: 'show', id: issue.id }); assert.ok('issue' in shown); assert.deepEqual(shown.issue.labels, []); assert.equal(shown.issue.versions.labels, 1);
 });
 test('claim parser validates scope, proof target, session, TTL, and label UTF-8 bounds', async t => {
   const { run } = fixture(t); await create(run); const owner = await acquire(run, 'pd-1');

@@ -328,6 +328,12 @@ test('transport keeps the read-only and agent gate rejections of the Worker', as
   ]) await assert.rejects(send(comment, 403, body), { code: 'denied', status: 403 });
   await assert.rejects(send(comment, 409, { error: { code: 'claim_required', message: 'claim', details: { id: 'pd-1' } } }),
     { code: 'claim_required', status: 409, details: { id: 'pd-1' } });
+  const issue = { id: 'pd-1', tool: 'pd', project: 'test', body: 'Issue', status: 'open', type: 'task', priority: 2, labels: [] as string[],
+    versions: { tool: 1, project: 1, body: 1, status: 1, type: 1, priority: 1, labels: 1 },
+    created_at: '2020-01-01T00:00:00.000Z', created_by: 'test', updated_at: '2020-01-01T00:00:00.000Z', updated_by: 'test' };
+  const update = parseOperation({ op: 'update', id: 'pd-1', changes: [{ field: 'labels', value: ['ready'], expected: 1 }] });
+  await assert.rejects(send(update, 409, { error: { code: 'claim_required', message: 'claim', details: { issue, claim: { state: 'expired', generation: 1, expires_at: 1000, note: 'ignored' } } } }),
+    { code: 'claim_required', status: 409, details: { issue } });
   await assert.rejects(send(comment, 409, { error: { code: 'claim_required', message: 'claim', details: { id: 'pd-2' } } }), { code: 'cloud_invalid_response' });
   const dependency = parseOperation({ op: 'dependency_add', dependent_id: 'pd-1', blocker_id: 'pd-2', expected_revision: 1, request_id: crypto.randomUUID() });
   await assert.rejects(send(dependency, 409, { error: { code: 'claim_required', message: 'claim', details: { id: 'pd-1' } } }),
