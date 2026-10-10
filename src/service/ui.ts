@@ -55,6 +55,7 @@ function projectSummaryItem(summary: ProjectSummary): string {
   return `<li class="quiet-row"><a href="${escape(projectHref(summary.tool, summary.project))}">
 <span class="primary">${escape(summary.tool)}</span>
 <span class="secondary">${escape(summary.project)}</span>
+<span class="secondary">Updated <time datetime="${escape(summary.lastUpdatedAt)}">${escape(japanTime(summary.lastUpdatedAt))}</time></span>
 <span class="secondary">open ${counts.open} · in_progress ${counts.in_progress} · deferred ${counts.deferred} · closed ${counts.closed}</span>
 </a></li>`;
 }

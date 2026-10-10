@@ -434,6 +434,7 @@ export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promis
 export type ProjectSummary = {
   tool: string;
   project: string;
+  lastUpdatedAt: string;
   counts: { open: number; in_progress: number; deferred: number; closed: number };
 };
 
@@ -445,7 +446,7 @@ function storedCount(value: number | null): number {
 export async function projectSummaries(db: SqlExecutor, limit: number): Promise<ProjectSummary[]> {
   return (await db.reads.all(issueQueries.projectSummaries, { limit })).map(row => {
     try {
-      return { tool: name(row.tool, 'tool'), project: name(row.project, 'project'), counts: {
+      return { tool: name(row.tool, 'tool'), project: name(row.project, 'project'), lastUpdatedAt: text(row.last_updated_at, 'last_updated_at'), counts: {
         open: storedCount(row.open_count), in_progress: storedCount(row.in_progress_count),
         deferred: storedCount(row.deferred_count), closed: storedCount(row.closed_count),
       } };
