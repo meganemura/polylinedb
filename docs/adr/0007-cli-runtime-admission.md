@@ -16,6 +16,6 @@ The command module owns option parsing, storage and authentication adapters, dom
 
 ## Consequences
 
-The bootstrap reads one small manifest for each invocation and defers one module load for operational commands. A user on an unsupported runtime, such as Bun, can still read the help text and the reported Node version, and no other command runs. The manifest remains the authority for the package version and Node range. The range parser does not claim general semver support; a future engine-range syntax change must update the parser and its tests.
+The bootstrap reads one small manifest for each invocation and defers one module load for operational commands. The command module defers the cloud client in a second import. [ADR 0015](0015-deferred-cloud-client.md) records that import. A user on an unsupported runtime, such as Bun, can still read the help text and the reported Node version, and no other command runs. The manifest remains the authority for the package version and Node range. The range parser does not claim general semver support; a future engine-range syntax change must update the parser and its tests.
 
 Version managers can select an older Node version from a repository pin. The README shows a wrapper that calls a fixed Node binary and the package entrypoint directly.
