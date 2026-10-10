@@ -80,8 +80,9 @@ export async function credentialTransaction<T>(options: {
   catch (error) { outcome = { ok: false, error }; }
   try { await rmdir(lock); }
   catch (error) {
-    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
-    if (code !== 'ENOENT') process.stderr.write('auth_lock_release_failed: The authentication lock could not be removed. Later commands can return auth_busy until that lock directory is removed.\n');
+    const code = fileSystemCode(error);
+    const cause = code === undefined ? '' : `: the file system returned ${code}`;
+    if (code !== 'ENOENT') process.stderr.write(`auth_lock_release_failed: The authentication lock could not be removed${cause}. Later commands can return auth_busy until that lock directory is removed.\n`);
   }
   if (!outcome.ok) throw outcome.error;
   return outcome.value;
