@@ -1117,6 +1117,44 @@ test('ui: recent updates lists the newest changes, open and closed', async () =>
   } finally { sqlite.close(); }
 });
 
+test('ui: projects are ordered by their latest issue update, newest first, with ties by project name', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const stale = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/alpha', body: 'Alpha stale' });
+    const fresh = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/alpha', body: 'Alpha fresh' });
+    const closed = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/beta', body: 'Beta closed' });
+    const gamma = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/gamma', body: 'Gamma' });
+    const tieByTool = await createIssue(env, token, { tool: 'alpha', project: 'meganemura/tie-b', body: 'Tie by tool' });
+    const tieByProject = await createIssue(env, token, { tool: 'zeta', project: 'meganemura/tie-a', body: 'Tie by project' });
+    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?');
+    stamp.run('open', '2026-10-01T00:00:00.000Z', stale);
+    stamp.run('open', '2026-10-05T06:40:00.000Z', fresh);
+    stamp.run('closed', '2026-10-08T00:00:00.000Z', closed);
+    stamp.run('open', '2026-10-03T00:00:00.000Z', gamma);
+    stamp.run('open', '2026-10-02T00:00:00.000Z', tieByTool);
+    stamp.run('open', '2026-10-02T00:00:00.000Z', tieByProject);
+
+    const anonymous = await viewUi(env);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('meganemura/alpha'));
+    const projects = uiSection(await (await viewUi(env, auth)).text(), 'Projects');
+    assert.deepEqual([...projects.matchAll(/href="([^"]+)"/g)].map(match => match[1]), [
+      projectPath('nukadoko', 'meganemura/beta'),
+      projectPath('polylinedb', 'meganemura/alpha'),
+      projectPath('polylinedb', 'meganemura/gamma'),
+      projectPath('zeta', 'meganemura/tie-a'),
+      projectPath('alpha', 'meganemura/tie-b'),
+    ]);
+    const alphaRow = projects.split('<li class="quiet-row">').find(part => part.includes('meganemura/alpha'));
+    assert.ok(alphaRow);
+    assert.ok(alphaRow.includes('<span class="secondary">Updated <time datetime="2026-10-05T06:40:00.000Z">2026-10-05 15:40 JST</time></span>'));
+    assert.ok(projects.includes('Updated <time datetime="2026-10-08T00:00:00.000Z">2026-10-08 09:00 JST</time>'));
+    assert.ok(!/<(form|input|button|script)\b/.test(projects));
+  } finally { sqlite.close(); }
+});
+
 test('ui: project filter chips link to a status or a label', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
