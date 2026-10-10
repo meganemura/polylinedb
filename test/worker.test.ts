@@ -1116,3 +1116,27 @@ test('ui: recent updates lists the newest changes, open and closed', async () =>
     assert.ok(!/<(form|input|button|script)\b/.test(html));
   } finally { sqlite.close(); }
 });
+
+test('ui: project filter chips link to a status or a label', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Chip ready', labels: ['ready'], status: 'open' });
+    await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Chip started', status: 'in_progress' });
+    const path = projectPath('polylinedb', 'meganemura/polylinedb');
+    const open = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth)).text();
+    assert.ok(open.includes(`href="${path}?status=open"`));
+    assert.ok(open.includes(`href="${path}?label=ready"`));
+    assert.ok(open.includes(`href="${path}" aria-current="page"`));
+    const started = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth, 'GET', '?status=in_progress')).text();
+    assert.ok(started.includes(`href="${path}?status=in_progress" aria-current="page"`));
+    assert.ok(started.includes('Chip started'));
+    assert.ok(!started.split('<h2>Recently closed</h2>')[0]?.includes('Chip ready'));
+    const ready = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth, 'GET', '?label=ready')).text();
+    assert.ok(ready.includes(`href="${path}?label=ready" aria-current="page"`));
+    assert.ok(ready.includes('Chip ready'));
+    assert.ok(!ready.split('<h2>Recently closed</h2>')[0]?.includes('Chip started'));
+    assert.ok(!/<(form|input|button|script)\b/.test(ready));
+  } finally { sqlite.close(); }
+});

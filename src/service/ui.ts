@@ -310,12 +310,30 @@ ${body}
 ${note}`);
 }
 
-function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], closed: readonly Issue[], labels: ReadonlyMap<string, string>, more: boolean, filtered: boolean): string {
+function filterHref(tool: string, project: string, status?: Status, label?: string): string {
+  const params = new URLSearchParams();
+  if (status !== undefined) params.set('status', status);
+  if (label !== undefined) params.set('label', label);
+  const query = params.toString();
+  return `${projectHref(tool, project)}${query === '' ? '' : `?${query}`}`;
+}
+
+function chip(href: string, label: string, current: boolean): string {
+  return `<a href="${escape(href)}"${current ? ' aria-current="page"' : ''}>${escape(label)}</a>`;
+}
+
+function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], closed: readonly Issue[], labels: ReadonlyMap<string, string>, more: boolean, filter: { status?: Status; label?: string }): string {
   const note = more ? '<p class="section-note">More issues are not shown.</p>' : '';
+  const filtered = filter.status !== undefined || filter.label !== undefined;
   const empty = filtered ? 'Nothing matches.' : 'Nothing is open.';
   const body = issues.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${issues.map(row => projectIssueItem(row, labels)).join('')}</ul>`;
+  const statuses = ['open', 'in_progress', 'deferred', 'closed'] as const;
+  const statusChips = [chip(filterHref(tool, project, undefined, filter.label), 'Unfinished', filter.status === undefined), ...statuses.map(status => chip(filterHref(tool, project, status, filter.label), status, filter.status === status))].join('');
+  const labelChips = [chip(filterHref(tool, project, filter.status), 'Any label', filter.label === undefined), ...attentionLabels.map(label => chip(filterHref(tool, project, filter.status, label), label, filter.label === label))].join('');
   return document(tool, `<h1>${escape(tool)}</h1>
 <p class="section-note">${escape(project)}</p>
+<nav class="chips" aria-label="Status">${statusChips}</nav>
+<nav class="chips" aria-label="Labels">${labelChips}</nav>
 ${body}
 ${note}
 ${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered by last update. The close time is not recorded.')}`);
@@ -381,7 +399,7 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
       projectIssues(db, route.tool, route.project, projectIssueLimit, route.status ?? null, route.label ?? null),
       projectClosedIssues(db, route.tool, route.project, listLimit),
     ]);
-    return new Response(projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), closed, labels, issues.length > shownProjectIssues, route.status !== undefined || route.label !== undefined), { headers: htmlHeaders });
+    return new Response(projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), closed, labels, issues.length > shownProjectIssues, { status: route.status, label: route.label }), { headers: htmlHeaders });
   }
   const [projects, awaitingMain] = await Promise.all([
     projectSummaries(db, projectSummaryLimit), issuesAwaitingMain(db, listLimit),
@@ -427,6 +445,9 @@ h1 {
 }
 .section-note, .quiet-note { margin: 0; color: #716b60; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .quiet-note { margin-top: 18px; font-size: 18px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+.chips a { border: 1px solid #cfc6b8; border-radius: 999px; padding: 4px 10px; color: inherit; text-decoration: none; font-size: 14px; line-height: 1.4; }
+.chips a[aria-current="page"] { background: #393730; color: #f5f1e8; }
 .views { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 28px; }
 .views a { color: inherit; font-size: 15px; line-height: 1.4; }
 .quiet-list { list-style: none; margin: 0; padding: 0; }
