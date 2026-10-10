@@ -12,6 +12,7 @@ import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from "../src/reco
 import { SCHEMA_V2_SQL } from "../src/records/schema.ts";
 import type { SqlExecutor } from "../src/records/issues.ts";
 import { issueRow } from "../src/records/persistence.ts";
+import { withoutChangeWriter } from "./fixtures/legacy-schema.ts";
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-memory-'));
@@ -108,11 +109,11 @@ test('schema upgrade is explicit and v2 snapshot conversion retains issue data',
   const directory = join(root, 'store'); mkdirSync(directory, { mode: 0o700 });
   const path = join(directory, 'polylinedb.sqlite');
   const old = new DatabaseSync(path); old.exec(SCHEMA_V2_SQL);
-  const legacy: SqlExecutor = { reads: node(old), batch: async statements => {
+  const legacy: SqlExecutor = withoutChangeWriter({ reads: node(old), batch: async statements => {
     old.exec('BEGIN IMMEDIATE');
     try { const result = statements.map(({ sql, params }) => ({ rows: old.prepare(sql).all(...params) })); old.exec('COMMIT'); return result; }
     catch (error) { old.exec('ROLLBACK'); throw error; }
-  } };
+  } });
   const request = parseOperation({ op: 'create', prefix: 'old', project: 'legacy', tool: 'tool', request_id: crypto.randomUUID(), body: 'Before upgrade' });
   await executeOperation(legacy, request, 'legacy:creator');
   await executeOperation(legacy, parseOperation({ op: 'comment', id: 'old-1', body: 'Original comment' }), 'legacy:commenter');

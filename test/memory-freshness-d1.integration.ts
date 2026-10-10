@@ -6,6 +6,7 @@ import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_STATEMENTS, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../src/records/schema.ts";
 import { SCHEMA_V5_STATEMENTS } from '../src/records/schema-v5.ts';
 import { SCHEMA_V6_STATEMENTS } from '../src/records/schema-v6.ts';
+import { withoutChangeWriter } from './fixtures/legacy-schema.ts';
 
 const runtime = new Miniflare({ host: '127.0.0.1', cf: false, telemetry: { enabled: false }, workers: [{ config: {
   name: 'freshness-test', compatibilityDate: '2026-09-25',
@@ -22,7 +23,7 @@ try {
     const identity = { kind: 'cloud' as const, url: 'https://freshness-test.example' };
     const run = (input: unknown) => executeOperation(db, parseOperation(input), 'test:d1', identity);
     const request = { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), project: 'demo', tool: 'test', body: 'Before upgrade' };
-    const issue = await run(request); assert('issue' in issue);
+    const issue = await executeOperation(withoutChangeWriter(db), parseOperation(request), 'test:d1', identity); assert('issue' in issue);
     let memoryRequest = { op: 'memory_create', prefix: 'pd', request_id: crypto.randomUUID(), project: 'demo', title: 'Fact', body: 'Before upgrade' };
     if (version >= 3) await run(memoryRequest);
     const originalRequests = (await database.prepare('SELECT * FROM requests').all()).results;
