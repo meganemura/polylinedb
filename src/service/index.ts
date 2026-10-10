@@ -283,6 +283,7 @@ export async function handleRequest(
   env: Environment,
   authenticate: ReturnType<typeof createAccessVerifier> = verifyAccess,
 ): Promise<Response> {
+  const started = performance.now();
   try {
     const target = requestTarget(new URL(request.url).pathname);
     if (target.kind === 'missing') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
@@ -297,7 +298,10 @@ export async function handleRequest(
         route = { ...route, ...filters };
       }
       if (route.page === 'search') route = { page: 'search', query: new URL(request.url).searchParams.get('q') ?? '' };
-      return await uiResponse(d1Executor(env.DB), actorLabels(env), route, caller.actor);
+      const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, caller.actor);
+      // Workers advance this clock only across I/O, so the duration is the time spent waiting on Access keys and D1.
+      page.headers.set('server-timing', `worker;dur=${(performance.now() - started).toFixed(1)}`);
+      return page;
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
     if (target.kind === 'mcp') return await mcp(request, env, caller);
