@@ -12,12 +12,15 @@ import { parseDependencyOperation, executeDependencyOperation, dependencySchemas
 import type { DependencyOperation, DependencyResult } from './dependencies.ts';
 import { claimSchemas, parseClaimOperation, executeClaimOperation } from './claims.ts';
 import type { ClaimOperation, ClaimResult } from './claims.ts';
-export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation;
-export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness }) | MemoryResult | DependencyResult | ClaimResult;
+import { changesSchemas, parseChangesOperation, executeChangesOperation } from './changes.ts';
+import type { ChangesOperation, ChangesResult } from './changes.ts';
+export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation | ChangesOperation;
+export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness }) | MemoryResult | DependencyResult | ClaimResult | ChangesResult;
 const observedSchema = { type: 'string', maxLength: 4100, description: 'Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search.' };
-export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas,
+export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas, ...changesSchemas,
   ...Object.fromEntries(Object.entries(issueSchemas).filter(([key]) => key !== 'actor').map(([key, value]) => [key, { ...value, properties: { ...value.properties, observed_memory_revision: observedSchema } }])) };
 export function parseOperation(value: unknown): Operation {
+  if (value && typeof value === 'object' && 'op' in value && value.op === 'changes') return parseChangesOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('claim_')) return parseClaimOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('dependency_')) return parseDependencyOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('memory_')) return parseMemoryOperation(value);
@@ -43,6 +46,8 @@ async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, sto
   switch (operation.op) {
     case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_release':
       return executeClaimOperation(db, operation, actor);
+    case 'changes':
+      return executeChangesOperation(db, operation);
     case 'dependency_add': case 'dependency_remove': case 'dependency_list': case 'dependency_worklist':
       return executeDependencyOperation(db, operation, actor);
     case 'memory_create': case 'memory_show': case 'memory_list': case 'memory_search': case 'memory_update': case 'memory_delete': case 'memory_context':

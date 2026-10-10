@@ -17,3 +17,4 @@ export type { DependencyOperation, DependencyMutation, DependencyResult, Depende
 export { parseClaimProof, parseIncarnation } from './claims.ts';
 export type { Claim, ClaimOperation, ClaimReceipt, ClaimRequest, ClaimInspection, ClaimState, ClaimResult } from './claims.ts';
 export type { ClaimProof, ClaimMutation } from './claims-sql.ts';
+export type { ChangesOperation, ChangesResult, ChangeEvent, ChangeKind } from './changes.ts';

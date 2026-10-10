@@ -79,6 +79,7 @@
     "dist/records/errors.js",
     "dist/records/claims.js",
     "dist/records/claims-sql.js",
+    "dist/records/changes.js",
     "dist/records/changes-sql.js",
     "dist/records/schema-v5.js",
     "dist/records/schema-v6.js",
