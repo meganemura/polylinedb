@@ -56,6 +56,9 @@ Commands:
   dependency list ID [--after ID] [--limit 1..100]
   dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
   dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]
+  changes --since SEQ [--incarnation HEX] [--project NAME] [--issue ID ...]
+          [--kind KIND ...] [--limit 1..100]
+                                Issue change events after SEQ; continue from next_since.
   ready [FILTERS]                Open issues with resolved prerequisites.
   blocked [FILTERS]              Unfinished issues with active blockers.
   memory create --title TITLE --body TEXT [--request-id UUID]

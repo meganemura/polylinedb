@@ -12,7 +12,7 @@ import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence.ts';
 import { claimRow } from '../records/persistence.ts';
 import { parseIncarnation } from '../records/index.ts';
-import type { Claim, ClaimInspection } from '../records/index.ts';
+import type { Claim, ClaimInspection, ChangeEvent } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;
@@ -58,6 +58,15 @@ function claimInspection(value: unknown): ClaimInspection {
   const state = lease === null ? 'never_claimed' : lease.incarnation !== store_incarnation ? 'invalidated' : lease.released_at !== null ? 'released' : lease.expires_at <= row.observed_at ? 'expired' : 'active';
   if (row.state !== state) return invalid();
   return { issue_id, store_incarnation, observed_at: row.observed_at, state, lease };
+}
+const count = (value: unknown, minimum: number): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum ? value : invalid();
+// A later Worker may record a kind or name a field that this client does not know, so both are checked only as names.
+const changeName = (value: unknown): string => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : invalid();
+function changeEvent(value: unknown, incarnation: string): ChangeEvent {
+  const row = known(value, ['seq', 'incarnation', 'issue_id', 'kind', 'fields', 'occurred_at', 'actor']);
+  if (row.incarnation !== incarnation || !Array.isArray(row.fields) || row.fields.length > 64
+    || typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)) return invalid();
+  return { seq: count(row.seq, 1), incarnation, issue_id: parseIssueId(row.issue_id), kind: changeName(row.kind), fields: row.fields.map(changeName), occurred_at: count(row.occurred_at, 0), actor: row.actor };
 }
 // A Worker that reports blockers on acquisition sends sorted open blocker IDs; the result type does not carry them yet.
 function openBlockers(value: unknown, dependent: string): boolean {
@@ -117,6 +126,19 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       if (expected === 'released' && parsed.released_at !== null) return { claim_receipt: { ...parsed, outcome: expected, released_at: parsed.released_at } };
       if (expected !== 'released' && parsed.released_at === null) return { claim_receipt: { ...parsed, outcome: expected, released_at: null } };
       return invalid();
+    }
+    case 'changes': {
+      const row = known(value, ['incarnation', 'changes', 'next_since']);
+      const incarnation = parseIncarnation(row.incarnation);
+      if ((operation.incarnation !== undefined && incarnation !== operation.incarnation) || !Array.isArray(row.changes) || row.changes.length > operation.limit) return invalid();
+      const changes = row.changes.map(entry => changeEvent(entry, incarnation));
+      let previous = operation.since;
+      for (const change of changes) {
+        if (change.seq <= previous || (operation.issue_ids !== undefined && !operation.issue_ids.includes(change.issue_id))
+          || (operation.kinds !== undefined && !operation.kinds.some(kind => kind === change.kind))) return invalid();
+        previous = change.seq;
+      }
+      return { incarnation, changes, next_since: count(row.next_since, previous) };
     }
     case 'dependency_add': case 'dependency_remove': {
       const row = known(known(value, ['dependency']).dependency, ['dependent_id', 'blocker_id', 'revision', 'outcome']);
@@ -240,6 +262,14 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       if (operation.op !== 'update' && operation.op !== 'close' && operation.op !== 'reopen') return invalid();
       const current = issue(known(value, ['issue']).issue); if (current.id !== operation.id) return invalid();
       return { issue: current };
+    }
+    case 'incarnation_mismatch': case 'cursor_expired': {
+      if (operation.op !== 'changes') return invalid();
+      const row = known(value, ['incarnation', 'next_since']);
+      const incarnation = parseIncarnation(row.incarnation); const next_since = count(row.next_since, 0);
+      if (code === 'incarnation_mismatch' ? operation.incarnation === undefined || incarnation === operation.incarnation
+        : (operation.incarnation !== undefined && incarnation !== operation.incarnation) || next_since <= operation.since) return invalid();
+      return { incarnation, next_since };
     }
     case 'not_ready': {
       if (operation.op !== 'claim_acquire' || known(value, ['id']).id !== operation.issue_id) return invalid();
