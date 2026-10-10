@@ -10,7 +10,7 @@ import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { SCHEMA_SQL } from '../src/records/persistence.ts';
 import type { SqlExecutor } from '../src/records/persistence.ts';
 import { runChangeFeedFlow } from './fixtures/change-feed-flow.ts';
-import { downgradeToSchema6 } from './fixtures/legacy-schema.ts';
+import { downgradeToSchema6, withoutChangeWriter } from './fixtures/legacy-schema.ts';
 
 function location(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-changes-'));
@@ -49,7 +49,7 @@ test('change feed records nothing for snapshot import or memory writes, and the 
   } finally { source.close(); target.close(); }
 });
 
-test('upgrading a schema 6 store adds the canonical change feed DDL and records later writes only', async t => {
+test('upgrading a schema 6 store adds the canonical change feed DDL, and writes of an earlier release still commit without events', async t => {
   const { place, database_path } = location(t);
   const store = openStore(place);
   try { await executeOperation(store.db, created(), 'alice'); } finally { store.close(); }
@@ -63,6 +63,11 @@ test('upgrading a schema 6 store adds the canonical change feed DDL and records 
     assert.deepEqual((await changes(reopened.db)).changes, []);
     await executeOperation(reopened.db, parseOperation({ op: 'update', id: 'cf-1', changes: [{ field: 'body', value: 'edited', expected: 1 }] }), 'alice');
     assert.deepEqual((await changes(reopened.db)).changes.map(({ seq, kind, fields }) => ({ seq, kind, fields })), [{ seq: 1, kind: 'updated', fields: ['body'] }]);
+    const earlierRelease = withoutChangeWriter(reopened.db);
+    await executeOperation(earlierRelease, created(), 'alice');
+    await executeOperation(earlierRelease, parseOperation({ op: 'comment', id: 'cf-1', body: 'from a schema 6 Worker' }), 'alice');
+    await executeOperation(earlierRelease, parseOperation({ op: 'close', id: 'cf-1', expected: 1 }), 'alice');
+    assert.equal((await changes(reopened.db)).next_since, 1);
   } finally { reopened.close(); }
 });
 
