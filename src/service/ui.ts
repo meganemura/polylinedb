@@ -468,6 +468,8 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
 const styles = `
 @media (prefers-reduced-motion: no-preference) {
   @view-transition { navigation: auto; }
+  ::view-transition-group(root),
+  ::view-transition-image-pair(root),
   ::view-transition-old(root),
   ::view-transition-new(root) { animation-duration: 80ms; }
 }
