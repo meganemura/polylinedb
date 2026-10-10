@@ -145,11 +145,49 @@ finally { database.close(); }
   } finally { fixture.close(); }
 });
 
+test('verify names an existing output and does not read the remote snapshot again', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const fixture = await remoteD1Fixture();
+  try {
+    const bin = join(fixture.directory, 'bin'); mkdirSync(bin);
+    const calls = join(fixture.directory, 'cf-calls');
+    writeFileSync(calls, '');
+    writeFileSync(join(bin, 'cf'), `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(process.env.PD_TEST_CALLS, '1');
+const { DatabaseSync } = require('node:sqlite');
+const args = process.argv.slice(2);
+const [statement] = JSON.parse(fs.readFileSync(args[args.indexOf('--batch') + 1].slice(1), 'utf8'));
+const database = new DatabaseSync(process.env.PD_TEST_DATABASE, { readOnly: true });
+try { process.stdout.write(JSON.stringify({ success: true, result: [{ success: true, results: database.prepare(statement.sql).all(...statement.params) }] })); }
+finally { database.close(); }
+`, { mode: 0o700 });
+    const output = join(fixture.directory, 'verified.json');
+    const run = () => spawnSync(process.execPath, ['scripts/d1-snapshot.ts', ...fixture.args(output)], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PD_TEST_DATABASE: fixture.database_path, PD_TEST_CALLS: calls,
+        POLYLINEDB_D1_CHILD_LIMIT_MS: String(childLimits.startMs + childLimits.runMs) }, encoding: 'utf8',
+    });
+    const first = run();
+    assert.equal(first.status, 0, first.stderr);
+    const written = readFileSync(output);
+    const callsAfterSuccess = readFileSync(calls, 'utf8').length;
+    assert.ok(callsAfterSuccess > 0);
+    const second = run();
+    assert.equal(second.status, 1);
+    assert.equal(second.stdout, '');
+    assert.equal(second.stderr, 'D1 snapshot operation failed: The output file already exists.\n');
+    assert.deepEqual(readFileSync(output), written);
+    assert.equal(readFileSync(calls, 'utf8').length, callsAfterSuccess);
+  } finally { fixture.close(); }
+});
+
 test('verify refuses overwrite, a relative output, and a differing remote without writing', async () => {
   const { DatabaseSync } = await import('node:sqlite');
   const { runSnapshotCommand } = await import('../scripts/d1-snapshot.ts');
   const fixture = await remoteD1Fixture();
+  let queries = 0;
   const connect = () => async (statement: { sql: string; params: (string | number | null)[] }) => {
+    queries += 1;
     const database = new DatabaseSync(fixture.database_path, { readOnly: true });
     try { return parseQueryOutput({ success: true, result: [{ success: true, results: database.prepare(statement.sql).all(...statement.params) }] }); }
     finally { database.close(); }
@@ -159,7 +197,9 @@ test('verify refuses overwrite, a relative output, and a differing remote withou
     assert.deepEqual(await runSnapshotCommand(fixture.args(output), connect), { target: { ...target, snapshotSha256: fixture.sha256 }, result: 'verified', sha256: fixture.sha256,
       counts: { issues: 1, comments: 0, counters: 1, requests: 1, memories: 0, memory_counters: 0, memory_requests: 0, dependencies: 0, dependency_revisions: 1, dependency_requests: 0, issue_claims: 0, claim_requests: 0 } });
     assert.equal(readFileSync(output, 'utf8'), fixture.canonical + '\n');
-    await assert.rejects(runSnapshotCommand(fixture.args(output), connect), { code: 'EEXIST' });
+    const queriesAfterSuccess = queries;
+    await assert.rejects(runSnapshotCommand(fixture.args(output), connect), { message: 'The output file already exists' });
+    assert.equal(queries, queriesAfterSuccess);
     assert.equal(readFileSync(output, 'utf8'), fixture.canonical + '\n');
     await assert.rejects(runSnapshotCommand(fixture.args('relative.json'), connect), { message: /^Usage: node scripts\/d1-snapshot.ts inspect\|restore\|verify / });
     await fixture.store.db.batch([{ sql: "UPDATE issues SET body = 'changed remotely'", params: [] }]);
