@@ -417,18 +417,22 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const html = await response.text();
     const waitingPart = uiSection(html, 'main 待ち');
-    const closedPart = uiSection(html, 'Recently closed');
     const ids = (part: string) => [...part.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
     assert.match(waitingPart, /^main 待ち<\/h2>/);
     assert.deepEqual(ids(waitingPart), [waiting]);
-    assert.match(closedPart, /^Recently closed<\/h2>/);
-    assert.deepEqual(ids(closedPart), [newest, hostile, older, closedWaiting]);
-    assert.ok(html.includes(`<span class="primary">Newest close</span>\n<span class="secondary">${newest} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:agent-7</span>`));
-    assert.ok(html.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;&amp;</span>'));
-    assert.ok(html.includes('<span class="secondary">access:&lt;b&gt;&quot;x&quot;</span>'));
-    assert.ok(!html.includes('<img'));
+    assert.equal(html.indexOf('<h2>Recently closed</h2>'), -1);
+    assert.ok(!html.includes('Newest close'));
     assert.ok(!/<(form|input|button|script)\b/.test(html));
     assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
+    const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': token })).text();
+    const closedPart = uiSection(project, 'Recently closed');
+    assert.match(closedPart, /^Recently closed<\/h2>/);
+    assert.deepEqual(ids(closedPart), [newest, hostile, older, closedWaiting]);
+    assert.ok(project.includes(`<span class="primary">Newest close</span>\n<span class="secondary">${newest} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:agent-7</span>`));
+    assert.ok(project.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;&amp;</span>'));
+    assert.ok(project.includes('<span class="secondary">access:&lt;b&gt;&quot;x&quot;</span>'));
+    assert.ok(!project.includes('<img'));
+    assert.ok(!/<(form|input|button|script)\b/.test(project));
   } finally { sqlite.close(); }
 });
 
@@ -444,7 +448,7 @@ test('/ui names the last updater by its roster label, and by the raw actor ID wi
     updaters.forEach((updater, index) => set.run(`2026-10-0${4 - index}T00:00:00.000Z`, updater, ids[index]));
     const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all());
 
-    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
+    const html = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': token })).text();
     const updatedBy = [...html.matchAll(/<\/time><\/span>\n<span class="secondary">([^<]*)<\/span>/g)].map(match => match[1]);
     assert.deepEqual(updatedBy, ['Claude', '&lt;b&gt;&quot;Codex&quot;&amp;&#39;', 'service:cursor-token', 'access:departed']);
     assert.ok(!html.includes('<b>'));
@@ -457,7 +461,8 @@ test('/ui shows quiet notes when nothing waits for main and nothing has closed',
   try {
     const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
     assert.ok(html.includes('<p class="quiet-note">Nothing waits for main.</p>'));
-    assert.ok(html.includes('<p class="quiet-note">Nothing has closed yet.</p>'));
+    const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': await assertion() })).text();
+    assert.ok(project.includes('<p class="quiet-note">Nothing has closed yet.</p>'));
   } finally { sqlite.close(); }
 });
 
@@ -483,7 +488,9 @@ test('/ui requires the Access assertion and the roster, lets owner, agent, and r
     for (const [role, roleToken] of Object.entries(roles)) {
       const view = await viewUi(env, { 'cf-access-jwt-assertion': roleToken });
       assert.equal(view.status, 200, role);
-      assert.ok((await view.text()).includes('<span class="primary">Secret title</span>'), role);
+      const project = await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': roleToken });
+      assert.equal(project.status, 200, role);
+      assert.ok((await project.text()).includes('<span class="primary">Secret title</span>'), role);
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
         const write = await handleRequest(new Request('https://issues.example/ui', { method,
           headers: { 'cf-access-jwt-assertion': roleToken, 'content-type': 'application/json' },
@@ -523,7 +530,7 @@ test('/ui reads no issue before Access accepts the caller, and a misconfigured A
     assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) })).status, 403);
     assert.deepEqual(reads, []);
     assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': token })).status, 200);
-    assert.equal(reads.length, 3);
+    assert.equal(reads.length, 2);
   } finally { sqlite.close(); }
 });
 
@@ -554,8 +561,9 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     const html = await home.text();
     const projectsAt = html.indexOf('<h2>Projects</h2>');
     const waitingAt = html.indexOf('<h2>main 待ち</h2>');
-    const closedAt = html.indexOf('<h2>Recently closed</h2>');
-    assert.ok(projectsAt !== -1 && projectsAt < waitingAt && waitingAt < closedAt);
+    assert.ok(projectsAt !== -1 && projectsAt < waitingAt);
+    assert.equal(html.indexOf('<h2>Recently closed</h2>'), -1);
+    assert.ok(!html.includes('Done nukadoko'));
     assert.ok(html.includes('href="/ui/p/nukadoko/meganemura/nukadoko"'));
     assert.ok(html.includes('href="/ui/p/polylinedb/meganemura/polylinedb"'));
     assert.ok(html.includes('nukadoko'));
@@ -577,9 +585,6 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     const waitingPart = uiSection(html, 'main 待ち');
     assert.match(waitingPart, /^main 待ち<\/h2>/);
     assert.ok(waitingPart.includes(polyline));
-    const closedPart = uiSection(html, 'Recently closed');
-    assert.match(closedPart, /^Recently closed<\/h2>/);
-    assert.ok(closedPart.includes(closed));
 
     const anonymous = await viewProject(env, 'nukadoko', 'meganemura/nukadoko');
     assert.equal(anonymous.status, 401);
@@ -604,8 +609,12 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     assert.ok(page.includes('ready'));
     assert.ok(!page.includes('dogfooding'));
     assert.ok(!page.includes('<img'));
-    assert.ok(!page.includes(closed));
-    assert.ok(!page.includes('Done nukadoko'));
+    const openList = page.split('<h2>Recently closed</h2>')[0] ?? '';
+    assert.ok(!openList.includes(closed));
+    assert.ok(!openList.includes('Done nukadoko'));
+    const closedPart = uiSection(page, 'Recently closed');
+    assert.ok(closedPart.includes(closed));
+    assert.ok(closedPart.includes('Done nukadoko'));
     assert.ok(!page.includes(polyline));
     assert.ok(!page.includes(slashed));
     assert.ok(!page.includes(marked));
