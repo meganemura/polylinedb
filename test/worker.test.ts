@@ -1140,3 +1140,29 @@ test('ui: project filter chips link to a status or a label', async () => {
     assert.ok(!/<(form|input|button|script)\b/.test(ready));
   } finally { sqlite.close(); }
 });
+
+test('ui: night theme follows the phone color scheme and the page widens on a desktop', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Night title', status: 'open' });
+    const anonymous = await handleRequest(new Request('https://issues.example/ui'), env, authenticate);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Night title'));
+    const html = await (await viewUi(env, auth)).text();
+    assert.ok(html.includes('@media (prefers-color-scheme: dark)'));
+    assert.ok(html.includes('color-scheme: dark'));
+    assert.ok(html.includes('--ink: #f3ece3'));
+    assert.ok(html.includes('--paper: #1c1916'));
+    assert.ok(html.includes('min(100%, 720px)'));
+    assert.ok(html.includes('@media (max-width: 420px)'));
+    assert.ok(html.includes('content="#1c1916" media="(prefers-color-scheme: dark)"'));
+    assert.ok(html.includes('<h1>Projects</h1>'));
+    assert.ok(!/<script\b/.test(html));
+    const project = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth)).text();
+    assert.ok(project.includes('Night title'));
+    assert.ok(project.includes('<span class="secondary">open</span>'));
+    assert.ok(project.includes('@media (prefers-color-scheme: dark)'));
+  } finally { sqlite.close(); }
+});
