@@ -45,6 +45,14 @@ export async function credentialTransaction<T>(options: {
       await setTimeout(25);
     }
   }
-  try { return await action(key); }
-  finally { await rmdir(lock); }
+  let outcome: { ok: true; value: T } | { ok: false; error: unknown };
+  try { outcome = { ok: true, value: await action(key) }; }
+  catch (error) { outcome = { ok: false, error }; }
+  try { await rmdir(lock); }
+  catch (error) {
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+    if (code !== 'ENOENT') process.stderr.write('auth_lock_release_failed: The authentication lock could not be removed. Later commands can return auth_busy until that lock directory is removed.\n');
+  }
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
 }

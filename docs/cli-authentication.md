@@ -83,6 +83,9 @@ If lock creation returns `EACCES` or `EPERM`, the CLI reports `auth_state_access
 Allow access to the authentication state directory, then retry the command.
 A command that finds an existing lock waits up to ten seconds, then returns `auth_busy`.
 The CLI does not steal a lock based on its age.
+When lock removal fails and the directory remains, the command still returns the operation result.
+It reports `auth_lock_release_failed` on standard error.
+A later command can return `auth_busy` until that directory is removed.
 
 Before spending a refresh token, the CLI saves a state that requires reauthorization.
 It saves the replacement grant before using the new access token.
@@ -125,7 +128,7 @@ Each machine should perform its own initial authorization.
 
 ## Verification scope
 
-Synthetic OAuth tests cover PKCE, callback checks, failed repeat login, refresh contention, interrupted refresh, and logout.
+Synthetic OAuth tests cover PKCE, callback checks, failed repeat login, refresh contention, interrupted refresh, failed lock release, and logout.
 Credential tests cover command arguments, size limits, denied or unavailable stores, and write verification.
 The macOS Keychain and a disposable Linux Secret Service both passed save, read, overwrite, delete, and missing-entry checks with synthetic credentials.
 The Linux test also verified errors when the service was unavailable.
