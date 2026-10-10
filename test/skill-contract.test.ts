@@ -24,6 +24,19 @@ test('every operation the skill names is an advertised MCP tool with the argumen
   assert.deepEqual((operationSchemas.dependency_worklist.properties.state as { enum: string[] }).enum, ['ready', 'blocked']);
 });
 
+test('the skill identifies the pd connection before stopping for a missing tool', () => {
+  const rules = [
+    'Do not substitute another tool.',
+    'Before stopping because a named tool is missing, see which connection each visible pd tool comes from.',
+    'The name prefix or the namespace names that connection.',
+    'Check for more than one pd connection, such as a host connector import and a configured MCP server.',
+    'For example, a Codex session can show a connector import beside a configured MCP server.',
+    'Use only the connection that advertises every tool this skill names.',
+    'If none does, stop and report the missing names, the source of the visible tools, and that a connector import can keep the tool list from its creation time (refresh it) or that a configured server may need its own login.',
+  ];
+  for (const sentence of rules) assert.ok(skill.includes(sentence), sentence);
+});
+
 // A shipped skill outlives the release it was written for, so release status in its text goes stale.
 test('the skill takes capabilities from advertised schemas rather than release status', () => {
   assert.doesNotMatch(skill, /\b\d+\.\d+\.\d+\b/, 'the skill names no package version');
