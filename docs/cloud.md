@@ -587,17 +587,20 @@ The row has no link.
 The project page title is the tool.
 The line under the title is the project name.
 
-Status chips and label chips filter the issue list together.
-The status chips are **Unfinished**, `open`, `in_progress`, `deferred`, and `closed`.
+Two filters sit on the project page, and they are not the same kind of choice.
+**State** is one status at a time. The choices are joined into one bar.
+They are **Unfinished**, `open`, `in_progress`, `deferred`, and `closed`.
 **Unfinished** is selected when the address has no `status`.
 It lists every status except `closed`.
 Lower priority numbers come first, then `in_progress`, then `open`, then `deferred`.
-The `open`, `in_progress`, and `deferred` chips use that same order.
-The `closed` chip lists closed issues, newest update first.
-The label chips are **Any label**, `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action`.
+The `open`, `in_progress`, and `deferred` choices use that same order.
+The `closed` choice lists closed issues, newest update first.
+**Mark** is a label on the issue. It does not change the status.
+The choices are separate tickets, not segments of the state bar.
+They are **Any label**, `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action`.
 **Any label** is selected when the address has no `label`.
-A label chip keeps issues that carry that label.
-The selected chip is filled.
+A mark keeps issues that carry that label.
+The selected state is filled with the page ink. The selected mark is filled with a different color.
 A `status` other than those four values returns the not-found page.
 A `label` that is empty, longer than 256 UTF-8 bytes, or that contains a control character returns the not-found page.
 

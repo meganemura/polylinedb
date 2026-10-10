@@ -351,7 +351,7 @@ async function scenario(cdp: Cdp, base: string, projectPath: string, dwell: numb
   await measure('first load: home', `${base}/ui`);
   await sleep(500);
   await follow('home -> project', `a[href="${projectPath}"]`);
-  await follow('project -> open filter', 'nav[aria-label="Status"] a[href$="?status=open"]');
+  await follow('project -> open filter', 'nav[aria-label="State"] a[href$="?status=open"]');
   await follow('filter -> issue', '.quiet-list a[href^="/ui/i/"]');
   await cdp.send('Page.enable', {}, sessionId);
   const skipped = new Promise<string | undefined>(resolve => {

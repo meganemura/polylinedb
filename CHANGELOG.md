@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Split the `/ui` project filters into two kinds. **State** is one joined bar (one status at a time, and Unfinished means every status except closed). **Mark** is a separate row of tickets, because a label does not change the status. The selected state and the selected mark use different colors.
 - Cross-fade a same-origin `/ui` navigation for 80 ms, including the transition group, and only when the browser is not asking for reduced motion. A tap during that crossfade may not reach the new page.
 - Prefetch a `/ui` link the pointer rests on. Each page includes a fixed speculation-rules script, allowed by its SHA-256 hash in `script-src`. The rules use eagerness `moderate`, match only `/ui` and `/ui/…`, send no referrer, and do not prerender. Access still runs on the prefetch. The cache stays `private, no-cache`.
 - Send `/ui` pages with `Cache-Control: private, no-cache` and an `ETag` instead of `no-store`. A request whose `If-None-Match` matches gets `304 Not Modified` with no body, after the same Access check. A browser that kept no-store pages out of its back-forward cache can now restore a page on Back without a request.
