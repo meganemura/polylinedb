@@ -179,6 +179,24 @@ test('CLI claim sessions, observed incarnation, proof JSON, CAS and immutable re
   assert.equal(run(['close', '1', '--expected', '2', '--claim-proof', secondProof]).issue.status, 'closed');
   assert.equal(run(['reopen', '1', '--expected', '3', '--claim-proof', secondProof]).issue.status, 'open');
 });
+test('CLI claim renew and release accept the acquire receipt as --claim-proof', t => {
+  const { run } = fixture(t);
+  run(['init']);
+  run(['create', '--tool', 'test', '--project', 'test', '--body', 'Claim']);
+  const inspected = run(['claim', 'show', '1']).claim;
+  const session = crypto.randomUUID();
+  const acquired = run(['claim', 'acquire', '1', '--incarnation', inspected.store_incarnation, '--session-id', session, '--agent-label', 'Codex']);
+  const receipt = acquired.claim_receipt;
+  const renewed = run(['claim', 'renew', '--claim-proof', JSON.stringify(receipt), '--expected-revision', String(receipt.revision), '--ttl', '3600']);
+  assert.equal(renewed.claim_receipt.outcome, 'renewed');
+  assert.equal(renewed.claim_receipt.revision, 2);
+  assert.equal(renewed.claim_receipt.generation, receipt.generation);
+  assert.equal(renewed.claim_receipt.session_id, session);
+  const released = run(['claim', 'release', '--claim-proof', JSON.stringify(renewed.claim_receipt), '--expected-revision', '2']);
+  assert.equal(released.claim_receipt.outcome, 'released');
+  assert.equal(released.claim_receipt.generation, receipt.generation);
+  assert.equal(released.claim_receipt.session_id, session);
+});
 test('CLI rejects claim flags and malformed proof before opening storage', t => {
   const { run, directory } = fixture(t);
   for (const args of [
