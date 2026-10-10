@@ -764,3 +764,84 @@ test('pd-135: project rows link to an issue detail page that escapes body and co
     assert.ok(!dottedHtml.includes('Secret sibling'));
   } finally { sqlite.close(); }
 });
+
+test('pd-136: project rows show active claims and open blocker counts, and detail splits blockers', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const post = async (body: unknown) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
+    }), env, authenticate);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const claim = async (issueId: string, agentLabel: string) => {
+    const shown = await post({ op: 'claim_show', issue_id: issueId });
+    const session = crypto.randomUUID();
+    const receipt = (await post({ op: 'claim_acquire', issue_id: issueId, incarnation: shown.claim.store_incarnation, session_id: session, request_id: crypto.randomUUID(), agent_label: agentLabel })).claim_receipt;
+    return { session, incarnation: shown.claim.store_incarnation, receipt };
+  };
+  try {
+    const active = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Active work' });
+    const released = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Released work' });
+    const expired = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Expired work' });
+    const one = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'One block' });
+    const mixed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Mixed blocks' });
+    const clear = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Only closed' });
+    const openBlocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Open prerequisite' });
+    const deferredBlocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Deferred prerequisite' });
+    const closedBlocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Closed prerequisite' });
+    const otherClosed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Finished prerequisite' });
+    await post({ op: 'update', id: deferredBlocker, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
+    await post({ op: 'close', id: closedBlocker, expected: 1 });
+    await post({ op: 'close', id: otherClosed, expected: 1 });
+    await post({ op: 'dependency_add', dependent_id: one, blocker_id: openBlocker, expected_revision: 1, request_id: crypto.randomUUID() });
+    await post({ op: 'dependency_add', dependent_id: mixed, blocker_id: deferredBlocker, expected_revision: 1, request_id: crypto.randomUUID() });
+    await post({ op: 'dependency_add', dependent_id: mixed, blocker_id: closedBlocker, expected_revision: 2, request_id: crypto.randomUUID() });
+    await post({ op: 'dependency_add', dependent_id: clear, blocker_id: otherClosed, expected_revision: 1, request_id: crypto.randomUUID() });
+    const activeClaim = await claim(active, 'Lane agent');
+    const releasedClaim = await claim(released, 'Gone agent');
+    const expiredClaim = await claim(expired, 'Stale agent');
+    await post({ op: 'claim_release', claim_proof: { issue_id: released, incarnation: releasedClaim.receipt.incarnation, session_id: releasedClaim.receipt.session_id, generation: releasedClaim.receipt.generation }, expected_revision: releasedClaim.receipt.revision, request_id: crypto.randomUUID() });
+    const activeUntil = Math.floor(Date.parse('2027-01-01T00:00:00.000Z') / 1000);
+    sqlite.prepare('UPDATE issue_claims SET expires_at = ? WHERE issue_id = ?').run(activeUntil, active);
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = ?, changed_at = ?, expires_at = ? WHERE issue_id = ?').run(1_000, 1_000, 1_001, expired);
+
+    const anonymous = await viewProject(env, 'polylinedb', 'meganemura/claims');
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Active work'));
+    const list = await (await viewProject(env, 'polylinedb', 'meganemura/claims', { 'cf-access-jwt-assertion': token })).text();
+    const row = (title: string) => {
+      const found = list.split('<li class="quiet-row">').find(part => part.includes(title));
+      assert.ok(found, title);
+      return found;
+    };
+    const activeRow = row('Active work');
+    assert.ok(activeRow.includes('Lane agent'));
+    assert.ok(activeRow.includes('2027-01-01 09:00 JST'));
+    assert.ok(!list.includes(activeClaim.session));
+    assert.ok(!list.includes(activeClaim.incarnation));
+    assert.ok(!list.includes(releasedClaim.session));
+    assert.ok(!list.includes(expiredClaim.session));
+    assert.ok(!row('Released work').includes('Gone agent'));
+    assert.ok(!row('Expired work').includes('Stale agent'));
+    assert.ok(row('One block').includes('blocked 1'));
+    assert.ok(!row('Only closed').includes('blocked'));
+
+    const detail = await (await viewIssue(env, mixed, { 'cf-access-jwt-assertion': token })).text();
+    const openPart = uiSection(detail, 'Open blockers');
+    const closedPart = uiSection(detail, 'Closed blockers');
+    assert.ok(openPart.includes(`href="/ui/i/${deferredBlocker}"`));
+    assert.ok(openPart.includes('deferred'));
+    assert.ok(!openPart.includes(closedBlocker));
+    assert.ok(closedPart.includes(closedBlocker));
+    assert.ok(closedPart.includes('closed'));
+    assert.ok(!closedPart.includes(deferredBlocker));
+    const single = await (await viewIssue(env, one, { 'cf-access-jwt-assertion': token })).text();
+    const singleOpen = uiSection(single, 'Open blockers');
+    assert.ok(singleOpen.includes(`href="/ui/i/${openBlocker}"`));
+    assert.ok(singleOpen.includes('open'));
+    assert.ok(!single.includes(activeClaim.session));
+    assert.ok(!single.includes(activeClaim.incarnation));
+  } finally { sqlite.close(); }
+});
