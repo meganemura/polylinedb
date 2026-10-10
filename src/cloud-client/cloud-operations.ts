@@ -386,6 +386,7 @@ export async function executeCloudOperation(input: {
     }
     if (input.operation.op === 'show' && !Object.hasOwn(object(value), 'claim')) {
       // A Worker released before show returned `claim` omits it, and claim_show reads the same inspection, so a show result always has one.
+      retried = true;
       const inspected = await executeCloudOperation({ ...input, operation: { op: 'claim_show', issue_id: input.operation.id } });
       if (!('claim' in inspected)) return invalid();
       value = { ...object(value), claim: inspected.claim };

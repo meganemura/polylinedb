@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep the authorization error when a cloud `show` follows up with `claim_show` because the Worker omitted `claim`. `pd show` reports that error with its code and its login message.
 - Let `pd --claim-proof` accept a `claim_receipt` from acquire or renew. The CLI reads `issue_id`, `incarnation`, `session_id`, and `generation` and sends only those fields. HTTP and MCP still reject any other field on `claim_proof`.
 - Change `auth_busy` so it says another pd process may still hold the authentication lock, for example during a token refresh or `pd auth login`, which can wait up to 300 seconds for the browser callback. Wait and retry. Delete the lock directory only after no pd process is running for this configuration. The 10 second wait is unchanged. If the lock directory already contains an entry named `login`, the message says that the holder is an interactive login.
 - Keep the result of a credential operation when removing the authentication lock fails. If the lock directory remains, the command reports `auth_lock_release_failed` on standard error, and a later command can return `auth_busy` until that directory is removed.
