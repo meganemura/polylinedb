@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Let `pd --claim-proof` accept a `claim_receipt` from acquire or renew. The CLI reads `issue_id`, `incarnation`, `session_id`, and `generation` and sends only those fields. HTTP and MCP still reject any other field on `claim_proof`.
 - Stop the memory context child of the host hook after 10 s instead of 15 s. The host still caps the hook at 15 s, so a slow child now ends with the `unavailable` notice instead of a hook that the host kills without output.
 - Tell where each search hit matched. A `search` request with `with_matches: true` also returns `matches`: for each issue, the body and each matching comment ID, with an excerpt of at most 160 UTF-8 bytes around the first match. A request without the field keeps the 0.3.1 result, so older CLIs still decode it. `pd search` and the MCP `search` tool always request matches, and `--human` prints a `Matched in` line for each. A Worker that predates the field rejects it. The cloud client then sends the search once more without the field and returns that page without `matches`, so the CLI and the Worker can be updated in either order.
 

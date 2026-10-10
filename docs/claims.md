@@ -45,7 +45,9 @@ Ready and blocked lists observe prerequisites and do not acquire claims.
 
 ## Change status with a proof
 
-Copy exactly four fields from the receipt into a proof object:
+`pd --claim-proof` accepts the four-field proof below, or a `claim_receipt` from acquire or renew.
+The CLI reads `issue_id`, `incarnation`, `session_id`, and `generation` and ignores every other receipt field.
+HTTP and MCP still require the four-field object.
 
 ```json
 {

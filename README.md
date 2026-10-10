@@ -83,7 +83,8 @@ pd --actor local:owner claim release --claim-proof "$PROOF_JSON" --expected-revi
 
 Replace placeholders with observed values and retained lowercase UUIDs.
 `OBSERVED_HEX` is `claim.store_incarnation` from `pd show`.
-`PROOF_JSON` contains the receipt's `issue_id`, `incarnation`, `session_id`, and `generation` only.
+`PROOF_JSON` contains the receipt's `issue_id`, `incarnation`, `session_id`, and `generation`.
+`pd --claim-proof` also accepts the whole `claim_receipt` and reads those four fields.
 Read field and claim revisions before each new mutation.
 After a claim lifecycle starts, status writes require a current proof, and force overrides prerequisites only.
 See [ownership coordination](docs/claims.md) for deadlines, inspection, handoff, and retry rules.

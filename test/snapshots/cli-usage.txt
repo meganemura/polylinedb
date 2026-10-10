@@ -75,6 +75,7 @@ Each update field requires its own expected version from show. Conflicts require
 Start and close require resolved prerequisites. An explicit --force --reason records an attributed exception comment.
 Update accepts the same override when it sets status to in_progress or closed.
 Update, close and reopen accept --claim-proof JSON. A supplied proof always asserts current ownership.
+--claim-proof accepts a claim receipt as well as the four-field proof. The CLI reads issue_id, incarnation, session_id, and generation.
 Claimed issues require an unexpired proof for every requested status change, including unchanged status values.
 Force overrides prerequisites only. Closed issues remain claimable. Acquisition does not change status.
 Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID. Keep one UUID per caller session.
