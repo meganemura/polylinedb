@@ -1,7 +1,7 @@
 # Move a shared local store to the cloud
 
-These instructions describe version 0.3.0 with schema 6 and snapshot 5.
-Version 0.2.0 uses schema 5.
+These instructions describe schema 7 and snapshot 5.
+Versions 0.3.0 and 0.4.0 use schema 6, and version 0.2.0 uses schema 5.
 
 This procedure adds a local store to an existing D1 store, then selects the cloud connection in your repositories.
 It preserves the records already in D1.
@@ -17,12 +17,13 @@ The operator refuses the same incarnation before it prepares any database write.
 It preserves destination identity and existing destination owners, and imported claim rows retain invalidated source authority as history.
 The merge batch guards the captured destination identity and project memory revisions before it inserts source rows.
 Memory insertion advances destination project revisions through their existing triggers.
+The merge records no [change feed](operations.md#change-feed) events, so a feed receiver must read the merged issues itself.
 
 ## Prepare the connection and repositories
 
 Use the supported Node version, an installed `pd`, and an authenticated `cf` profile.
 Run the operator from a source checkout of polylinedb.
-The Worker and both stores must already use canonical schema 6.
+The Worker and both stores must already use canonical schema 7.
 The additive operator refuses additional application tables, including an existing `polylinedb_snapshot_claim` restoration table.
 Use the separate restoration procedure or review that provenance before preparing a different operator.
 The [restored D1 addition proposal](adr/0012-restored-d1-addition.md) defines a possible single addition with the original input and unchanged destination rows.

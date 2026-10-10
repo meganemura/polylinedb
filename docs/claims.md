@@ -102,6 +102,9 @@ Renewal and release increase revision only.
 Closed issues remain claimable for reopening.
 Release followed by acquisition provides explicit handoff.
 
+The [change feed](operations.md#change-feed) records `claim_acquired` and `claim_released` for committed receipts.
+Renewal, a replayed request, and a lease that passes its deadline record no event, so read `claim_show` for the current deadline.
+
 After an uncertain result, retry only with the original request UUID and identical actor, session, incarnation, and payload.
 A committed request returns its original immutable receipt after later renewal, release, reacquisition, or restore.
 That receipt is history; inspect the current claim before more work.

@@ -90,6 +90,11 @@ After a claim lifecycle starts, status writes require a current proof, and force
 See [ownership coordination](docs/claims.md) for deadlines, inspection, handoff, and retry rules.
 Give each local agent its own actor with [local agent actors](docs/agent-actors.md).
 
+Schema 7 adds a store-wide change feed.
+`pd changes --since 0` lists issue changes in commit order; continue with the returned `next_since` and `incarnation`.
+An event names the issue, the kind of change, and the actor, so an agent can follow other agents' work without rereading every issue.
+See the [change feed](docs/operations.md#change-feed).
+
 Create an epic with `--type epic`, then create children with `--parent EPIC_ID`.
 A root ID looks like `pd-1`; its first child is `pd-1.1`.
 Numbers continue from 99 to 100 without a fixed digit count.

@@ -1,7 +1,7 @@
 # Restore a local snapshot into D1
 
-These instructions describe version 0.3.0 with schema 6 and snapshot 5.
-Version 0.2.0 uses schema 5.
+These instructions describe schema 7 and snapshot 5.
+Versions 0.3.0 and 0.4.0 use schema 6, and version 0.2.0 uses schema 5.
 
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.
@@ -30,7 +30,7 @@ Create a target file with mode 0600 outside Git checkouts. Environment-specific 
   "accountId": "ACCOUNT_ID",
   "databaseId": "DATABASE_UUID",
   "snapshotSha256": "CANONICAL_SNAPSHOT_SHA256",
-  "schemaVersion": 6
+  "schemaVersion": 7
 }
 ```
 
@@ -56,13 +56,16 @@ A failed query reports the limit, exit status, or signal, and the end of the `cf
 The excerpt replaces each run of 20 or more identifier characters with `[redacted]`, so account IDs, database IDs, and tokens stay out.
 
 <a id="upgrade-an-existing-schema-2-3-or-4-deployment"></a>
+<a id="upgrade-an-existing-schema-2-3-4-or-5-deployment"></a>
 
-## Upgrade an existing schema 2, 3, 4 or 5 deployment
+## Upgrade an existing schema 2, 3, 4, 5 or 6 deployment
 
-The new Worker needs schema 6. The CLI's `upgrade` command applies only to local SQLite.
+The new Worker needs schema 7. The CLI's `upgrade` command applies only to local SQLite.
+A schema 7 Worker fails every issue, comment, claim, and prerequisite write against a schema 6 database, because the `change_writer` table is missing.
+Upgrade the database before deploying the Worker. A schema 6 Worker keeps working against an upgraded database, and its writes record no change events.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
 Record the account, database UUID, and Worker binding.
-Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL` definition before a write.
+Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL` or `SCHEMA_V6_SQL` definition before a write.
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
@@ -71,21 +74,23 @@ For a v3 or v4 snapshot, use `--from 3` or `--from 4` instead.
 Then use the new v5 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
-For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, or `--upgrade-from 5`.
+For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, or `--upgrade-from 6`.
 Apply every statement in one approved D1 batch or transaction; do not send these statements through the public Worker API.
 The `schemaUpgradeStatements` export provides complete statements, including trigger bodies, for a D1 batch adapter.
 Do not split migration SQL at semicolons because trigger bodies contain semicolons.
 The batch checks the previous version and applies its required memory migrations.
 Upgrades from versions 2 through 4 create dependency tables and seed each issue at prerequisite revision 1.
-Every supported upgrade adds empty claim collections and sets schema version 6.
+Upgrades from versions 2 through 5 add empty claim collections.
+Every supported upgrade adds the empty change feed tables and their triggers, and sets schema version 7.
 Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
 Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
 Verify that schema 2 upgrades create empty memory collections.
 Verify that schema 3 upgrades preserve their memories and seed one revision row per existing memory project.
 Check that `memory_store_identity` has exactly one valid incarnation.
 Verify that schema 4 and 5 upgrades preserve memory identity and project revision rows.
-For schema 5, verify that graph edges, revisions, and receipt payload bytes remain unchanged.
-Verify that both claim collections remain empty after the upgrade.
+For schema 5 and 6, verify that graph edges, revisions, and receipt payload bytes remain unchanged.
+Verify that both claim collections remain empty after an upgrade from schema 2 through 5, and that schema 6 claim rows and receipts remain unchanged.
+Verify that `change_events` and `change_writer` are empty after the upgrade.
 Deploy the new Worker only after those checks pass.
 If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
 
@@ -112,9 +117,9 @@ Historical request UUIDs still replay their original receipts.
 Snapshot validation rejects dangling claim receipts and receipt counters above their aggregate, across every incarnation.
 
 A retired historical local store rejects `pd upgrade` and retains its write guards.
-Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, or 5.
-That export converts the content to snapshot 5 with empty claim collections.
-Schema 5 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
+Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, or 6.
+That export converts the content to snapshot 5. Schema 6 claim records remain intact; earlier schemas receive empty claim collections.
+Schema 5 and 6 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
 It preserves creation payload strings and source attribution. Transfer it into a separately initialized destination.
 
 Create-request records retain their original actor. Replaying a local request through a different cloud actor returns `request_conflict`. New cloud operations use new request IDs.

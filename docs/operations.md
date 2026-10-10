@@ -52,6 +52,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ... }` |
 | `claim_renew` | `claim_proof`, `expected_revision`, `request_id`; optional `ttl` | Same as claim acquire |
 | `claim_release` | `claim_proof`, `expected_revision`, `request_id` | Same as claim acquire |
+| `changes` | `since`; `incarnation` when `since` is greater than 0; optional `project`, `issue_ids`, `kinds`, `limit` | `{ "incarnation": ..., "changes": [...], "next_since": ... }` |
 
 Unknown arguments are rejected.
 The cloud actor comes from authentication, so requests cannot supply an actor.
@@ -61,6 +62,7 @@ Prerequisites form a separate acyclic graph. They can cross projects within the 
 See [issue prerequisites](prerequisites.md) for aggregate conflicts, immutable request receipts, and readiness semantics.
 Close and updates that request `in_progress` or `closed` accept `force: true` with a nonempty `reason` for an explicit exception.
 The reason becomes an attributed comment in the successful status transaction. Ordinary operation results retain their existing shapes.
+Schema 7 adds the [change feed](#change-feed) and keeps every operation result unchanged.
 Version 0.3.0 uses schema 6 and adds issue ownership while retaining all seven ordinary issue fields.
 Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
@@ -118,6 +120,100 @@ The excerpt surrounds the first match in that body or comment and is at most 160
 It keeps whole code points, replaces control characters such as line feeds with spaces, and marks removed text with `…` at either end.
 When the query alone exceeds the bound, the excerpt shows the start of the match and ends with `…`.
 Each page reads its matching comments in one additional query, whatever the page size.
+
+## Change feed
+
+`changes` returns the issue changes of the whole store in the order that they committed.
+An event says that an issue changed. Read the issue again for its current state.
+The [change feed decision](adr/0016-change-feed.md) records the design and its alternatives.
+
+```json
+{ "incarnation": "4be1…", "changes": [
+  { "seq": 41, "incarnation": "4be1…", "issue_id": "pd-7", "kind": "updated", "fields": ["body", "priority"], "occurred_at": 1791590400, "actor": "local:codex" },
+  { "seq": 42, "incarnation": "4be1…", "issue_id": "pd-9", "kind": "became_ready", "fields": [], "occurred_at": 1791590400, "actor": "local:codex" }
+], "next_since": 42 }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `seq` | Position in the store's sequence, from 1, without gaps or repeats within one incarnation |
+| `incarnation` | The store incarnation, the same value as `claim.store_incarnation` |
+| `issue_id` | The changed issue; for a prerequisite edit, the dependent |
+| `kind` | One of the kinds in the next table |
+| `fields` | For `updated` and `status_changed`, the written field names in field order; otherwise `[]` |
+| `occurred_at` | Database time of the write, in integer Unix seconds |
+| `actor` | The actor of the write |
+
+| Kind | Recorded when |
+| --- | --- |
+| `created` | `create` inserts an issue |
+| `updated` | `update` writes fields other than `status` |
+| `status_changed` | `update`, `close`, or `reopen` writes `status`; `fields` includes `status` |
+| `commented` | `comment` appends a comment, or a forced status change appends its reason |
+| `claim_acquired` | `claim_acquire` commits a receipt |
+| `claim_released` | `claim_release` commits a receipt |
+| `dependency_added` | `dependency_add` inserts an edge |
+| `dependency_removed` | `dependency_remove` deletes an edge |
+| `became_ready` | A blocker closes, or an open blocker is removed, and the dependent is `open` with no open blocker left |
+
+A written field counts even when its value stays the same, because its version advances.
+One write can record several events. They take consecutive numbers in this order: the change itself, then `became_ready` for each released dependent in issue order, then the reason comment of a forced change.
+A dependent with two open blockers records `became_ready` only when the second one closes or is removed.
+Closing an issue that is already closed records `status_changed` and no `became_ready`.
+A dependent that becomes blocked again records no event of its own.
+
+These writes record no event:
+
+- A rejected write, and a replay of an earlier request.
+- `claim_renew`, which extends the deadline for the same holder. `claim_show` reports the current deadline.
+- A prerequisite edit with the outcome `already_present` or `already_absent`.
+- Memory operations.
+- A lease that passes its deadline. `claim_show` and `claim_list` report it as `expired`.
+- Snapshot import, the D1 restore and merge operators, and schema upgrades.
+
+### Reading the feed
+
+Start with `since: 0`.
+A page holds the events with `seq` greater than `since`, oldest first, and at most `limit` events.
+`limit` defaults to 50 and accepts 1 through 100.
+Continue with the returned `next_since` and `incarnation`; `incarnation` is required when `since` is greater than 0.
+When more matching events remain, `next_since` is the `seq` of the last event on the page.
+Otherwise it is the newest `seq` in the store, so the next read skips events that the filters excluded.
+A page with no events and `next_since` equal to `since` means that nothing changed.
+The page and these bounds come from one query, so a write between two pages cannot open a gap.
+
+Filters narrow a page, and every supplied filter must match:
+
+- `project` matches the current project of the issue. Events do not copy issue fields, so an issue that moves to another project matches the new project, earlier events included.
+- `issue_ids` lists 1 through 50 complete issue IDs without repeats.
+- `kinds` lists 1 through 9 kinds without repeats.
+
+The store keeps the newest 10,000 events.
+Each new event beyond that removes the oldest one.
+
+The incarnation changes when `pd import`, the D1 restore operator, or a raw restore rotates it.
+The rotation removes every event, and the next event gets `seq` 1.
+A cursor from before the rotation then fails with `incarnation_mismatch`, so a receiver never confuses a reused number with an old one.
+
+| Code | Status | Cause | `details` |
+| --- | --- | --- | --- |
+| `incarnation_mismatch` | 409 | `incarnation` names another store incarnation | `incarnation`, `next_since` |
+| `cursor_expired` | 409 | Retention removed events after `since` | `incarnation`, `next_since` |
+| `invalid_input` | 400 | `since` is greater than the newest `seq`, or another argument is invalid | None |
+
+The details give the current incarnation and the newest `seq`.
+After either 409 error, read the state that you need again, then continue from those values.
+The feed reports every change after the new cursor, and the state read covers the changes before it.
+This also applies to `since: 0`: after retention has removed the first events, a read from 0 fails with `cursor_expired`.
+
+The CLI command takes the same arguments.
+`--issue` and `--kind` can repeat, and a numeric `--issue` uses the selected prefix.
+The 409 errors exit with code 4.
+
+```sh
+pd changes --since 0 --limit 20
+pd changes --since 42 --incarnation HEX --project parser --kind became_ready --kind status_changed
+```
 
 ## CLI diagnostic details
 
@@ -227,13 +323,14 @@ It also keeps these checks:
 - Discriminators, such as the claim `state`, the receipt `outcome`, the dependency `outcome`, and the memory freshness `status`, must have a value that the client knows.
 - Echoed IDs and projects must match the request, and labels must round-trip.
 - Claim, prerequisite, and worklist pages must keep their order and their cursor rules.
+- A `changes` page must hold at most `limit` events with increasing `seq` above `since`, match the requested filters and incarnation, and return a `next_since` no lower than its last `seq`. The client checks `kind` and each `fields` entry only as a lowercase name, so a Worker can add a kind or a field name. `incarnation_mismatch` and `cursor_expired` details are decoded only for `changes`.
 - Error details are decoded only for the codes that carry them. Details on another code make the response invalid.
 - The response size limit and the request timeout stay the same.
 
 A Worker can add a response field without breaking a CLI that has this behavior.
 A field that a Worker adds to `memory_context` counts toward `max_bytes`, because the client measures the whole response body.
 A Worker must not remove, rename, or retype a field that a client requires.
-It also must not send a new discriminator value, a new success shape, or details on an error code that had none.
+It also must not send a new discriminator value, a new success shape, or details on an error code that had none. A change feed `kind` is the exception.
 The client rejects each of these.
 Version 0.4.0 accepts unknown response fields. The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
 
@@ -284,10 +381,13 @@ Export uses one read transaction for a consistent snapshot.
 These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
 
+Schema 7 adds the change feed and keeps portable snapshot 5. A snapshot carries no change events.
+Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, or 5 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, or 6 store after making a private backup.
+The upgrade to schema 7 starts with an empty change feed.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
 For a v3 or v4 snapshot, use `--from 3` or `--from 4` instead.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.

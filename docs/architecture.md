@@ -13,6 +13,11 @@ The Worker adapts the same operations to D1, HTTP, and remote MCP.
 Database adapters execute ordered statement lists as one transaction.
 They do not expose interactive transactions to the issue module.
 
+Schema triggers record the [change feed](operations.md#change-feed) inside the statement that changes a row.
+Each issue, comment, claim, and prerequisite mutation batch writes a `change_writer` row with its actor first and deletes it last.
+The triggers record events only while that row exists, so restores, merges, and upgrades record none.
+The [change feed decision](adr/0016-change-feed.md) records the sequence, retention, and cursor rules.
+
 ## Dependency direction
 
 The architecture check orders source modules as core, domain, adapter, then entrypoint.
