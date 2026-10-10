@@ -7,7 +7,13 @@ description: Select, claim, and complete agent work through polylinedb MCP tools
 
 Use the selected MCP connector's advertised tools and argument schemas.
 They decide what is available, even when the installed package and the connector run different versions.
-If the connector does not advertise a tool that this skill names, stop and report the gap. Do not substitute another tool.
+Do not substitute another tool.
+Before stopping because a named tool is missing, see which connection each visible pd tool comes from.
+The name prefix or the namespace names that connection.
+Check for more than one pd connection, such as a host connector import and a configured MCP server.
+For example, a Codex session can show a connector import beside a configured MCP server.
+Use only the connection that advertises every tool this skill names.
+If none does, stop and report the missing names, the source of the visible tools, and that a connector import can keep the tool list from its creation time (refresh it) or that a configured server may need its own login.
 Keep the same connector and explicit project throughout the work.
 Repository policy selects `main-direct` or `PR` publication.
 Neither policy grants permission to publish. Follow the user's authorization boundary before an external write.
