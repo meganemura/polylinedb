@@ -62,6 +62,33 @@ test('credential lock distinguishes denied writes from an existing lock', async 
   assert.equal(busyActionInvoked, false);
 });
 
+test('auth_busy tells the user to wait while another pd process may hold the lock', async t => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-lock-busy-'));
+  t.after(() => rm(stateDirectory, { recursive: true, force: true }));
+  const namespace = await realpath(stateDirectory);
+  const lock = join(namespace, `${credentialKey(resource, namespace)}.lock`);
+  await mkdir(lock, { mode: 0o700 });
+  const guidance = 'Authentication is busy. Another pd process may still hold the authentication lock while it works, for example during a token refresh or an interactive pd auth login, which can wait up to 300 seconds for the browser callback. Wait and retry. Do not delete the lock directory while another pd process may still be running. Remove the lock directory only after you verify that no pd process is running for this configuration.';
+  await assert.rejects(credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => 'later'), error => {
+    assert.ok(error instanceof OAuthError);
+    assert.equal(error.code, 'auth_busy');
+    assert.equal(error.message, guidance);
+    assert.equal(error.message.includes(stateDirectory), false);
+    assert.equal(error.message.includes(namespace), false);
+    return true;
+  });
+  await writeFile(join(lock, 'login'), '');
+  const loginGuidance = 'Authentication is busy. The lock contents show that the holder is an interactive pd auth login, which can wait up to 300 seconds for the browser callback. Wait and retry. Do not delete the lock directory while another pd process may still be running. Remove the lock directory only after you verify that no pd process is running for this configuration.';
+  await assert.rejects(credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => 'later'), error => {
+    assert.ok(error instanceof OAuthError);
+    assert.equal(error.code, 'auth_busy');
+    assert.equal(error.message, loginGuidance);
+    assert.equal(error.message.includes(stateDirectory), false);
+    assert.equal(error.message.includes(namespace), false);
+    return true;
+  });
+});
+
 test('a failed lock release preserves the action outcome', async t => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-lock-release-'));
   t.after(() => rm(stateDirectory, { recursive: true, force: true }));
