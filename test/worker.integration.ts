@@ -136,6 +136,20 @@ try {
   assert.equal(record(final.versions).priority, 1);
   const stored = await database.prepare('SELECT body, body_v, priority, priority_v, created_by FROM issues WHERE id = ?').bind(id).first();
   assert.deepEqual(stored, { body: 'Changed through MCP', body_v: 2, priority: 2, priority_v: 1, created_by: 'access:owner' });
+  const feed = await http({ op: 'changes', since: 0, limit: 1 });
+  assert.ok(Array.isArray(feed.changes));
+  const firstChange = record(feed.changes[0]);
+  assert.deepEqual([firstChange.seq, firstChange.issue_id, firstChange.kind, firstChange.fields], [1, id, 'created', []]);
+  assert.equal(feed.next_since, 1);
+  assert.equal(typeof feed.incarnation, 'string');
+  const rest = await http({ op: 'changes', since: feed.next_since, incarnation: feed.incarnation, limit: 10 });
+  assert.ok(Array.isArray(rest.changes));
+  assert.deepEqual(rest.changes.map(change => record(change).kind), ['updated']);
+  assert.equal(rest.next_since, 2);
+  const mismatch = await http({ op: 'changes', since: 1, incarnation: 'f'.repeat(32) }, 409);
+  assert.equal(record(mismatch.error).code, 'incarnation_mismatch');
+  assert.deepEqual(record(record(mismatch.error).details), { incarnation: feed.incarnation, next_since: 2 });
+  assert.ok(listed.tools.map(tool => record(tool).name).includes('changes'));
   assert.ok(listed.tools.map(tool => record(tool).name).includes('memory_context'));
   const memoryRequest = { project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Build fact', body: 'Verified in workerd' };
   const memoryCreated = await rpc('tools/call', { name: 'memory_create', arguments: memoryRequest });
@@ -143,6 +157,9 @@ try {
   const memory = record(record(memoryCreated.structuredContent).memory);
   assert.equal(memory.id, 'pd-m1');
   assert.equal(memory.created_by, 'access:owner');
+  const afterMemory = await http({ op: 'changes', since: 2, incarnation: feed.incarnation });
+  assert.deepEqual(afterMemory.changes, []);
+  assert.equal(afterMemory.next_since, 2);
   const memoryUpdated = record((await http({ op: 'memory_update', project: 'parser', id: memory.id, title: 'Build fact', body: 'Shared HTTP and MCP state', expected: 1 })).memory);
   assert.equal(memoryUpdated.version, 2);
   const memoryContext = await rpc('tools/call', { name: 'memory_context', arguments: { project: 'parser' } });
@@ -265,7 +282,8 @@ try {
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
       'real JWT verification', 'missing and invalid credentials rejected', 'HTTP create', 'MCP initialize and show',
-      'MCP update', 'HTTP and MCP stale conflicts', 'D1 atomicity and persisted audit identity', 'JWKS cache',
+      'MCP update', 'HTTP and MCP stale conflicts', 'change feed paging and incarnation_mismatch', 'memory writes record no change event',
+      'D1 atomicity and persisted audit identity', 'JWKS cache',
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',

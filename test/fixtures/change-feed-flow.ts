@@ -60,12 +60,14 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   await records([['cf-2', 'created']], create('cf', 'first blocker').run);
   await records([['cf-3', 'created', [], 'bob']], create('cf', 'second blocker', 'other', 'bob').run);
   await silent(first.run);
+  await silent(() => run({ ...first.command, body: 'not the same issue' }), 'request_conflict');
   await silent(() => run({ ...first.command, request_id: crypto.randomUUID(), parent: 'cf-99' }), 'not_found');
 
   const firstEdge = edge('dependency_add', 'cf-1', 'cf-2', 1);
   await records([['cf-1', 'dependency_added']], () => run(firstEdge));
   await records([['cf-1', 'dependency_added']], () => run(edge('dependency_add', 'cf-1', 'cf-3', 2)));
   await silent(() => run(firstEdge));
+  await silent(() => run({ ...firstEdge, expected_revision: 99 }), 'dependency_request_conflict');
   await silent(() => run(edge('dependency_add', 'cf-2', 'cf-1', 1)), 'dependency_cycle');
   await silent(() => run(edge('dependency_add', 'cf-1', 'cf-2', 1)), 'dependency_conflict');
   await silent(() => run(edge('dependency_add', 'cf-1', 'cf-2', 3)));
@@ -84,6 +86,7 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   });
   const claim_proof = { issue_id: 'cf-3', incarnation, session_id: bobSession, generation };
   await silent(() => run(acquire, 'bob'));
+  await silent(() => run({ ...acquire, agent_label: 'Pat' }, 'bob'), 'claim_request_conflict');
   await silent(() => run({ ...acquire, session_id: aliceSession, request_id: crypto.randomUUID() }), 'claim_conflict');
   await silent(() => run({ op: 'claim_renew', claim_proof, expected_revision: 1, request_id: crypto.randomUUID(), ttl: 600 }, 'bob'));
   await records([['cf-3', 'status_changed', ['status'], 'bob'], ['cf-1', 'became_ready', [], 'bob']], () => run({ op: 'close', id: 'cf-3', expected: 1, claim_proof }, 'bob'));
@@ -113,6 +116,36 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   await records([['cf-9', 'dependency_added']], () => run(edge('dependency_add', 'cf-9', 'cf-8', 1)));
   await records([['cf-8', 'status_changed', ['status']], ['cf-9', 'became_ready'], ['cf-10', 'became_ready']], () => run({ op: 'close', id: 'cf-8', expected: 1 }));
   await records([['cf-7', 'updated', ['project', 'labels']]], () => run({ op: 'update', id: 'cf-7', changes: [{ field: 'labels', value: ['moved'], expected: 1 }, { field: 'project', value: 'other', expected: 1 }] }));
+
+  // A deferred or in_progress blocker is still active. Only an open dependent becomes ready.
+  await records([['cf-11', 'created']], create('cf', 'deferred blocker').run);
+  await records([['cf-12', 'created']], create('cf', 'waits on deferred').run);
+  await records([['cf-11', 'status_changed', ['status']]], () => run({ op: 'update', id: 'cf-11', changes: [{ field: 'status', value: 'deferred', expected: 1 }] }));
+  await records([['cf-12', 'dependency_added']], () => run(edge('dependency_add', 'cf-12', 'cf-11', 1)));
+  await records([['cf-13', 'created']], create('cf', 'second active blocker').run);
+  await records([['cf-12', 'dependency_added']], () => run(edge('dependency_add', 'cf-12', 'cf-13', 2)));
+  await records([['cf-13', 'status_changed', ['status']]], () => run({ op: 'close', id: 'cf-13', expected: 1 }));
+  await records([['cf-11', 'status_changed', ['status']], ['cf-12', 'became_ready']], () => run({ op: 'close', id: 'cf-11', expected: 2 }));
+  await records([['cf-14', 'created']], create('cf', 'in progress blocker').run);
+  await records([['cf-15', 'created']], create('cf', 'waits on progress').run);
+  await records([['cf-14', 'status_changed', ['status']]], () => run({ op: 'update', id: 'cf-14', changes: [{ field: 'status', value: 'in_progress', expected: 1 }] }));
+  await records([['cf-15', 'dependency_added']], () => run(edge('dependency_add', 'cf-15', 'cf-14', 1)));
+  await records([['cf-15', 'dependency_removed'], ['cf-15', 'became_ready']], () => run(edge('dependency_remove', 'cf-15', 'cf-14', 2)));
+  await records([['cf-16', 'created']], create('cf', 'started while blocked').run);
+  await records([['cf-17', 'created']], create('cf', 'blocks the started issue').run);
+  await records([['cf-16', 'dependency_added']], () => run(edge('dependency_add', 'cf-16', 'cf-17', 1)));
+  await records([['cf-16', 'status_changed', ['status']], ['cf-16', 'commented']], () => run({ op: 'update', id: 'cf-16', changes: [{ field: 'status', value: 'in_progress', expected: 1 }], force: true, reason: 'Started despite the blocker' }));
+  await records([['cf-17', 'status_changed', ['status']]], () => run({ op: 'close', id: 'cf-17', expected: 1 }));
+
+  const lapse = { op: 'claim_acquire', issue_id: 'cf-5', incarnation, session_id: aliceSession, request_id: crypto.randomUUID(), ttl: 600 };
+  await records([['cf-5', 'claim_acquired']], () => run(lapse));
+  const held = await latest();
+  await sql('UPDATE issue_claims SET acquired_at = unixepoch() - 10, changed_at = unixepoch() - 10, expires_at = unixepoch() - 1 WHERE issue_id = ?', 'cf-5');
+  const lapsed = await run({ op: 'claim_show', issue_id: 'cf-5' });
+  assert.ok('claim' in lapsed && lapsed.claim.state === 'expired', 'a past deadline is expired at read time');
+  assert.equal(await latest(), held, 'a lapsed lease recorded no event');
+  assert.deepEqual((await read({ since: held, incarnation })).changes, []);
+  assert.equal(await writerRows(), 0);
 
   const end = await latest();
   assert.deepEqual(log.map(change => change.seq), Array.from({ length: end }, (_, index) => index + 1));
