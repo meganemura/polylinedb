@@ -57,9 +57,34 @@ Use the host's HTTP connector for cloud agents. `autospawn` starts and shares lo
 
 For Codex Cloud, select a host-supported plugin or connector that brokers the remote server and owns its credentials. Verify that mechanism in the actual cloud account before relying on it. OpenAI's [plugin authentication guide](https://developers.openai.com/plugins/build/auth) describes the OAuth contract. Its [MCP guide](https://learn.chatgpt.com/docs/extend/mcp) describes the different local and hosted mechanisms.
 
-A successful `codex mcp login` on a laptop proves that local connection. A local IDE MCP configuration likewise proves that IDE connection. Neither result establishes token storage or tool availability inside a cloud task. Do not copy a local OAuth credential file into a cloud sandbox to bridge this gap.
+A successful `codex mcp login <name>` on a laptop proves that named server on that machine. A local IDE MCP configuration likewise proves that IDE connection. Neither result establishes token storage or tool availability inside a cloud task. Do not copy a local OAuth credential file into a cloud sandbox to bridge this gap. When Codex also shows a connector import, the two sources can list different tools and different actors. See [Refresh a connector's tool list](#refresh-a-connectors-tool-list).
 
 If the selected cloud product cannot broker the connection without exposing credentials to its agent, keep that host unavailable. A service token inside its VM does not meet this connection boundary.
+
+## Refresh a connector's tool list
+
+The Worker advertises its current tools to every caller.
+A host can still show an older list, because a connector import can keep the tool list from the time the connector was created.
+After polylinedb adds tools, refresh that import in the host.
+Calls through the saved list still reach the current Worker, so issue data can be current while the import omits tools added later.
+
+A connector import and a configured MCP server can both be present.
+Each one keeps its own tool list and its own signed-in identity.
+The tool name prefix or the namespace shows which connection advertised a tool.
+This host MCP connection is separate from a named [`pd` connection](connections.md).
+Use the connection that advertises every tool the skill names.
+An `actor` result belongs to that connection.
+
+Codex is one example.
+It can import a ChatGPT connector (a Codex App) and also read a server from its own MCP configuration.
+The import can keep the creation-time tool list described above.
+The configured server contributes tools after its own login: `codex mcp login <name>`, with `<name>` taken from that configuration.
+A login for one of those sources leaves the other source unchanged.
+
+Prefer the logged-in MCP server that advertises the current tools.
+The `pd` CLI keeps authentication state in `$XDG_CONFIG_HOME/polylinedb/auth`, or in `~/.config/polylinedb/auth` when `XDG_CONFIG_HOME` is unset.
+A sandbox can deny writes to that directory, so allow the directory before a CLI login.
+[CLI authentication](cli-authentication.md) describes the resulting `auth_state_access_denied` error.
 
 ## Configure the Worker
 
