@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, realpath, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, realpath, chmod, rmdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,6 +60,55 @@ test('credential lock distinguishes denied writes from an existing lock', async 
     return true;
   });
   assert.equal(busyActionInvoked, false);
+});
+
+test('a failed lock release preserves the action outcome', async t => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-lock-release-'));
+  t.after(() => rm(stateDirectory, { recursive: true, force: true }));
+  const namespace = await realpath(stateDirectory);
+  const lock = join(namespace, `${credentialKey(resource, namespace)}.lock`);
+  const releaseFailure = 'auth_lock_release_failed: The authentication lock could not be removed. Later commands can return auth_busy until that lock directory is removed.\n';
+  const lines: string[] = [];
+  const write = process.stderr.write;
+  process.stderr.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
+    lines.push(String(chunk));
+    return write.call(process.stderr, chunk as never, encoding as never, callback as never);
+  }) as typeof process.stderr.write;
+  try {
+    const released = await credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => {
+      await rmdir(lock);
+      return 'refreshed';
+    });
+    assert.equal(released, 'refreshed');
+    assert.deepEqual(lines, []);
+
+    await assert.rejects(credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => {
+      await rmdir(lock);
+      throw new OAuthError('auth_reauthorization_required', 'Run auth login for this cloud connection.');
+    }), error => {
+      assert.ok(error instanceof OAuthError);
+      assert.equal(error.code, 'auth_reauthorization_required');
+      assert.equal(error.message, 'Run auth login for this cloud connection.');
+      return true;
+    });
+    assert.deepEqual(lines, []);
+
+    const stuck = await credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => {
+      await writeFile(join(lock, 'kept'), 'x');
+      return 'refreshed';
+    });
+    assert.equal(stuck, 'refreshed');
+    assert.deepEqual(lines, [releaseFailure]);
+    assert.equal(lines.join('').includes(stateDirectory), false);
+    assert.equal(lines.join('').includes(namespace), false);
+    await assert.rejects(credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => 'later'), error => {
+      assert.ok(error instanceof OAuthError);
+      assert.equal(error.code, 'auth_busy');
+      return true;
+    });
+  } finally {
+    process.stderr.write = write;
+  }
 });
 
 async function fixture(t: test.TestContext, providerIssuer = issuer) {
