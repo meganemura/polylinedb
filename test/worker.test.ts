@@ -320,6 +320,36 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
   } finally { sqlite.close(); }
 });
 
+test('MCP update names the expired claim when the supplied proof no longer holds', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const post = (path: string, body: unknown) => handleRequest(new Request(`https://issues.example${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': token },
+    body: JSON.stringify(body),
+  }), env, authenticate);
+  try {
+    const created = await post('/v1/operations', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'pd', project: 'test', body: 'Issue' });
+    const issue = (await created.json()).issue;
+    const shown = await post('/v1/operations', { op: 'claim_show', issue_id: issue.id });
+    const incarnation = (await shown.json()).claim.store_incarnation;
+    const session_id = crypto.randomUUID();
+    const acquired = await post('/v1/operations', { op: 'claim_acquire', issue_id: issue.id, incarnation, session_id, request_id: crypto.randomUUID(), ttl: 3600 });
+    assert.equal((await acquired.json()).claim_receipt.generation, 1);
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue.id);
+    const mcp = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'update', arguments: {
+      id: issue.id, claim_proof: { issue_id: issue.id, incarnation, session_id, generation: 1 },
+      changes: [{ field: 'labels', value: ['ready'], expected: 1 }],
+    } } });
+    const result = (await mcp.json()).result;
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, 'claim_required');
+    assert.equal(result.structuredContent.error.message, 'A current ownership proof is required for this update');
+    assert.deepEqual(result.structuredContent.error.details.claim, { state: 'expired', generation: 1, expires_at: 1000 });
+    assert.deepEqual(result.structuredContent.error.details.issue.labels, []);
+    assert.equal(sqlite.prepare('SELECT labels_json FROM issues WHERE id = ?').get(issue.id)?.labels_json, '[]');
+  } finally { sqlite.close(); }
+});
+
 test('claim_acquire without a session UUID fails with a session_id usage error on HTTP and MCP', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
