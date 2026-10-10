@@ -486,7 +486,7 @@ The `agent_label` of a claim stays display text.
 
 ### Label an actor for the `/ui` page
 
-The `label` names the actor on the [`/ui` page](#read-recent-work-in-a-browser), such as `Claude` or `owner`.
+The `label` names the actor on the [`/ui` pages](#read-issues-in-a-browser), such as `Claude` or `owner`.
 Only the operator sets it, in the roster.
 The Worker never takes a label from an email address or an assertion claim.
 
@@ -506,27 +506,167 @@ The label is display text for `/ui` only.
 The store keeps the actor ID in `created_by`, `updated_by`, and claim leases, and every operation response and MCP result returns the actor ID.
 A change to a label therefore changes `/ui` for past updates too.
 
-## Read recent work in a browser
+## Read issues in a browser
 
-The Worker serves a read-only page at `/ui` for a phone browser.
-The page lists two sections:
+The Worker serves HTML pages under `/ui` for a phone browser.
+The pages do not change the store.
+They contain no script.
+Every page accepts only `GET`.
+The same Access check as the operation endpoints runs before any page is returned.
+A bad Access configuration returns `503 invalid_access_configuration`.
+A missing or invalid assertion returns `401`.
+An actor outside the roster returns `403`.
+Each roster role can read the pages.
 
-- `Waiting for main`: open issues with the label `main-wait`. This label marks work that is merged into a local land queue but is not yet on the remote main branch.
-- `Recently closed`: closed issues.
+Every page starts with the same links.
 
-Each row shows the issue ID, the first line of the body, the time of the last update in JST, and the actor of the last update.
-The actor shows as its roster [label](#label-an-actor-for-the-ui-page), or as the actor ID when the roster gives it no label or no longer lists it.
-The rows are newest first by `updated_at`.
-The time column has the label `Last updated`.
-It is not the close time, because the store does not record when an issue closed or who closed it.
+- **Projects** opens `/ui`.
+- **Inbox** opens `/ui/inbox`.
+- **Working** opens `/ui/working`.
+- **Blocked** opens `/ui/blocked`.
+- **Recent** opens `/ui/recent`.
+- **Search** opens `/ui/search`.
+
+An actor name is the roster [label](#label-an-actor-for-the-ui-page).
+When that actor has no label, the page shows the actor ID.
+Times use Japan Standard Time.
+The store does not record when an issue closed.
+A shown update time is `updated_at`.
 A comment does not change `updated_at`.
+On **Working now**, the time is when the claim expires.
 
-The Worker code returns the page only after the same Access verification as the operation endpoints.
-A bad Access configuration returns `503 invalid_access_configuration`, a missing or invalid assertion returns `401`, and an actor outside the roster returns `403`.
-Each roster role can read the page.
-The page has no form and no script, and `/ui` accepts only `GET`.
-Serve `/ui` and every file it needs from Worker code. If a later change adds static assets, set `run_worker_first` so that the Access check runs first.
+### Projects
 
+`/ui` lists projects.
+Each row names the tool and the project.
+It counts issues in `open`, `in_progress`, `deferred`, and `closed`.
+The list is ordered by tool, then by project.
+It shows at most 200 projects.
+When more exist, the page says that more projects are not shown.
+A row opens `/ui/p/<tool>/<project>`.
+A slash in the project name is its own path segment.
+
+**Waiting for main** sits under the project list.
+It lists open issues with the label `main-wait`, newest update first, at most 50.
+That label marks work that is merged into a local land queue and is not yet on the remote main branch.
+Each row shows the first line of the body, the issue ID, the last update, and the actor of that update.
+The row has no link.
+
+### Project view
+
+The project page title is the tool.
+The line under the title is the project name.
+
+Status chips and label chips filter the issue list together.
+The status chips are **Unfinished**, `open`, `in_progress`, `deferred`, and `closed`.
+**Unfinished** is selected when the address has no `status`.
+It lists every status except `closed`.
+Lower priority numbers come first, then `in_progress`, then `open`, then `deferred`.
+The `open`, `in_progress`, and `deferred` chips use that same order.
+The `closed` chip lists closed issues, newest update first.
+The label chips are **Any label**, `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action`.
+**Any label** is selected when the address has no `label`.
+A label chip keeps issues that carry that label.
+The selected chip is filled.
+A `status` other than those four values returns the not-found page.
+A `label` that is empty, longer than 256 UTF-8 bytes, or that contains a control character returns the not-found page.
+
+Each issue row links to that issue.
+The row shows the first line of the body, the status, the priority, the type, and the issue ID.
+The row also lists each of `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action` that the issue carries.
+An active claim adds the claim's agent label when one is set, the actor, and the expiry time.
+When blockers are not closed, the row shows how many.
+A deferred blocker counts.
+The list shows at most 100 issues.
+It says when more match.
+
+**Recently closed** stays under the filtered list for every chip.
+It lists this project's closed issues, newest update first, at most 50.
+The time is the last update.
+Choosing the `closed` chip shows those issues in the filtered list as well.
+
+### Issue detail
+
+`/ui/i/<id>` shows one issue.
+The title is the first non-empty line of the body, without leading hash marks.
+The page shows the issue ID, status, type, priority, tool, and project, then the labels.
+An issue with no labels says so.
+The rest of the body follows.
+A link named **Project** returns to that issue's project page.
+
+The claim line shows the claim state.
+When a claim exists, the line also shows the agent label if one is set, the actor, and a time.
+An active claim and an expired claim show the expiry time.
+A released claim shows the release time when the store has one, and the expiry time otherwise.
+An issue that was never claimed shows `never_claimed`.
+
+When the issue has a parent, the page links to the parent and shows the parent's status.
+**Children** lists issues that name this issue as their parent, in creation order, at most 100.
+Each child links to its page and shows its title, ID, and status.
+The page says when more children exist.
+It says when there are none.
+
+**Comments** lists each comment with its time and author.
+**Open blockers** lists blockers whose status is not `closed`, and each one links to that issue.
+**Closed blockers** lists the blockers that are closed.
+A missing issue returns the not-found page.
+
+### Inbox
+
+`/ui/inbox` lists issues that are not closed and that carry `owner-decision`, `owner-action`, or `main-wait`.
+Rows are newest first.
+The page shows at most 50.
+Each row links to the issue.
+It shows the title, ID, status, tool, project, the matching labels, and the last update.
+
+### Search
+
+`/ui/search` is the only page with a form.
+The form sends `GET`.
+The query is `q`.
+An empty box asks for an issue ID or words from the text.
+Words match the issue body or a comment.
+A query that is an issue ID lists that issue first when it exists.
+The page shows at most 50 search matches.
+It says when further matches exist.
+It does not load a next page.
+A query longer than 65536 UTF-8 bytes, or a query that contains a null character, is rejected.
+Each hit links to the issue and shows the title, ID, status, and project.
+
+### Working now
+
+`/ui/working` lists issues with an active claim.
+The page lists active claims only.
+The soonest expiry comes first.
+The page shows at most 50 claims.
+Each row links to the issue.
+It shows the title, the project, the agent label when the claim has one, the actor, and the expiry time.
+
+### Blocked
+
+`/ui/blocked` lists issues that are not closed and that have at least one blocker that is not closed.
+A deferred blocker counts.
+The most open blockers come first, then the lower priority numbers.
+The page shows at most 50 issues.
+Each row links to the issue and shows the title, status, project, and the open-blocker count.
+
+### Recent updates
+
+`/ui/recent` lists issues of every status, newest update first, at most 50.
+Each row links to the issue.
+It shows the title, ID, status, project, last update, and the actor of that update.
+The time is the last update.
+
+### Night theme
+
+The pages follow the browser color scheme.
+When the browser asks for a dark scheme, the background is `#1c1916`.
+The text is `#f3ece3`.
+The browser theme color uses that same background.
+The page has no theme control of its own.
+
+Serve `/ui` and every file it needs from Worker code.
+If a later change adds static assets, set `run_worker_first` so that the Access check runs first.
 Do not add an Access bypass for local use.
 `test/worker.test.ts` renders `/ui` on Node with SQLite, and `npm run test:worker` renders it in local workerd with D1.
 Both sign a test assertion and check the page content.
