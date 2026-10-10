@@ -41,7 +41,7 @@ try {
   const expectedFiles = ['LICENSE', 'CHANGELOG.md', 'README.md', 'package.json', 'dist/cli.js', 'dist/cli-help.js', 'dist/cli-commands.js', 'dist/cli-human.js', 'dist/cli-diagnostics.js', "dist/records/issues.js",
     "dist/records/schema.js", "dist/local-store/index.js", "dist/records/snapshot.js", "dist/workspace/local-config.js", "dist/workspace/connections.js", 'dist/workspace/index.js', "dist/records/issue-id.js",
     'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
-    "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'docs/agent-workflow.md', 'docs/architecture.md',
+    "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'skills/polylinedb-queue/SKILL.md', 'docs/agent-workflow.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
     'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
     "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md',
@@ -205,6 +205,8 @@ try {
   const skill = readFileSync(join(installed, 'skills', 'polylinedb', 'SKILL.md'), 'utf8');
   assert.match(skill, /memory_context/);
   assert.match(skill, /context compaction/);
+  const queueSkill = readFileSync(join(installed, 'skills', 'polylinedb-queue', 'SKILL.md'), 'utf8');
+  assert.match(queueSkill, /queue-branch/);
   const snapshotPath = join(root, 'snapshot.json');
   const exported = JSON.parse(pd(['export', '--file', snapshotPath]));
   const restoredDirectory = join(root, 'restored');

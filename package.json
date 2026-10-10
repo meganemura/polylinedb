@@ -60,6 +60,7 @@
     "dist/local-store/index.js",
     "docs/",
     "skills/polylinedb/",
+    "skills/polylinedb-queue/",
     "dist/records/issue-queries.js",
     "dist/records/solarsql.generated.js",
     "dist/workspace/connections.js",
