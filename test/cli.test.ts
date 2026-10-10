@@ -681,6 +681,18 @@ test('CLI sequential IDs support natural pagination, child aliases and explicit 
   assert.equal(run(['show', 'pd-1', '--prefix', 'other']).issue.id, epic.id);
 });
 
+test('CLI create accepts an uppercase request UUID and retries it as the same issue', t => {
+  const { run } = fixture(t);
+  run(['init']);
+  const uppercase = '550E8400-E29B-41D4-A716-446655440000';
+  const lowercase = '550e8400-e29b-41d4-a716-446655440000';
+  const created = run(['create', '--tool', 'tool', '--project', 'project', '--body', 'From uuidgen', '--request-id', uppercase]).issue;
+  assert.equal(created.id, 'pd-1');
+  assert.equal(run(['create', '--tool', 'tool', '--project', 'project', '--body', 'From uuidgen', '--request-id', lowercase]).issue.id, 'pd-1');
+  assert.equal(run(['create', '--tool', 'tool', '--project', 'project', '--body', 'From uuidgen', '--request-id', uppercase]).issue.id, 'pd-1');
+  assert.equal(run(['list']).issues.length, 1);
+});
+
 test('CLI create retries reuse a supplied request ID and automatic IDs create separate issues', t => {
   const { run } = fixture(t);
   run(['init']);
