@@ -256,6 +256,59 @@ test('claim cloud decoding rejects malformed authority, state and receipt varian
   } finally { sqlite.close(); }
 });
 
+test('cloud decoding reads change feed pages and cursor errors and rejects pages that break the cursor', async () => {
+  const { sqlite, env } = fixture(); const token = await assertion();
+  const worker = (async (_url, options) => handleRequest(new Request('https://issues.example/v1/operations', { ...options, headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token } }), env, authenticate)) satisfies typeof fetch;
+  const run = (value: unknown, transport: typeof fetch = worker) => executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation(value), authorize: async () => 'synthetic', fetch: transport });
+  const reply = (body: unknown, status = 200) => async () => Response.json(body, { status });
+  try {
+    await run({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'cloud', body: 'Feed' });
+    await run({ op: 'comment', id: 'pd-1', body: 'noted' });
+    const page = await run({ op: 'changes', since: 0 }); assert.ok('next_since' in page);
+    const { incarnation } = page;
+    assert.deepEqual(page.changes.map(({ seq, issue_id, kind, fields, actor }) => ({ seq, issue_id, kind, fields, actor })), [
+      { seq: 1, issue_id: 'pd-1', kind: 'created', fields: [], actor: 'access:owner' },
+      { seq: 2, issue_id: 'pd-1', kind: 'commented', fields: [], actor: 'access:owner' },
+    ]);
+    assert.equal(page.next_since, 2);
+    const other = 'f'.repeat(32);
+    await assert.rejects(run({ op: 'changes', since: 1, incarnation: other }), { code: 'incarnation_mismatch', details: { incarnation, next_since: 2 } });
+    sqlite.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10000)
+      INSERT INTO change_events(issue_id, kind, fields_json, occurred_at, actor) SELECT 'pd-1', 'commented', '[]', unixepoch(), 'retention' FROM n`);
+    await assert.rejects(run({ op: 'changes', since: 1, incarnation }), { code: 'cursor_expired', details: { incarnation, next_since: 10002 } });
+
+    const [created, commented] = page.changes; assert.ok(created && commented);
+    const later = { ...commented, kind: 'claim_reclaimed', fields: ['reclaimed_at'] };
+    assert.deepEqual(await run({ op: 'changes', since: 0, limit: 2 }, reply({ incarnation, changes: [created, later], next_since: 9 })), { incarnation, changes: [created, later], next_since: 9 });
+    for (const [operation, body] of [
+      [{ op: 'changes', since: 0, limit: 1 }, { ...page }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [commented, created] }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [created, created] }],
+      [{ op: 'changes', since: 1, incarnation }, { ...page }],
+      [{ op: 'changes', since: 0 }, { ...page, next_since: 1 }],
+      [{ op: 'changes', since: 0 }, { ...page, next_since: undefined }],
+      [{ op: 'changes', since: 0, incarnation: other }, { ...page }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [{ ...created, incarnation: other }] }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [{ ...created, kind: 'Created' }] }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [{ ...created, fields: ['Body'] }] }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [{ ...created, fields: undefined }] }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [{ ...created, actor: '' }] }],
+      [{ op: 'changes', since: 0 }, { ...page, changes: [{ ...created, occurred_at: -1 }] }],
+      [{ op: 'changes', since: 0, kinds: ['created'] }, { ...page }],
+      [{ op: 'changes', since: 0, issue_ids: ['pd-2'] }, { ...page }],
+    ] satisfies [Record<string, unknown>, unknown][]) await assert.rejects(run(operation, reply(body)), { code: 'cloud_invalid_response' }, JSON.stringify({ operation, body }));
+    for (const [operation, error] of [
+      [{ op: 'changes', since: 0 }, { code: 'incarnation_mismatch', details: { incarnation, next_since: 2 } }],
+      [{ op: 'changes', since: 1, incarnation }, { code: 'incarnation_mismatch', details: { incarnation, next_since: 2 } }],
+      [{ op: 'changes', since: 1, incarnation }, { code: 'incarnation_mismatch', details: { incarnation: 'bad', next_since: 2 } }],
+      [{ op: 'changes', since: 5, incarnation }, { code: 'cursor_expired', details: { incarnation, next_since: 5 } }],
+      [{ op: 'changes', since: 1, incarnation }, { code: 'cursor_expired', details: { incarnation: other, next_since: 9 } }],
+      [{ op: 'changes', since: 1, incarnation }, { code: 'cursor_expired', details: { incarnation } }],
+      [{ op: 'show', id: 'pd-1' }, { code: 'cursor_expired', details: { incarnation, next_since: 9 } }],
+    ] satisfies [Record<string, unknown>, Record<string, unknown>][]) await assert.rejects(run(operation, reply({ error: { message: 'x', ...error } }, 409)), { code: 'cloud_invalid_response' }, JSON.stringify({ operation, error }));
+  } finally { sqlite.close(); }
+});
+
 test('response boundary rejects HTML, redirects, missing fields, oversized bodies and unsafe error details', async () => {
   const replies = [new Response('<html>secret</html>'), new Response('', { status: 302, headers: { location: 'https://other.example' } }),
     Response.json({}), Response.json({ actor: 'x' }, { headers: { 'content-length': String(8 * 1024 * 1024 + 1) } }),
