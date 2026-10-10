@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- When `update`, `close`, or `reopen` includes a `claim_proof` and the store rejects it with `claim_required`, `details.claim` sits next to `details.issue`. A lease reports `state`, `generation`, and `expires_at`. An issue that was never claimed reports `state` `never_claimed`. A rejection with no proof still returns only the issue. The cloud CLI drops `claim`, so a released CLI still accepts the response. MCP and a direct HTTP client see `claim`.
+- Reject a `reason` sent without `force` with `reason is accepted only with force: true`. The MCP schema for `reason` on `update` and `close` says the same thing. `force` without a nonempty `reason` still reports `force requires true and a nonempty reason`. The call stays refused, and the text is not stored.
 - Keep the authorization error when a cloud `show` follows up with `claim_show` because the Worker omitted `claim`. `pd show` reports that error with its code and its login message.
 - Let `pd --claim-proof` accept a `claim_receipt` from acquire or renew. The CLI reads `issue_id`, `incarnation`, `session_id`, and `generation` and sends only those fields. HTTP and MCP still reject any other field on `claim_proof`.
 - Change `auth_busy` so it says another pd process may still hold the authentication lock, for example during a token refresh or `pd auth login`, which can wait up to 300 seconds for the browser callback. Wait and retry. Delete the lock directory only after no pd process is running for this configuration. The 10 second wait is unchanged. If the lock directory already contains an entry named `login`, the message says that the holder is an interactive login.
