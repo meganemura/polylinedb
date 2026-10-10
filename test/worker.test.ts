@@ -1444,8 +1444,10 @@ test('ui: a cross-document view transition is css and stays off when motion is r
   try {
     const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
     assert.match(html, /@media \(prefers-reduced-motion: no-preference\) \{\s*@view-transition \{ navigation: auto; \}/);
-    assert.ok(html.includes('::view-transition-old(root)'));
+    assert.ok(html.includes('::view-transition-group(root)'));
+    assert.ok(html.includes('::view-transition-image-pair(root)'));
     assert.ok(html.includes('animation-duration: 80ms'));
+    assert.equal(html.includes('pointer-events'), false);
     assertNoApplicationControls(html);
   } finally { sqlite.close(); }
 });
