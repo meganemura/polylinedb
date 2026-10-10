@@ -2,7 +2,7 @@
 import { PolylinedbError } from './errors.ts';
 import { claimRow } from './claims.ts';
 import type { SqlStatement } from './issues.ts';
-import { admitAgentWrite, readyLabel } from '../transition/index.ts';
+import { admitAgentWrite, claimState, readyLabel } from '../transition/index.ts';
 import type { Actor, GatedWrite } from '../transition/index.ts';
 
 const open: SqlStatement = { sql: '1', params: [] };
@@ -27,10 +27,13 @@ export function heldClaimObservation(issueId: string): SqlStatement {
 export function rejectAgentWrite(actor: Actor, write: GatedWrite, issueId: string, labels: readonly string[], observed: Record<string, unknown> | undefined): void {
   if (actor.kind === 'human') return;
   if (!observed || typeof observed.store_incarnation !== 'string' || typeof observed.observed_at !== 'number') throw new PolylinedbError('storage_error', 'Database omitted the claim observation', 503);
-  const decision = admitAgentWrite(actor, write, { labels, claim: observed.generation === null || observed.generation === undefined ? null : claimRow(observed),
-    store_incarnation: observed.store_incarnation, now: observed.observed_at });
+  const lease = observed.generation === null || observed.generation === undefined ? null : claimRow(observed);
+  const decision = admitAgentWrite(actor, write, { labels, claim: lease, store_incarnation: observed.store_incarnation, now: observed.observed_at });
   if (decision.admitted) return;
   if (decision.code === 'not_ready') throw new PolylinedbError('not_ready', `An agent can claim only an issue with the ${readyLabel} label`, 409, { id: issueId });
+  if (lease !== null && lease.actor === actor.id && claimState(lease, observed.store_incarnation, observed.observed_at) === 'expired') {
+    throw new PolylinedbError('claim_required', "The agent's own claim expired", 409, { id: issueId, claim: { state: 'expired', generation: lease.generation, expires_at: lease.expires_at } });
+  }
   throw new PolylinedbError('claim_required', 'An agent needs its own active claim on this issue before it writes', 409, { id: issueId });
 }
 
