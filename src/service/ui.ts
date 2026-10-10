@@ -365,8 +365,18 @@ function projectPage(tool: string, project: string, issues: readonly ProjectIssu
   const labelChips = [chip(filterHref(tool, project, filter.status), 'Any label', filter.label === undefined), ...attentionLabels.map(label => chip(filterHref(tool, project, filter.status, label), label, filter.label === label))].join('');
   return document(tool, `<h1>${escape(tool)}</h1>
 <p class="section-note">${escape(project)}</p>
-<nav class="chips" aria-label="Status">${statusChips}</nav>
-<nav class="chips" aria-label="Labels">${labelChips}</nav>
+<div class="filters">
+<section class="filter-rail filter-state">
+<p class="filter-kicker"><span class="filter-name">State</span> One status at a time</p>
+<nav class="segment" aria-label="State">${statusChips}</nav>
+<p class="filter-note">Unfinished means every status except closed.</p>
+</section>
+<section class="filter-rail filter-mark">
+<p class="filter-kicker"><span class="filter-name">Mark</span> A label, not a status</p>
+<nav class="stamps" aria-label="Mark">${labelChips}</nav>
+<p class="filter-note">A mark sits on the issue. It does not change the status.</p>
+</section>
+</div>
 ${body}
 ${note}
 ${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered by last update. The close time is not recorded.')}`);
@@ -480,6 +490,7 @@ const styles = `
   --muted: #716b60;
   --line: #ddd7cb;
   --chip: #cfc6b8;
+  --mark: #9a3412;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
   color: var(--ink);
   background: var(--paper);
@@ -515,9 +526,21 @@ h1 {
 }
 .section-note, .quiet-note { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .quiet-note { margin-top: 18px; font-size: 18px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
-.chips a { border: 1px solid var(--chip); border-radius: 999px; padding: 4px 10px; color: inherit; text-decoration: none; font-size: 14px; line-height: 1.4; }
-.chips a[aria-current="page"] { background: var(--ink); color: var(--paper); }
+.filters { display: grid; gap: 18px; margin: 28px 0 8px; }
+.filter-rail { display: grid; gap: 8px; padding: 14px 0 16px; border-top: 1px solid var(--line); }
+.filter-kicker { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 15px; line-height: 1.3; letter-spacing: .01em; }
+.filter-kicker .filter-name { display: block; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+.filter-state .filter-name { color: var(--ink); }
+.filter-mark .filter-name { color: var(--mark); }
+.filter-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.segment { display: flex; overflow-x: auto; border: 2px solid var(--ink); }
+.segment a { flex: 1 0 auto; padding: 9px 10px; border-right: 1px solid var(--ink); color: inherit; text-align: center; text-decoration: none; font-size: 13px; line-height: 1.3; }
+.segment a:last-child { border-right: 0; }
+.segment a[aria-current="page"] { background: var(--ink); color: var(--paper); }
+.stamps { display: flex; flex-wrap: wrap; gap: 8px; }
+.stamps a { border: 1.5px solid var(--mark); padding: 6px 10px; color: var(--mark); text-decoration: none; font-size: 13px; line-height: 1.3; background:
+  linear-gradient(var(--mark), var(--mark)) left / 4px 100% no-repeat; padding-left: 12px; }
+.stamps a[aria-current="page"] { background: var(--mark); color: var(--paper); }
 .views { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 28px; }
 .views a { color: inherit; font-size: 15px; line-height: 1.4; }
 .quiet-list { list-style: none; margin: 0; padding: 0; }
@@ -549,6 +572,7 @@ a { color: inherit; }
     --muted: #c8bfb2;
     --line: #3d362e;
     --chip: #5c5348;
+    --mark: #f0a07a;
   }
 }
 `;

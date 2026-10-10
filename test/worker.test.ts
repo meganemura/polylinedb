@@ -1424,6 +1424,14 @@ test('ui: project filter chips link to a status or a label', async () => {
     await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Chip started', status: 'in_progress' });
     const path = projectPath('polylinedb', 'meganemura/polylinedb');
     const open = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth)).text();
+    assert.ok(open.includes('class="filter-rail filter-state"'));
+    assert.ok(open.includes('class="filter-rail filter-mark"'));
+    assert.ok(open.includes('One status at a time'));
+    assert.ok(open.includes('A label, not a status'));
+    assert.ok(open.includes('aria-label="State"'));
+    assert.ok(open.includes('aria-label="Mark"'));
+    assert.ok(open.includes('<nav class="segment"'));
+    assert.ok(open.includes('<nav class="stamps"'));
     assert.ok(open.includes(`href="${path}?status=open"`));
     assert.ok(open.includes(`href="${path}?label=ready"`));
     assert.ok(open.includes(`href="${path}" aria-current="page"`));
