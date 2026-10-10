@@ -379,6 +379,10 @@ export async function projectClosedIssues(db: SqlExecutor, tool: string, project
   return (await db.reads.all(issueQueries.projectClosed, { tool, project, limit })).map(issueRow);
 }
 
+export async function ownerInboxIssues(db: SqlExecutor, limit: number): Promise<Issue[]> {
+  return (await db.reads.all(issueQueries.ownerInbox, { limit })).map(issueRow);
+}
+
 // `main-wait` keeps an issue open while its merge sits in a local land queue that the remote trunk does not yet contain.
 export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promise<Issue[]> {
   return (await db.reads.all(issueQueries.awaitingMain, { limit })).map(issueRow);

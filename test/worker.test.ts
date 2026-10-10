@@ -915,3 +915,46 @@ test('pd-137: project filters and a project-scoped closed section replace the st
     assert.ok(!(await anonymous.text()).includes('First priority'));
   } finally { sqlite.close(); }
 });
+
+test('ui: owner inbox lists owner-decision, owner-action, and main-wait across projects', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const openInbox = () => handleRequest(new Request('https://issues.example/ui/inbox', { headers: auth }), env, authenticate);
+  try {
+    const decision = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Needs a decision', labels: ['owner-decision'] });
+    const action = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Needs an action', status: 'deferred', labels: ['owner-action'] });
+    const waiting = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: '<img inbox>', labels: ['main-wait', 'ready'] });
+    const readyOnly = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Ready only', labels: ['ready'] });
+    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Closed decision', labels: ['owner-decision'] });
+    await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({ op: 'close', id: closed, expected: 1 }),
+    }), env, authenticate);
+
+    const anonymous = await handleRequest(new Request('https://issues.example/ui/inbox'), env, authenticate);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Needs a decision'));
+    const home = await (await viewUi(env, auth)).text();
+    assert.ok(home.includes('href="/ui/inbox"'));
+    const page = await openInbox();
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get('cache-control'), 'no-store');
+    const html = await page.text();
+    assert.ok(html.includes('Needs a decision'));
+    assert.ok(html.includes('Needs an action'));
+    assert.ok(html.includes('&lt;img inbox&gt;'));
+    assert.ok(!html.includes('<img'));
+    assert.ok(html.includes(`href="/ui/i/${decision}"`));
+    assert.ok(html.includes(`href="/ui/i/${action}"`));
+    assert.ok(html.includes(waiting));
+    assert.ok(html.includes('owner-decision'));
+    assert.ok(html.includes('owner-action'));
+    assert.ok(html.includes('main-wait'));
+    assert.ok(html.includes('meganemura/nukadoko'));
+    assert.ok(!html.includes('Ready only'));
+    assert.ok(!html.includes(readyOnly));
+    assert.ok(!html.includes('Closed decision'));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+  } finally { sqlite.close(); }
+});
