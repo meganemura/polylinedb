@@ -263,6 +263,7 @@ try {
   const page = await view(viewer);
   assert.equal(page.status, 200);
   assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.match(page.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/);
   const html = await page.text();
   assert.ok(html.includes(`${draftIssue.id} · Last updated`));
   assert.ok(!html.includes('Recently closed'));
@@ -291,6 +292,6 @@ try {
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
       'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
-      'projects by latest update',
+      'projects by latest update', '/ui Server-Timing',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }

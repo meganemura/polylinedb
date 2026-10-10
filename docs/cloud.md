@@ -693,6 +693,13 @@ The text is `#f3ece3`.
 The browser theme color uses that same background.
 The page has no theme control of its own.
 
+### Speed
+
+Each page carries a `Server-Timing` header with one entry named `worker`.
+Its duration is the time in milliseconds that the Worker waited on the Access keys and D1 for that page.
+A rejected caller gets no `Server-Timing` header.
+[Measure `/ui` latency](ui-latency.md) sets the latency budget and describes how to measure it.
+
 Serve `/ui` and every file it needs from Worker code.
 If a later change adds static assets, set `run_worker_first` so that the Access check runs first.
 Do not add an Access bypass for local use.
