@@ -39,6 +39,7 @@ test('credential lock distinguishes denied writes from an existing lock', async 
     assert.ok(error instanceof OAuthError);
     assert.equal(error.code, 'auth_state_access_denied');
     assert.equal(error.message, 'Authentication state is not writable. Allow access to the authentication state directory and retry.');
+    assert.deepEqual(error.details, { diagnostic: { code: 'EACCES' } });
     assert.equal(error.message.includes(deniedStateDirectory), false);
     return true;
   });
@@ -60,6 +61,53 @@ test('credential lock distinguishes denied writes from an existing lock', async 
     return true;
   });
   assert.equal(busyActionInvoked, false);
+});
+
+test('denied creation of the authentication state directory reports access denied', async t => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    t.skip('This permission fixture requires a non-root Unix process.');
+    return;
+  }
+  const parent = await mkdtemp(join(tmpdir(), 'pd-oauth-state-denied-'));
+  t.after(async () => {
+    await chmod(parent, 0o700);
+    await rm(parent, { recursive: true, force: true });
+  });
+  await chmod(parent, 0o500);
+  await assert.rejects(credentialTransaction({ stateDirectory: join(parent, 'auth'), resource, lockTimeoutMs: 25 }, async () => 'unexpected success'), error => {
+    assert.ok(error instanceof OAuthError);
+    assert.equal(error.code, 'auth_state_access_denied');
+    assert.equal(error.message, 'Authentication state is not writable. Allow access to the authentication state directory and retry.');
+    assert.deepEqual(error.details, { diagnostic: { code: 'EACCES' } });
+    assert.equal(error.message.includes(parent), false);
+    return true;
+  });
+});
+
+test('a lock creation failure names its file system code instead of reporting contention', async t => {
+  if (process.platform !== 'linux') {
+    t.skip('This fixture relies on the Linux 4096-byte path limit.');
+    return;
+  }
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'pd-oauth-lock-long-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // The state directory fits within the path limit, but the lock path inside it does not.
+  let stateDirectory = root;
+  while (stateDirectory.length < 3850) stateDirectory = join(stateDirectory, 'd'.repeat(200));
+  stateDirectory = join(stateDirectory, 'd'.repeat(4060 - stateDirectory.length - 1));
+  let actionInvoked = false;
+  await assert.rejects(credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => {
+    actionInvoked = true;
+    return 'unexpected success';
+  }), error => {
+    assert.ok(error instanceof OAuthError);
+    assert.equal(error.code, 'auth_lock_failed');
+    assert.equal(error.message, 'Could not acquire the authentication lock: the file system returned ENAMETOOLONG for the authentication state directory. This is not contention with another pd process, so waiting does not help. Resolve the file system error and retry.');
+    assert.deepEqual(error.details, { diagnostic: { code: 'ENAMETOOLONG' } });
+    assert.equal(error.message.includes(root), false);
+    return true;
+  });
+  assert.equal(actionInvoked, false);
 });
 
 test('auth_busy tells the user to wait while another pd process may hold the lock', async t => {
