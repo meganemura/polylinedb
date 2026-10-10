@@ -543,7 +543,8 @@ test('ui: every page reports the Worker time in Server-Timing, and a rejected ca
       const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
       assert.match(response.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/, path);
     }
-    for (const headers of [{}, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) }]) {
+    const rejections: Record<string, string>[] = [{}, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) }];
+    for (const headers of rejections) {
       const rejected = await viewUi(env, headers);
       assert.ok(rejected.status === 401 || rejected.status === 403);
       assert.equal(rejected.headers.get('server-timing'), null);
