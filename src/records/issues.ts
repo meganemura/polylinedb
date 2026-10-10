@@ -86,6 +86,7 @@ function labels(value: unknown): string[] {
 
 const nameSchema = { type: 'string', minLength: 1, maxLength: 256, description: 'At most 256 UTF-8 bytes, without control characters.' };
 const bodySchema = { type: 'string', minLength: 1, maxLength: 65536, description: 'At most 65536 UTF-8 bytes.' };
+const reasonSchema = { ...bodySchema, description: 'Accepted only with force: true. At most 65536 UTF-8 bytes.' };
 const versionSchema = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const fieldRegistry = {
@@ -110,8 +111,8 @@ export const operationSchemas = {
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
     oneOf: fields.map((field) => objectSchema({ field: { const: field }, value: fieldRegistry[field].schema, expected: versionSchema }, ['field', 'value', 'expected']))
-  } }, force: { const: true }, reason: bodySchema, claim_proof: claimProofSchema }, ['id', 'changes']),
-  close: objectSchema({ id: idSchema, expected: versionSchema, force: { const: true }, reason: bodySchema, claim_proof: claimProofSchema }, ['id', 'expected']),
+  } }, force: { const: true }, reason: reasonSchema, claim_proof: claimProofSchema }, ['id', 'changes']),
+  close: objectSchema({ id: idSchema, expected: versionSchema, force: { const: true }, reason: reasonSchema, claim_proof: claimProofSchema }, ['id', 'expected']),
   reopen: objectSchema({ id: idSchema, expected: versionSchema, claim_proof: claimProofSchema }, ['id', 'expected']),
   actor: objectSchema({}),
 };
@@ -148,6 +149,7 @@ function parseFilters(input: Record<string, unknown>): Filters {
 }
 function parseOverride(input: Record<string, unknown>): StatusOverride {
   if (input.force === undefined && input.reason === undefined) return {};
+  if (input.force === undefined) return invalid('reason is accepted only with force: true');
   if (input.force !== true || input.reason === undefined) return invalid('force requires true and a nonempty reason');
   return { force: true, reason: text(input.reason, 'reason') };
 }
