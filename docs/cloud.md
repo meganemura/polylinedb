@@ -540,9 +540,12 @@ On **Working now**, the time is when the claim expires.
 `/ui` lists projects.
 Each row names the tool and the project.
 It counts issues in `open`, `in_progress`, `deferred`, and `closed`.
-The list is ordered by tool, then by project.
+**Updated** is the newest `updated_at` among the project's issues, closed issues included.
+The most recently updated project comes first.
+Projects with the same update time are ordered by project name, then by tool.
 It shows at most 200 projects.
 When more exist, the page says that more projects are not shown.
+The projects left out are the ones updated longest ago.
 A row opens `/ui/p/<tool>/<project>`.
 A slash in the project name is its own path segment.
 
