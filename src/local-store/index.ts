@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { commentRow, issueRow } from "../records/persistence.ts";
 import { PolylinedbError } from "../records/index.ts";
 import type { SqlExecutor, SqlStatement } from "../records/persistence.ts";
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
 import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4 } from "../records/persistence.ts";
 import { claimRow, claimRequestRow } from '../records/persistence.ts';
 import type { Snapshot, SnapshotImport } from "../records/persistence.ts";
@@ -79,7 +79,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   if (rows.length !== 1 || rows[0]?.version !== SCHEMA_VERSION) {
     throw new PolylinedbError('unsupported_schema', 'Database schema version is unsupported', 409, { supported: SCHEMA_VERSION, actual: rows.map((row) => row.version) });
   }
-  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests'].some(name => !tables.some(table => table.name === name))) {
+  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'change_events', 'change_writer'].some(name => !tables.some(table => table.name === name))) {
     throw new PolylinedbError('invalid_store', 'Database schema is incomplete', 500);
   }
   return 'current';
@@ -186,9 +186,9 @@ function upgradeApproved(location: StoreLocation): { result: 'upgraded' | 'alrea
         database.exec('COMMIT');
         return { result: 'already_current', version: SCHEMA_VERSION, database_path };
       }
-      if (versions.length !== 1 || (versions[0]?.version !== 2 && versions[0]?.version !== 3 && versions[0]?.version !== 4 && versions[0]?.version !== 5)) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3, 4 and 5 can be upgraded', 409);
+      if (versions.length !== 1 || (versions[0]?.version !== 2 && versions[0]?.version !== 3 && versions[0]?.version !== 4 && versions[0]?.version !== 5 && versions[0]?.version !== 6)) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3, 4, 5 and 6 can be upgraded', 409);
       const previous = versions[0].version;
-      reference.exec(previous === 2 ? SCHEMA_V2_SQL : previous === 3 ? SCHEMA_V3_SQL : previous === 4 ? SCHEMA_V4_SQL : SCHEMA_V5_SQL);
+      reference.exec(previous === 2 ? SCHEMA_V2_SQL : previous === 3 ? SCHEMA_V3_SQL : previous === 4 ? SCHEMA_V4_SQL : previous === 5 ? SCHEMA_V5_SQL : SCHEMA_V6_SQL);
       const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
       if (JSON.stringify(database.prepare(sql).all()) !== JSON.stringify(reference.prepare(sql).all())) throw new PolylinedbError('invalid_store', `Upgrade requires the canonical schema ${previous}`, 409);
       database.exec(schemaUpgradeStatements(previous).join(';\n') + ';');
@@ -326,8 +326,8 @@ function exportHistorical(location: StoreLocation): Snapshot {
     database.exec('BEGIN');
     const rows = database.prepare('SELECT version FROM schema_version').all();
     const version = rows[0]?.version;
-    if (rows.length !== 1 || (version !== 2 && version !== 3 && version !== 4 && version !== 5)) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3, 4 or 5', 409);
-    reference.exec(version === 2 ? SCHEMA_V2_SQL : version === 3 ? SCHEMA_V3_SQL : version === 4 ? SCHEMA_V4_SQL : SCHEMA_V5_SQL);
+    if (rows.length !== 1 || (version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6)) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3, 4, 5 or 6', 409);
+    reference.exec(version === 2 ? SCHEMA_V2_SQL : version === 3 ? SCHEMA_V3_SQL : version === 4 ? SCHEMA_V4_SQL : version === 5 ? SCHEMA_V5_SQL : SCHEMA_V6_SQL);
     const guards = database.prepare("SELECT name FROM sqlite_master WHERE name GLOB 'polylinedb_retired_*'").all();
     if (guards.length && historicalRetirement(database) === undefined) throw new PolylinedbError('invalid_store', 'Historical retirement guards differ from the canonical guards', 409);
     const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT GLOB 'polylinedb_retired_*' ORDER BY name";
@@ -345,8 +345,11 @@ function exportHistorical(location: StoreLocation): Snapshot {
         return memory;
       }), memory_counters: database.prepare('SELECT * FROM memory_counters').all(), memory_requests: database.prepare('SELECT * FROM memory_requests').all() });
     const { issue_claims: _, claim_requests: __, ...legacyConverted } = converted;
-    const complete = version === 5 ? convertSnapshotV4({ ...legacyConverted, version: 4,
-      dependencies: database.prepare('SELECT * FROM dependencies').all(), dependency_revisions: database.prepare('SELECT * FROM dependency_revisions').all(), dependency_requests: database.prepare('SELECT * FROM dependency_requests').all() }) : converted;
+    const dependencies = () => ({ dependencies: database.prepare('SELECT * FROM dependencies').all(), dependency_revisions: database.prepare('SELECT * FROM dependency_revisions').all(), dependency_requests: database.prepare('SELECT * FROM dependency_requests').all() });
+    const complete = version === 5 ? convertSnapshotV4({ ...legacyConverted, version: 4, ...dependencies() })
+      : version === 6 ? parseSnapshot({ ...legacyConverted, version: 5, ...dependencies(),
+        issue_claims: database.prepare('SELECT * FROM issue_claims').all().map(claimRow), claim_requests: database.prepare('SELECT * FROM claim_requests').all().map(claimRequestRow) })
+      : converted;
     database.exec('COMMIT'); return complete;
   } finally { reference.close(); database.close(); }
 }

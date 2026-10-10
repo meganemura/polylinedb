@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { cfQuery, parseQueryOutput, parseTarget } from '../scripts/d1-snapshot.ts';
 import { childLimits } from './fixtures/child-run.ts';
 
-const target = parseTarget({ profile: 'migration', accountId: 'a'.repeat(32), databaseId: '11111111-1111-4111-8111-111111111111', snapshotSha256: 'b'.repeat(64), schemaVersion: 6 });
+const target = parseTarget({ profile: 'migration', accountId: 'a'.repeat(32), databaseId: '11111111-1111-4111-8111-111111111111', snapshotSha256: 'b'.repeat(64), schemaVersion: 7 });
 
 test('cf transport fixes identity, protects bound values, cleans files, and sanitizes failures', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pd-cf-test-'));

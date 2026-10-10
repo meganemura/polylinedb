@@ -1,10 +1,11 @@
 // Owns the persistent schema for the shared issue vocabulary; runtime adapters own database access.
 import { CLAIM_STATEMENTS } from './claims-sql.ts';
+import { CHANGE_STATEMENTS } from './changes-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
 export { SCHEMA_V6_SQL } from './schema-v6.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
 export { statuses, issueTypes, fields };
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const MEMORY_SCHEMA_SQL = `
 CREATE TABLE memories (
@@ -143,13 +144,14 @@ export const DEPENDENCY_STATEMENTS = [
       ) SELECT 1 FROM reachable WHERE id = NEW.dependent_id
     ) BEGIN SELECT RAISE(ABORT,'dependency_cycle'); END`,
 ];
-export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5): readonly string[] {
+export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6): readonly string[] {
   return [
     `INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT count(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ${previous})`,
     ...(previous === 2 ? MEMORY_SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean) : []),
     ...(previous < 4 ? MEMORY_REVISION_STATEMENTS : []),
     ...(previous < 5 ? DEPENDENCY_STATEMENTS : []),
-    ...CLAIM_STATEMENTS,
+    ...(previous < 6 ? CLAIM_STATEMENTS : []),
+    ...CHANGE_STATEMENTS,
     `UPDATE schema_version SET version = ${SCHEMA_VERSION} WHERE version = ${previous}`,
   ];
 }
@@ -159,5 +161,6 @@ export const SCHEMA_STATEMENTS = [
   ...MEMORY_REVISION_STATEMENTS,
   ...DEPENDENCY_STATEMENTS,
   ...CLAIM_STATEMENTS,
+  ...CHANGE_STATEMENTS,
 ];
 export const SCHEMA_SQL = SCHEMA_STATEMENTS.join(';\n') + ';\n';
