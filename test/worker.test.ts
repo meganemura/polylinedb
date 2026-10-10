@@ -385,8 +385,8 @@ function projectPath(tool: string, project: string): string {
   return `/ui/p/${encodeURIComponent(tool)}/${project.split('/').map(segment => encodeURIComponent(segment)).join('/')}`;
 }
 
-function viewProject(env: ReturnType<typeof fixture>['env'], tool: string, project: string, headers: Record<string, string> = {}, method = 'GET') {
-  return handleRequest(new Request(`https://issues.example${projectPath(tool, project)}`, { method, headers }), env, authenticate);
+function viewProject(env: ReturnType<typeof fixture>['env'], tool: string, project: string, headers: Record<string, string> = {}, method = 'GET', query = '') {
+  return handleRequest(new Request(`https://issues.example${projectPath(tool, project)}${query}`, { method, headers }), env, authenticate);
 }
 
 function viewIssue(env: ReturnType<typeof fixture>['env'], id: string, headers: Record<string, string> = {}, method = 'GET') {
@@ -813,5 +813,66 @@ test('pd-136: project rows show active claims and open blocker counts, and detai
     assert.ok(singleOpen.includes('open'));
     assert.ok(!single.includes(activeClaim.session));
     assert.ok(!single.includes(activeClaim.incarnation));
+  } finally { sqlite.close(); }
+});
+
+test('pd-137: project filters and a project-scoped closed section replace the store-wide list', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const first = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'First priority', priority: 0, labels: ['ready'] });
+    const second = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Second priority', priority: 2, status: 'open' });
+    const plain = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Plain open' });
+    const older = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Older close' });
+    const newest = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Newest close' });
+    const foreign = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/other', body: 'Foreign close' });
+    const waiting = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Waiting for main', labels: ['main-wait'] });
+    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?');
+    stamp.run('closed', '2026-10-01T00:00:00.000Z', older);
+    stamp.run('closed', '2026-10-03T08:00:00.000Z', newest);
+    stamp.run('closed', '2026-10-04T00:00:00.000Z', foreign);
+
+    const home = await (await viewUi(env, auth)).text();
+    assert.ok(home.includes('<h1>Projects</h1>'));
+    assert.ok(uiSection(home, 'main 待ち').includes(waiting));
+    assert.ok(!home.includes('Foreign close'));
+    assert.ok(!home.includes('Newest close'));
+
+    const openPage = await (await viewProject(env, 'polylinedb', 'meganemura/filters', auth)).text();
+    const openList = openPage.split('<h2>Recently closed</h2>')[0] ?? '';
+    const closedPart = uiSection(openPage, 'Recently closed');
+    assert.ok(openList.includes(first));
+    assert.ok(openList.includes('Second priority'));
+    assert.ok(openList.indexOf('First priority') < openList.indexOf('Second priority'));
+    assert.ok(!openList.includes(older));
+    assert.ok(!openList.includes('Newest close'));
+    assert.ok(closedPart.includes(newest));
+    assert.ok(closedPart.includes(older));
+    assert.ok(closedPart.indexOf('Newest close') < closedPart.indexOf('Older close'));
+    assert.ok(closedPart.includes('最終更新'));
+    assert.ok(!closedPart.includes('Foreign close'));
+    assert.ok(!openPage.includes('Foreign close'));
+
+    const closedFilter = await (await viewProject(env, 'polylinedb', 'meganemura/filters', auth, 'GET', '?status=closed')).text();
+    const closedMain = closedFilter.split('<h2>Recently closed</h2>')[0] ?? '';
+    assert.ok(closedMain.includes('Newest close'));
+    assert.ok(closedMain.includes('Older close'));
+    assert.ok(closedMain.indexOf('Newest close') < closedMain.indexOf('Older close'));
+    assert.ok(!closedMain.includes('Plain open'));
+    assert.ok(!closedMain.includes(plain));
+
+    const ready = await (await viewProject(env, 'polylinedb', 'meganemura/filters', auth, 'GET', '?label=ready')).text();
+    const readyMain = ready.split('<h2>Recently closed</h2>')[0] ?? '';
+    assert.ok(readyMain.includes('First priority'));
+    assert.ok(!readyMain.includes('Plain open'));
+    assert.ok(!readyMain.includes('Second priority'));
+
+    const invalid = await viewProject(env, 'polylinedb', 'meganemura/filters', auth, 'GET', '?status=nope');
+    assert.equal(invalid.status, 404);
+    assert.ok(!(await invalid.text()).includes('First priority'));
+    const anonymous = await viewProject(env, 'polylinedb', 'meganemura/filters', {}, 'GET', '?status=nope');
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('First priority'));
   } finally { sqlite.close(); }
 });
