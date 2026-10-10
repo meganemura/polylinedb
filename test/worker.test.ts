@@ -998,3 +998,48 @@ test('ui: search finds an issue by id or by words in the text', async () => {
     assert.ok(!missing.includes('Unique lantern phrase'));
   } finally { sqlite.close(); }
 });
+
+test('ui: working now lists active claims and hides released ones', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const post = async (body: unknown) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
+    }), env, authenticate);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  try {
+    const active = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Lane is here' });
+    const released = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Gone from the list' });
+    const claim = async (issueId: string, agentLabel: string) => {
+      const shown = await post({ op: 'claim_show', issue_id: issueId });
+      const session = crypto.randomUUID();
+      const receipt = (await post({ op: 'claim_acquire', issue_id: issueId, incarnation: shown.claim.store_incarnation, session_id: session, request_id: crypto.randomUUID(), agent_label: agentLabel })).claim_receipt;
+      return { session, incarnation: shown.claim.store_incarnation, receipt };
+    };
+    const activeClaim = await claim(active, 'Lane agent');
+    const releasedClaim = await claim(released, 'Gone agent');
+    await post({ op: 'claim_release', claim_proof: { issue_id: released, incarnation: releasedClaim.receipt.incarnation, session_id: releasedClaim.receipt.session_id, generation: releasedClaim.receipt.generation }, expected_revision: releasedClaim.receipt.revision, request_id: crypto.randomUUID() });
+    const until = Math.floor(Date.parse('2027-01-01T00:00:00.000Z') / 1000);
+    sqlite.prepare('UPDATE issue_claims SET expires_at = ? WHERE issue_id = ?').run(until, active);
+
+    const anonymous = await handleRequest(new Request('https://issues.example/ui/working'), env, authenticate);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Lane is here'));
+    const home = await (await viewUi(env, auth)).text();
+    assert.ok(home.includes('href="/ui/working"'));
+    const html = await (await handleRequest(new Request('https://issues.example/ui/working', { headers: auth }), env, authenticate)).text();
+    assert.ok(html.includes('Lane is here'));
+    assert.ok(html.includes('Lane agent'));
+    assert.ok(html.includes('2027-01-01 09:00 JST'));
+    assert.ok(html.includes(`href="/ui/i/${active}"`));
+    assert.ok(!html.includes('Gone agent'));
+    assert.ok(!html.includes('Gone from the list'));
+    assert.ok(!html.includes(activeClaim.session));
+    assert.ok(!html.includes(activeClaim.incarnation));
+    assert.ok(!html.includes(releasedClaim.session));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+  } finally { sqlite.close(); }
+});

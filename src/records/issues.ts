@@ -383,6 +383,21 @@ export async function ownerInboxIssues(db: SqlExecutor, limit: number): Promise<
   return (await db.reads.all(issueQueries.ownerInbox, { limit })).map(issueRow);
 }
 
+export type ActiveClaimIssue = { issue: Issue; actor: string; agentLabel: string | null; expiresAt: number };
+export async function activeClaimIssues(db: SqlExecutor, limit: number): Promise<ActiveClaimIssue[]> {
+  const rows = await db.reads.all(issueQueries.activeClaims, { limit });
+  return rows.flatMap(row => {
+    const issue = issueRow(row);
+    if (row.claim_generation === null) return [];
+    const lease = claimRow({ issue_id: issue.id, incarnation: row.claim_incarnation, actor: row.claim_actor, session_id: row.claim_session_id,
+      agent_label: row.claim_agent_label, generation: row.claim_generation, revision: row.claim_revision, acquired_at: row.claim_acquired_at,
+      changed_at: row.claim_changed_at, expires_at: row.claim_expires_at, released_at: row.claim_released_at });
+    const state = claimState(lease, parseIncarnation(row.store_incarnation), clock(row.observed_at));
+    if (state !== 'active') return [];
+    return [{ issue, actor: lease.actor, agentLabel: lease.agent_label, expiresAt: lease.expires_at }];
+  });
+}
+
 // `main-wait` keeps an issue open while its merge sits in a local land queue that the remote trunk does not yet contain.
 export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promise<Issue[]> {
   return (await db.reads.all(issueQueries.awaitingMain, { limit })).map(issueRow);
