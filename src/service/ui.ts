@@ -1,5 +1,5 @@
 /** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
-import { executeOperation, issuesAwaitingMain, projectIssues, projectSummaries, recentlyClosedIssues, PolylinedbError, type Actor, type Comment, type Issue, type ProjectSummary } from '../records/index.ts';
+import { claimDisplay, executeOperation, issuesAwaitingMain, projectIssues, projectSummaries, recentlyClosedIssues, PolylinedbError, type Actor, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 
 const listLimit = 50;
@@ -70,13 +70,32 @@ function issueHref(id: string): string {
   return `/ui/i/${encodeURIComponent(id)}`;
 }
 
-function projectIssueItem(issue: Issue): string {
+function japanTimeFromSeconds(seconds: number): string {
+  return japanTime(new Date(seconds * 1000).toISOString());
+}
+
+function person(actor: string, labels: ReadonlyMap<string, string>): string {
+  return labels.get(actor) ?? actor;
+}
+
+function activeClaim(claim: ClaimDisplay, labels: ReadonlyMap<string, string>): string {
+  if (claim.state !== 'active') return '';
+  const agent = claim.agentLabel === null ? '' : `<span class="secondary">${escape(claim.agentLabel)}</span>\n`;
+  const at = new Date(claim.expiresAt * 1000).toISOString();
+  return `${agent}<span class="secondary">${escape(person(claim.actor, labels))}</span>
+<span class="secondary"><time datetime="${escape(at)}">${escape(japanTimeFromSeconds(claim.expiresAt))}</time></span>
+`;
+}
+
+function projectIssueItem(row: ProjectIssue, labels: ReadonlyMap<string, string>): string {
+  const { issue } = row;
+  const blocked = row.openBlockers > 0 ? `<span class="secondary">blocked ${row.openBlockers}</span>\n` : '';
   return `<li class="quiet-row"><a href="${escape(issueHref(issue.id))}">
 <span class="primary">${escape(title(issue.body))}</span>
 <span class="secondary">${escape(issue.status)}</span>
 <span class="secondary">priority ${issue.priority}</span>
 <span class="secondary">${escape(issue.type)}</span>
-${attention(issue.labels)}<span class="secondary">${escape(issue.id)}</span>
+${attention(issue.labels)}${activeClaim(row.claim, labels)}${blocked}<span class="secondary">${escape(issue.id)}</span>
 </a></li>`;
 }
 
@@ -94,9 +113,31 @@ function commentItem(comment: Comment, labels: ReadonlyMap<string, string>): str
 </li>`;
 }
 
-function detailPage(issue: Issue, comments: readonly Comment[], labels: ReadonlyMap<string, string>): string {
+function detailClaim(claim: ClaimDisplay, labels: ReadonlyMap<string, string>): string {
+  if (claim.state === 'never_claimed') return '<span class="secondary">never_claimed</span>';
+  const at = claim.state === 'released' && claim.releasedAt !== null ? claim.releasedAt : claim.expiresAt;
+  const iso = new Date(at * 1000).toISOString();
+  const agent = claim.agentLabel === null ? '' : `\n<span class="secondary">${escape(claim.agentLabel)}</span>`;
+  return `<span class="secondary">${escape(claim.state)}</span>${agent}
+<span class="secondary">${escape(person(claim.actor, labels))}</span>
+<span class="secondary"><time datetime="${escape(iso)}">${escape(japanTimeFromSeconds(at))}</time></span>`;
+}
+
+function blockerItem(blocker: { id: string; status: Status }): string {
+  return `<li class="quiet-row"><span class="secondary"><a href="${escape(issueHref(blocker.id))}">${escape(blocker.id)}</a></span>
+<span class="secondary">${escape(blocker.status)}</span></li>`;
+}
+
+function blockerSection(heading: string, blockers: readonly { id: string; status: Status }[], empty: string): string {
+  const body = blockers.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${blockers.map(blockerItem).join('')}</ul>`;
+  return `<section class="quiet-section"><h2>${heading}</h2>${body}</section>`;
+}
+
+function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], labels: ReadonlyMap<string, string>): string {
   const labelLine = issue.labels.length === 0 ? '<span class="secondary">No labels.</span>' : `<span class="secondary">${issue.labels.map(label => escape(label)).join(' ')}</span>`;
   const commentList = comments.length === 0 ? '<p class="quiet-note">No comments.</p>' : `<ul class="quiet-list">${comments.map(comment => commentItem(comment, labels)).join('')}</ul>`;
+  const open = blockers.filter(blocker => blocker.status !== 'closed');
+  const closed = blockers.filter(blocker => blocker.status === 'closed');
   return document(title(issue.body), `<p><a href="${escape(projectHref(issue.tool, issue.project))}">Project</a></p>
 <h1>${escape(title(issue.body))}</h1>
 <span class="secondary">${escape(issue.id)}</span>
@@ -106,8 +147,11 @@ function detailPage(issue: Issue, comments: readonly Comment[], labels: Readonly
 <span class="secondary">${escape(issue.tool)}</span>
 <span class="secondary">${escape(issue.project)}</span>
 ${labelLine}
+${detailClaim(claim, labels)}
 <div class="prose">${escape(bodyAfterTitle(issue.body))}</div>
-<section class="quiet-section"><h2>Comments</h2>${commentList}</section>`);
+<section class="quiet-section"><h2>Comments</h2>${commentList}</section>
+${blockerSection('Open blockers', open, 'No open blockers.')}
+${blockerSection('Closed blockers', closed, 'No closed blockers.')}`);
 }
 
 function notFoundPage(): string {
@@ -142,9 +186,9 @@ ${section('main 待ち', lists.awaitingMain, labels, 'Nothing waits for main.', 
 ${section('Recently closed', lists.recentlyClosed, labels, 'Nothing has closed yet.', 'Ordered by 最終更新. pd does not record when an issue closed.')}`);
 }
 
-function projectPage(tool: string, project: string, issues: readonly Issue[], more: boolean): string {
+function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], labels: ReadonlyMap<string, string>, more: boolean): string {
   const note = more ? '<p class="section-note">More issues are not shown.</p>' : '';
-  const body = issues.length === 0 ? '<p class="quiet-note">Nothing is open.</p>' : `<ul class="quiet-list">${issues.map(projectIssueItem).join('')}</ul>`;
+  const body = issues.length === 0 ? '<p class="quiet-note">Nothing is open.</p>' : `<ul class="quiet-list">${issues.map(row => projectIssueItem(row, labels)).join('')}</ul>`;
   return document(tool, `<h1>${escape(tool)}</h1>
 <p class="section-note">${escape(project)}</p>
 ${body}
@@ -159,12 +203,28 @@ const htmlHeaders = {
   'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
+async function issueBlockers(db: SqlExecutor, id: string, actor: Actor): Promise<{ id: string; status: Status }[]> {
+  const blockers: { id: string; status: Status }[] = [];
+  const seen = new Set<string>();
+  let after: string | undefined;
+  for (;;) {
+    const result = await executeOperation(db, { op: 'dependency_list', dependent_id: id, limit: 100, ...(after === undefined ? {} : { after }) }, actor);
+    if (!('blockers' in result)) throw new PolylinedbError('storage_error', 'Blockers are unavailable', 500);
+    blockers.push(...result.blockers);
+    if (result.next_cursor === null) return blockers;
+    if (seen.has(result.next_cursor)) throw new PolylinedbError('storage_error', 'Blocker page repeated', 500);
+    seen.add(result.next_cursor);
+    after = result.next_cursor;
+  }
+}
+
 export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, actor: Actor): Promise<Response> {
   if (route.page === 'issue') {
     try {
       const result = await executeOperation(db, { op: 'show', id: route.id }, actor);
       if (!('comments' in result)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
-      return new Response(detailPage(result.issue, result.comments, labels), { headers: htmlHeaders });
+      const blockers = await issueBlockers(db, route.id, actor);
+      return new Response(detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, labels), { headers: htmlHeaders });
     } catch (error) {
       if (error instanceof PolylinedbError && error.code === 'not_found') return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
       throw error;
@@ -172,7 +232,7 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
   }
   if (route.page === 'project') {
     const issues = await projectIssues(db, route.tool, route.project, projectIssueLimit);
-    return new Response(projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), issues.length > shownProjectIssues), { headers: htmlHeaders });
+    return new Response(projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), labels, issues.length > shownProjectIssues), { headers: htmlHeaders });
   }
   const [projects, awaitingMain, recentlyClosed] = await Promise.all([
     projectSummaries(db, projectSummaryLimit), issuesAwaitingMain(db, listLimit), recentlyClosedIssues(db, listLimit),
