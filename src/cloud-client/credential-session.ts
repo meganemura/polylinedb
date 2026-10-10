@@ -11,13 +11,11 @@ export interface CredentialStore {
   delete(key: string): Promise<void>;
 }
 
-/** A diagnostic carries only a file system error code, never a path. */
-export type OAuthErrorDetails = { readonly diagnostic: { readonly code: string } };
-
 export class OAuthError extends Error {
   readonly code: string;
-  readonly details: OAuthErrorDetails | undefined;
-  constructor(code: string, message: string, details?: OAuthErrorDetails) { super(message); this.name = 'OAuthError'; this.code = code; this.details = details; }
+  /** A diagnostic carries only a file system error code, never a path. */
+  readonly details: { readonly diagnostic: { readonly code: string } } | undefined;
+  constructor(code: string, message: string, details?: OAuthError['details']) { super(message); this.name = 'OAuthError'; this.code = code; this.details = details; }
 }
 
 export function credentialKey(resource: string, namespace: string): string {
