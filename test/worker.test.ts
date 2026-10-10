@@ -1219,3 +1219,71 @@ test('ui: an epic lists its children and a child links back to the parent', asyn
     assert.ok(packed.indexOf('Packed child 2') < packed.indexOf('Packed child 10'));
   } finally { sqlite.close(); }
 });
+
+test('pd-144: /ui orders projects by their latest issue update', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-09-01T00:00:00.000Z', 'access:owner', ?, 'access:owner')`);
+    insert.run('pd-1', issueSortKey('pd-1'), 'order', 'alpha', 'pd-1', '2026-10-09T03:00:00.000Z');
+    insert.run('pd-2', issueSortKey('pd-2'), 'order', 'alpha', 'pd-2', '2026-10-08T00:00:00.000Z');
+    insert.run('pd-3', issueSortKey('pd-3'), 'order', 'bravo', 'pd-3', '2026-10-10T06:40:00.000Z');
+    insert.run('pd-4', issueSortKey('pd-4'), 'order', 'charlie', 'pd-4', '2026-10-07T00:00:00.000Z');
+    insert.run('pd-6', issueSortKey('pd-6'), 'aa-tool', 'echo', 'pd-6', '2026-10-01T00:00:00.000Z');
+    insert.run('pd-5', issueSortKey('pd-5'), 'zz-tool', 'delta', 'pd-5', '2026-10-01T00:00:00.000Z');
+    insert.run('pd-7', issueSortKey('pd-7'), 'b-tool', 'shared', 'pd-7', '2026-09-30T00:00:00.000Z');
+    insert.run('pd-8', issueSortKey('pd-8'), 'a-tool', 'shared', 'pd-8', '2026-09-30T00:00:00.000Z');
+    const home = await viewUi(env, { 'cf-access-jwt-assertion': token });
+    assert.equal(home.status, 200);
+    const html = await home.text();
+    const projects = uiSection(html, 'Projects');
+    assert.deepEqual([...projects.matchAll(/href="\/ui\/p\/([^"]+)"/g)].map(match => match[1]), [
+      'order/bravo', 'order/alpha', 'order/charlie', 'zz-tool/delta', 'aa-tool/echo', 'a-tool/shared', 'b-tool/shared',
+    ]);
+    const bravo = projects.split('<li class="quiet-row">').find(part => part.includes('href="/ui/p/order/bravo"'));
+    assert.ok(bravo);
+    assert.ok(bravo.includes('Updated <time datetime="2026-10-10T06:40:00.000Z">2026-10-10 15:40 JST</time>'));
+    assert.ok(bravo.replace(/<[^>]+>/g, '').includes('Updated 2026-10-10 15:40 JST'));
+    const alpha = projects.split('<li class="quiet-row">').find(part => part.includes('href="/ui/p/order/alpha"'));
+    assert.ok(alpha);
+    assert.ok(alpha.includes('2026-10-09 12:00 JST'));
+    assert.ok(!alpha.includes('2026-10-08 09:00 JST'));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+  } finally { sqlite.close(); }
+});
+
+test('pd-144: the project cap keeps the most recently updated projects', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', ?, 'access:owner')`);
+    for (let number = 0; number <= 200; number += 1) {
+      const id = `pd-${number + 1}`;
+      insert.run(id, issueSortKey(id), 'cap', `p${String(number).padStart(3, '0')}`, `Project ${number}`, '2026-10-01T00:00:00.000Z');
+    }
+    insert.run('pd-202', issueSortKey('pd-202'), 'cap', 'zzz', 'Newest', '2026-10-02T00:00:00.000Z');
+    const home = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
+    const projects = uiSection(home, 'Projects');
+    assert.ok(projects.includes('More projects are not shown.'));
+    assert.equal([...projects.matchAll(/href="\/ui\/p\/([^"]+)"/g)][0]?.[1], 'cap/zzz');
+    assert.ok(home.includes('p000'));
+    assert.ok(!home.includes('p199'));
+    assert.ok(!home.includes('p200'));
+  } finally { sqlite.close(); }
+});
+
+test('pd-144: a project update time is escaped', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const updatedAt = '"><img';
+    sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', ?, 'access:owner')`)
+      .run('pd-1', issueSortKey('pd-1'), 'wire', 'marked', 'Marked time', updatedAt);
+    const projects = uiSection(await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text(), 'Projects');
+    assert.ok(projects.includes('datetime="&quot;&gt;&lt;img"'));
+    assert.ok(!projects.includes('<img'));
+  } finally { sqlite.close(); }
+});
