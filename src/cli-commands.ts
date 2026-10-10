@@ -37,6 +37,7 @@ const commandFlags: Record<string, readonly string[]> = {
   claim_show: [], claim_list: ['tool', 'project', 'after', 'limit'],
   claim_acquire: ['incarnation', 'session-id', 'ttl', 'agent-label', 'request-id'],
   claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
+  changes: ['since', 'incarnation', 'project', 'issue', 'kind', 'limit'],
   ready: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'], blocked: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'],
   memory_create: ['project', 'title', 'body', 'body-file', 'request-id'],
   memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
@@ -150,7 +151,7 @@ async function main(argv: readonly string[]): Promise<void> {
     const value = ['clear-labels', 'stealth', 'with-revision', 'force', 'historical'].includes(name) ? 'true' : args[++index];
     if (value === undefined || value === '--' || (value.startsWith('--') && value !== '--help')) invalid(`Missing value for ${arg}`);
     const previous = flags.get(name) ?? [];
-    if (previous.length && name !== 'label' && name !== 'expect') invalid(`Duplicate flag ${arg}`);
+    if (previous.length && name !== 'label' && name !== 'expect' && name !== 'issue' && name !== 'kind') invalid(`Duplicate flag ${arg}`);
     flags.set(name, [...previous, value]);
   }
   const [first, ...rest] = positionals;
@@ -395,6 +396,14 @@ async function main(argv: readonly string[]): Promise<void> {
     if (expected !== undefined) raw.expected_revision = integer(expected);
   }
   const ttl = one('ttl'); if (ttl !== undefined) raw.ttl = integer(ttl);
+  if (command === 'changes') {
+    const since = one('since');
+    if (since === undefined) invalid('Changes requires --since');
+    raw.since = integer(since);
+    if (one('incarnation') !== undefined) raw.incarnation = one('incarnation');
+    if (flags.has('issue')) raw.issue_ids = flags.get('issue')?.map(value => expandedId(value, false));
+    if (flags.has('kind')) raw.kinds = flags.get('kind');
+  }
   if (command === 'ready' || command === 'blocked') { raw.op = 'dependency_worklist'; raw.state = command; }
   if (command === 'dependency_add' || command === 'dependency_remove') {
     const dependent = one('dependent'); const blocker = one('blocker'); const expected = one('expected-revision');
