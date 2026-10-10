@@ -118,3 +118,79 @@ TypeScript 7.0.2 does not expose this function.
 The configuration excludes both TypeScript configuration files from Stryker's temporary sandbox.
 Node executes these TypeScript tests directly, so that exclusion does not change the test command.
 Keep the normal type check as a separate required check.
+
+## Transition mutation
+
+```sh
+PD_HEGEL_CASES=20 npm run test:mutation
+```
+
+Stryker 10.0.0 mutates `src/transition/**/*.ts` together with the existing ranges in `src/records/issue-id.ts`, `src/records/issues.ts`, and `src/records/snapshot.ts`.
+The run uses the issue, snapshot, transition, claim, differential, and agent-gate tests, two workers, and a ten-second mutant timeout.
+`PD_HEGEL_CASES=20` bounds the generated cases.
+The machine has 4 vCPUs.
+The runtime is Node 24.21.0.
+
+Stryker treats a TypeScript `as const` expression as a type node and does not walk it.
+`src/transition/vocabulary.ts`, `actorKinds`, and `src/transition/index.ts` therefore contribute no mutants.
+`MAX_COUNTER` is a property read with no operator to replace.
+The issue-id range is lines 16–20, which are now a return and a binding, so that range contributes no mutants either.
+The issues and snapshot ranges are the same text as the earlier bounded run.
+Those files have grown, so the ranges now cover the update rejection path and the snapshot comparators.
+
+The run before the tests in this section measured 435 mutants in 6 minutes 51 seconds.
+It killed 380, left 37 survivors, timed out 2, and found 16 with no coverage.
+`src/transition` held 296 of them: 293 killed and 3 survivors, with no timeouts and no missing coverage.
+`src/records/issues.ts` held 119: 82 killed, 2 timeouts, 29 survivors, and 6 with no coverage.
+`src/records/snapshot.ts` held 20: 5 killed, 5 survivors, and 10 with no coverage.
+
+The added tests check which edits honor active prerequisites, including a close paired with another field.
+They check that an exhausted status stays `version_exhausted` when the issue has no blocker and when force is set on a blocked issue.
+They check that a skipped update the transition would accept, and an update after the store identity row is gone, are `storage_error`.
+They check that `not_found`, `version_exhausted`, `epic_has_children`, and `dependency_blocked` name the issue, and that version exhaustion names the field.
+They check that a snapshot orders comments by id.
+
+The run after those tests measured the same 435 mutants in 4 minutes 54 seconds.
+It killed 407, left 26 survivors, and found 2 with no coverage.
+There were no timeouts and no execution errors.
+The transition counts did not change: 293 killed and 3 survivors.
+`issues.ts` then had 104 killed, 13 survivors, and 2 with no coverage.
+`snapshot.ts` had 10 killed and 10 survivors.
+
+### Survivors that do not change a result
+
+Three survivors in `holdsClaim` replace `claim !== null`, `proof.incarnation === storeIncarnation`, or `claim.incarnation === proof.incarnation` with `true`.
+An active `claimState` already requires a claim whose incarnation equals the store.
+With the other incarnation comparison still present, each removed check follows from the rest.
+A null claim still fails the active-state check before the function reads claim fields.
+
+Replacing `has_children === 1` with `true` does not change an update result.
+The SQL write already rejects a non-epic type when children exist.
+`decideIssueUpdate` reports a version conflict, an ownership failure, an active prerequisite, or version exhaustion before it reads that flag.
+When the epic check can reject, the observed flag is already 1.
+
+Replacing `proof === undefined` with `false` always copies `claim_proof`.
+A missing proof is `undefined`, and ownership treats that value as no proof.
+
+Replacing `typeof ownershipRow.store_incarnation !== 'string'` or `typeof ownershipRow.observed_at !== 'number'` with `false` does not change a result.
+A missing identity row is already rejected.
+When the row exists, the observation query returns a text incarnation and `unixepoch()` as an integer.
+
+Replacing `'issue_write'` with an empty string does not change admission.
+`admitAgentWrite` distinguishes `claim_acquire` from every other write kind.
+
+Ten survivors in `compareId` and `compareText` replace the greater-than test, or turn a less-than into a less-than-or-equal.
+On Node 24.21.0, `Array.prototype.sort` orders the distinct keys of an accepted snapshot the same way after those replacements.
+Duplicate ids are rejected, so an equality result is not part of an accepted snapshot.
+
+Eight survivors replace an English message with an empty string and leave the error code and details in place.
+The messages are: issue not found, a missing claim observation, an update the database did not apply, a stale read, a missing ownership proof, active prerequisites, version exhaustion, and an epic with children.
+Exact message text is outside this check's contract.
+These survivors are presentation changes, not proven equivalent mutants.
+
+### Unreachable rejection default
+
+Two mutants have no coverage.
+They delete the `default` arm of the update rejection switch.
+`UpdateRejection` has no other member, so that arm does not run.
+Deleting it does not change behavior.
