@@ -31,7 +31,7 @@ function japanTime(iso: string): string {
 function row(issue: Issue, labels: ReadonlyMap<string, string>): string {
   return `<li class="quiet-row">
 <span class="primary">${escape(title(issue.body))}</span>
-<span class="secondary">${escape(issue.id)} · 最終更新 <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
+<span class="secondary">${escape(issue.id)} · Last updated <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
 <span class="secondary">${escape(labels.get(issue.updated_by) ?? issue.updated_by)}</span>
 </li>`;
 }
@@ -186,7 +186,7 @@ ${body}
 export function uiPage(lists: { projects: readonly ProjectSummary[]; moreProjects: boolean; awaitingMain: readonly Issue[] }, labels: ReadonlyMap<string, string>): string {
   return document('Projects', `<h1>Projects</h1>
 ${projectsSection(lists.projects, lists.moreProjects)}
-${section('main 待ち', lists.awaitingMain, labels, 'Nothing waits for main.', 'Open issues labelled main-wait.')}`);
+${section('Waiting for main', lists.awaitingMain, labels, 'Nothing is waiting for main.', 'Open issues with the main-wait label.')}`);
 }
 
 function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], closed: readonly Issue[], labels: ReadonlyMap<string, string>, more: boolean, filtered: boolean): string {
@@ -197,7 +197,7 @@ function projectPage(tool: string, project: string, issues: readonly ProjectIssu
 <p class="section-note">${escape(project)}</p>
 ${body}
 ${note}
-${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered by 最終更新. pd does not record when an issue closed.')}`);
+${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered by last update. The close time is not recorded.')}`);
 }
 
 const htmlHeaders = {
