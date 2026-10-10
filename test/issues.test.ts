@@ -36,6 +36,18 @@ async function show(db: SqlExecutor, id: string): Promise<Issue> {
 function errorCode(code: string) {
   return (error: unknown) => error instanceof PolylinedbError && error.code === code;
 }
+function rejectionDetails(error: unknown): Record<string, unknown> {
+  assert.ok(error instanceof PolylinedbError);
+  assert.equal(typeof error.details, 'object');
+  assert.ok(error.details);
+  return error.details as Record<string, unknown>;
+}
+function detailIssueId(details: Record<string, unknown>): unknown {
+  const issue = details.issue;
+  assert.equal(typeof issue, 'object');
+  assert.ok(issue);
+  return (issue as { id?: unknown }).id;
+}
 
 test('generated label reads preserve exact matching and combined filters', async (t) => {
   const { first } = fixture(t);
@@ -183,7 +195,11 @@ test('epic containment checks are atomic and parent status does not cascade', as
   const retainedEpic = await execute(first, { op: 'update', id: epic.id, changes: [{ field: 'type', value: 'epic', expected: 1 }] });
   assert.ok('issue' in retainedEpic);
   assert.equal(retainedEpic.issue.versions.type, 2);
-  await assert.rejects(execute(first, { op: 'update', id: epic.id, changes: [{ field: 'type', value: 'task', expected: 2 }, { field: 'body', value: 'should roll back', expected: 1 }] }), errorCode('epic_has_children'));
+  await assert.rejects(execute(first, { op: 'update', id: epic.id, changes: [{ field: 'type', value: 'task', expected: 2 }, { field: 'body', value: 'should roll back', expected: 1 }] }), (error: unknown) => {
+    assert.equal(errorCode('epic_has_children')(error), true);
+    assert.equal(detailIssueId(rejectionDetails(error)), epic.id);
+    return true;
+  });
   assert.equal((await show(first, epic.id)).body, 'Empty input fails');
   await execute(first, { op: 'close', id: epic.id, expected: 1 });
   assert.equal((await show(second, child.id)).status, 'open');
@@ -208,7 +224,11 @@ test('invalid input rejects unknown fields, invalid versions and duplicate edits
     { op: 'show', id: 'not-an-id' },
   ]) assert.throws(() => parseOperation(operation), errorCode('invalid_input'));
   await assert.rejects(execute(first, { op: 'comment', id: issue.id, body: 'valid' }, 'bad\nactor'), errorCode('invalid_input'));
-  await assert.rejects(execute(first, { op: 'show', id: 'pd-999' }), errorCode('not_found'));
+  await assert.rejects(execute(first, { op: 'show', id: 'pd-999' }), (error: unknown) => {
+    assert.equal(errorCode('not_found')(error), true);
+    assert.deepEqual(rejectionDetails(error), { id: 'pd-999' });
+    return true;
+  });
   await assert.rejects(execute(first, { op: 'update', id: 'pd-999', changes: [{ field: 'body', value: 'missing', expected: 1 }] }), errorCode('not_found'));
   assert.deepEqual(await execute(first, { op: 'actor' }, 'local:alice'), { actor: 'local:alice' });
 });
@@ -219,12 +239,82 @@ test('version exhaustion changes none of the requested fields', async (t) => {
   await first.batch([{ sql: 'UPDATE issues SET body_v = ? WHERE id = ?', params: [Number.MAX_SAFE_INTEGER, issue.id] }]);
   await assert.rejects(execute(first, { op: 'update', id: issue.id, changes: [
     { field: 'priority', value: 0, expected: 1 }, { field: 'body', value: 'overflow', expected: Number.MAX_SAFE_INTEGER },
-  ] }), errorCode('version_exhausted'));
+  ] }), (error: unknown) => {
+    assert.equal(errorCode('version_exhausted')(error), true);
+    const details = rejectionDetails(error);
+    assert.equal(details.field, 'body');
+    assert.equal(detailIssueId(details), issue.id);
+    return true;
+  });
   const observed = await show(first, issue.id);
   assert.equal(observed.priority, 2);
   assert.equal(observed.versions.priority, 1);
   assert.equal(observed.body, 'Empty input fails');
   assert.equal(observed.versions.body, Number.MAX_SAFE_INTEGER);
+});
+
+test('active prerequisites block only start and close, including a close paired with another field', async (t) => {
+  const { first } = fixture(t);
+  const dependent = await create(first);
+  const blocker = await create(first);
+  await first.batch([{ sql: 'INSERT INTO dependencies(dependent_id, blocker_id) VALUES (?, ?)', params: [dependent.id, blocker.id] }]);
+  const blocked = (changes: unknown[]) => assert.rejects(execute(first, { op: 'update', id: dependent.id, changes }), (error: unknown) => {
+    assert.equal(errorCode('dependency_blocked')(error), true);
+    assert.equal(detailIssueId(rejectionDetails(error)), dependent.id);
+    return true;
+  });
+  await blocked([{ field: 'status', value: 'in_progress', expected: 1 }]);
+  await blocked([{ field: 'status', value: 'closed', expected: 1 }]);
+  await blocked([{ field: 'status', value: 'closed', expected: 1 }, { field: 'body', value: 'together', expected: 1 }]);
+  const deferred = await execute(first, { op: 'update', id: dependent.id, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
+  assert.ok('issue' in deferred);
+  assert.equal(deferred.issue.status, 'deferred');
+  const body = await execute(first, { op: 'update', id: dependent.id, changes: [{ field: 'body', value: 'closed', expected: 1 }] });
+  assert.ok('issue' in body);
+  assert.equal(body.issue.body, 'closed');
+  assert.equal(body.issue.status, 'deferred');
+  assert.equal((await show(first, dependent.id)).versions.body, 2);
+});
+
+test('an exhausted status stays version exhaustion when prerequisites are absent or forced', async (t) => {
+  const { first } = fixture(t);
+  const plain = await create(first);
+  await first.batch([{ sql: 'UPDATE issues SET status_v = ? WHERE id = ?', params: [Number.MAX_SAFE_INTEGER, plain.id] }]);
+  await assert.rejects(execute(first, { op: 'close', id: plain.id, expected: Number.MAX_SAFE_INTEGER }), (error: unknown) => {
+    assert.equal(errorCode('version_exhausted')(error), true);
+    const details = rejectionDetails(error);
+    assert.equal(details.field, 'status');
+    assert.equal(detailIssueId(details), plain.id);
+    return true;
+  });
+  const dependent = await create(first);
+  const blocker = await create(first);
+  await first.batch([
+    { sql: 'INSERT INTO dependencies(dependent_id, blocker_id) VALUES (?, ?)', params: [dependent.id, blocker.id] },
+    { sql: 'UPDATE issues SET status_v = ? WHERE id = ?', params: [Number.MAX_SAFE_INTEGER, dependent.id] },
+  ]);
+  await assert.rejects(execute(first, { op: 'close', id: dependent.id, expected: Number.MAX_SAFE_INTEGER, force: true, reason: 'still exhausted' }), (error: unknown) => {
+    assert.equal(errorCode('version_exhausted')(error), true);
+    assert.equal(rejectionDetails(error).field, 'status');
+    return true;
+  });
+  assert.equal((await show(first, dependent.id)).status, 'open');
+});
+
+test('a skipped update the transition would accept is a storage error', async (t) => {
+  const { first } = fixture(t);
+  const issue = await create(first);
+  await first.batch([{ sql: 'CREATE TRIGGER skip_issue_update BEFORE UPDATE ON issues BEGIN SELECT RAISE(IGNORE); END', params: [] }]);
+  await assert.rejects(execute(first, { op: 'update', id: issue.id, changes: [{ field: 'body', value: 'kept', expected: 1 }] }), errorCode('storage_error'));
+  assert.equal((await show(first, issue.id)).body, 'Empty input fails');
+  assert.equal((await show(first, issue.id)).versions.body, 1);
+});
+
+test('an update without store identity reports a storage error', async (t) => {
+  const { first } = fixture(t);
+  const issue = await create(first);
+  await first.batch([{ sql: 'DELETE FROM memory_store_identity', params: [] }]);
+  await assert.rejects(execute(first, { op: 'update', id: issue.id, changes: [{ field: 'body', value: 'missing identity', expected: 2 }] }), errorCode('storage_error'));
 });
 
 async function parallel(directory: string, cwd: string, operations: unknown[]) {
