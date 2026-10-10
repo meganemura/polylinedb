@@ -154,13 +154,14 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `claim_released` | `claim_release` commits a receipt |
 | `dependency_added` | `dependency_add` inserts an edge |
 | `dependency_removed` | `dependency_remove` deletes an edge |
-| `became_ready` | A blocker closes, or an open blocker is removed, and the dependent is `open` with no open blocker left |
+| `became_ready` | A blocker closes, or an active blocker is removed, and the dependent is `open` with no active blocker left |
 
 A written field counts even when its value stays the same, because its version advances.
 One write can record several events. They take consecutive numbers in this order: the change itself, then `became_ready` for each released dependent in issue order, then the reason comment of a forced change.
-A dependent with two open blockers records `became_ready` only when the second one closes or is removed.
+An active blocker has any status other than `closed`, including `in_progress` and `deferred`.
+A dependent with two active blockers records `became_ready` only when the second one closes or is removed.
 Closing an issue that is already closed records `status_changed` and no `became_ready`.
-A dependent that becomes blocked again records no event of its own.
+A dependent that is not `open`, or that becomes blocked again, records no event of its own.
 
 These writes record no event:
 
@@ -323,7 +324,7 @@ It also keeps these checks:
 - Discriminators, such as the claim `state`, the receipt `outcome`, the dependency `outcome`, and the memory freshness `status`, must have a value that the client knows.
 - Echoed IDs and projects must match the request, and labels must round-trip.
 - Claim, prerequisite, and worklist pages must keep their order and their cursor rules.
-- A `changes` page must hold at most `limit` events with increasing `seq` above `since`, match the requested filters and incarnation, and return a `next_since` no lower than its last `seq`. The client checks `kind` and each `fields` entry only as a lowercase name, so a Worker can add a kind or a field name. `incarnation_mismatch` and `cursor_expired` details are decoded only for `changes`.
+- A `changes` page must hold at most `limit` events with increasing `seq` above `since`, match the requested `issue_ids` and `kinds`, and return a `next_since` no lower than its last `seq`. The client checks `kind` and each `fields` entry only as a lowercase name, so a Worker can add a kind or a field name. `project` stays on the issue, so the page check uses the event's `issue_ids` and `kinds`. `incarnation_mismatch` and `cursor_expired` details are decoded only for `changes`.
 - Error details are decoded only for the codes that carry them. Details on another code make the response invalid.
 - The response size limit and the request timeout stay the same.
 
