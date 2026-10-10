@@ -466,6 +466,11 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
 }
 
 const styles = `
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation-duration: 80ms; }
+}
 :root {
   color-scheme: light;
   --ink: #393730;
