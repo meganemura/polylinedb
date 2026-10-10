@@ -6,6 +6,7 @@ import { storageOf } from 'solarsql/node';
 import { createAccessVerifier } from "../src/service/access.ts";
 import { handleRequest } from "../src/service/index.ts";
 import { SCHEMA_SQL } from "../src/records/schema.ts";
+import { issueSortKey } from "../src/records/issue-id.ts";
 import { assertSnapshot } from "./fixtures/snapshot.ts";
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
@@ -404,6 +405,20 @@ function viewUi(env: ReturnType<typeof fixture>['env'], headers: Record<string, 
   return handleRequest(new Request('https://issues.example/ui', { method, headers }), env, authenticate);
 }
 
+function uiSection(html: string, heading: string): string {
+  const part = html.split('<h2>').find(candidate => candidate.startsWith(`${heading}</h2>`));
+  assert.ok(part, heading);
+  return part;
+}
+
+function projectPath(tool: string, project: string): string {
+  return `/ui/p/${encodeURIComponent(tool)}/${project.split('/').map(segment => encodeURIComponent(segment)).join('/')}`;
+}
+
+function viewProject(env: ReturnType<typeof fixture>['env'], tool: string, project: string, headers: Record<string, string> = {}, method = 'GET') {
+  return handleRequest(new Request(`https://issues.example${projectPath(tool, project)}`, { method, headers }), env, authenticate);
+}
+
 test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
@@ -427,7 +442,8 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const html = await response.text();
-    const [, waitingPart, closedPart] = html.split(/<h2>/);
+    const waitingPart = uiSection(html, 'main 待ち');
+    const closedPart = uiSection(html, 'Recently closed');
     const ids = (part: string) => [...part.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
     assert.match(waitingPart, /^main 待ち<\/h2>/);
     assert.deepEqual(ids(waitingPart), [waiting]);
@@ -534,5 +550,135 @@ test('/ui reads no issue before Access accepts the caller, and a misconfigured A
     assert.deepEqual(reads, []);
     assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': token })).status, 200);
     assert.equal(reads.length, 2);
+  } finally { sqlite.close(); }
+});
+
+async function createIssue(env: ReturnType<typeof fixture>['env'], token: string, fields: Record<string, unknown>): Promise<string> {
+  const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token },
+    body: JSON.stringify({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), ...fields }),
+  }), env, authenticate);
+  assert.equal(response.status, 200, await response.clone().text());
+  return (await response.json()).issue.id;
+}
+
+test('pd-134: /ui lists projects and a project view shows unfinished issues in that project', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+  const token = await assertion();
+  try {
+    const hold = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Hold', status: 'deferred', priority: 0 });
+    const started = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Started', status: 'in_progress', priority: 0, type: 'bug', labels: ['dogfooding', 'ready'] });
+    const later = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Later', status: 'open', priority: 2, type: 'feature' });
+    const hostile = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: '<img src=x onerror=alert(1)>&', status: 'in_progress', priority: 1 });
+    const closed = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Done nukadoko', status: 'closed' });
+    const polyline = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Polyline work', labels: ['main-wait'] });
+    const slashed = await createIssue(env, token, { tool: 'a/b', project: 'c', body: 'Slashed tool' });
+    const marked = await createIssue(env, token, { tool: 'poly', project: 'q<b>&', body: 'Marked project' });
+
+    const home = await viewUi(env, { 'cf-access-jwt-assertion': token });
+    assert.equal(home.status, 200);
+    const html = await home.text();
+    const projectsAt = html.indexOf('<h2>Projects</h2>');
+    const waitingAt = html.indexOf('<h2>main 待ち</h2>');
+    const closedAt = html.indexOf('<h2>Recently closed</h2>');
+    assert.ok(projectsAt !== -1 && projectsAt < waitingAt && waitingAt < closedAt);
+    assert.ok(html.includes('href="/ui/p/nukadoko/meganemura/nukadoko"'));
+    assert.ok(html.includes('href="/ui/p/polylinedb/meganemura/polylinedb"'));
+    assert.ok(html.includes('nukadoko'));
+    assert.ok(html.includes('meganemura/polylinedb'));
+    const nukadokoRow = html.split('<li class="quiet-row">').find(part => part.includes('meganemura/nukadoko'));
+    assert.ok(nukadokoRow);
+    assert.ok(nukadokoRow.includes('open 1'));
+    assert.ok(nukadokoRow.includes('in_progress 2'));
+    assert.ok(nukadokoRow.includes('deferred 1'));
+    assert.ok(nukadokoRow.includes('closed 1'));
+    const slashedRow = html.split('<li class="quiet-row">').find(part => part.includes('Slashed') || part.includes('href="/ui/p/a%2Fb/c"'));
+    assert.ok(slashedRow);
+    assert.ok(slashedRow.includes('href="/ui/p/a%2Fb/c"'));
+    assert.ok(slashedRow.includes('in_progress 0'));
+    assert.ok(html.includes('href="/ui/p/poly/q%3Cb%3E%26"'));
+    assert.ok(html.includes('q&lt;b&gt;&amp;'));
+    assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    const waitingPart = uiSection(html, 'main 待ち');
+    assert.match(waitingPart, /^main 待ち<\/h2>/);
+    assert.ok(waitingPart.includes(polyline));
+    const closedPart = uiSection(html, 'Recently closed');
+    assert.match(closedPart, /^Recently closed<\/h2>/);
+    assert.ok(closedPart.includes(closed));
+
+    const anonymous = await viewProject(env, 'nukadoko', 'meganemura/nukadoko');
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Started'));
+    const missing = await handleRequest(new Request('https://issues.example/ui/'), env, authenticate);
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: { code: 'not_found', message: 'Route not found.' } });
+    const bareProject = await handleRequest(new Request('https://issues.example/ui/p'), env, authenticate);
+    assert.equal(bareProject.status, 404);
+    assert.equal(bareProject.headers.get('content-type'), 'application/json');
+
+    const reader = await viewProject(env, 'nukadoko', 'meganemura/nukadoko', { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
+    assert.equal(reader.status, 200);
+    const page = await reader.text();
+    assert.equal(reader.headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    assert.equal(reader.headers.get('cache-control'), 'no-store');
+    assert.ok(page.indexOf('Started') < page.indexOf('Hold'));
+    assert.ok(page.indexOf('Hold') < page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;'));
+    assert.ok(page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;') < page.indexOf('Later'));
+    assert.ok(page.includes('<span class="secondary">in_progress</span>'));
+    assert.ok(page.includes('<span class="secondary">deferred</span>'));
+    assert.ok(page.includes('ready'));
+    assert.ok(!page.includes('dogfooding'));
+    assert.ok(!page.includes('<img'));
+    assert.ok(!page.includes(closed));
+    assert.ok(!page.includes('Done nukadoko'));
+    assert.ok(!page.includes(polyline));
+    assert.ok(!page.includes(slashed));
+    assert.ok(!page.includes(marked));
+    assert.ok(page.includes(started));
+    assert.ok(page.includes(hold));
+    assert.ok(page.includes(later));
+    assert.ok(page.includes(hostile));
+    assert.ok(page.includes('<span class="secondary">priority 0</span>'));
+    assert.ok(page.includes('<span class="secondary">bug</span>'));
+    assert.ok(!/<(form|input|button|script)\b/.test(page));
+    assert.ok(!page.includes('href="/ui/i/'));
+    const encoded = await handleRequest(new Request('https://issues.example/ui/p/polylinedb/meganemura%2Fpolylinedb', { headers: { 'cf-access-jwt-assertion': token } }), env, authenticate);
+    assert.equal(encoded.status, 200);
+    assert.ok((await encoded.text()).includes(polyline));
+    const empty = await viewProject(env, 'nukadoko', 'nobody/home', { 'cf-access-jwt-assertion': token });
+    assert.equal(empty.status, 200);
+    const emptyHtml = await empty.text();
+    assert.ok(emptyHtml.includes('Nothing is open.'));
+    assert.ok(!emptyHtml.includes('Started'));
+    const write = await viewProject(env, 'nukadoko', 'meganemura/nukadoko', { 'cf-access-jwt-assertion': token }, 'POST');
+    assert.equal(write.status, 405);
+    assert.equal(write.headers.get('allow'), 'GET');
+  } finally { sqlite.close(); }
+});
+
+test('pd-134: project and issue lists say when the cap hides further rows', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`);
+    for (let number = 1; number <= 101; number += 1) {
+      const id = `pd-${number}`;
+      insert.run(id, issueSortKey(id), 'cap', 'issues', `Issue ${number}`);
+    }
+    for (let number = 0; number <= 200; number += 1) {
+      const id = `zz-${number + 1}`;
+      insert.run(id, `zz-${String(number).padStart(16, '0')}`, 'cap', `p${String(number).padStart(3, '0')}`, `Project ${number}`);
+    }
+    const home = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(home.includes('More projects are not shown.'));
+    assert.ok(home.includes('p000'));
+    assert.ok(!home.includes('p200'));
+    const page = await (await viewProject(env, 'cap', 'issues', { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(page.includes('More issues are not shown.'));
+    assert.ok(page.includes('pd-1'));
+    assert.ok(page.includes('pd-100'));
+    assert.ok(!page.includes('pd-101'));
   } finally { sqlite.close(); }
 });
