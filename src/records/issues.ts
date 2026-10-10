@@ -383,6 +383,11 @@ export async function ownerInboxIssues(db: SqlExecutor, limit: number): Promise<
   return (await db.reads.all(issueQueries.ownerInbox, { limit })).map(issueRow);
 }
 
+export type BlockedIssue = { issue: Issue; openBlockers: number };
+export async function blockedIssues(db: SqlExecutor, limit: number): Promise<BlockedIssue[]> {
+  return (await db.reads.all(issueQueries.blockedIssues, { limit })).map(row => ({ issue: issueRow(row), openBlockers: storedCount(row.open_blockers) }));
+}
+
 export type ActiveClaimIssue = { issue: Issue; actor: string; agentLabel: string | null; expiresAt: number };
 export async function activeClaimIssues(db: SqlExecutor, limit: number): Promise<ActiveClaimIssue[]> {
   const rows = await db.reads.all(issueQueries.activeClaims, { limit });
