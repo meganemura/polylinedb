@@ -95,6 +95,7 @@ If the lock directory already contains an entry named `login`, the message says 
 The CLI does not steal a lock based on its age.
 When lock removal fails and the directory remains, the command still returns the operation result.
 It reports `auth_lock_release_failed` on standard error.
+That line names the filesystem error code, such as `EACCES`, when one is available.
 A later command can return `auth_busy` until that directory is removed.
 
 Before spending a refresh token, the CLI saves a state that requires reauthorization.

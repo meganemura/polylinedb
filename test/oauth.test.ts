@@ -142,7 +142,7 @@ test('a failed lock release preserves the action outcome', async t => {
   t.after(() => rm(stateDirectory, { recursive: true, force: true }));
   const namespace = await realpath(stateDirectory);
   const lock = join(namespace, `${credentialKey(resource, namespace)}.lock`);
-  const releaseFailure = 'auth_lock_release_failed: The authentication lock could not be removed. Later commands can return auth_busy until that lock directory is removed.\n';
+  const releaseFailure = 'auth_lock_release_failed: The authentication lock could not be removed: the file system returned ENOTEMPTY. Later commands can return auth_busy until that lock directory is removed.\n';
   const lines: string[] = [];
   const write = process.stderr.write;
   process.stderr.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
@@ -181,6 +181,35 @@ test('a failed lock release preserves the action outcome', async t => {
       assert.equal(error.code, 'auth_busy');
       return true;
     });
+  } finally {
+    process.stderr.write = write;
+  }
+});
+
+test('a denied lock release names its file system code', async t => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    t.skip('This permission fixture requires a non-root Unix process.');
+    return;
+  }
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'pd-oauth-lock-release-denied-'));
+  t.after(async () => {
+    await chmod(stateDirectory, 0o700);
+    await rm(stateDirectory, { recursive: true, force: true });
+  });
+  const lines: string[] = [];
+  const write = process.stderr.write;
+  process.stderr.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
+    lines.push(String(chunk));
+    return write.call(process.stderr, chunk as never, encoding as never, callback as never);
+  }) as typeof process.stderr.write;
+  try {
+    const result = await credentialTransaction({ stateDirectory, resource, lockTimeoutMs: 25 }, async () => {
+      await chmod(stateDirectory, 0o500);
+      return 'refreshed';
+    });
+    assert.equal(result, 'refreshed');
+    assert.deepEqual(lines, ['auth_lock_release_failed: The authentication lock could not be removed: the file system returned EACCES. Later commands can return auth_busy until that lock directory is removed.\n']);
+    assert.equal(lines.join('').includes(stateDirectory), false);
   } finally {
     process.stderr.write = write;
   }
