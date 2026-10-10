@@ -1,5 +1,5 @@
 // Runs operational commands after the executable admits the Node runtime.
-// Keeping storage and authentication imports here lets the bootstrap reject unsupported runtimes before this graph loads.
+// Storage imports stay here so the bootstrap can reject an unsupported runtime before this graph loads.
 import { createReadStream } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -16,11 +16,17 @@ import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } fr
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from "./workspace/index.ts";
-import { createCloudClient, OAuthError, CredentialStoreError } from './cloud-client/index.ts';
 import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4 } from './records/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 import { help } from './cli-help.ts';
+
+type CloudClientModule = typeof import('./cloud-client/index.ts');
+let cloudClientModule: CloudClientModule | undefined;
+async function loadCloudClient(): Promise<CloudClientModule> {
+  if (cloudClientModule === undefined) cloudClientModule = await import('./cloud-client/index.ts');
+  return cloudClientModule;
+}
 
 const fields = ['tool', 'project', 'body', 'status', 'type', 'priority', 'labels'];
 const globals = ['connection', 'data-dir', 'actor', 'actor-kind', 'prefix'];
@@ -234,7 +240,7 @@ async function main(argv: readonly string[]): Promise<void> {
     repository: defaults, ...current, fallbackDirectory: stealth ? join(dataRoot, 'stores', randomUUID()) : dataRoot });
   if (command === 'auth') {
     if (selected.kind !== 'cloud') invalid('Authentication requires a cloud connection');
-    const cloud = createCloudClient(selected);
+    const cloud = (await loadCloudClient()).createCloudClient(selected);
     const result = operands[0] === 'login' ? await cloud.login(url => { process.stderr.write(url + '\n'); })
       : operands[0] === 'status' ? await cloud.status() : await cloud.logout();
     process.stdout.write(JSON.stringify(result) + '\n');
@@ -345,8 +351,11 @@ async function main(argv: readonly string[]): Promise<void> {
     if (after !== undefined) raw.after = expandedMemory(after, false);
     if (command === 'memory_create') { raw.prefix = prefix; raw.request_id = one('request-id') ?? randomUUID(); }
     const operation = parseOperation(raw);
-    if (selected.kind === 'cloud') writeOperationResult(operation,
-      await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation)), human);
+    if (selected.kind === 'cloud') {
+      const cloud = await loadCloudClient();
+      writeOperationResult(operation,
+        await executeWithPrefixOrigin(shorthandOrigins, () => cloud.createCloudClient(selected).execute(operation)), human);
+    }
     else {
       if (actor === undefined) invalid('Local connection requires an actor');
       const store = openStore({ directory: selected.directory });
@@ -436,8 +445,9 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   const operation = parseOperation(raw);
   if (selected.kind === 'cloud') {
+    const cloud = await loadCloudClient();
     writeOperationResult(operation,
-      await executeWithPrefixOrigin(shorthandOrigins, () => createCloudClient(selected).execute(operation)), human);
+      await executeWithPrefixOrigin(shorthandOrigins, () => cloud.createCloudClient(selected).execute(operation)), human);
     return;
   }
   if (actor === undefined) invalid('Local connection requires an actor');
@@ -450,7 +460,8 @@ export async function runCli(argv: readonly string[]): Promise<void> {
   try { await main(argv); }
   catch (error: unknown) {
     const known = error instanceof PolylinedbError;
-    const authentication = error instanceof OAuthError || error instanceof CredentialStoreError;
+    const loaded = cloudClientModule;
+    const authentication = loaded !== undefined && (error instanceof loaded.OAuthError || error instanceof loaded.CredentialStoreError);
     const reported = known || authentication
       ? { code: error.code, message: error.message, ...(known && error.details !== undefined ? { details: error.details } : {}) }
       : describeUnexpectedError(error);
