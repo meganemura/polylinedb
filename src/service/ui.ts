@@ -257,22 +257,27 @@ ${list}
 ${extra}`);
 }
 
+async function directHit(db: SqlExecutor, id: string, actor: Actor): Promise<Issue | null> {
+  try {
+    const result = await executeOperation(db, { op: 'show', id }, actor);
+    return 'comments' in result ? result.issue : null;
+  } catch (error) {
+    if (error instanceof PolylinedbError && error.code === 'not_found') return null;
+    throw error;
+  }
+}
+
 async function searchHits(db: SqlExecutor, query: string, actor: Actor): Promise<{ hits: Issue[]; more: boolean; rejected: boolean }> {
   const trimmed = query.trim();
   if (trimmed.length === 0) return { hits: [], more: false, rejected: false };
-  let direct: Issue | null = null;
   let id: string | null = null;
   try { id = parseIssueId(trimmed); } catch { id = null; }
-  if (id !== null) {
-    try {
-      const result = await executeOperation(db, { op: 'show', id }, actor);
-      if ('comments' in result) direct = result.issue;
-    } catch (error) {
-      if (!(error instanceof PolylinedbError && error.code === 'not_found')) throw error;
-    }
+  const lookup = id === null ? Promise.resolve(null) : directHit(db, id, actor);
+  if (trimmed.includes('\u0000') || new TextEncoder().encode(trimmed).length > 65536) {
+    const direct = await lookup;
+    return { hits: direct === null ? [] : [direct], more: false, rejected: direct === null };
   }
-  if (trimmed.includes('\u0000') || new TextEncoder().encode(trimmed).length > 65536) return { hits: direct === null ? [] : [direct], more: false, rejected: direct === null };
-  const result = await executeOperation(db, { op: 'search', query: trimmed, limit: 50 }, actor);
+  const [direct, result] = await Promise.all([lookup, executeOperation(db, { op: 'search', query: trimmed, limit: 50 }, actor)]);
   if (!('issues' in result) || !('next_cursor' in result)) throw new PolylinedbError('storage_error', 'Search is unavailable', 500);
   const rest = result.issues.filter(issue => issue.id !== direct?.id);
   return { hits: direct === null ? rest : [direct, ...rest], more: result.next_cursor !== null, rejected: false };
@@ -390,13 +395,13 @@ async function issueBlockers(db: SqlExecutor, id: string, actor: Actor): Promise
 export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, actor: Actor): Promise<Response> {
   if (route.page === 'issue') {
     try {
-      const result = await executeOperation(db, { op: 'show', id: route.id }, actor);
-      if (!('comments' in result)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
-      const [blockers, parent, children] = await Promise.all([
+      const [result, blockers, parent, children] = await Promise.all([
+        executeOperation(db, { op: 'show', id: route.id }, actor),
         issueBlockers(db, route.id, actor),
         issueParent(db, route.id),
         issueChildren(db, route.id, childLimit),
       ]);
+      if (!('comments' in result)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
       return new Response(detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, parent, children.slice(0, shownChildren), children.length > shownChildren, labels), { headers: htmlHeaders });
     } catch (error) {
       if (error instanceof PolylinedbError && error.code === 'not_found') return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
