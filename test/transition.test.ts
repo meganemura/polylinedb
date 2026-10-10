@@ -62,6 +62,13 @@ test('start and close need resolved blockers unless forced', () => {
   assert.deepEqual(decideIssueUpdate(blocked, { changes: [close], force: true }, 'alice', 999), { accepted: true });
 });
 
+test('only a status change to start or close checks prerequisites', () => {
+  const blocked = issue({ has_active_blockers: true });
+  assert.deepEqual(decideIssueUpdate(blocked, { changes: [{ field: 'body', expected: 3, value: 'closed' }], force: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(blocked, { changes: [close, { field: 'body', expected: 3, value: 'x' }], force: false }, 'alice', 999),
+    { accepted: false, rejection: { code: 'dependency_blocked' } });
+});
+
 test('an exhausted version and an epic with children reject the update', () => {
   const full = issue({ versions: { ...versions, priority: Number.MAX_SAFE_INTEGER } });
   assert.deepEqual(decideIssueUpdate(full, { changes: [{ field: 'priority', expected: Number.MAX_SAFE_INTEGER, value: 0 }], force: false }, 'alice', 999),
@@ -70,6 +77,7 @@ test('an exhausted version and an epic with children reject the update', () => {
   assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'type', expected: 1, value: 'task' }], force: false }, 'alice', 999),
     { accepted: false, rejection: { code: 'epic_has_children' } });
   assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'type', expected: 1, value: 'epic' }], force: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'body', expected: 3, value: 'task' }], force: false }, 'alice', 999), { accepted: true });
 });
 
 test('claim acquisition needs the current incarnation and no active lease', () => {
@@ -79,6 +87,7 @@ test('claim acquisition needs the current incarnation and no active lease', () =
   assert.deepEqual(decideClaimMutation(lease(), store, acquire, 'bob', 999), { accepted: false, reason: 'already_active' });
   assert.deepEqual(decideClaimMutation(null, store, { op: 'claim_acquire', incarnation: 'b'.repeat(32) }, 'alice', 999), { accepted: false, reason: 'stale_incarnation' });
   assert.deepEqual(decideClaimMutation(lease({ released_at: 1, generation: Number.MAX_SAFE_INTEGER }), store, acquire, 'alice', 999), { accepted: false, reason: 'counter_exhausted' });
+  assert.deepEqual(decideClaimMutation(lease({ released_at: 1, revision: Number.MAX_SAFE_INTEGER }), store, acquire, 'alice', 999), { accepted: false, reason: 'counter_exhausted' });
 });
 
 test('claim renewal and release need the observed revision and a current proof', () => {
