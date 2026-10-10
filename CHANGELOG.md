@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add a store-wide change feed in schema 7. The new read operation `changes` returns issue change events after a `since` sequence number, oldest first, through `pd changes`, HTTP, and a read-only MCP tool. Each event has `seq`, `incarnation`, `issue_id`, `kind`, `fields`, `occurred_at` in database time, and `actor`. The kinds are `created`, `updated` and `status_changed` with the written field names, `commented`, `claim_acquired`, `claim_released`, `dependency_added`, `dependency_removed`, and `became_ready` for a dependent whose last open blocker closed or was removed. Filter by `project`, `issue_ids`, and `kinds`, and continue from `next_since` with the returned `incarnation`. The store keeps the newest 10,000 events. An older cursor gets `cursor_expired`, and a cursor from another store incarnation gets `incarnation_mismatch`. Both return status 409 with the current `incarnation` and `next_since`. See the change feed section of `docs/operations.md`.
+- Record each event in the same transaction as its write, on local SQLite and on D1. A rejected write, a request replay, `claim_renew`, an unchanged prerequisite edit, memory operations, a lapsed lease, snapshot import, and the D1 restore and merge operators record no event. Every existing request and response keeps its shape.
+
+### Upgrade from 0.4.0
+
+Schema 7 adds the `change_events` and `change_writer` tables and their triggers. Snapshot 5 is unchanged and carries no events.
+Back up a local store with `pd export`, then run `pd upgrade`; it accepts canonical schemas 2 through 6. `pd export --historical` now also reads schema 6.
+The new Worker fails issue, comment, claim, and prerequisite writes against a schema 6 database.
+Upgrade D1 first with the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-5-or-6-deployment) and `node scripts/schema.ts --upgrade-from 6`, then deploy the Worker.
+A 0.4.0 Worker keeps working against an upgraded database, and its writes record no events.
+The 0.4.0 CLI keeps working against the new Worker; it has no `changes` command.
+
 - When an agent's own lease has expired, the agent-gate `claim_required` says `The agent's own claim expired`. `details.claim` reports `state`, `generation`, and `expires_at` next to `id`. A write with no lease, or another agent's lease, still returns only `id`.
 - When `update`, `close`, or `reopen` includes a `claim_proof` and the store rejects it with `claim_required`, `details.claim` sits next to `details.issue`. A lease reports `state`, `generation`, and `expires_at`. An issue that was never claimed reports `state` `never_claimed`. A rejection with no proof still returns only the issue. The cloud CLI drops `claim`, so a released CLI still accepts the response. MCP and a direct HTTP client see `claim`.
 - Reject a `reason` sent without `force` with `reason is accepted only with force: true`. The MCP schema for `reason` on `update` and `close` says the same thing. `force` without a nonempty `reason` still reports `force requires true and a nonempty reason`. The call stays refused, and the text is not stored.

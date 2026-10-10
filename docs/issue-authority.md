@@ -238,6 +238,10 @@ D1 applies a signal only when its sequence is greater than the stored sequence f
 Because the signal carries the full row, D1 does not need the signals in between, and a repeated signal changes nothing.
 The sender deletes an outbox row only after D1 confirms that it stored that sequence or a later one.
 
+The store-wide [change feed](operations.md#change-feed) is separate from this outbox.
+It numbers changes for the whole store, carries no row, and keeps a fixed window for receivers that read the state again.
+The [change feed decision](adr/0016-change-feed.md#the-feed-and-the-per-issue-outbox-stay-independent) explains why neither sequence derives from the other.
+
 ### The compatibility date decides whether pending I/O keeps the store in memory
 
 A Durable Object with no connected client and no pending work leaves memory after 70 to 140 seconds without requests or events.
