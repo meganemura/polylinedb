@@ -629,7 +629,7 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     const reader = await viewProject(env, 'nukadoko', 'meganemura/nukadoko', { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
     assert.equal(reader.status, 200);
     const page = await reader.text();
-    assert.equal(reader.headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    assert.equal(reader.headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     assert.equal(reader.headers.get('cache-control'), 'no-store');
     assert.ok(page.indexOf('Started') < page.indexOf('Hold'));
     assert.ok(page.indexOf('Hold') < page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;'));
@@ -956,5 +956,45 @@ test('ui: owner inbox lists owner-decision, owner-action, and main-wait across p
     assert.ok(!html.includes(readyOnly));
     assert.ok(!html.includes('Closed decision'));
     assert.ok(!/<(form|input|button|script)\b/.test(html));
+  } finally { sqlite.close(); }
+});
+
+test('ui: search finds an issue by id or by words in the text', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const search = (query: string, headers: Record<string, string> = auth) => handleRequest(new Request(`https://issues.example/ui/search?q=${encodeURIComponent(query)}`, { headers }), env, authenticate);
+  try {
+    const lantern = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Unique lantern phrase' });
+    const other = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Other project work' });
+    sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, 'polylinedb', 'meganemura/polylinedb', 'Dotted search child', 'open', 'task', 2, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`)
+      .run('pd-51.6', issueSortKey('pd-51.6'));
+
+    const anonymous = await search('lantern', {});
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Unique lantern phrase'));
+    const home = await (await viewUi(env, auth)).text();
+    assert.ok(home.includes('href="/ui/search"'));
+    const blank = await (await handleRequest(new Request('https://issues.example/ui/search', { headers: auth }), env, authenticate)).text();
+    assert.ok(blank.includes('Type an issue id or words from the text.'));
+    assert.ok(blank.includes('<form method="get" action="/ui/search">'));
+    assert.ok(!blank.includes('method="post"'));
+    assert.ok(!/<(script)\b/.test(blank));
+
+    const byWords = await (await search('lantern')).text();
+    assert.ok(byWords.includes('Unique lantern phrase'));
+    assert.ok(byWords.includes(`href="/ui/i/${lantern}"`));
+    assert.ok(!byWords.includes('Other project work'));
+    assert.ok(!byWords.includes(other));
+    const byId = await (await search('pd-51.6')).text();
+    assert.ok(byId.includes('Dotted search child'));
+    assert.ok(byId.includes('href="/ui/i/pd-51.6"'));
+    const hostile = await (await search('<img src=x>')).text();
+    assert.ok(hostile.includes('&lt;img src=x&gt;'));
+    assert.ok(!hostile.includes('<img'));
+    const missing = await (await search('pd-999')).text();
+    assert.ok(missing.includes('Nothing matches.'));
+    assert.ok(!missing.includes('Unique lantern phrase'));
   } finally { sqlite.close(); }
 });
