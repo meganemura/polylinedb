@@ -375,6 +375,10 @@ export async function recentlyClosedIssues(db: SqlExecutor, limit: number): Prom
   return (await db.reads.all(issueQueries.recentlyClosed, { limit })).map(issueRow);
 }
 
+export async function projectClosedIssues(db: SqlExecutor, tool: string, project: string, limit: number): Promise<Issue[]> {
+  return (await db.reads.all(issueQueries.projectClosed, { tool, project, limit })).map(issueRow);
+}
+
 // `main-wait` keeps an issue open while its merge sits in a local land queue that the remote trunk does not yet contain.
 export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promise<Issue[]> {
   return (await db.reads.all(issueQueries.awaitingMain, { limit })).map(issueRow);
@@ -412,8 +416,8 @@ function clock(value: number | null): number {
   return value;
 }
 
-export async function projectIssues(db: SqlExecutor, tool: string, project: string, limit: number): Promise<ProjectIssue[]> {
-  return (await db.reads.all(issueQueries.projectIssues, { tool, project, limit })).map(row => {
+export async function projectIssues(db: SqlExecutor, tool: string, project: string, limit: number, status: Status | null = null, label: string | null = null): Promise<ProjectIssue[]> {
+  return (await db.reads.all(issueQueries.projectIssues, { tool, project, limit, status, label, closed: status === 'closed' ? 1 : 0 })).map(row => {
     const issue = issueRow(row);
     const openBlockers = storedCount(row.open_blockers);
     if (row.claim_generation === null) return { issue, openBlockers, claim: { state: 'never_claimed' } };

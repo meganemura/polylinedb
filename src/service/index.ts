@@ -1,9 +1,10 @@
 /** Adapts authenticated HTTP and MCP requests to issue and memory operations, and serves the read-only /ui page. OAuth belongs to Access. */
 import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
-import { uiResponse, type UiRoute } from "./ui.ts";
+import { uiNotFoundResponse, uiResponse, type UiRoute } from "./ui.ts";
 import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseIssueId, parseOperation, parseRequestId } from "../records/index.ts";
+import type { Status } from "../records/index.ts";
 import type { Operation } from "../records/index.ts";
 
 export type Environment = AccessSettings & {
@@ -215,6 +216,23 @@ function scopeName(value: string): boolean {
   return value.trim().length > 0 && !value.includes('\u0000') && !/\p{Cc}/u.test(value) && new TextEncoder().encode(value).length <= 256;
 }
 
+const projectStatuses = ['open', 'in_progress', 'deferred', 'closed'] as const satisfies readonly Status[];
+
+function projectFilters(url: URL): { status?: Status; label?: string } | 'invalid' {
+  const status = url.searchParams.get('status');
+  const label = url.searchParams.get('label');
+  const filters: { status?: Status; label?: string } = {};
+  if (status !== null) {
+    if (!projectStatuses.includes(status as Status)) return 'invalid';
+    filters.status = status as Status;
+  }
+  if (label !== null) {
+    if (!scopeName(label)) return 'invalid';
+    filters.label = label;
+  }
+  return filters;
+}
+
 function projectRoute(pathname: string): UiRoute | null {
   const segments = pathname.slice('/ui/p/'.length).split('/');
   if (segments.length < 2) return null;
@@ -266,7 +284,13 @@ export async function handleRequest(
     const caller = await authenticate(request, env);
     if (target.kind === 'ui') {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
-      return await uiResponse(d1Executor(env.DB), actorLabels(env), target.route, caller.actor);
+      let route = target.route;
+      if (route.page === 'project') {
+        const filters = projectFilters(new URL(request.url));
+        if (filters === 'invalid') return uiNotFoundResponse();
+        route = { ...route, ...filters };
+      }
+      return await uiResponse(d1Executor(env.DB), actorLabels(env), route, caller.actor);
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
     if (target.kind === 'mcp') return await mcp(request, env, caller);

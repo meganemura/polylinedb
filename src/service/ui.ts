@@ -1,5 +1,5 @@
 /** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
-import { claimDisplay, executeOperation, issuesAwaitingMain, projectIssues, projectSummaries, recentlyClosedIssues, PolylinedbError, type Actor, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { claimDisplay, executeOperation, issuesAwaitingMain, projectClosedIssues, projectIssues, projectSummaries, PolylinedbError, type Actor, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 
 const listLimit = 50;
@@ -9,7 +9,7 @@ const projectIssueLimit = 101;
 const shownProjectIssues = 100;
 const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
 
-export type UiRoute = { page: 'home' } | { page: 'project'; tool: string; project: string } | { page: 'issue'; id: string };
+export type UiRoute = { page: 'home' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 function escape(value: string): string {
@@ -159,6 +159,10 @@ function notFoundPage(): string {
 <p class="quiet-note">Issue was not found.</p>`);
 }
 
+export function uiNotFoundResponse(): Response {
+  return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
+}
+
 function document(pageTitle: string, body: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -179,20 +183,21 @@ ${body}
 </html>`;
 }
 
-export function uiPage(lists: { projects: readonly ProjectSummary[]; moreProjects: boolean; awaitingMain: readonly Issue[]; recentlyClosed: readonly Issue[] }, labels: ReadonlyMap<string, string>): string {
-  return document('Recent work', `<h1>Recent work</h1>
+export function uiPage(lists: { projects: readonly ProjectSummary[]; moreProjects: boolean; awaitingMain: readonly Issue[] }, labels: ReadonlyMap<string, string>): string {
+  return document('Projects', `<h1>Projects</h1>
 ${projectsSection(lists.projects, lists.moreProjects)}
-${section('main 待ち', lists.awaitingMain, labels, 'Nothing waits for main.', 'Open issues labelled main-wait.')}
-${section('Recently closed', lists.recentlyClosed, labels, 'Nothing has closed yet.', 'Ordered by 最終更新. pd does not record when an issue closed.')}`);
+${section('main 待ち', lists.awaitingMain, labels, 'Nothing waits for main.', 'Open issues labelled main-wait.')}`);
 }
 
-function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], labels: ReadonlyMap<string, string>, more: boolean): string {
+function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], closed: readonly Issue[], labels: ReadonlyMap<string, string>, more: boolean, filtered: boolean): string {
   const note = more ? '<p class="section-note">More issues are not shown.</p>' : '';
-  const body = issues.length === 0 ? '<p class="quiet-note">Nothing is open.</p>' : `<ul class="quiet-list">${issues.map(row => projectIssueItem(row, labels)).join('')}</ul>`;
+  const empty = filtered ? 'Nothing matches.' : 'Nothing is open.';
+  const body = issues.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${issues.map(row => projectIssueItem(row, labels)).join('')}</ul>`;
   return document(tool, `<h1>${escape(tool)}</h1>
 <p class="section-note">${escape(project)}</p>
 ${body}
-${note}`);
+${note}
+${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered by 最終更新. pd does not record when an issue closed.')}`);
 }
 
 const htmlHeaders = {
@@ -231,13 +236,16 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
     }
   }
   if (route.page === 'project') {
-    const issues = await projectIssues(db, route.tool, route.project, projectIssueLimit);
-    return new Response(projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), labels, issues.length > shownProjectIssues), { headers: htmlHeaders });
+    const [issues, closed] = await Promise.all([
+      projectIssues(db, route.tool, route.project, projectIssueLimit, route.status ?? null, route.label ?? null),
+      projectClosedIssues(db, route.tool, route.project, listLimit),
+    ]);
+    return new Response(projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), closed, labels, issues.length > shownProjectIssues, route.status !== undefined || route.label !== undefined), { headers: htmlHeaders });
   }
-  const [projects, awaitingMain, recentlyClosed] = await Promise.all([
-    projectSummaries(db, projectSummaryLimit), issuesAwaitingMain(db, listLimit), recentlyClosedIssues(db, listLimit),
+  const [projects, awaitingMain] = await Promise.all([
+    projectSummaries(db, projectSummaryLimit), issuesAwaitingMain(db, listLimit),
   ]);
-  return new Response(uiPage({ projects: projects.slice(0, shownProjects), moreProjects: projects.length > shownProjects, awaitingMain, recentlyClosed }, labels), { headers: htmlHeaders });
+  return new Response(uiPage({ projects: projects.slice(0, shownProjects), moreProjects: projects.length > shownProjects, awaitingMain }, labels), { headers: htmlHeaders });
 }
 
 const styles = `
