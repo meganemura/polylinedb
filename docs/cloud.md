@@ -511,13 +511,13 @@ A change to a label therefore changes `/ui` for past updates too.
 The Worker serves a read-only page at `/ui` for a phone browser.
 The page lists two sections:
 
-- `main 待ち`: open issues with the label `main-wait`. This label marks work that is merged into a local land queue but is not yet on the remote main branch.
+- `Waiting for main`: open issues with the label `main-wait`. This label marks work that is merged into a local land queue but is not yet on the remote main branch.
 - `Recently closed`: closed issues.
 
 Each row shows the issue ID, the first line of the body, the time of the last update in JST, and the actor of the last update.
 The actor shows as its roster [label](#label-an-actor-for-the-ui-page), or as the actor ID when the roster gives it no label or no longer lists it.
 The rows are newest first by `updated_at`.
-The time column has the label `最終更新`.
+The time column has the label `Last updated`.
 It is not the close time, because the store does not record when an issue closed or who closed it.
 A comment does not change `updated_at`.
 

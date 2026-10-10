@@ -246,14 +246,14 @@ try {
   assert.equal(page.status, 200);
   assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
   const html = await page.text();
-  assert.ok(html.includes(`${draftIssue.id} · 最終更新`));
+  assert.ok(html.includes(`${draftIssue.id} · Last updated`));
   assert.ok(!html.includes('Recently closed'));
   assert.ok(!html.includes('Ready work'));
   const gatedPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/gated', { headers: { 'cf-access-jwt-assertion': viewer } });
   assert.equal(gatedPage.status, 200);
   const gatedHtml = await gatedPage.text();
   assert.ok(gatedHtml.includes('Recently closed'));
-  assert.ok(gatedHtml.includes(`<span class="secondary">${readyIssue.id} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">Codex</span>`));
+  assert.ok(gatedHtml.includes(`<span class="secondary">${readyIssue.id} · Last updated <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">Codex</span>`));
   assert.ok(html.includes('<h2>Projects</h2>'));
   for (const project of ['parser', 'other', 'gated']) assert.ok(html.includes(`href="/ui/p/compiler/${project}"`), project);
   const projectPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/parser', { headers: { 'cf-access-jwt-assertion': viewer } });

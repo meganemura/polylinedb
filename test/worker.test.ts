@@ -416,9 +416,9 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const html = await response.text();
-    const waitingPart = uiSection(html, 'main 待ち');
+    const waitingPart = uiSection(html, 'Waiting for main');
     const ids = (part: string) => [...part.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
-    assert.match(waitingPart, /^main 待ち<\/h2>/);
+    assert.match(waitingPart, /^Waiting for main<\/h2>/);
     assert.deepEqual(ids(waitingPart), [waiting]);
     assert.equal(html.indexOf('<h2>Recently closed</h2>'), -1);
     assert.ok(!html.includes('Newest close'));
@@ -428,7 +428,7 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     const closedPart = uiSection(project, 'Recently closed');
     assert.match(closedPart, /^Recently closed<\/h2>/);
     assert.deepEqual(ids(closedPart), [newest, hostile, older, closedWaiting]);
-    assert.ok(project.includes(`<span class="primary">Newest close</span>\n<span class="secondary">${newest} · 最終更新 <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:agent-7</span>`));
+    assert.ok(project.includes(`<span class="primary">Newest close</span>\n<span class="secondary">${newest} · Last updated <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:agent-7</span>`));
     assert.ok(project.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;&amp;</span>'));
     assert.ok(project.includes('<span class="secondary">access:&lt;b&gt;&quot;x&quot;</span>'));
     assert.ok(!project.includes('<img'));
@@ -460,7 +460,7 @@ test('/ui shows quiet notes when nothing waits for main and nothing has closed',
   const { sqlite, env } = fixture();
   try {
     const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
-    assert.ok(html.includes('<p class="quiet-note">Nothing waits for main.</p>'));
+    assert.ok(html.includes('<p class="quiet-note">Nothing is waiting for main.</p>'));
     const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': await assertion() })).text();
     assert.ok(project.includes('<p class="quiet-note">Nothing has closed yet.</p>'));
   } finally { sqlite.close(); }
@@ -560,7 +560,7 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     assert.equal(home.status, 200);
     const html = await home.text();
     const projectsAt = html.indexOf('<h2>Projects</h2>');
-    const waitingAt = html.indexOf('<h2>main 待ち</h2>');
+    const waitingAt = html.indexOf('<h2>Waiting for main</h2>');
     assert.ok(projectsAt !== -1 && projectsAt < waitingAt);
     assert.equal(html.indexOf('<h2>Recently closed</h2>'), -1);
     assert.ok(!html.includes('Done nukadoko'));
@@ -582,8 +582,8 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     assert.ok(html.includes('q&lt;b&gt;&amp;'));
     assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
     assert.ok(!/<(form|input|button|script)\b/.test(html));
-    const waitingPart = uiSection(html, 'main 待ち');
-    assert.match(waitingPart, /^main 待ち<\/h2>/);
+    const waitingPart = uiSection(html, 'Waiting for main');
+    assert.match(waitingPart, /^Waiting for main<\/h2>/);
     assert.ok(waitingPart.includes(polyline));
 
     const anonymous = await viewProject(env, 'nukadoko', 'meganemura/nukadoko');
@@ -844,7 +844,7 @@ test('pd-137: project filters and a project-scoped closed section replace the st
 
     const home = await (await viewUi(env, auth)).text();
     assert.ok(home.includes('<h1>Projects</h1>'));
-    assert.ok(uiSection(home, 'main 待ち').includes(waiting));
+    assert.ok(uiSection(home, 'Waiting for main').includes(waiting));
     assert.ok(!home.includes('Foreign close'));
     assert.ok(!home.includes('Newest close'));
 
@@ -859,7 +859,7 @@ test('pd-137: project filters and a project-scoped closed section replace the st
     assert.ok(closedPart.includes(newest));
     assert.ok(closedPart.includes(older));
     assert.ok(closedPart.indexOf('Newest close') < closedPart.indexOf('Older close'));
-    assert.ok(closedPart.includes('最終更新'));
+    assert.ok(closedPart.includes('Last updated'));
     assert.ok(!closedPart.includes('Foreign close'));
     assert.ok(!openPage.includes('Foreign close'));
 
