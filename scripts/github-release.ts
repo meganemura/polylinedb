@@ -35,6 +35,10 @@ export type ReleaseClient = {
 };
 export type ReleaseOutcome = { tag: 'created' | 'verified'; release: 'created' | 'verified' };
 
+export function releaseTag(version: string): string {
+  return `v${version}`;
+}
+
 export function tagMessage(version: string): string {
   return `polylinedb ${version}\n`;
 }
@@ -76,7 +80,7 @@ export async function ensureRelease(client: ReleaseClient, input: { version: str
   if (!versionPattern.test(input.version)) refuse(`Invalid version: ${input.version}`);
   if (!commitPattern.test(input.commit)) refuse('The approved commit must be a full lowercase SHA');
   if (input.notes.trim() === '') refuse('Release notes are empty');
-  const tag = `v${input.version}`;
+  const tag = releaseTag(input.version);
   const refName = `refs/tags/${tag}`;
   const matches = (await client.matchingRefs(tag)).filter(ref => ref.ref === refName);
   if (matches.length > 1) refuse(`Tag ${tag} matched more than one ref`);
