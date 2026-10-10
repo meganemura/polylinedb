@@ -1,7 +1,7 @@
 // Pins the invalid_input wording that MCP and CLI callers see when operation fields do not match a schema.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseOperation } from "../src/records/operations.ts";
+import { operationSchemas, parseOperation } from "../src/records/operations.ts";
 
 const secret = 'VAL-SENTINEL-89';
 function rejection(input: Record<string, unknown>): string {
@@ -64,6 +64,16 @@ test('a rejection hides a name that is not shaped like an identifier', () => {
     assert.equal(rejection({ ...memory, [key]: 'v' }), 'Unexpected field: <invalid name>');
   }
   assert.equal(rejection({ ...memory, tool: 'v', [`Bearer ${secret}`]: 'v' }), 'Unexpected fields: tool, <invalid name>');
+});
+
+test('update rejects a reason that arrives without force', () => {
+  assert.equal(rejection({ op: 'update', id: 'pd-1', changes: [change], reason: 'corrected the body', claim_proof: proof }), 'reason is accepted only with force: true');
+  assert.equal(rejection({ op: 'close', id: 'pd-1', expected: 1, reason: 'corrected the body' }), 'reason is accepted only with force: true');
+  assert.equal(rejection({ op: 'update', id: 'pd-1', changes: [change], force: true }), 'force requires true and a nonempty reason');
+  const description = 'Accepted only with force: true. At most 65536 UTF-8 bytes.';
+  for (const name of ['update', 'close'] as const) {
+    assert.equal((operationSchemas[name].properties as { reason: { description: string } }).reason.description, description);
+  }
 });
 
 test('claim and dependency operations list every field problem', () => {

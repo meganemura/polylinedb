@@ -211,7 +211,7 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 65536,
-        "description": "At most 65536 UTF-8 bytes."
+        "description": "Accepted only with force: true. At most 65536 UTF-8 bytes."
       },
       "claim_proof": {
         "type": "object",
@@ -1131,7 +1131,7 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 65536,
-        "description": "At most 65536 UTF-8 bytes."
+        "description": "Accepted only with force: true. At most 65536 UTF-8 bytes."
       },
       "claim_proof": {
         "type": "object",
