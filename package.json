@@ -24,7 +24,7 @@
     "generate:sql": "node scripts/solarsql.ts",
     "check:sql": "node scripts/solarsql.ts --check",
     "check:architecture": "node scripts/check-architecture.ts",
-    "test:properties": "node --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts test/claims.test.ts test/transition-differential.test.ts",
+    "test:properties": "node --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts test/claims.test.ts test/transition-differential.test.ts test/spec-properties.test.ts",
     "test:mutation": "stryker run"
   },
   "devDependencies": {
