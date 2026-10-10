@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { gzipSync } from 'node:zlib';
 import { Miniflare, Response as MiniflareResponse } from 'miniflare';
-import { SCHEMA_STATEMENTS } from '../src/records/schema.ts';
+import { SCHEMA_STATEMENTS } from '../src/records/persistence.ts';
 
 const { values: options } = parseArgs({ options: {
   'delay-ms': { type: 'string', default: '0' },
