@@ -1,6 +1,7 @@
 // Keep credentials, callback listeners, and HTTPS responses synthetic in CLI test subprocesses.
 import childProcess from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
+import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import type { RequestListener, ServerOptions } from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
@@ -35,6 +36,16 @@ if (listenerCode) {
       return server;
     } });
     return server;
+  } });
+}
+// `state:CODE` fails creation of the authentication state directory; `lock:CODE` fails creation of the lock inside it.
+const [mkdirTarget, mkdirCode] = (process.env.PD_AUTH_MKDIR_FAILURE ?? '').split(':');
+if (mkdirCode) {
+  const nativeMkdir = fsPromises.mkdir;
+  Object.defineProperty(fsPromises, 'mkdir', { value: (path: string, options?: Parameters<typeof nativeMkdir>[1]) => {
+    const target = path.endsWith('.lock') ? 'lock' : path.endsWith('/polylinedb/auth') ? 'state' : undefined;
+    if (target !== mkdirTarget) return nativeMkdir(path, options);
+    return Promise.reject(Object.assign(new Error(`synthetic-private-token ${path}`), { code: mkdirCode, syscall: 'mkdir', path }));
   } });
 }
 syncBuiltinESMExports();
