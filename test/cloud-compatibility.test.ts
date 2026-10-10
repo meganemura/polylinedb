@@ -153,6 +153,20 @@ test('an older Worker show without claim completes through one claim_show reques
   } finally { sqlite.close(); }
 });
 
+test('an authorization failure during the show claim fallback stays the authorize error', async () => {
+  const show = { op: 'show', id: 'pd-1' };
+  const reauthorization = new Error('synthetic grant expired');
+  let authorizations = 0;
+  const sent: Record<string, unknown>[] = [];
+  const fetch: typeof globalThis.fetch = async (_url, options) => {
+    sent.push(JSON.parse(String(options?.body)));
+    return Response.json({ issue: { id: 'pd-1' }, comments: [] });
+  };
+  await assert.rejects(executeCloudOperation({ origin, operation: parseOperation(show), fetch,
+    authorize: async () => { authorizations++; if (authorizations > 1) throw reauthorization; return 'synthetic-secret'; } }), error => error === reauthorization);
+  assert.deepEqual([authorizations, sent], [2, [JSON.parse(JSON.stringify(parseOperation(show)))]]);
+});
+
 test('an older Worker that rejects with_matches answers a search through one plain search request', async () => {
   const { sqlite, transport, wire } = await worker();
   try {
