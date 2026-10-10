@@ -106,6 +106,35 @@ test('CLI persists issues, exposes conflicts, and appends comments', t => {
     code: 'not_found', message: 'Issue was not found', details: { id: 'pd-51' },
   });
 });
+test('CLI reads the change feed with repeated filters, paging, and cursor errors', t => {
+  const { run } = fixture(t);
+  run(['init']);
+  for (const project of ['feed', 'feed', 'other']) run(['create', '--tool', 'codex', '--project', project, '--body', 'issue']);
+  run(['comment', '2', '--body', 'noted']);
+  run(['dependency_add', '--dependent', '2', '--blocker', '1', '--expected-revision', '1']);
+  const all = run(['changes', '--since', '0']);
+  assert.deepEqual(all.changes.map(({ seq, issue_id, kind, actor }: { seq: number; issue_id: string; kind: string; actor: string }) => [seq, issue_id, kind, actor]), [
+    [1, 'pd-1', 'created', 'local:test'], [2, 'pd-2', 'created', 'local:test'], [3, 'pd-3', 'created', 'local:test'],
+    [4, 'pd-2', 'commented', 'local:test'], [5, 'pd-2', 'dependency_added', 'local:test'],
+  ]);
+  assert.equal(all.next_since, 5);
+  const first = run(['changes', '--since', '0', '--limit', '2']);
+  assert.deepEqual([first.changes.map((change: { seq: number }) => change.seq), first.next_since], [[1, 2], 2]);
+  const rest = run(['changes', '--since', String(first.next_since), '--incarnation', all.incarnation, '--limit', '3']);
+  assert.deepEqual([rest.changes.map((change: { seq: number }) => change.seq), rest.next_since], [[3, 4, 5], 5]);
+  const filtered = run(['changes', '--since', '0', '--issue', '2', '--issue', 'pd-3', '--kind', 'created', '--kind', 'commented']);
+  assert.deepEqual(filtered.changes.map((change: { seq: number }) => change.seq), [2, 3, 4]);
+  assert.deepEqual(run(['changes', '--since', '0', '--project', 'other']).changes.map((change: { seq: number }) => change.seq), [3]);
+  assert.equal(run(['changes'], { status: 2 }).error.code, 'invalid_input');
+  assert.equal(run(['changes', '--since', '3'], { status: 2 }).error.message, 'incarnation is required when since is greater than 0');
+  assert.equal(run(['changes', '--since', '6', '--incarnation', all.incarnation], { status: 2 }).error.code, 'invalid_input');
+  assert.equal(run(['changes', '--since', '0', '--kind', 'reclaimed'], { status: 2 }).error.code, 'invalid_input');
+  assert.equal(run(['changes', '--since', '0', '--since', '1'], { status: 2 }).error.message, 'Duplicate flag --since');
+  assert.deepEqual(run(['changes', '--since', '3', '--incarnation', 'f'.repeat(32)], { status: 4 }).error, {
+    code: 'incarnation_mismatch', message: 'The store incarnation changed. Read the state again, then continue from next_since.',
+    details: { incarnation: all.incarnation, next_since: 5 },
+  });
+});
 test('CLI human reads show full details and comments, safe previews, and page cursors', t => {
   const { run } = fixture(t);
   run(['init']);

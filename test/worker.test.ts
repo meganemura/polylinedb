@@ -196,6 +196,59 @@ test('MCP handles transport and JSON-RPC failures without executing tools', asyn
   } finally { sqlite.close(); }
 });
 
+test('HTTP and MCP read the change feed for readers and report cursor errors with the current position', async () => {
+  const { sqlite, env } = fixture(JSON.stringify(['access:owner', { actor: 'access:viewer', role: 'reader' }]));
+  const tokens = { owner: await assertion(), viewer: await assertion({ sub: 'viewer' }) };
+  const operate = async (body: Record<string, unknown>, who: keyof typeof tokens = 'owner') => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': tokens[who] }, body: JSON.stringify(body),
+    }), env, authenticate);
+    return { status: response.status, text: await response.text() };
+  };
+  const tool = async (args: Record<string, unknown>, who: keyof typeof tokens = 'viewer') => (await (await handleRequest(new Request('https://issues.example/mcp', {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': tokens[who] },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'changes', arguments: args } }),
+  }), env, authenticate)).json()).result;
+  try {
+    for (const body of ['blocker', 'dependent']) assert.equal((await operate({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'feed', project: 'feed', body })).status, 200);
+    await operate({ op: 'comment', id: 'pd-2', body: 'waiting' });
+    const first = await operate({ op: 'changes', since: 0, limit: 2 }, 'viewer');
+    assert.equal(first.status, 200);
+    const page = JSON.parse(first.text);
+    const incarnation = page.incarnation;
+    assert.match(incarnation, /^[a-f0-9]{32}$/);
+    const occurred = page.changes.map((change: { occurred_at: number }) => change.occurred_at);
+    assert.equal(first.text, JSON.stringify({ incarnation, changes: [
+      { seq: 1, incarnation, issue_id: 'pd-1', kind: 'created', fields: [], occurred_at: occurred[0], actor: 'access:owner' },
+      { seq: 2, incarnation, issue_id: 'pd-2', kind: 'created', fields: [], occurred_at: occurred[1], actor: 'access:owner' },
+    ], next_since: 2 }));
+    const second = await tool({ since: 2, incarnation });
+    assert.equal(second.isError, false);
+    assert.deepEqual(second.structuredContent.changes.map((change: { seq: number; kind: string }) => [change.seq, change.kind]), [[3, 'commented']]);
+    assert.equal(second.structuredContent.next_since, 3);
+    assert.deepEqual((await tool({ since: 0, kinds: ['commented'], issue_ids: ['pd-2'], project: 'feed' })).structuredContent.changes.map((change: { seq: number }) => change.seq), [3]);
+
+    const other = 'f'.repeat(32);
+    const mismatch = await operate({ op: 'changes', since: 2, incarnation: other });
+    assert.equal(mismatch.status, 409);
+    assert.deepEqual(JSON.parse(mismatch.text).error, { code: 'incarnation_mismatch', message: 'The store incarnation changed. Read the state again, then continue from next_since.', details: { incarnation, next_since: 3 } });
+    const toolMismatch = await tool({ since: 2, incarnation: other });
+    assert.equal(toolMismatch.isError, true);
+    assert.deepEqual(toolMismatch.structuredContent.error.details, { incarnation, next_since: 3 });
+    const ahead = await operate({ op: 'changes', since: 4, incarnation });
+    assert.equal(ahead.status, 400);
+    assert.deepEqual(JSON.parse(ahead.text).error, { code: 'invalid_input', message: 'since must not exceed the newest change seq' });
+    assert.equal((await operate({ op: 'changes', since: 1 })).status, 400);
+
+    sqlite.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10000)
+      INSERT INTO change_events(issue_id, kind, fields_json, occurred_at, actor) SELECT 'pd-1', 'commented', '[]', unixepoch(), 'retention' FROM n`);
+    const expired = await operate({ op: 'changes', since: 2, incarnation }, 'viewer');
+    assert.equal(expired.status, 409);
+    assert.deepEqual(JSON.parse(expired.text).error, { code: 'cursor_expired', message: 'Retention removed changes after since. Read the state again, then continue from next_since.', details: { incarnation, next_since: 10003 } });
+    assert.equal((await operate({ op: 'changes', since: 3, incarnation, limit: 1 })).status, 200);
+  } finally { sqlite.close(); }
+});
+
 test('the roster keeps readers read-only and gates each service-token agent as its own actor', async () => {
   const { sqlite, env } = fixture(JSON.stringify([
     'access:owner',
