@@ -1013,3 +1013,46 @@ test('ui: working now lists active claims and hides released ones', async () => 
     assert.ok(!/<(form|input|button|script)\b/.test(html));
   } finally { sqlite.close(); }
 });
+
+test('ui: blocked lists unfinished issues that still have an open blocker', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const post = async (body: unknown) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
+    }), env, authenticate);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  try {
+    const stuck = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Stuck on two' });
+    const deferredOnly = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Stuck on a deferral' });
+    const clear = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Only a closed blocker' });
+    const openA = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Open blocker A' });
+    const openB = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Open blocker B' });
+    const deferred = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Deferred blocker' });
+    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Finished blocker' });
+    await post({ op: 'update', id: deferred, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
+    await post({ op: 'close', id: closed, expected: 1 });
+    await post({ op: 'dependency_add', dependent_id: stuck, blocker_id: openA, expected_revision: 1, request_id: crypto.randomUUID() });
+    await post({ op: 'dependency_add', dependent_id: stuck, blocker_id: openB, expected_revision: 2, request_id: crypto.randomUUID() });
+    await post({ op: 'dependency_add', dependent_id: deferredOnly, blocker_id: deferred, expected_revision: 1, request_id: crypto.randomUUID() });
+    await post({ op: 'dependency_add', dependent_id: clear, blocker_id: closed, expected_revision: 1, request_id: crypto.randomUUID() });
+
+    const anonymous = await handleRequest(new Request('https://issues.example/ui/blocked'), env, authenticate);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Stuck on two'));
+    const home = await (await viewUi(env, auth)).text();
+    assert.ok(home.includes('href="/ui/blocked"'));
+    const html = await (await handleRequest(new Request('https://issues.example/ui/blocked', { headers: auth }), env, authenticate)).text();
+    assert.ok(html.includes('Stuck on two'));
+    assert.ok(html.includes('blocked 2'));
+    assert.ok(html.includes('Stuck on a deferral'));
+    assert.ok(html.includes('blocked 1'));
+    assert.ok(html.includes(`href="/ui/i/${stuck}"`));
+    assert.ok(!html.includes('Only a closed blocker'));
+    assert.ok(html.indexOf('Stuck on two') < html.indexOf('Stuck on a deferral'));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+  } finally { sqlite.close(); }
+});
