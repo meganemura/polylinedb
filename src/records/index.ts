@@ -1,6 +1,7 @@
 // Exposes record commands and their domain types; storage and snapshot details use the persistence entry.
 export { executeOperation, parseOperation, operationSchemas } from './operations.ts';
-export { recentlyClosedIssues, issuesAwaitingMain } from './issues.ts';
+export { recentlyClosedIssues, issuesAwaitingMain, projectSummaries, projectIssues } from './issues.ts';
+export type { ProjectSummary } from './issues.ts';
 export { mcpAnnotationsFor, operationAccess, requiresExplicitLocalActor } from './operation-policy.ts';
 export type { Operation, OperationResult } from './operations.ts';
 export type { OperationAccess } from './operation-policy.ts';

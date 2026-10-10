@@ -549,7 +549,7 @@ test('/ui reads no issue before Access accepts the caller, and a misconfigured A
     assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) })).status, 403);
     assert.deepEqual(reads, []);
     assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': token })).status, 200);
-    assert.equal(reads.length, 2);
+    assert.equal(reads.length, 3);
   } finally { sqlite.close(); }
 });
 
