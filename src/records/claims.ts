@@ -15,6 +15,11 @@ export type ClaimReceipt = Omit<Claim, 'released_at'> & ({ outcome: 'released'; 
 export type ClaimRequest = ClaimReceipt & { request_id: string; payload: string; created_at: number };
 export type { ClaimState };
 export type ClaimInspection = { issue_id: string; store_incarnation: string; observed_at: number; state: ClaimState; lease: Claim | null };
+export type ClaimDisplay = { state: 'never_claimed' } | { state: Exclude<ClaimState, 'never_claimed'>; actor: string; agentLabel: string | null; expiresAt: number; releasedAt: number | null };
+export function claimDisplay(inspection: ClaimInspection): ClaimDisplay {
+  if (inspection.lease === null || inspection.state === 'never_claimed') return { state: 'never_claimed' };
+  return { state: inspection.state, actor: inspection.lease.actor, agentLabel: inspection.lease.agent_label, expiresAt: inspection.lease.expires_at, releasedAt: inspection.lease.released_at };
+}
 export type ClaimOperation = ClaimMutation | { op: 'claim_show'; issue_id: string }
   | { op: 'claim_list'; tool?: string; project?: string; after?: string; limit: number };
 export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claims: ClaimInspection[]; next_cursor: string | null };

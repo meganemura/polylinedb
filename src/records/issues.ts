@@ -4,7 +4,8 @@ import { fields, issueTypes, statuses } from "./schema.ts";
 import type { Database } from 'solarsql';
 import { issueQueries } from "./issue-queries.ts";
 import { expectedType, PolylinedbError, requireFields } from './errors.ts';
-import { claimProofSchema, claimRow, inspectClaim, parseClaimProof } from './claims.ts';
+import { claimProofSchema, claimRow, inspectClaim, parseClaimProof, parseIncarnation } from './claims.ts';
+import type { ClaimDisplay } from './claims.ts';
 import type { ClaimInspection } from './claims.ts';
 import { claimState, decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
@@ -404,8 +405,25 @@ export async function projectSummaries(db: SqlExecutor, limit: number): Promise<
   });
 }
 
-export async function projectIssues(db: SqlExecutor, tool: string, project: string, limit: number): Promise<Issue[]> {
-  return (await db.reads.all(issueQueries.projectIssues, { tool, project, limit })).map(issueRow);
+export type ProjectIssue = { issue: Issue; openBlockers: number; claim: ClaimDisplay };
+
+function clock(value: number | null): number {
+  if (value === null || !Number.isSafeInteger(value) || value < 0) throw new PolylinedbError('invalid_store', 'Stored claim clock is invalid', 500);
+  return value;
+}
+
+export async function projectIssues(db: SqlExecutor, tool: string, project: string, limit: number): Promise<ProjectIssue[]> {
+  return (await db.reads.all(issueQueries.projectIssues, { tool, project, limit })).map(row => {
+    const issue = issueRow(row);
+    const openBlockers = storedCount(row.open_blockers);
+    if (row.claim_generation === null) return { issue, openBlockers, claim: { state: 'never_claimed' } };
+    const lease = claimRow({ issue_id: issue.id, incarnation: row.claim_incarnation, actor: row.claim_actor, session_id: row.claim_session_id,
+      agent_label: row.claim_agent_label, generation: row.claim_generation, revision: row.claim_revision, acquired_at: row.claim_acquired_at,
+      changed_at: row.claim_changed_at, expires_at: row.claim_expires_at, released_at: row.claim_released_at });
+    const state = claimState(lease, parseIncarnation(row.store_incarnation), clock(row.observed_at));
+    if (state === 'never_claimed') return { issue, openBlockers, claim: { state } };
+    return { issue, openBlockers, claim: { state, actor: lease.actor, agentLabel: lease.agent_label, expiresAt: lease.expires_at, releasedAt: lease.released_at } };
+  });
 }
 
 // The excerpt bound counts UTF-8 bytes, including the ellipses; the SQL window counts code points, and each code point costs at least one byte.
