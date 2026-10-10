@@ -389,6 +389,10 @@ function viewProject(env: ReturnType<typeof fixture>['env'], tool: string, proje
   return handleRequest(new Request(`https://issues.example${projectPath(tool, project)}`, { method, headers }), env, authenticate);
 }
 
+function viewIssue(env: ReturnType<typeof fixture>['env'], id: string, headers: Record<string, string> = {}, method = 'GET') {
+  return handleRequest(new Request(`https://issues.example/ui/i/${id}`, { method, headers }), env, authenticate);
+}
+
 test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
@@ -612,7 +616,6 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     assert.ok(page.includes('<span class="secondary">priority 0</span>'));
     assert.ok(page.includes('<span class="secondary">bug</span>'));
     assert.ok(!/<(form|input|button|script)\b/.test(page));
-    assert.ok(!page.includes('href="/ui/i/'));
     const encoded = await handleRequest(new Request('https://issues.example/ui/p/polylinedb/meganemura%2Fpolylinedb', { headers: { 'cf-access-jwt-assertion': token } }), env, authenticate);
     assert.equal(encoded.status, 200);
     assert.ok((await encoded.text()).includes(polyline));
@@ -650,5 +653,84 @@ test('pd-134: project and issue lists say when the cap hides further rows', asyn
     assert.ok(page.includes('pd-1'));
     assert.ok(page.includes('pd-100'));
     assert.ok(!page.includes('pd-101'));
+  } finally { sqlite.close(); }
+});
+
+test('pd-135: project rows link to an issue detail page that escapes body and comments', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const post = (body: unknown) => handleRequest(new Request('https://issues.example/v1/operations', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
+  }), env, authenticate);
+  try {
+    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parent epic', type: 'epic' });
+    const child = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Child line\n\nFollow <b>up</b>\nhttps://example.com', parent: epic, type: 'task', priority: 1, labels: ['dogfooding', 'ready', '<x>'] });
+    const sibling = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Secret sibling' });
+    const commented = await post({ op: 'comment', id: child, body: 'See <img src=x onerror=alert(1)>' });
+    assert.equal(commented.status, 200);
+    const inspection = await post({ op: 'claim_show', issue_id: child });
+    assert.equal(inspection.status, 200);
+    const incarnation = (await inspection.json()).claim.store_incarnation;
+    const session = crypto.randomUUID();
+    const acquired = await post({ op: 'claim_acquire', issue_id: child, incarnation, session_id: session, request_id: crypto.randomUUID(), agent_label: 'Codex' });
+    assert.equal(acquired.status, 200);
+    sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, 'polylinedb', 'meganemura/polylinedb', 'Dotted child', 'open', 'task', 2, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`)
+      .run('pd-51.6', issueSortKey('pd-51.6'));
+
+    const list = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(list.includes(`href="/ui/i/${child}"`));
+    assert.ok(list.includes('href="/ui/i/pd-51.6"'));
+    assert.ok(!list.includes('dogfooding'));
+
+    const anonymous = await viewIssue(env, child);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Child line'));
+    const grammar = await handleRequest(new Request('https://issues.example/ui/i/not-an-id'), env, authenticate);
+    assert.equal(grammar.status, 404);
+    assert.equal(grammar.headers.get('content-type'), 'application/json');
+    assert.deepEqual(await grammar.json(), { error: { code: 'not_found', message: 'Route not found.' } });
+    const nested = await handleRequest(new Request('https://issues.example/ui/i/pd-1/extra', { headers: { 'cf-access-jwt-assertion': token } }), env, authenticate);
+    assert.equal(nested.status, 404);
+    assert.equal(nested.headers.get('content-type'), 'application/json');
+
+    const missing = await viewIssue(env, 'pd-999', { 'cf-access-jwt-assertion': token });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get('content-type'), 'text/html; charset=utf-8');
+    const missingHtml = await missing.text();
+    assert.ok(!missingHtml.includes('Secret sibling'));
+    assert.ok(!missingHtml.includes('Child line'));
+    assert.equal(missing.headers.get('cache-control'), 'no-store');
+
+    const detail = await viewIssue(env, child, { 'cf-access-jwt-assertion': token });
+    assert.equal(detail.status, 200);
+    const html = await detail.text();
+    assert.ok(html.includes('href="/ui/p/polylinedb/meganemura/polylinedb"'));
+    assert.ok(html.includes('Child line'));
+    assert.ok(html.includes(child));
+    assert.ok(html.includes('<span class="secondary">open</span>'));
+    assert.ok(html.includes('<span class="secondary">task</span>'));
+    assert.ok(html.includes('<span class="secondary">priority 1</span>'));
+    assert.ok(html.includes('polylinedb'));
+    assert.ok(html.includes('meganemura/polylinedb'));
+    assert.ok(html.includes('dogfooding'));
+    assert.ok(html.includes('ready'));
+    assert.ok(html.includes('&lt;x&gt;'));
+    assert.ok(html.includes('Follow &lt;b&gt;up&lt;/b&gt;'));
+    assert.ok(html.includes('https://example.com'));
+    assert.ok(!html.includes('href="https://example.com"'));
+    assert.ok(html.includes('See &lt;img src=x onerror=alert(1)&gt;'));
+    assert.ok(!html.includes('<img'));
+    assert.ok(!html.includes('<b>'));
+    assert.ok(!html.includes(session));
+    assert.ok(!html.includes(incarnation));
+    assert.ok(html.includes('white-space: pre-wrap'));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+    const dotted = await viewIssue(env, 'pd-51.6', { 'cf-access-jwt-assertion': token });
+    assert.equal(dotted.status, 200);
+    const dottedHtml = await dotted.text();
+    assert.ok(dottedHtml.includes('Dotted child'));
+    assert.ok(dottedHtml.includes('href="/ui/p/polylinedb/meganemura/polylinedb"'));
+    assert.ok(!dottedHtml.includes('Secret sibling'));
   } finally { sqlite.close(); }
 });
