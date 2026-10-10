@@ -478,6 +478,25 @@ test('ui: the issue page and an ID search start their independent reads together
   } finally { sqlite.close(); }
 });
 
+test('ui: every page reports the Worker time in Server-Timing, and a rejected caller gets none', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Timed title' });
+    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/search?q=Timed', '/ui/p/polylinedb/meganemura/polylinedb', `/ui/i/${id}`, '/ui/i/pd-999']) {
+      const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
+      assert.match(response.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/, path);
+    }
+    for (const headers of [{}, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) }]) {
+      const rejected = await viewUi(env, headers);
+      assert.ok(rejected.status === 401 || rejected.status === 403);
+      assert.equal(rejected.headers.get('server-timing'), null);
+      assert.ok(!(await rejected.text()).includes('Timed title'));
+    }
+  } finally { sqlite.close(); }
+});
+
 test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();

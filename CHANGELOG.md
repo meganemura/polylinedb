@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Report how long the Worker waited on Access keys and D1 for each `/ui` page in a `Server-Timing` header, such as `worker;dur=12.0`. The browser developer tools show it with the request timing. A rejected caller gets no such header.
 - Order the `/ui` project list by the newest issue update in each project, newest first, instead of by tool and project. Each row shows that time, such as `Updated 2026-10-10 15:40 JST`. Projects with the same update time are ordered by project name, then by tool. When more than 200 projects exist, the ones updated longest ago are left out.
 - When an agent's own lease has expired, the agent-gate `claim_required` says `The agent's own claim expired`. `details.claim` reports `state`, `generation`, and `expires_at` next to `id`. A write with no lease, or another agent's lease, still returns only `id`.
 - When `update`, `close`, or `reopen` includes a `claim_proof` and the store rejects it with `claim_required`, `details.claim` sits next to `details.issue`. A lease reports `state`, `generation`, and `expires_at`. An issue that was never claimed reports `state` `never_claimed`. A rejection with no proof still returns only the issue. The cloud CLI drops `claim`, so a released CLI still accepts the response. MCP and a direct HTTP client see `claim`.
