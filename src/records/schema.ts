@@ -1,6 +1,7 @@
 // Owns the persistent schema for the shared issue vocabulary; runtime adapters own database access.
 import { CLAIM_STATEMENTS } from './claims-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
+export { SCHEMA_V6_SQL } from './schema-v6.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
 export { statuses, issueTypes, fields };
 export const SCHEMA_VERSION = 6;
