@@ -1439,6 +1439,17 @@ test('ui: project filter chips link to a status or a label', async () => {
   } finally { sqlite.close(); }
 });
 
+test('ui: a cross-document view transition is css and stays off when motion is reduced', async () => {
+  const { sqlite, env } = fixture();
+  try {
+    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
+    assert.match(html, /@media \(prefers-reduced-motion: no-preference\) \{\s*@view-transition \{ navigation: auto; \}/);
+    assert.ok(html.includes('::view-transition-old(root)'));
+    assert.ok(html.includes('animation-duration: 80ms'));
+    assertNoApplicationControls(html);
+  } finally { sqlite.close(); }
+});
+
 test('ui: night theme follows the phone color scheme and the page widens on a desktop', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();

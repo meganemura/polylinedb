@@ -277,6 +277,7 @@ try {
   const rulesHash = createHash('sha256').update(rulesBody ?? '').digest('base64');
   assert.equal(page.headers.get('content-security-policy'), `default-src 'none'; script-src 'sha256-${rulesHash}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
   assert.equal(page.headers.get('cache-control')?.includes('public'), false);
+  assert.match(html, /@media \(prefers-reduced-motion: no-preference\) \{\s*@view-transition \{ navigation: auto; \}/);
   const revalidated = await runtime.dispatchFetch('http://polylinedb.test/ui', { headers: { 'cf-access-jwt-assertion': viewer, 'if-none-match': `W/${etag}` } });
   assert.equal(revalidated.status, 304);
   assert.equal(await revalidated.text(), '');
@@ -316,6 +317,6 @@ try {
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
       'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
       'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
-      '/ui speculation rules prefetch behind a CSP hash',
+      '/ui speculation rules prefetch behind a CSP hash', '/ui cross-document view transition',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }
