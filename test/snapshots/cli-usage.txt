@@ -42,9 +42,9 @@ Commands:
   comment ID --body TEXT
   update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]
          [--type TYPE] [--priority 0..4] [--label NAME ... | --clear-labels]
-         --expect FIELD=VERSION [--expect FIELD=VERSION ...]
-  close ID --expected VERSION [--force --reason TEXT]
-  reopen ID --expected VERSION
+         --expect FIELD=VERSION [--expect FIELD=VERSION ...] [--claim-proof JSON]
+  close ID --expected VERSION [--force --reason TEXT] [--claim-proof JSON]
+  reopen ID --expected VERSION [--claim-proof JSON]
   dependency list ID [--after ID] [--limit 1..100]
   dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
   dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]

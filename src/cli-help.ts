@@ -44,9 +44,9 @@ Commands:
   comment ID --body TEXT
   update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]
          [--type TYPE] [--priority 0..4] [--label NAME ... | --clear-labels]
-         --expect FIELD=VERSION [--expect FIELD=VERSION ...]
-  close ID --expected VERSION [--force --reason TEXT]
-  reopen ID --expected VERSION
+         --expect FIELD=VERSION [--expect FIELD=VERSION ...] [--claim-proof JSON]
+  close ID --expected VERSION [--force --reason TEXT] [--claim-proof JSON]
+  reopen ID --expected VERSION [--claim-proof JSON]
   claim show ID                 Inspect ownership and the current store incarnation.
   claim list [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
   claim acquire ID --incarnation HEX --session-id UUID [--ttl 30..3600]
