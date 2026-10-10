@@ -1,5 +1,5 @@
 /** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
-import { activeClaimIssues, blockedIssues, claimDisplay, executeOperation, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { activeClaimIssues, blockedIssues, claimDisplay, executeOperation, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 
 const listLimit = 50;
@@ -9,9 +9,9 @@ const projectIssueLimit = 101;
 const shownProjectIssues = 100;
 const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
 
-export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'working' } | { page: 'blocked' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
+export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'working' } | { page: 'blocked' } | { page: 'recent' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
 const inboxLabels = ['owner-decision', 'owner-action', 'main-wait'] as const;
-const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox'], ['/ui/working', 'Working'], ['/ui/blocked', 'Blocked'], ['/ui/search', 'Search']];
+const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox'], ['/ui/working', 'Working'], ['/ui/blocked', 'Blocked'], ['/ui/recent', 'Recent'], ['/ui/search', 'Search']];
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 function escape(value: string): string {
@@ -273,6 +273,20 @@ function blockedItem(row: BlockedIssue): string {
 </a></li>`;
 }
 
+function recentPage(issues: readonly Issue[], labels: ReadonlyMap<string, string>): string {
+  const body = issues.length === 0 ? '<p class="quiet-note">Nothing has been updated.</p>' : `<ul class="quiet-list">${issues.map(issue => `<li class="quiet-row"><a href="${escape(issueHref(issue.id))}">
+<span class="primary">${escape(title(issue.body))}</span>
+<span class="secondary">${escape(issue.id)}</span>
+<span class="secondary">${escape(issue.status)}</span>
+<span class="secondary">${escape(issue.project)}</span>
+<span class="secondary">Last updated <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
+<span class="secondary">${escape(labels.get(issue.updated_by) ?? issue.updated_by)}</span>
+</a></li>`).join('')}</ul>`;
+  return document('Recent updates', `<h1>Recent updates</h1>
+<p class="section-note">Newest last update first, open and closed. This is not a close time.</p>
+${body}`);
+}
+
 function blockedPage(rows: readonly BlockedIssue[]): string {
   const body = rows.length === 0 ? '<p class="quiet-note">Nothing is blocked.</p>' : `<ul class="quiet-list">${rows.map(blockedItem).join('')}</ul>`;
   return document('Blocked', `<h1>Blocked</h1>
@@ -341,6 +355,10 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
       if (error instanceof PolylinedbError && error.code === 'not_found') return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
       throw error;
     }
+  }
+  if (route.page === 'recent') {
+    const issues = await recentUpdates(db, listLimit);
+    return new Response(recentPage(issues, labels), { headers: htmlHeaders });
   }
   if (route.page === 'blocked') {
     const rows = await blockedIssues(db, listLimit);

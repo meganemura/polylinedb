@@ -265,6 +265,7 @@ function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations'
   if (pathname === '/ui/search') return { kind: 'ui', route: { page: 'search', query: '' } };
   if (pathname === '/ui/working') return { kind: 'ui', route: { page: 'working' } };
   if (pathname === '/ui/blocked') return { kind: 'ui', route: { page: 'blocked' } };
+  if (pathname === '/ui/recent') return { kind: 'ui', route: { page: 'recent' } };
   if (pathname.startsWith('/ui/p/')) {
     const route = projectRoute(pathname);
     return route === null ? { kind: 'missing' } : { kind: 'ui', route };
