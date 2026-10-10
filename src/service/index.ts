@@ -3,7 +3,7 @@ import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, ty
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { uiResponse, type UiRoute } from "./ui.ts";
 import { PolylinedbError } from "../records/index.ts";
-import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseOperation, parseRequestId } from "../records/index.ts";
+import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseIssueId, parseOperation, parseRequestId } from "../records/index.ts";
 import type { Operation } from "../records/index.ts";
 
 export type Environment = AccessSettings & {
@@ -231,12 +231,24 @@ function projectRoute(pathname: string): UiRoute | null {
   return { page: 'project', tool, project: decoded.slice(1).join('/') };
 }
 
+function issueRoute(pathname: string): UiRoute | null {
+  const rest = pathname.slice('/ui/i/'.length);
+  if (rest.length === 0 || rest.includes('/')) return null;
+  let value: string;
+  try { value = decodeURIComponent(rest); } catch { return null; }
+  try { return { page: 'issue', id: parseIssueId(value) }; } catch { return null; }
+}
+
 function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'ui'; route: UiRoute } | { kind: 'missing' } {
   if (pathname === '/mcp') return { kind: 'mcp' };
   if (pathname === '/v1/operations') return { kind: 'operations' };
   if (pathname === '/ui') return { kind: 'ui', route: { page: 'home' } };
   if (pathname.startsWith('/ui/p/')) {
     const route = projectRoute(pathname);
+    return route === null ? { kind: 'missing' } : { kind: 'ui', route };
+  }
+  if (pathname.startsWith('/ui/i/')) {
+    const route = issueRoute(pathname);
     return route === null ? { kind: 'missing' } : { kind: 'ui', route };
   }
   return { kind: 'missing' };
@@ -254,7 +266,7 @@ export async function handleRequest(
     const caller = await authenticate(request, env);
     if (target.kind === 'ui') {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
-      return await uiResponse(d1Executor(env.DB), actorLabels(env), target.route);
+      return await uiResponse(d1Executor(env.DB), actorLabels(env), target.route, caller.actor);
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
     if (target.kind === 'mcp') return await mcp(request, env, caller);
