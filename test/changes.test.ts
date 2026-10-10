@@ -27,7 +27,7 @@ const created = (project = 'feed') => parseOperation({ op: 'create', prefix: 'cf
 
 test('change feed records the shared flow on a local SQLite store', async t => {
   const store = openStore(location(t).place);
-  try { assert.equal((await runChangeFeedFlow(store.db)).length, 41); }
+  try { assert.equal((await runChangeFeedFlow(store.db)).length, 63); }
   finally { store.close(); }
 });
 
