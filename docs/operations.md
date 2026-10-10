@@ -210,6 +210,10 @@ It contains only these fields, each when the error supplies it in a safe shape:
 
 Known domain and authentication errors keep their codes, messages, and details.
 
+A local command waits up to 5 seconds when another command holds the database lock.
+If the lock is still held, the error code is `store_busy` and the exit code is 1.
+Retry the command.
+
 ## Response compatibility
 
 The cloud client reads each `/v1/operations` response by the keys that it knows.

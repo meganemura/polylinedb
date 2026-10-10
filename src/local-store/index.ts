@@ -18,6 +18,19 @@ export type LocalStore = { db: SqlExecutor; exportSnapshot(): Snapshot; importSn
 
 type StoreLocation = { directory: string; cwd?: string };
 const fail = (message: string, details?: unknown): never => { throw new PolylinedbError('invalid_data_directory', message, 400, details); };
+const busyTimeoutMs = 5000;
+function sqliteBusy(error: unknown): boolean {
+  if (!(error instanceof Error) || !('code' in error) || error.code !== 'ERR_SQLITE_ERROR' || !('errcode' in error)) return false;
+  const errcode = error.errcode;
+  return typeof errcode === 'number' && (errcode & 0xff) === 5;
+}
+function rethrow(error: unknown): never {
+  if (sqliteBusy(error)) throw new PolylinedbError('store_busy', 'The local database is busy. Retry the command.', 503);
+  throw error;
+}
+function readOnly(path: string): DatabaseSync {
+  return new DatabaseSync(path, { readOnly: true, timeout: busyTimeoutMs });
+}
 
 function canonical(path: string): string {
   if (existsSync(path)) return realpathSync(path);
@@ -72,7 +85,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   return 'current';
 }
 function verifyExisting(path: string, allowEmpty: boolean): void {
-  const database = new DatabaseSync(path, { readOnly: true });
+  const database = readOnly(path);
   try {
     if (schemaVersion(database) === 'empty' && !allowEmpty) throw new PolylinedbError('uninitialized_store', 'Run init for this data directory first', 400);
   } finally { database.close(); }
@@ -80,7 +93,7 @@ function verifyExisting(path: string, allowEmpty: boolean): void {
 function connect(path: string): DatabaseSync {
   const database = new DatabaseSync(path);
   try {
-    database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    database.exec(`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = ${busyTimeoutMs};`);
     return database;
   } catch (error) { database.close(); throw error; }
 }
@@ -132,6 +145,10 @@ function rollbackWrite(database: DatabaseSync, error: unknown): never {
 }
 
 export function initializeStore(location: StoreLocation): { database_path: string } {
+  try { return initializeApproved(location); }
+  catch (error) { rethrow(error); }
+}
+function initializeApproved(location: StoreLocation): { database_path: string } {
   const approved = approvedPath(location);
   if (existsSync(approved.database_path)) verifyExisting(approved.database_path, true);
   mkdirSync(approved.directory, { recursive: true, mode: 0o700 });
@@ -150,6 +167,10 @@ export function initializeStore(location: StoreLocation): { database_path: strin
 }
 
 export function upgradeStore(location: StoreLocation): { result: 'upgraded' | 'already_current'; version: number; database_path: string } {
+  try { return upgradeApproved(location); }
+  catch (error) { rethrow(error); }
+}
+function upgradeApproved(location: StoreLocation): { result: 'upgraded' | 'already_current'; version: number; database_path: string } {
   const { database_path } = approvedPath(location);
   if (!existsSync(database_path)) throw new PolylinedbError('uninitialized_store', 'Initialize this store first', 400);
   const database = connect(database_path);
@@ -178,19 +199,29 @@ export function upgradeStore(location: StoreLocation): { result: 'upgraded' | 'a
 }
 
 export function openStore(location: StoreLocation): LocalStore {
+  try { return openApproved(location); }
+  catch (error) { rethrow(error); }
+}
+function openApproved(location: StoreLocation): LocalStore {
   const { database_path } = approvedPath(location);
   if (!existsSync(database_path)) throw new PolylinedbError('uninitialized_store', 'Run init for this data directory first', 400);
   verifyExisting(database_path, false);
   const database = connect(database_path);
+  const sqliteReads = node(database);
   const db: SqlExecutor = {
-    reads: node(database),
+    reads: { async all(query, ...params) {
+      try { return await sqliteReads.all(query, ...params); }
+      catch (error) { rethrow(error); }
+    } },
     async batch(statements: readonly SqlStatement[]) {
-      database.exec('BEGIN IMMEDIATE');
       try {
-        const results = statements.map(({ sql, params }) => ({ rows: database.prepare(sql).all(...params) }));
-        database.exec('COMMIT');
-        return results;
-      } catch (error) { rollbackWrite(database, error); }
+        database.exec('BEGIN IMMEDIATE');
+        try {
+          const results = statements.map(({ sql, params }) => ({ rows: database.prepare(sql).all(...params) }));
+          database.exec('COMMIT');
+          return results;
+        } catch (error) { rollbackWrite(database, error); }
+      } catch (error) { rethrow(error); }
     },
   };
   const readSnapshot = (): Snapshot => parseSnapshot({
@@ -221,11 +252,16 @@ export function openStore(location: StoreLocation): LocalStore {
   return {
     db,
     exportSnapshot() {
-      database.exec('BEGIN');
-      try { const snapshot = readSnapshot(); database.exec('COMMIT'); return snapshot; }
-      catch (error) { database.exec('ROLLBACK'); throw error; }
+      try {
+        database.exec('BEGIN');
+        try { const snapshot = readSnapshot(); database.exec('COMMIT'); return snapshot; }
+        catch (error) { database.exec('ROLLBACK'); throw error; }
+      } catch (error) { rethrow(error); }
     },
     importSnapshot(input) {
+      try { return importApproved(input); }
+      catch (error) { rethrow(error); }
+      function importApproved(input: Snapshot): SnapshotImport {
       const snapshot = parseSnapshot(input);
       const canonical = canonicalSnapshot(snapshot);
       const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, memories: snapshot.memories.length, dependencies: snapshot.dependencies.length, dependency_revisions: snapshot.dependency_revisions.length, dependency_requests: snapshot.dependency_requests.length, issue_claims: snapshot.issue_claims.length, claim_requests: snapshot.claim_requests.length, sha256: createHash('sha256').update(canonical).digest('hex') };
@@ -271,15 +307,20 @@ export function openStore(location: StoreLocation): LocalStore {
         database.exec('COMMIT');
         return { result: 'imported', ...summary };
       } catch (error) { rollbackWrite(database, error); }
+      }
     },
     close: () => database.close(),
   };
 }
 
 export function exportHistoricalSnapshot(location: StoreLocation): Snapshot {
+  try { return exportHistorical(location); }
+  catch (error) { rethrow(error); }
+}
+function exportHistorical(location: StoreLocation): Snapshot {
   const { database_path } = approvedPath(location);
   if (!existsSync(database_path)) throw new PolylinedbError('uninitialized_store', 'Initialize this store first', 400);
-  const database = new DatabaseSync(database_path, { readOnly: true });
+  const database = readOnly(database_path);
   const reference = new DatabaseSync(':memory:');
   try {
     database.exec('BEGIN');
