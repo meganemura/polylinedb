@@ -53,6 +53,42 @@ Hegel stores minimized failures in the ignored `.hegel` directory.
 Keep a reproducible failure as a behavior test before changing its implementation.
 A deliberate inversion of the ordering property verified failure reporting and shrinking.
 
+## Specification properties
+
+```sh
+node --test test/spec-properties.test.ts
+```
+
+The differential test compares the transition with SQL that shares its reading of the rules, so it cannot find a mistake that both make.
+These properties come from sentences in `docs/claims.md`, `docs/prerequisites.md`, `docs/architecture.md`, `docs/adr/0009-issue-ownership.md`, and `CONTEXT.md`.
+Each property cites its sentence, and its expected value comes from that sentence rather than from a transition call.
+
+The exhaustive test enumerates a bounded domain instead of sampling it.
+The domain covers never-claimed, held, released, and invalidated leases, and a clock before, equal to, and after the deadline.
+A proof is missing or differs in any subset of issue, incarnation, session, and generation, and the caller is the holder or another actor.
+Renewal and release name their issue only through the proof, so their domain omits a proof for another issue.
+Issue updates also vary the requested field, active blockers, children, and the force option.
+The October 10, 2026 run checked 20796 combinations: 12 claim states, 19584 issue updates, 816 claim mutations, and 384 agent gate decisions.
+The readiness property creates 240 dependents in SQLite with every status, every set of up to two blocker statuses, and four label sets.
+It compares the ready, agent ready, and blocked worklists with the documented definitions.
+
+The Hegel generators now produce the boundary values.
+The TTL property draws the minimum and the maximum TTL explicitly and checks that both appear.
+Before this change, 4 of 20 unseeded runs drew the maximum TTL.
+The differential adds a lease whose deadline equals the clock at seeding.
+A 100-case run checks that empty blocker sets, empty label sets, and a clock equal to the deadline each appear.
+Before this change, the differential never generated a clock equal to the deadline.
+
+A deliberate defect in `claimState` treated a deadline equal to the clock as active, and three properties failed:
+
+- `property: every bounded claim, proof, and clock combination follows the documented rules` reported `{"lease":"held","clock":"equal"}` as `'active'` where `'expired'` was expected.
+- `property: a proof whose deadline equals the clock cannot change the status` reported an accepted status write by the holder with a matching proof.
+- `property: only the holder of the current proof changes the status of a claimed issue` reported the same accepted write.
+
+With the earlier differential fixture, the differential test passed with the same defect.
+With the deadline lease, it fails, because SQLite treats that lease as expired and the transition treats it as active.
+The defect was reverted and is not part of the repository.
+
 ## Bounded mutation tests
 
 ```sh
