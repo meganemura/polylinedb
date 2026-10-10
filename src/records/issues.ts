@@ -387,6 +387,25 @@ export async function recentUpdates(db: SqlExecutor, limit: number): Promise<Iss
   return (await db.reads.all(issueQueries.recentUpdates, { limit })).map(issueRow);
 }
 
+export type IssueLink = { id: string; body: string; status: Status };
+
+function issueLink(row: { id: unknown; body: unknown; status: unknown }): IssueLink {
+  try {
+    return { id: id(row.id), body: text(row.body, 'body'), status: enumeration(row.status, 'status', statuses) };
+  } catch (error) {
+    throw new PolylinedbError('invalid_store', `Stored issue link is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);
+  }
+}
+
+export async function issueParent(db: SqlExecutor, issueId: string): Promise<IssueLink | null> {
+  const row = (await db.reads.all(issueQueries.issueParent, { id: issueId }))[0];
+  return row === undefined ? null : issueLink(row);
+}
+
+export async function issueChildren(db: SqlExecutor, issueId: string, limit: number): Promise<IssueLink[]> {
+  return (await db.reads.all(issueQueries.issueChildren, { id: issueId, limit })).map(issueLink);
+}
+
 export type BlockedIssue = { issue: Issue; openBlockers: number };
 export async function blockedIssues(db: SqlExecutor, limit: number): Promise<BlockedIssue[]> {
   return (await db.reads.all(issueQueries.blockedIssues, { limit })).map(row => ({ issue: issueRow(row), openBlockers: storedCount(row.open_blockers) }));

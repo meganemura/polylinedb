@@ -1166,3 +1166,56 @@ test('ui: night theme follows the phone color scheme and the page widens on a de
     assert.ok(project.includes('@media (prefers-color-scheme: dark)'));
   } finally { sqlite.close(); }
 });
+
+test('ui: an epic lists its children and a child links back to the parent', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Tree epic', type: 'epic' });
+    const first = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'First child', parent: epic, type: 'task' });
+    const hostile = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '<img src=x onerror=alert(1)>', parent: epic, type: 'task' });
+    const leaf = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Unrelated leaf' });
+    sqlite.prepare('UPDATE issues SET status = ? WHERE id = ?').run('closed', first);
+    const fat = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Fat epic', type: 'epic' });
+    const insert = sqlite.prepare(`INSERT INTO issues(id, parent_id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, ?, 'polylinedb', 'meganemura/polylinedb', ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`);
+    for (let number = 1; number <= 101; number += 1) {
+      const id = `${fat}.${number}`;
+      insert.run(id, fat, issueSortKey(id), `Packed child ${number}`);
+    }
+
+    const anonymous = await viewIssue(env, epic);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Tree epic'));
+
+    const epicHtml = await (await viewIssue(env, epic, auth)).text();
+    const children = uiSection(epicHtml, 'Children');
+    assert.ok(children.includes('First child'));
+    assert.ok(children.includes(`href="/ui/i/${first}"`));
+    assert.ok(children.includes('<span class="secondary">closed</span>'));
+    assert.ok(children.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    assert.ok(children.includes(`href="/ui/i/${hostile}"`));
+    assert.ok(!children.includes('<img'));
+    assert.ok(children.indexOf('First child') < children.indexOf('&lt;img'));
+    assert.ok(!epicHtml.includes('>Parent <'));
+    assert.ok(!epicHtml.includes('Unrelated leaf'));
+    assert.ok(!/<(form|input|button|script)\b/.test(epicHtml));
+
+    const childHtml = await (await viewIssue(env, first, auth)).text();
+    assert.ok(childHtml.includes(`Parent <a href="/ui/i/${epic}">Tree epic</a>`));
+    assert.ok(uiSection(childHtml, 'Children').includes('No children.'));
+    const leafHtml = await (await viewIssue(env, leaf, auth)).text();
+    assert.ok(!leafHtml.includes('>Parent <'));
+    assert.ok(uiSection(leafHtml, 'Children').includes('No children.'));
+
+    const fatHtml = await (await viewIssue(env, fat, auth)).text();
+    const packed = uiSection(fatHtml, 'Children');
+    assert.ok(packed.includes('More issues are not shown.'));
+    assert.ok(packed.includes('Packed child 1'));
+    assert.ok(packed.includes('Packed child 100'));
+    assert.ok(!packed.includes('Packed child 101'));
+    assert.ok(packed.indexOf('Packed child 1') < packed.indexOf('Packed child 2'));
+    assert.ok(packed.indexOf('Packed child 2') < packed.indexOf('Packed child 10'));
+  } finally { sqlite.close(); }
+});

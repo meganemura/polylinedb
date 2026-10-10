@@ -1,5 +1,5 @@
 /** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
-import { activeClaimIssues, blockedIssues, claimDisplay, executeOperation, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { activeClaimIssues, blockedIssues, claimDisplay, executeOperation, issueChildren, issueParent, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 
 const listLimit = 50;
@@ -7,6 +7,8 @@ const projectSummaryLimit = 201;
 const shownProjects = 200;
 const projectIssueLimit = 101;
 const shownProjectIssues = 100;
+const childLimit = 101;
+const shownChildren = 100;
 const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
 
 export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'working' } | { page: 'blocked' } | { page: 'recent' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
@@ -135,7 +137,26 @@ function blockerSection(heading: string, blockers: readonly { id: string; status
   return `<section class="quiet-section"><h2>${heading}</h2>${body}</section>`;
 }
 
-function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], labels: ReadonlyMap<string, string>): string {
+function familyItem(link: IssueLink): string {
+  return `<li class="quiet-row"><a href="${escape(issueHref(link.id))}">
+<span class="primary">${escape(title(link.body))}</span>
+<span class="secondary">${escape(link.id)}</span>
+<span class="secondary">${escape(link.status)}</span>
+</a></li>`;
+}
+
+function parentLine(parent: IssueLink | null): string {
+  if (parent === null) return '';
+  return `<p>Parent <a href="${escape(issueHref(parent.id))}">${escape(title(parent.body))}</a> <span class="secondary">${escape(parent.status)}</span></p>`;
+}
+
+function childrenSection(children: readonly IssueLink[], more: boolean): string {
+  const extra = more ? '<p class="section-note">More issues are not shown.</p>' : '';
+  const body = children.length === 0 ? '<p class="quiet-note">No children.</p>' : `<ul class="quiet-list">${children.map(familyItem).join('')}</ul>`;
+  return `<section class="quiet-section"><h2>Children</h2>${extra}${body}</section>`;
+}
+
+function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>): string {
   const labelLine = issue.labels.length === 0 ? '<span class="secondary">No labels.</span>' : `<span class="secondary">${issue.labels.map(label => escape(label)).join(' ')}</span>`;
   const commentList = comments.length === 0 ? '<p class="quiet-note">No comments.</p>' : `<ul class="quiet-list">${comments.map(comment => commentItem(comment, labels)).join('')}</ul>`;
   const open = blockers.filter(blocker => blocker.status !== 'closed');
@@ -150,6 +171,8 @@ function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisp
 <span class="secondary">${escape(issue.project)}</span>
 ${labelLine}
 ${detailClaim(claim, labels)}
+${parentLine(parent)}
+${childrenSection(children, moreChildren)}
 <div class="prose">${escape(bodyAfterTitle(issue.body))}</div>
 <section class="quiet-section"><h2>Comments</h2>${commentList}</section>
 ${blockerSection('Open blockers', open, 'No open blockers.')}
@@ -368,8 +391,12 @@ export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, st
     try {
       const result = await executeOperation(db, { op: 'show', id: route.id }, actor);
       if (!('comments' in result)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
-      const blockers = await issueBlockers(db, route.id, actor);
-      return new Response(detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, labels), { headers: htmlHeaders });
+      const [blockers, parent, children] = await Promise.all([
+        issueBlockers(db, route.id, actor),
+        issueParent(db, route.id),
+        issueChildren(db, route.id, childLimit),
+      ]);
+      return new Response(detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, parent, children.slice(0, shownChildren), children.length > shownChildren, labels), { headers: htmlHeaders });
     } catch (error) {
       if (error instanceof PolylinedbError && error.code === 'not_found') return new Response(notFoundPage(), { status: 404, headers: htmlHeaders });
       throw error;
