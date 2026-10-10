@@ -1,4 +1,5 @@
 // Owns the change feed DDL; triggers record an event only while a mutation batch holds the writer row.
+import type { SqlExecutor } from './issues.ts';
 import { fields } from '../transition/index.ts';
 
 export const changeKinds = ['created', 'updated', 'status_changed', 'commented', 'claim_acquired', 'claim_released', 'dependency_added', 'dependency_removed', 'became_ready'] as const;
@@ -59,3 +60,17 @@ export const CHANGE_STATEMENTS = [
         AND ${noActiveBlocker('dependent.id')};
     END`,
 ];
+
+export function recordingChanges(db: SqlExecutor, actor: string): SqlExecutor {
+  return {
+    reads: db.reads,
+    async batch(statements) {
+      const results = await db.batch([
+        { sql: 'INSERT INTO change_writer(singleton,actor) VALUES (1,?)', params: [actor] },
+        ...statements,
+        { sql: 'DELETE FROM change_writer', params: [] },
+      ]);
+      return results.slice(1, -1);
+    },
+  };
+}

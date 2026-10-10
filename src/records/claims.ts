@@ -3,6 +3,7 @@ import { PolylinedbError, requireFields } from './errors.ts';
 import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
 import { claimMutationStatements } from './claims-sql.ts';
+import { recordingChanges } from './changes-sql.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
 import { claimState, decideReplay } from '../transition/index.ts';
@@ -137,7 +138,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   let results;
   const issue_id = operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id;
   const gate = operation.op === 'claim_acquire' ? agentMayAcquire(caller, 'issues.labels_json') : undefined;
-  try { results = await db.batch([...claimMutationStatements(operation, actor, gate), claimObservation(issue_id)]); }
+  try { results = await recordingChanges(db, actor).batch([...claimMutationStatements(operation, actor, gate), claimObservation(issue_id)]); }
   catch (error) {
     if (!duplicateReceipt(error)) throw error;
     const row = (await db.reads.all(issueQueries.claimRequest, { request_id: operation.request_id }))[0];

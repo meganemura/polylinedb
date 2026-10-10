@@ -4,6 +4,7 @@ import { parseOperation as parseIssue, issueRow } from './issues.ts';
 import { PolylinedbError, requireFields } from './errors.ts';
 import type { Operation as IssueOperation, Issue, SqlExecutor, SqlStatement, Status } from './issues.ts';
 import { issueQueries } from './issue-queries.ts';
+import { recordingChanges } from './changes-sql.ts';
 import { decidePrerequisiteEdit, decideReplay } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
@@ -123,7 +124,7 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
   const gate = [operation.request_id, operation.dependent_id, operation.expected_revision + 1];
   let result;
   try {
-    result = await db.batch([
+    result = await recordingChanges(db, actor).batch([
       receipt,
       { sql: `UPDATE dependency_revisions SET revision = revision + 1 WHERE dependent_id = ? AND revision = ? AND ${admitted}`, params: [operation.dependent_id, operation.expected_revision, ...gate] },
       operation.op === 'dependency_add'

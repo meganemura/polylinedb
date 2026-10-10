@@ -1,6 +1,19 @@
-// Turns a current store into schema 6 so tests can hold schema 6 records written through the public operations.
+// Holds records in an older schema: current operations as an earlier release issued them, and a schema 6 store made from a current one.
 import type { DatabaseSync } from 'node:sqlite';
 import { CHANGE_STATEMENTS } from '../../src/records/changes-sql.ts';
+import type { SqlExecutor } from '../../src/records/persistence.ts';
+
+export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
+  return {
+    reads: db.reads,
+    async batch(statements) {
+      const writer = statements.map(statement => /\bchange_writer\b/.test(statement.sql));
+      const results = await db.batch(statements.filter((_, index) => !writer[index]));
+      let next = 0;
+      return writer.map(skipped => skipped ? { rows: [] } : results[next++] ?? { rows: [] });
+    },
+  };
+}
 
 export function downgradeToSchema6(database: DatabaseSync): void {
   const objects = CHANGE_STATEMENTS.map(sql => /^CREATE (TABLE|TRIGGER) (\w+)/.exec(sql)).map(match => {
