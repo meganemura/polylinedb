@@ -297,7 +297,7 @@ export async function handleRequest(
         route = { ...route, ...filters };
       }
       if (route.page === 'search') route = { page: 'search', query: new URL(request.url).searchParams.get('q') ?? '' };
-      const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, caller.actor);
+      const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, caller.actor, request.headers.get('if-none-match'));
       // Workers advance this clock only across I/O, so the duration is the time spent waiting on Access keys and D1.
       page.headers.set('server-timing', `worker;dur=${(performance.now() - started).toFixed(1)}`);
       return page;

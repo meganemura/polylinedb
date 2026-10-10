@@ -1,6 +1,7 @@
 /** Exercises HTTP/MCP with real SQLite and signed assertions. Production Access policy remains a live test. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { storageOf } from 'solarsql/node';
 import { createAccessVerifier } from "../src/service/access.ts";
@@ -498,6 +499,73 @@ test('ui: every page reports the Worker time in Server-Timing, and a rejected ca
   } finally { sqlite.close(); }
 });
 
+test('ui: a page revalidates with its ETag only after Access accepts the caller, and a 304 carries no page data', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const reads: string[] = [];
+  const watched = { ...env, DB: { ...env.DB, prepare: (sql: string) => { reads.push(sql); return env.DB.prepare(sql); } } };
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Cached title' });
+    const issueRequest = (headers: Record<string, string>, target = env) => handleRequest(new Request(`https://issues.example/ui/i/${id}`, { headers }), target, authenticate);
+    const first = await issueRequest(auth);
+    assert.equal(first.status, 200);
+    assert.equal(first.headers.get('cache-control'), 'private, no-cache');
+    const etag = first.headers.get('etag') ?? '';
+    assert.match(etag, /^"[0-9a-f]{32}"$/);
+    const html = await first.text();
+    assert.equal(etag, `"${createHash('sha256').update(html).digest('hex').slice(0, 32)}"`);
+
+    for (const ifNoneMatch of [etag, `W/${etag}`, `"other", W/${etag}`, '*']) {
+      const again = await issueRequest({ ...auth, 'if-none-match': ifNoneMatch });
+      assert.equal(again.status, 304, ifNoneMatch);
+      assert.equal(await again.text(), '');
+      assert.equal(again.headers.get('etag'), etag);
+      assert.equal(again.headers.get('cache-control'), 'private, no-cache');
+      assert.equal(again.headers.get('content-security-policy'), first.headers.get('content-security-policy'));
+      assert.equal(again.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(again.headers.get('referrer-policy'), 'no-referrer');
+      assert.equal(again.headers.get('content-type'), null);
+    }
+    const reader = await issueRequest({ 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }), 'if-none-match': etag });
+    assert.equal(reader.status, 304);
+    const stale = await issueRequest({ ...auth, 'if-none-match': '"0123456789abcdef0123456789abcdef"' });
+    assert.equal(stale.status, 200);
+    assert.ok((await stale.text()).includes('Cached title'));
+
+    for (const ifNoneMatch of [etag, '*']) {
+      const rejections: Record<string, string>[] = [{}, { 'cf-access-jwt-assertion': `${token.slice(0, -4)}AAAA` }, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) }];
+      for (const headers of rejections) {
+        const denied = await issueRequest({ ...headers, 'if-none-match': ifNoneMatch }, watched);
+        assert.ok(denied.status === 401 || denied.status === 403, `${denied.status}`);
+        assert.equal(denied.headers.get('etag'), null);
+        assert.equal(denied.headers.get('cache-control'), 'no-store');
+        assert.equal(denied.headers.get('content-type'), 'application/json');
+        assert.ok(!(await denied.text()).includes('Cached title'));
+      }
+      const misconfigured = await issueRequest({ ...auth, 'if-none-match': ifNoneMatch }, { ...watched, ACCESS_ACTORS: '[]' });
+      assert.equal(misconfigured.status, 503);
+      assert.equal(misconfigured.headers.get('etag'), null);
+    }
+    assert.deepEqual(reads, []);
+
+    sqlite.prepare("UPDATE issues SET body = 'Changed title', updated_at = '2026-10-10T00:00:00.000Z' WHERE id = ?").run(id);
+    const changed = await issueRequest({ ...auth, 'if-none-match': etag });
+    assert.equal(changed.status, 200);
+    assert.notEqual(changed.headers.get('etag'), etag);
+    assert.ok((await changed.text()).includes('Changed title'));
+
+    const missing = await handleRequest(new Request('https://issues.example/ui/i/pd-999', { headers: { ...auth, 'if-none-match': '*' } }), env, authenticate);
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get('etag'), null);
+    assert.ok((await missing.text()).includes('Issue was not found.'));
+    const home = await viewUi(env, auth);
+    const homeTag = home.headers.get('etag') ?? '';
+    assert.notEqual(homeTag, etag);
+    assert.equal((await viewUi(env, { ...auth, 'if-none-match': homeTag })).status, 304);
+  } finally { sqlite.close(); }
+});
+
 test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
@@ -519,7 +587,7 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     const response = await viewUi(env, { 'cf-access-jwt-assertion': token });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
-    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('cache-control'), 'private, no-cache');
     const html = await response.text();
     const waitingPart = uiSection(html, 'Waiting for main');
     const ids = (part: string) => [...part.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
@@ -705,7 +773,7 @@ test('pd-134: /ui lists projects and a project view shows unfinished issues in t
     assert.equal(reader.status, 200);
     const page = await reader.text();
     assert.equal(reader.headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
-    assert.equal(reader.headers.get('cache-control'), 'no-store');
+    assert.equal(reader.headers.get('cache-control'), 'private, no-cache');
     assert.ok(page.indexOf('Started') < page.indexOf('Hold'));
     assert.ok(page.indexOf('Hold') < page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;'));
     assert.ok(page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;') < page.indexOf('Later'));
@@ -814,7 +882,7 @@ test('pd-135: project rows link to an issue detail page that escapes body and co
     const missingHtml = await missing.text();
     assert.ok(!missingHtml.includes('Secret sibling'));
     assert.ok(!missingHtml.includes('Child line'));
-    assert.equal(missing.headers.get('cache-control'), 'no-store');
+    assert.equal(missing.headers.get('cache-control'), 'private, no-cache');
 
     const detail = await viewIssue(env, child, { 'cf-access-jwt-assertion': token });
     assert.equal(detail.status, 200);
@@ -1014,7 +1082,7 @@ test('ui: owner inbox lists owner-decision, owner-action, and main-wait across p
     assert.ok(home.includes('href="/ui/inbox"'));
     const page = await openInbox();
     assert.equal(page.status, 200);
-    assert.equal(page.headers.get('cache-control'), 'no-store');
+    assert.equal(page.headers.get('cache-control'), 'private, no-cache');
     const html = await page.text();
     assert.ok(html.includes('Needs a decision'));
     assert.ok(html.includes('Needs an action'));

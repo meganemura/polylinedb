@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Send `/ui` pages with `Cache-Control: private, no-cache` and an `ETag` instead of `no-store`. A request whose `If-None-Match` matches gets `304 Not Modified` with no body, after the same Access check. A browser that kept no-store pages out of its back-forward cache can now restore a page on Back without a request.
 - Report how long the Worker waited on Access keys and D1 for each `/ui` page in a `Server-Timing` header, such as `worker;dur=12.0`. The browser developer tools show it with the request timing. A rejected caller gets no such header.
 - Order the `/ui` project list by the newest issue update in each project, newest first, instead of by tool and project. Each row shows that time, such as `Updated 2026-10-10 15:40 JST`. Projects with the same update time are ordered by project name, then by tool. When more than 200 projects exist, the ones updated longest ago are left out.
 - When an agent's own lease has expired, the agent-gate `claim_required` says `The agent's own claim expired`. `details.claim` reports `state`, `generation`, and `expires_at` next to `id`. A write with no lease, or another agent's lease, still returns only `id`.
