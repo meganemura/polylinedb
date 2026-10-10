@@ -327,6 +327,15 @@ test('CLI treats dash queries and help option values as literal text', t => {
   assert.equal(run(['comment', helpText.id, '--body', '--help']).comment.body, '--help');
 });
 
+test('help names --claim-proof on update, close, and reopen', t => {
+  const { cwd } = fixture(t);
+  for (const command of ['update', 'close', 'reopen']) {
+    const result = spawnSync(process.execPath, [executable, command, '--help'], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const usage = result.stdout.match(new RegExp(`^  ${command} .*\\n(?: {8,}\\S.*\\n)*`, 'm'))?.[0] ?? '';
+    assert.match(usage, /\[--claim-proof JSON\]/);
+  }
+});
 test('help pins the usage of the claim commands', t => {
   const { cwd } = fixture(t);
   const result = spawnSync(process.execPath, [executable, '--help'], { cwd, env: isolatedEnvironment(cwd), encoding: 'utf8' });
