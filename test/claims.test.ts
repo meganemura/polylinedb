@@ -14,7 +14,7 @@ import { executeOperation, parseOperation, PolylinedbError } from '../src/record
 import type { ClaimReceipt } from '../src/records/index.ts';
 import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
 import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence.ts';
-import { downgradeToSchema6 } from './fixtures/schema-v6-store.ts';
+import { downgradeToSchema6 } from './fixtures/legacy-schema.ts';
 const request = () => crypto.randomUUID();
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pd-claim-'));

@@ -11,6 +11,7 @@ import { claimState, decideCreation, decideIssueUpdate, decideReplay } from '../
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 import { issueClaimGuard } from './claims-sql.ts';
+import { recordingChanges } from './changes-sql.ts';
 import type { ClaimProof } from './claims-sql.ts';
 
 export type Status = typeof statuses[number];
@@ -247,7 +248,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   }
   assignments.push('updated_by = ?', 'updated_at = ?');
   params.push(actor, new Date().toISOString(), ...guards);
-  const result = await db.batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
+  const result = await recordingChanges(db, actor).batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
     ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId),
     heldClaimObservation(issueId)]);
   const changed = rowsAt(result, 0)[0];
@@ -294,7 +295,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
       const now = new Date().toISOString();
       const eligible = `NOT EXISTS(SELECT 1 FROM requests WHERE request_id = ?)${operation.parent ? " AND EXISTS(SELECT 1 FROM issues WHERE id = ? AND type = 'epic')" : ''}`;
       const gate = operation.parent ? [operation.request_id, operation.parent] : [operation.request_id];
-      const result = await db.batch([
+      const result = await recordingChanges(db, actor).batch([
         { sql: `INSERT INTO counters(scope, last_number) SELECT ?, 1 WHERE ${eligible}
           ON CONFLICT(scope) DO UPDATE SET last_number = last_number + 1`, params: [scope, ...gate] },
         { sql: `INSERT INTO issues(id, parent_id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
@@ -334,7 +335,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
     }
     case 'comment': {
       const gate = agentHoldsClaim(operation.id, caller);
-      const result = await db.batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by)
+      const result = await recordingChanges(db, actor).batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by)
         SELECT ?, id, ?, ?, ? FROM issues WHERE id = ? AND ${gate.sql} RETURNING *`,
         params: [crypto.randomUUID(), operation.body, new Date().toISOString(), actor, operation.id, ...gate.params] },
         ...(caller.kind === 'agent' ? [observation(operation.id), heldClaimObservation(operation.id)] : [])]);

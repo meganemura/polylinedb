@@ -12,6 +12,7 @@ import { SCHEMA_SQL, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL,
 import type { SqlExecutor } from '../src/records/persistence.ts';
 import { snapshotMigration } from '../scripts/d1-snapshot-store.ts';
 import { createHash } from 'node:crypto';
+import { withoutChangeWriter } from './fixtures/legacy-schema.ts';
 
 function root(t: test.TestContext) { const directory = mkdtempSync(join(tmpdir(), 'pd-graph-persistence-')); t.after(() => rmSync(directory, { recursive: true, force: true })); return directory; }
 function executor(db: DatabaseSync): SqlExecutor { return { reads: node(db), async batch(statements) { db.exec('BEGIN IMMEDIATE'); try { const rows = statements.map(statement => ({ rows: db.prepare(statement.sql).all(...statement.params) })); db.exec('COMMIT'); return rows; } catch (error) { db.exec('ROLLBACK'); throw error; } } }; }
@@ -21,7 +22,7 @@ test('schema 2/3/4/5/6 upgrades preserve canonical DDL and creation receipt byte
   for (const [version, ddl] of [[2, SCHEMA_V2_SQL], [3, SCHEMA_V3_SQL], [4, SCHEMA_V4_SQL], [5, SCHEMA_V5_SQL], [6, SCHEMA_V6_SQL]] as const) {
     const directory = join(base, `v${version}`); mkdirSync(directory, { mode: 0o700 }); const path = join(directory, 'polylinedb.sqlite');
     const db = new DatabaseSync(path); db.exec(ddl); const request = create('old');
-    const first = await executeOperation(executor(db), request, 'old:author');
+    const first = await executeOperation(withoutChangeWriter(executor(db)), request, 'old:author');
     chmodSync(path, 0o600); const requests = db.prepare('SELECT * FROM requests').all(); const oldSnapshot = exportHistoricalSnapshot({ directory });
     db.close(); chmodSync(path, 0o600);
     assert.equal(upgradeStore({ directory }).version, 7); assert.equal(upgradeStore({ directory }).result, 'already_current');
@@ -34,7 +35,7 @@ test('schema 2/3/4/5/6 upgrades preserve canonical DDL and creation receipt byte
 });
 test('canonical retired schema 4 rejects upgrade without writes and exports through read-only recovery', async t => {
   const directory = join(root(t), 'retired'); mkdirSync(directory, { mode: 0o700 }); const path = join(directory, 'polylinedb.sqlite');
-  const db = new DatabaseSync(path); db.exec(SCHEMA_V4_SQL); await executeOperation(executor(db), create('old'), 'old:author');
+  const db = new DatabaseSync(path); db.exec(SCHEMA_V4_SQL); await executeOperation(withoutChangeWriter(executor(db)), create('old'), 'old:author');
   const tables = ['issues','comments','counters','requests','memories','memory_counters','memory_requests','memory_store_identity','project_memory_revisions'];
   for (const table of tables) for (const op of ['INSERT','UPDATE','DELETE']) db.exec(`CREATE TRIGGER "polylinedb_retired_${table}_${op.toLowerCase()}" BEFORE ${op} ON "${table}" BEGIN SELECT RAISE(ABORT, 'This local database is retired. Use cloud connection archive.'); END`);
   const before = db.prepare('SELECT * FROM sqlite_master ORDER BY name').all(); db.close(); chmodSync(path, 0o600);
