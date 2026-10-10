@@ -1086,3 +1086,33 @@ test('ui: blocked lists unfinished issues that still have an open blocker', asyn
     assert.ok(!/<(form|input|button|script)\b/.test(html));
   } finally { sqlite.close(); }
 });
+
+test('ui: recent updates lists the newest changes, open and closed', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const older = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Older update' });
+    const newest = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Newest update' });
+    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/other', body: 'Closed update' });
+    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?');
+    stamp.run('open', '2026-10-01T00:00:00.000Z', older);
+    stamp.run('closed', '2026-10-02T00:00:00.000Z', closed);
+    stamp.run('open', '2026-10-03T01:00:00.000Z', newest);
+    const anonymous = await handleRequest(new Request('https://issues.example/ui/recent'), env, authenticate);
+    assert.equal(anonymous.status, 401);
+    assert.ok(!(await anonymous.text()).includes('Newest update'));
+    const home = await (await viewUi(env, auth)).text();
+    assert.ok(home.includes('href="/ui/recent"'));
+    const html = await (await handleRequest(new Request('https://issues.example/ui/recent', { headers: auth }), env, authenticate)).text();
+    assert.ok(html.includes('Newest update'));
+    assert.ok(html.includes('Closed update'));
+    assert.ok(html.includes('Older update'));
+    assert.ok(html.indexOf('Newest update') < html.indexOf('Closed update'));
+    assert.ok(html.indexOf('Closed update') < html.indexOf('Older update'));
+    assert.ok(html.includes('2026-10-03 10:00 JST'));
+    assert.ok(html.includes('<span class="secondary">closed</span>'));
+    assert.ok(html.includes('meganemura/nukadoko'));
+    assert.ok(!/<(form|input|button|script)\b/.test(html));
+  } finally { sqlite.close(); }
+});

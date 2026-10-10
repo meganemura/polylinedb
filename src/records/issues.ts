@@ -383,6 +383,10 @@ export async function ownerInboxIssues(db: SqlExecutor, limit: number): Promise<
   return (await db.reads.all(issueQueries.ownerInbox, { limit })).map(issueRow);
 }
 
+export async function recentUpdates(db: SqlExecutor, limit: number): Promise<Issue[]> {
+  return (await db.reads.all(issueQueries.recentUpdates, { limit })).map(issueRow);
+}
+
 export type BlockedIssue = { issue: Issue; openBlockers: number };
 export async function blockedIssues(db: SqlExecutor, limit: number): Promise<BlockedIssue[]> {
   return (await db.reads.all(issueQueries.blockedIssues, { limit })).map(row => ({ issue: issueRow(row), openBlockers: storedCount(row.open_blockers) }));
