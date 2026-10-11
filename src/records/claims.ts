@@ -6,7 +6,7 @@ import { claimMutationStatements } from './claims-sql.ts';
 import { recordingChanges } from './changes-sql.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
-import { claimState, decideReplay } from '../transition/index.ts';
+import { claimState, decideReplay, ownsExpiredLease } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentMayAcquire, asActor, rejectAgentWrite } from './agent-gate.ts';
 import type { ClaimState } from '../transition/index.ts';
@@ -23,7 +23,7 @@ export function claimDisplay(inspection: ClaimInspection): ClaimDisplay {
 }
 export type ClaimOperation = ClaimMutation | { op: 'claim_show'; issue_id: string }
   | { op: 'claim_list'; tool?: string; project?: string; after?: string; limit: number };
-export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claims: ClaimInspection[]; next_cursor: string | null };
+export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection };
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const uuidSchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' };
 const incarnationSchema = { type: 'string', pattern: '^[a-f0-9]{32}$' };
@@ -151,6 +151,10 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   const observed = results.at(-1)?.rows[0];
   if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
   if (operation.op === 'claim_acquire') rejectAgentWrite(caller, 'claim_acquire', issue_id, JSON.parse(String(observed.labels_json)), observed);
+  if (operation.op === 'claim_release') {
+    const current = inspection(observed);
+    if (ownsExpiredLease(current.lease, current.store_incarnation, operation.claim_proof, current.issue_id, actor, current.observed_at)) return { released: false, current };
+  }
   throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current: inspection(observed) });
 }
 function claimObservation(issue_id: string): SqlStatement {
