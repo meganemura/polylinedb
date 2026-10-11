@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show a favicon on every `/ui` page: a polyline on the page paper, drawn in the page colors with a night variant for a dark color scheme. It is an inline SVG `data:` URI in the page head, so it adds no request, and the existing `img-src data:` policy allows it. The Content-Security-Policy, caching, and prefetch rules are unchanged.
+
 - Branch a claim worktree from the `queue` tip. The main-lock steps belong to the owner who lands `queue` onto main. If the claim expires after the queue push, acquire the issue again to write the tip. See `docs/agent-actors.md` and `docs/claims.md`.
 - Add `pd claim keepalive --claim-proof JSON [--ttl 30..3600] [--max-duration 1..28800] [--kill-on-loss] (--pid PID | -- COMMAND ...)`. It renews a claim lease through the existing `claim_show` and `claim_renew` operations until the command or process exits, so a long required check no longer lets the lease lapse. It needs no Worker or schema change and keeps the 3600 second TTL maximum. It refuses an issue labeled `main-lock`. `--max-duration` defaults to 7200 seconds and is capped at 28800. The exit code is the command's code, 0 when the claim is released, 5 with `claim_lost`, or 6 with `keepalive_max_duration`. It kills the command only with `--kill-on-loss`. Cloud agents still renew through the MCP `claim_renew` tool. See `docs/claims.md`.
 - Return `open_blockers` from `claim_acquire`. The list holds the ids of active blockers, in issue order, as observed at acquire time, and it is empty when there are none. Acquire still succeeds when active blockers remain. A replay reads the list again. See `docs/claims.md`.
