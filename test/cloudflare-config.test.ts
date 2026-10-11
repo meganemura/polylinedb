@@ -16,8 +16,8 @@ const complete = {
 type Variable = keyof typeof complete;
 const variables = Object.keys(complete) as Variable[];
 
-function evaluate(overrides: Partial<Record<Variable | 'POLYLINEDB_BUILD_WITHOUT_ACCESS', string | undefined>>) {
-  const env: Record<string, string> = { PATH: process.env.PATH ?? '' };
+function evaluate(overrides: Partial<Record<Variable | 'POLYLINEDB_BUILD_WITHOUT_ACCESS', string | undefined>>, extras: Record<string, string> = {}) {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '', ...extras };
   for (const [name, value] of Object.entries({ ...complete, ...overrides })) if (value !== undefined) env[name] = value;
   const script = `const { default: config } = await import(${JSON.stringify(configUrl)});
     process.stdout.write(JSON.stringify(config.worker.env));`;
@@ -83,6 +83,21 @@ test('the local opt-in accepts only the exact value 1', () => {
   for (const value of ['true', 'yes', '0', '']) {
     refused(evaluate({ POLYLINEDB_ACCESS_AUD: undefined, POLYLINEDB_BUILD_WITHOUT_ACCESS: value }), 'POLYLINEDB_ACCESS_AUD');
   }
+});
+
+test('dispatch webhook secrets are not text bindings', () => {
+  const result = evaluate({}, {
+    POLYLINEDB_DISPATCH_WEBHOOK_URL: 'https://fixture.invalid/dispatch',
+    POLYLINEDB_DISPATCH_WEBHOOK_KEY: 'test-sender-key',
+  });
+  assert.equal(result.status, 0, result.output);
+  const env = JSON.parse(result.stdout);
+  assert.equal(env.POLYLINEDB_DISPATCH_WEBHOOK_URL, undefined);
+  assert.equal(env.POLYLINEDB_DISPATCH_WEBHOOK_KEY, undefined);
+  assert.equal(result.stdout.includes('POLYLINEDB_DISPATCH_WEBHOOK_URL'), false);
+  assert.equal(result.stdout.includes('POLYLINEDB_DISPATCH_WEBHOOK_KEY'), false);
+  assert.equal(result.stdout.includes('test-sender-key'), false);
+  assert.equal(result.stdout.includes('fixture.invalid'), false);
 });
 
 test('the Vite config switches remote bindings off for the dev server', () => {

@@ -23,7 +23,11 @@ test('the built Worker keeps logs on and invocation logs off', (t) => {
       POLYLINEDB_ACCESS_ACTORS: '["access:build-test"]', POLYLINEDB_ALLOWED_ORIGINS: '[]' },
   });
   assert.equal(build.status, 0, build.stdout + build.stderr);
-  const config = JSON.parse(readFileSync(join(root, '.cloudflare/output/v0/workers/default/worker.config.json'), 'utf8'));
+  const configText = readFileSync(join(root, '.cloudflare/output/v0/workers/default/worker.config.json'), 'utf8');
+  const config = JSON.parse(configText);
+  assert.equal(configText.includes('POLYLINEDB_DISPATCH_WEBHOOK_URL'), false);
+  assert.equal(configText.includes('POLYLINEDB_DISPATCH_WEBHOOK_KEY'), false);
+  assert.equal(configText.includes('test-sender-key'), false);
   assert.deepEqual(config.observability, { enabled: true, logs: { enabled: true, invocationLogs: false } },
     'invocation logs record every request and may keep the Cf-Access-Jwt-Assertion header; only console lines may reach Workers Logs');
 });

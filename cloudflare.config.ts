@@ -22,6 +22,7 @@ export default {
     compatibilityDate: '2026-09-25',
     previewUrls: false,
     observability: { enabled: true, logs: { enabled: true, invocationLogs: false } },
+    // The two dispatch secrets are runtime Worker secrets and must not be added as text bindings.
     env: {
       DB: { type: 'd1', name: process.env.POLYLINEDB_D1_NAME ?? 'polylinedb' },
       ACCESS_TEAM_DOMAIN: { type: 'text', value: required('POLYLINEDB_ACCESS_TEAM_DOMAIN', '') },

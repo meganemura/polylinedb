@@ -60,6 +60,7 @@ const controls: Control[] = [
   { name: 'public host hooks', path: 'src/cli.ts', statement: "import { agentContext as proof } from './host-hooks/index.ts'; void proof;" },
   { name: 'public service handler', path: 'scripts/check-architecture.ts', statement: "import { handleRequest as proof } from '../src/service/index.ts'; void proof;" },
   { name: 'private Access verifier', path: 'scripts/check-architecture.ts', statement: "import { createAccessVerifier as proof } from '../src/service/access.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('service') },
+  { name: 'private dispatch module', path: 'scripts/check-architecture.ts', statement: "import { createDispatcher as proof } from '../src/service/dispatch.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('service') },
   { name: 'private D1 adapter', path: 'scripts/check-architecture.ts', statement: "import { d1Executor as proof } from '../src/service/d1.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('service') },
   { name: 'store cannot import cloud client', path: 'src/local-store/index.ts', statement: "import { createCloudClient as proof } from '../cloud-client/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('local-store') },
   { name: 'workspace cannot import hooks', path: 'src/workspace/index.ts', statement: "import { agentContext as proof } from '../host-hooks/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('workspace') },

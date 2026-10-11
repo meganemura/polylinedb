@@ -1,7 +1,8 @@
-/** Adapts authenticated HTTP and MCP requests to issue and memory operations, and serves the read-only /ui page. OAuth belongs to Access. */
+/** Adapts authenticated HTTP and MCP requests to issue and memory operations, and serves /ui. OAuth belongs to Access. */
 import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
-import { uiNotFoundResponse, uiResponse, type UiRoute } from "./ui.ts";
+import { createDispatcher, dispatchSecretNames, type Dispatcher } from "./dispatch.ts";
+import { dispatchResponse, uiNotFoundResponse, uiResponse, type UiRoute } from "./ui.ts";
 import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseIssueId, parseOperation, parseRequestId } from "../records/index.ts";
 import type { Status } from "../records/index.ts";
@@ -10,9 +11,10 @@ import type { Operation } from "../records/index.ts";
 export type Environment = AccessSettings & {
   DB: D1DatabaseLike;
   ALLOWED_ORIGINS?: string;
-};
+} & { [Name in (typeof dispatchSecretNames)[number]]?: string };
 
 const verifyAccess = createAccessVerifier();
+const dispatchIssues = createDispatcher();
 // MCP search always reports where each hit matched, so the /v1/operations opt-in is not an MCP input.
 const { with_matches: _, ...searchProperties } = operationSchemas.search.properties;
 const mcpSchemas = { ...operationSchemas, search: { ...operationSchemas.search, properties: searchProperties } };
@@ -105,8 +107,13 @@ async function readJson(request: Request): Promise<unknown> {
   catch { throw new PolylinedbError('invalid_json', 'Body must contain valid UTF-8 JSON.', 400); }
 }
 
-function checkOrigin(request: Request, env: Environment): void {
+function checkOrigin(request: Request, env: Environment, target: { kind: string }): void {
   const origin = request.headers.get('origin');
+  // Dispatch accepts only a missing Origin or this request's own origin. ALLOWED_ORIGINS stays out of that decision.
+  if (target.kind === 'dispatch') {
+    if (origin === null || origin === new URL(request.url).origin) return;
+    throw new PolylinedbError('forbidden_origin', 'Origin is not allowed.', 403);
+  }
   if (origin === null) return;
   let allowed: unknown;
   try { allowed = JSON.parse(env.ALLOWED_ORIGINS ?? '[]'); }
@@ -250,15 +257,21 @@ function projectRoute(pathname: string): UiRoute | null {
   return { page: 'project', tool, project: decoded.slice(1).join('/') };
 }
 
-function issueRoute(pathname: string): UiRoute | null {
+function issueTarget(pathname: string): { kind: 'ui'; route: UiRoute } | { kind: 'dispatch'; issueId: string } | { kind: 'missing' } {
   const rest = pathname.slice('/ui/i/'.length);
-  if (rest.length === 0 || rest.includes('/')) return null;
+  const slash = rest.indexOf('/');
+  const idPart = slash === -1 ? rest : rest.slice(0, slash);
+  const tail = slash === -1 ? '' : rest.slice(slash);
+  if (idPart.length === 0 || (tail !== '' && tail !== '/dispatch')) return { kind: 'missing' };
   let value: string;
-  try { value = decodeURIComponent(rest); } catch { return null; }
-  try { return { page: 'issue', id: parseIssueId(value) }; } catch { return null; }
+  try { value = decodeURIComponent(idPart); } catch { return { kind: 'missing' }; }
+  try {
+    const id = parseIssueId(value);
+    return tail === '/dispatch' ? { kind: 'dispatch', issueId: id } : { kind: 'ui', route: { page: 'issue', id } };
+  } catch { return { kind: 'missing' }; }
 }
 
-function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'ui'; route: UiRoute } | { kind: 'missing' } {
+function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'ui'; route: UiRoute } | { kind: 'dispatch'; issueId: string } | { kind: 'missing' } {
   if (pathname === '/mcp') return { kind: 'mcp' };
   if (pathname === '/v1/operations') return { kind: 'operations' };
   if (pathname === '/ui') return { kind: 'ui', route: { page: 'home' } };
@@ -271,10 +284,7 @@ function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations'
     const route = projectRoute(pathname);
     return route === null ? { kind: 'missing' } : { kind: 'ui', route };
   }
-  if (pathname.startsWith('/ui/i/')) {
-    const route = issueRoute(pathname);
-    return route === null ? { kind: 'missing' } : { kind: 'ui', route };
-  }
+  if (pathname.startsWith('/ui/i/')) return issueTarget(pathname);
   return { kind: 'missing' };
 }
 
@@ -282,13 +292,18 @@ export async function handleRequest(
   request: Request,
   env: Environment,
   authenticate: ReturnType<typeof createAccessVerifier> = verifyAccess,
+  dispatcher: Dispatcher = dispatchIssues,
 ): Promise<Response> {
   const started = performance.now();
   try {
     const target = requestTarget(new URL(request.url).pathname);
     if (target.kind === 'missing') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
-    checkOrigin(request, env);
+    checkOrigin(request, env, target);
     const caller = await authenticate(request, env);
+    if (target.kind === 'dispatch') {
+      if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
+      return dispatchResponse(await dispatcher.press(request, env, caller, target.issueId), target.issueId);
+    }
     if (target.kind === 'ui') {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
       let route = target.route;
@@ -298,7 +313,7 @@ export async function handleRequest(
         route = { ...route, ...filters };
       }
       if (route.page === 'search') route = { page: 'search', query: new URL(request.url).searchParams.get('q') ?? '' };
-      const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, caller.actor, request.headers.get('if-none-match'));
+      const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, { actor: caller.actor, dispatch: dispatcher.control(env, caller) }, request.headers.get('if-none-match'));
       // Workers advance this clock only across I/O, so the duration is the time spent waiting on Access keys and D1.
       page.headers.set('server-timing', `worker;dur=${(performance.now() - started).toFixed(1)}`);
       return page;
