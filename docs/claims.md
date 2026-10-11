@@ -98,7 +98,15 @@ Claim timestamps are safe integer Unix seconds, including acquisition, last chan
 The nullable acquisition label contains at most 64 UTF-8 bytes and grants no authority.
 
 A new acquisition increases generation and revision.
-Renewal and release increase revision only.
+Renewal and release of an active lease increase revision only.
+Release of an expired lease succeeds when the proof names that lease's session and generation and the caller is that lease's actor.
+The result is `released: false` and the current inspection, whose `state` is `expired`.
+The revision stays the same, `released_at` stays null, and the store writes no receipt.
+A stale `expected_revision` still succeeds, because the release writes nothing.
+Retry that cleanup with a new request UUID. The store reads the lease again.
+Renewal still requires an unexpired proof.
+A proof that names a different session returns `claim_conflict` and leaves the revision unchanged, including when that newer lease is also expired.
+A status write under an expired lease still requires a new acquisition.
 Closed issues remain claimable for reopening.
 Release followed by acquisition provides explicit handoff.
 

@@ -111,6 +111,18 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { claims, next_cursor };
     }
     case 'claim_acquire': case 'claim_renew': case 'claim_release': {
+      if (operation.op === 'claim_release') {
+        const raw = object(value);
+        if (Object.hasOwn(raw, 'released')) {
+          if (Object.hasOwn(raw, 'claim_receipt') || raw.released !== false) return invalid();
+          const current = claimInspection(known(raw, ['released', 'current']).current);
+          const proof = operation.claim_proof;
+          if (current.state !== 'expired' || current.issue_id !== proof.issue_id || current.lease === null
+            || current.lease.incarnation !== proof.incarnation || current.lease.session_id !== proof.session_id
+            || current.lease.generation !== proof.generation || current.lease.released_at !== null) return invalid();
+          return { released: false, current };
+        }
+      }
       const response = known(value, ['claim_receipt'], operation.op === 'claim_acquire' ? ['open_blockers'] : []);
       if (operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') && !openBlockers(response.open_blockers, operation.issue_id)) return invalid();
       const row = known(response.claim_receipt, [...claimKeys, 'outcome']);

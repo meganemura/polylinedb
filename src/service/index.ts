@@ -32,7 +32,7 @@ const descriptions: Record<string, string> = {
   claim_list: 'List claim inspections with tool/project filters and numeric issue pagination, including never-claimed issues.',
   claim_acquire: 'Acquire one available issue using the observed incarnation and caller session UUID. Retain the request UUID and payload for retries.',
   claim_renew: 'Renew an unexpired claim using its proof and observed revision. Retries return the original receipt.',
-  claim_release: 'Release a current claim using its proof and observed revision. Release does not change the issue status.',
+  claim_release: 'Release a current claim using its proof and observed revision. Release does not change the issue status. When the lease is expired and the proof names it, release succeeds and writes nothing.',
   dependency_list: 'Read a dependent issue prerequisite revision and a bounded page of blockers. Closed blockers remain attached.',
   dependency_add: 'Add dependent to blocker prerequisite with the observed aggregate revision. Retain the request UUID and payload for retries.',
   dependency_remove: 'Remove a prerequisite with the observed aggregate revision. A retry returns its original immutable receipt.',
