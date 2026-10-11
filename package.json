@@ -81,6 +81,7 @@
     "dist/workspace/index.js",
     "dist/records/dependencies.js",
     "dist/records/active-blocker.js",
+    "dist/records/attention.js",
     "dist/records/errors.js",
     "dist/records/claims.js",
     "dist/records/claims-sql.js",
