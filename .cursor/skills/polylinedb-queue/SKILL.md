@@ -39,7 +39,7 @@ The rejected-push loop below handles the race.
 
 Fetch `queue` and rebase the finished commits onto it.
 If the rebase conflicts, finish it. Resolve the conflicts in the code.
-`CHANGELOG.md` conflicts are expected. Keep both entries.
+`CHANGELOG.md` and `CHANGELOG.human.md` conflicts are expected. Keep both entries.
 Do not stop and ask a human only because the rebase conflicted, and do not abort the rebase.
 After a conflict, rerun the affected tests. If they fail, fix the fallout of the resolve and run them again.
 
@@ -76,3 +76,14 @@ Do not use git notes.
 
 If the push succeeds but a later write fails, report the remote SHA and reconcile the records before declaring the enqueue complete.
 Never repeat a successful push merely because a later write failed.
+
+## Update both changelogs at each landing
+
+Every landing of `queue` onto main updates both changelog files at the repository root.
+`CHANGELOG.md` is the agent changelog. `CHANGELOG.human.md` is the changelog for people.
+Whoever lands `queue` onto main adds one entry for that landing to each file, in one commit on top of the commits being landed, and lands that commit with them.
+The `CHANGELOG.md` entry goes under `## Main landings`, newest first, with the heading `### YYYY-MM-DD main SHORT_SHA`, where the SHA is the newest landed commit below the changelog commit.
+It ties each change to its commits and its pd issue, and names MCP and CLI behavior, return fields, error and no-op semantics, required Worker secrets and bindings, D1 schema versions and migrations, and deploy prerequisites.
+The `CHANGELOG.human.md` entry says in a few plain sentences what people can now do or what changed in `/ui` and the workflow, without internals.
+Name Worker secrets and bindings only by name. Never write secret values, tokens, account IDs, or webhook URLs into either file.
+An agent that enqueues may add its own line under `## Unreleased` in `CHANGELOG.md`. The landing entries belong to whoever lands `queue`.

@@ -31,6 +31,7 @@ Any number of agents may push `queue` without force at the same time. A rejected
 After the enqueue, the agent sets the issue `open`, replaces `ready` with `main-wait`, and releases the lease.
 Whoever lands `queue` onto main claims the issue again, closes it, and then releases that claim.
 Close comes first, because close requires the current proof.
+Every landing of `queue` onto main adds an entry to both changelogs: [CHANGELOG.md](../CHANGELOG.md) for agents, with commits, pd issues, fields, errors, secrets by name, schema, and deploy steps, and [CHANGELOG.human.md](../CHANGELOG.human.md) for people, in plain English.
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
 
 ## `/ui` latency budget

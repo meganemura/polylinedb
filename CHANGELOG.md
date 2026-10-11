@@ -1,4 +1,101 @@
-# Changelog
+# Changelog for agents
+
+This is the agent changelog. It records the behavior that an agent or an operator script depends on.
+People should read [CHANGELOG.human.md](CHANGELOG.human.md), which says the same changes in plain English.
+
+Every landing of `queue` onto main adds one entry to `## Main landings` here and one to `CHANGELOG.human.md`.
+An entry covers MCP and CLI behavior, new or changed return fields, error and no-op semantics, required Worker secrets and bindings by name, D1 schema versions and migrations, and deploy prerequisites.
+Entries never contain secret values, tokens, account IDs, or webhook URLs.
+
+The release sections below `## Main landings`, starting with `## Unreleased`, keep their earlier form.
+The publish workflow reads a version section such as `## 0.4.0 (2026-10-09)` for the GitHub Release notes, so keep those headings.
+
+## Main landings
+
+Newest landing first.
+Each landing is a `### YYYY-MM-DD main SHORT_SHA` heading, where the SHA is the newest landed commit below the changelog commit.
+Whoever lands `queue` onto main writes both entries in one commit on top of the landed commits; the 2026-10-11 entry was added afterwards.
+Each change under it is a `####` heading and a list of `key: value` lines, so a search such as `grep -n '^- issue: pd-81' CHANGELOG.md` or `grep -n '^- secrets:' CHANGELOG.md` finds it.
+The keys are `issue`, `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`, `schema`, `secrets`, `deploy`, and `status`. A key that does not apply is left out.
+
+### 2026-10-11 main 748c720
+
+- main: 748c720332b925c8c89618868d7e43e722c950b3
+- previous main: b2cc155b9d27ef9956415d4c9196e753b3716cc7
+- landed commits: 0ca6ee3, 16559b9, f96674a, fb2dc4c, 0ac391f, b42eb1e, 5a46448, 67d829e, f1d7b97, 0bd5d1d, a0eaef8, 5737f02, 2f285db, bf686c0, 748c720
+- check: GitHub Check run 38116804370 passed on all 4 jobs
+- schema: 7, unchanged. No D1 migration.
+- deploy: pd1 Worker version 2af3e77f, deployed after the landing. D1 was confirmed at schema 7 before the deploy.
+- cli: the latest npm CLI is still 0.4.0. No CLI release in this landing.
+
+#### pd-65.3 Dispatch from the /ui issue page
+
+- issue: pd-65.3
+- commits: 2f285db feat(ui): post a dispatch envelope from an issue page; bf686c0 docs: explain how to set the dispatch webhook secrets; 748c720 test(dispatch): wait until the overlapping press fetch starts
+- surface: Worker `/ui`, new route `POST /ui/i/<id>/dispatch`. Every other `/ui` page stays `GET` only.
+- change: the issue page shows one Dispatch button to an Access human with write access, whose actor id starts with `access:`. A press POSTs one Sink `intent: dispatch` envelope to the configured webhook. The envelope carries `project`, `issue_id`, `event_id`, `idempotency_key` (`<issue_id>:dispatch`), and `occurred_at`. A press does not change the issue.
+- errors: a reader, an agent, a service actor, and an anonymous request are refused and see no button. The POST accepts a missing `Origin` or the Worker origin, and ignores `ALLOWED_ORIGINS`.
+- fields: none in MCP or CLI responses.
+- compatibility: a repeat for the same project and issue within 60 seconds reuses the `event_id` and does not POST again after a success. The window is in memory on one isolate, so another isolate or an eviction can deliver again. A failed delivery retries the same `event_id` until the window ends.
+- schema: none.
+- secrets: `POLYLINEDB_DISPATCH_WEBHOOK_URL` and `POLYLINEDB_DISPATCH_WEBHOOK_KEY`, both Worker secrets, both or neither. `cloudflare.config.ts` does not declare them, so a deploy without them succeeds and the button is disabled with `Dispatch is not set up.`
+- deploy: set both secrets with `cf workers secrets bulk`, then confirm that a later `cf deploy` keeps both names. See `docs/cloud.md`, "Set the dispatch webhook".
+- status: pd1 2af3e77f has neither secret, so Dispatch sends nothing yet. pd-65.3 stays open for the end-to-end press.
+
+#### pd-81 claim_acquire reports open blockers
+
+- issue: pd-81
+- commits: 0ac391f test(claims): expect open blockers on claim acquisition; b42eb1e feat(claims): report open blockers when a claim is acquired; 5a46448 test(cloud): decode claim_acquire when open_blockers is absent; 67d829e test(claims): pin active blockers to the worklists for each status; f1d7b97 refactor(records): use one active-blocker predicate
+- surface: MCP `claim_acquire`, HTTP `/v1/operations`, `pd claim acquire`, local SQLite and D1.
+- fields: a `claim_acquire` success returns `{ claim_receipt, open_blockers }`. `open_blockers` holds the ids of active blockers (any status other than `closed`, so a deferred blocker counts), in issue order, as observed at acquire time. It is `[]` when there are none. A replay reads the list again. Renew and release keep `{ claim_receipt }`.
+- errors: acquire never fails because of blockers.
+- compatibility: CLI 0.4.0 and later accept the field. CLI 0.3.1 reports `cloud_invalid_response` on `pd claim acquire` against this Worker, although the claim is acquired. The cloud client returns no `open_blockers` key when an older Worker omits it. MCP clients are not affected.
+- agent rule: if `open_blockers` is non-empty and the claim was meant to start work, release it and pick another ready issue.
+- schema: none.
+- deploy: Worker deploy, done on pd1 2af3e77f.
+
+#### pd-80 release of an expired own lease is a no-op
+
+- issue: pd-80
+- commits: f96674a test(claims): expect a no-op release for an expired own lease; fb2dc4c fix(claims): release an expired own lease as a no-op
+- surface: MCP `claim_release`, HTTP `/v1/operations`, `pd claim release`, local SQLite and D1.
+- fields: when the proof names the current expired lease (same actor, session, and generation), `claim_release` returns `{ released: false, current }`, where `current.state` is `expired`. The revision stays the same, `released_at` stays null, and the store writes no receipt. A stale `expected_revision` still succeeds.
+- errors: a proof for a different session or generation still returns `claim_conflict` with an unchanged revision, also when that newer lease is expired. Writes under an expired lease still need a new acquisition.
+- compatibility: on main 748c720 and pd1 2af3e77f the no-op answer is the default. CLI 0.4.0 decodes a release success only as `claim_receipt`, so `pd claim release` of an expired own lease gets 502 `cloud_invalid_response` against pd1 instead of 409 `claim_conflict`, until the next CLI release. MCP callers are not affected. The release already failed before this change. Queue commit 9b56052 makes the no-op opt-in with `expired_noop: true`; see `## Unreleased`.
+- schema: none.
+- deploy: Worker deploy, done on pd1 2af3e77f. Follow-up: pd-117.
+
+#### pd-147 /ui latency budget gate in CI
+
+- issue: pd-147
+- commits: a0eaef8 test(ui): fail CI when a /ui step misses the latency budget
+- surface: `npm run check:ui-latency` (`scripts/ui-latency-budget.ts`), run by `.github/workflows/check.yml` on every push and pull request.
+- change: a followed `/ui` link after the first load fails above 100 ms, and back or forward fails above one frame (16 ms). The tolerance is 0 ms. Chrome paint stays a manual measurement with `scripts/ui-latency.ts`.
+- agent rule: a budget miss fails the change. A feature that cannot meet the budget needs an owner decision. See `docs/ui-latency.md` and `docs/agent-workflow.md`.
+- schema: none.
+
+#### pd-142 change feed defect injection
+
+- issue: pd-142
+- commits: 5737f02 test(feed): fail the change feed contract on injected defects
+- surface: `test/change-feed-defects.test.ts`, `docs/verification.md`.
+- change: the pd-139.1 change feed contract fails on a store that drops one committed event and on a store that records an event for a rejected create. No runtime change.
+- status: pd-142 stays open. The interleaving model and cold reconciliation harnesses are not in the repository yet.
+
+#### /ui project state and marks
+
+- issue: none recorded
+- commits: 0ca6ee3 feat(ui): separate project state from marks
+- surface: Worker `/ui` project page.
+- change: the status filters are one joined State bar with one status at a time; Unfinished means every status except `closed`. Label filters are a separate Mark row. The two use different colors. The operation API does not change.
+
+#### Workspace Git cache
+
+- issue: none recorded
+- commits: 16559b9 perf(workspace): reuse one Git repository answer per directory; 0bd5d1d docs: record CLI workload timings
+- surface: local CLI only.
+- change: a local command starts Git once per directory and reuses the answer, including "not a repository", for repository defaults, the configuration path, and external-directory checks. A failed Git start is not cached. See `docs/adr/0017-repository-lookup-cache.md` and `docs/performance.md`.
+- compatibility: no output or flag changes.
 
 ## Unreleased
 

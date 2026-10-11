@@ -192,6 +192,7 @@ They enqueue finished commits on the `queue` branch, leave the issue open with t
 They do not acquire the main-lock, and they do not push main.
 
 The owner uses this section to land `queue` onto main.
+Every landing also adds one entry to the agent changelog `CHANGELOG.md` and one to `CHANGELOG.human.md`, in one commit on top of the landed commits, as the polylinedb-queue skill describes.
 
 Each repository has one lock issue with the labels `main-lock` and `ready`, for example with the body `main-lock: OWNER/REPO`.
 A human creates it once. Find it with `pd list --label main-lock`; the ready worklist never shows it.

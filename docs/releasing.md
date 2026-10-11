@@ -100,6 +100,7 @@ The version heading may be `## 0.4.0` or `## 0.4.0 (2026-10-09)`.
 The heading line is omitted because the release title carries the version.
 Every later line up to the next `## ` heading is included, so `###` subsections stay in the section.
 A missing or empty section fails the publish job before `npm publish`.
+The `## Main landings` section at the top of `CHANGELOG.md` and the file `CHANGELOG.human.md` are not read for release notes.
 
 A release body has no repository base, so a relative link target in the section becomes an absolute URL at the release tag.
 The repository URL comes from `repository.url` in `package.json`.
