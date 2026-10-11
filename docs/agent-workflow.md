@@ -7,8 +7,9 @@ Agents refetch ready candidates before each claim attempt because another actor 
 
 The current MCP vocabulary represents ready work as `dependency_worklist` with `state: "ready"`.
 `claim_show`, `claim_acquire`, `claim_renew`, and `claim_release` supply the issue lease lifecycle.
-The skill reads schemas at runtime and uses separate issue and main-lock proofs.
-Repository publication policy selects main-direct or PR work.
+The skill reads schemas at runtime.
+Agents enqueue finished work on the shared `queue` branch, and the owner lands `queue` onto main.
+Agents do not push main or take the main-lock.
 
 A successful `claim_acquire` returns `open_blockers`, the ids of active blockers, observed at acquire time.
 An empty list means there are none.
@@ -22,12 +23,13 @@ Cloud connections derive a human actor from authentication until per-agent token
 `recommended_ids` is a preference order only.
 A ready ID that the order omits stays claimable, and the skill never limits its choice to the order.
 The ready worklist leaves out issues labeled `main-lock`, so the repository lock issue never enters the ranking.
-The main-lock is a short claim on that lock issue, found with `list` and the `main-lock` label.
+The main-lock is a short claim on that lock issue, found with `list` and the `main-lock` label, and serializes the owner's pushes to main.
 The issue pointer is a comment from the claim holder whose whole body is `tip: <40-character SHA>`.
 
 A verified remote SHA precedes the tip comment because a local commit does not establish a remote tip.
-The main-lock covers reconciliation, push, and the tip comment.
-Completion closes the issue before releasing its lease because close requires a current ownership proof.
+Any number of agents may push `queue` without force at the same time. A rejected push leads to fetch, rebase, conflict resolution, and another push, so `queue` needs no lock.
+After the enqueue, the agent sets the issue `open`, replaces `ready` with `main-wait`, and releases the lease.
+Whoever lands `queue` onto main closes the issue. Close precedes release because close requires a current ownership proof.
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
 
 ## `/ui` latency budget

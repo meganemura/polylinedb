@@ -650,7 +650,7 @@ A slash in the project name is its own path segment.
 
 **Waiting for main** sits under the project list.
 It lists open issues with the label `main-wait`, newest update first, at most 50.
-That label marks work that is merged into a local land queue and is not yet on the remote main branch.
+That label marks work that is enqueued on the `queue` branch and is not yet on the remote main branch.
 Each row shows the first line of the body, the issue ID, the last update, and the actor of that update.
 The row has no link.
 

@@ -1,6 +1,6 @@
 ---
 name: polylinedb
-description: Select, claim, and complete agent work through polylinedb MCP tools. Rank ready candidates within the session and follow main-direct or PR policy.
+description: Select, claim, and complete agent work through polylinedb MCP tools. Rank ready candidates within the session and enqueue finished work on the queue branch.
 ---
 
 # Complete claimed agent work
@@ -15,8 +15,9 @@ For example, a Codex session can show a connector import beside a configured MCP
 Use only the connection that advertises every tool this skill names.
 If none does, stop and report the missing names, the source of the visible tools, and that a connector import can keep the tool list from its creation time (refresh it) or that a configured server may need its own login.
 Keep the same connector and explicit project throughout the work.
-Repository policy selects `main-direct` or `PR` publication.
-Neither policy grants permission to publish. Follow the user's authorization boundary before an external write.
+Agents land finished work through the `queue` branch with the polylinedb-queue skill. The owner lands `queue` onto main.
+Agents never push or merge main and never take the `main-lock` issue.
+This skill does not grant permission to publish. Follow the user's authorization boundary before an external write.
 
 ## Retrieve context
 
@@ -73,6 +74,7 @@ Use `update` to record `in_progress` with the observed status version.
 An `in_progress` status does not reserve work.
 
 Before expiry, read `claim_show` and use `claim_renew` with the proof and observed claim revision.
+The TTL is at most 3600 seconds, so renew between long steps. Cloud agents renew through the MCP connector, not a CLI login with owner credentials.
 If ownership expires or changes, stop protected work and make a deliberate new selection and acquisition.
 After uncertain completion, retain the original request UUID and identical payload for an explicit retry.
 Read current ownership before further work. A replayed receipt does not prove current ownership.
@@ -81,38 +83,21 @@ Do not silently replace versions, incarnations, or proofs.
 
 ## Work in your own worktree
 
-After a successful acquisition, create a git worktree and branch for the issue from the current main, for example `git worktree add ../work-ISSUE_ID -b work/ISSUE_ID origin/main`.
+After a successful acquisition, create a git worktree and branch for the issue from the current queue tip, for example `git worktree add ../work-ISSUE_ID -b work/ISSUE_ID origin/queue`.
 Make every edit, test run, and commit for the issue in that worktree.
 Never edit, stage, or commit in a checkout that another session uses, including the shared repository checkout.
 The branch name carries the issue ID, so other agents and the dispatcher can tell which worktree belongs to which claim.
-After the push and the close, remove the worktree with `git worktree remove` and delete its branch.
+After the enqueue, remove the worktree with `git worktree remove` and delete its branch.
 
 ## Publish and record the tip
 
-The main-lock is a claim on one lock issue per repository.
-The lock issue has the labels `main-lock` and `ready`, and its body names the repository, for example `main-lock: OWNER/REPO`.
-Find it only with `list` and the `main-lock` label. It never appears in the ready worklist, and it never belongs in `recommended_ids`.
-If the repository has no lock issue, stop and ask a human to create it.
-
+Follow the polylinedb-queue skill to push `queue`, write the tip comment, and hand the issue off as `open` with the `main-wait` label.
 The tip pointer is a comment on the claimed issue whose whole body is `tip: ` followed by the 40-character commit SHA.
 The newest `tip:` comment from the claim holder is the current pointer.
 The comment holds only that line, with no reasoning and no tool output.
 
-For `main-direct` policy:
-
-1. Finish the work, run the relevant checks, and commit locally under the issue claim.
-2. Acquire the lock issue with `claim_acquire` and a short TTL, for example 120 seconds. Keep its proof separate from the issue proof.
-3. Read the current main tip under the lock. Reconcile the local commits and rerun affected checks if needed.
-4. Confirm both leases remain valid before the authorized push. Stop if either proof is stale.
-5. Push without force and verify the remote tip SHA.
-6. Write `tip: <SHA>` as a comment on the claimed issue.
-7. Release the lock issue with `claim_release`.
-8. Close the issue with the issue proof, then release the issue claim.
-
-For `PR` policy, commit locally and publish the authorized branch and PR through the repository workflow.
-Record the verified branch tip with a `tip: <SHA>` comment on the claimed issue.
-Keep the issue open for review until repository policy permits completion.
-If the PR workflow later updates main, acquire the lock issue for that update and record the verified main tip.
+The `main-lock` issue serializes the owner's pushes to main. It has the labels `main-lock` and `ready`.
+It never appears in the ready worklist. Do not claim it, even when `list` shows it.
 
 If a push succeeds but the pointer write fails, report the remote SHA and reconcile the pointer before declaring completion.
 Never repeat a successful push merely because a later write failed.
@@ -121,7 +106,8 @@ Never repeat a successful push merely because a later write failed.
 
 Append the changed paths, commit SHAs, and verification result with `comment`.
 After an uncertain comment response, read the comments before appending again.
-Close completed work with `close`, the current issue proof, and the observed status version.
-Then read the current claim revision and call `claim_release` with the issue proof and a retained request UUID.
+After an enqueue, leave the issue open and release the claim as the polylinedb-queue skill describes.
+Whoever lands `queue` onto main closes the issue with `close`, a current claim proof, and the observed status version.
+Read the current claim revision and call `claim_release` with the issue proof and a retained request UUID.
 For a handoff, record the current pointers and release the issue claim while leaving the issue open.
 Release invalidates the proof, so close must precede release when close requires ownership.

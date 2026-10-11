@@ -127,7 +127,10 @@ See the [operation contract](docs/operations.md) for fields, defaults, paginatio
 ## Use the agent skill
 
 The package includes [the polylinedb skill](skills/polylinedb/SKILL.md) for agents that select, claim, and complete work through MCP.
-Copy or symlink the complete `skills/polylinedb` directory into your host's skill directory.
+It also includes [the polylinedb-queue skill](skills/polylinedb-queue/SKILL.md), which enqueues finished commits on the shared `queue` branch.
+The owner lands `queue` onto main. Agents do not push main.
+Copy or symlink the complete `skills/polylinedb` and `skills/polylinedb-queue` directories into your host's skill directory.
+A consumer repository does not carry these skills, so install them on each agent host.
 Common user directories are `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`.
 Choose one installed source for each host and reload skill discovery as required by that host.
 Keep `pd` available on the agent's PATH.
