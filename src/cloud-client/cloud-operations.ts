@@ -68,12 +68,13 @@ function changeEvent(value: unknown, incarnation: string): ChangeEvent {
     || typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)) return invalid();
   return { seq: count(row.seq, 1), incarnation, issue_id: parseIssueId(row.issue_id), kind: changeName(row.kind), fields: row.fields.map(changeName), occurred_at: count(row.occurred_at, 0), actor: row.actor };
 }
-// A Worker that reports blockers on acquisition sends sorted open blocker IDs; the result type does not carry them yet.
-function openBlockers(value: unknown, dependent: string): boolean {
-  if (!Array.isArray(value)) return false;
+// A Worker that reports blockers on acquisition sends sorted open blocker IDs. An older Worker omits the field.
+function openBlockers(value: unknown, dependent: string): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids: string[] = [];
   let previous = '';
-  for (const id of value.map(id => parseIssueId(id))) { const sort = issueSortKey(id); if (id === dependent || sort <= previous) return false; previous = sort; }
-  return true;
+  for (const id of value.map(item => parseIssueId(item))) { const sort = issueSortKey(id); if (id === dependent || sort <= previous) return undefined; previous = sort; ids.push(id); }
+  return ids;
 }
 function result(operation: Operation, value: unknown): OperationResult {
   if ('observed_memory_revision' in operation && operation.observed_memory_revision !== undefined) {
@@ -124,7 +125,8 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         }
       }
       const response = known(value, ['claim_receipt'], operation.op === 'claim_acquire' ? ['open_blockers'] : []);
-      if (operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') && !openBlockers(response.open_blockers, operation.issue_id)) return invalid();
+      const blockers = operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') ? openBlockers(response.open_blockers, operation.issue_id) : undefined;
+      if (operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') && blockers === undefined) return invalid();
       const row = known(response.claim_receipt, [...claimKeys, 'outcome']);
       const { outcome, ...owner } = row; const parsed = claim(owner);
       const expected = operation.op === 'claim_acquire' ? 'acquired' : operation.op === 'claim_renew' ? 'renewed' : 'released';
@@ -136,7 +138,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         if (parsed.issue_id !== proof.issue_id || parsed.incarnation !== proof.incarnation || parsed.session_id !== proof.session_id || parsed.generation !== proof.generation || parsed.revision !== operation.expected_revision + 1 || (operation.op === 'claim_renew' && parsed.expires_at !== parsed.changed_at + operation.ttl)) return invalid();
       }
       if (expected === 'released' && parsed.released_at !== null) return { claim_receipt: { ...parsed, outcome: expected, released_at: parsed.released_at } };
-      if (expected !== 'released' && parsed.released_at === null) return { claim_receipt: { ...parsed, outcome: expected, released_at: null } };
+      if (expected !== 'released' && parsed.released_at === null) return blockers === undefined ? { claim_receipt: { ...parsed, outcome: expected, released_at: null } } : { claim_receipt: { ...parsed, outcome: expected, released_at: null }, open_blockers: blockers };
       return invalid();
     }
     case 'changes': {
