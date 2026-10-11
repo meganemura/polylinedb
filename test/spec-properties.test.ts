@@ -112,11 +112,14 @@ type ClaimWorld =
   | { op: 'claim_acquire'; lease: Lease; clock: Clock; caller: Caller; incarnation: 'current' | 'former' }
   | { op: 'claim_renew' | 'claim_release'; lease: Lease; clock: Clock; caller: Caller; differs: ReadonlySet<ProofField>; revision: 'observed' | 'stale' };
 
+function expiredOwnRelease(world: ClaimWorld): boolean {
+  return world.op === 'claim_release' && world.lease === 'held' && world.clock !== 'before' && world.caller === 'holder' && world.differs.size === 0;
+}
 const claimRules: Rule<ClaimWorld>[] = [
   { code: 'claim_conflict', source: 'docs/adr/0009-issue-ownership.md: The database accepts acquisition only when that incarnation matches the current singleton and the issue has no active claim.',
     violated: world => world.op === 'claim_acquire' && (world.incarnation !== 'current' || specState(world.lease, world.clock) === 'active') },
-  { code: 'claim_conflict', source: 'docs/adr/0009-issue-ownership.md: Renewal and release increase revision and require the observed revision and a current ownership proof.',
-    violated: world => world.op !== 'claim_acquire' && (world.revision !== 'observed' || !currentProof({ ...world, proof: { supplied: true, differs: world.differs } })) },
+  { code: 'claim_conflict', source: 'docs/adr/0009-issue-ownership.md: Renewal and release of an active lease increase revision and require the observed revision and a current ownership proof. docs/claims.md "Renew, release, and retry": release of the caller\'s own expired lease does not write.',
+    violated: world => world.op !== 'claim_acquire' && !expiredOwnRelease(world) && (world.revision !== 'observed' || !currentProof({ ...world, proof: { supplied: true, differs: world.differs } })) },
 ];
 
 // Renewal and release name their issue only through the proof, so a proof for another issue addresses that issue's claim.
@@ -200,7 +203,8 @@ test('property: a proof whose deadline equals the clock cannot change the status
   }
   for (const world of claimWorlds()) {
     if (world.clock !== 'equal' || world.op === 'claim_acquire') continue;
-    assert.equal(decideClaim(world).accepted, false, describe(world));
+    const cleanup = world.op === 'claim_release' && world.lease === 'held' && world.caller === 'holder' && world.differs.size === 0;
+    assert.equal(decideClaim(world).accepted, cleanup, describe(world));
   }
   assert.ok(matchingProofs > 0);
 });
