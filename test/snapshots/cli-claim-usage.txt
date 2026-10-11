@@ -4,3 +4,6 @@
         [--agent-label TEXT] [--request-id UUID]
   claim renew --claim-proof JSON --expected-revision N [--ttl 30..3600] [--request-id UUID]
   claim release --claim-proof JSON --expected-revision N [--request-id UUID]
+  claim keepalive --claim-proof JSON [--ttl 30..3600] [--max-duration 1..28800]
+        [--kill-on-loss] (--pid PID | -- COMMAND [ARGS...])
+                                Renew a lease until COMMAND or PID exits; refuses main-lock issues.

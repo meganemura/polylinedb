@@ -53,6 +53,7 @@
     "dist/cli-commands.js",
     "dist/cli-human.js",
     "dist/cli-diagnostics.js",
+    "dist/cli-keepalive.js",
     "dist/records/issues.js",
     "dist/records/issue-id.js",
     "dist/workspace/local-config.js",

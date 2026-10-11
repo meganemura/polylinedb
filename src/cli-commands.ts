@@ -20,6 +20,7 @@ import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3,
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 import { help } from './cli-help.ts';
+import { defaultMaxDurationSeconds, maximumMaxDurationSeconds, keepaliveExitCodes, runKeepalive } from './cli-keepalive.ts';
 
 type CloudClientModule = typeof import('./cloud-client/index.ts');
 let cloudClientModule: CloudClientModule | undefined;
@@ -36,6 +37,7 @@ const commandFlags: Record<string, readonly string[]> = {
   dependency_list: ['after', 'limit'], dependency_add: ['dependent', 'blocker', 'expected-revision', 'request-id'], dependency_remove: ['dependent', 'blocker', 'expected-revision', 'request-id'],
   claim_show: [], claim_list: ['tool', 'project', 'after', 'limit'],
   claim_acquire: ['incarnation', 'session-id', 'ttl', 'agent-label', 'request-id'],
+  claim_keepalive: ['claim-proof', 'ttl', 'max-duration', 'pid', 'kill-on-loss'],
   claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
   changes: ['since', 'incarnation', 'project', 'issue', 'kind', 'limit'],
   ready: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'], blocked: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'],
@@ -148,7 +150,7 @@ async function main(argv: readonly string[]): Promise<void> {
     if (!arg.startsWith('--')) invalid(`Unknown flag ${arg}`);
     const name = arg.slice(2);
     if (![...globals, ...Object.values(commandFlags).flat()].includes(name)) invalid(`Unknown flag ${arg}`);
-    const value = ['clear-labels', 'stealth', 'with-revision', 'force', 'historical'].includes(name) ? 'true' : args[++index];
+    const value = ['clear-labels', 'stealth', 'with-revision', 'force', 'historical', 'kill-on-loss'].includes(name) ? 'true' : args[++index];
     if (value === undefined || value === '--' || (value.startsWith('--') && value !== '--help')) invalid(`Missing value for ${arg}`);
     const previous = flags.get(name) ?? [];
     if (previous.length && name !== 'label' && name !== 'expect' && name !== 'issue' && name !== 'kind') invalid(`Duplicate flag ${arg}`);
@@ -165,7 +167,7 @@ async function main(argv: readonly string[]): Promise<void> {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
   const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list', 'claim_show', 'claim_acquire'].includes(command);
-  if (!['connection', 'auth'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
+  if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
     if ([...flags.keys()].some(key => !['file', 'output', 'from'].includes(key))) invalid('Snapshot conversion accepts only --file, --output and --from');
@@ -289,7 +291,7 @@ async function main(argv: readonly string[]): Promise<void> {
     return;
   }
   const policyName = command === 'ready' || command === 'blocked' ? 'dependency_worklist' : command;
-  if (selected.kind === 'local' && (command === 'import' || command === 'upgrade' || requiresExplicitLocalActor(policyName))
+  if (selected.kind === 'local' && (command === 'import' || command === 'upgrade' || command === 'claim_keepalive' || requiresExplicitLocalActor(policyName))
     && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
   if (command === 'upgrade') {
     if (selected.kind !== 'local') invalid('Use the documented operator procedure to upgrade D1');
@@ -385,6 +387,27 @@ async function main(argv: readonly string[]): Promise<void> {
       raw.claim_proof = Object.fromEntries((['issue_id', 'incarnation', 'session_id', 'generation'] as const).filter(key => Object.hasOwn(record, key)).map(key => [key, record[key]]));
     }
   }
+  if (command === 'claim_keepalive') {
+    if (proof === undefined) invalid('Keepalive requires --claim-proof');
+    const pidText = one('pid');
+    if ((pidText === undefined) === (operands.length === 0)) invalid('Keepalive requires either a command after -- or --pid, not both');
+    const maxDuration = one('max-duration') === undefined ? defaultMaxDurationSeconds : integer(one('max-duration') ?? '');
+    if (maxDuration < 1 || maxDuration > maximumMaxDurationSeconds) invalid(`--max-duration must be from 1 through ${maximumMaxDurationSeconds} seconds`);
+    const pid = pidText === undefined ? undefined : integer(pidText);
+    if (pid !== undefined && pid < 1) invalid('--pid must be a positive process id');
+    if (pid !== undefined && flags.has('kill-on-loss')) invalid('--kill-on-loss applies only to a command after --');
+    const cloudClient = selected.kind === 'cloud' ? (await loadCloudClient()).createCloudClient(selected) : undefined;
+    const execute = async (operation: Operation): Promise<OperationResult> => {
+      if (cloudClient !== undefined) return cloudClient.execute(operation);
+      const directory = selected.kind === 'local' ? selected.directory : '';
+      const store = openStore({ directory });
+      try { return await executeOperation(store.db, operation, { id: actor ?? 'local:reader', kind: actorKind }, { kind: 'local', database_path: join(directory, 'polylinedb.sqlite') }); }
+      finally { store.close(); }
+    };
+    process.exitCode = await runKeepalive({ execute, proof: raw.claim_proof, ttl: one('ttl') === undefined ? 300 : integer(one('ttl') ?? ''), maxDurationSeconds: maxDuration,
+      target: pid !== undefined ? { kind: 'pid', pid } : { kind: 'command', argv: operands }, killOnLoss: flags.has('kill-on-loss') });
+    return;
+  }
   if (command === 'claim_acquire') {
     raw.incarnation = one('incarnation'); raw.session_id = one('session-id') ?? process.env.POLYLINEDB_SESSION_ID;
     if (raw.session_id === undefined) invalid('Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID');
@@ -396,7 +419,7 @@ async function main(argv: readonly string[]): Promise<void> {
     raw.request_id = one('request-id') ?? randomUUID(); const expected = one('expected-revision');
     if (expected !== undefined) raw.expected_revision = integer(expected);
   }
-  const ttl = one('ttl'); if (ttl !== undefined) raw.ttl = integer(ttl);
+  const ttl = one('ttl'); if (ttl !== undefined && command !== 'claim_keepalive') raw.ttl = integer(ttl);
   if (command === 'changes') {
     const since = one('since');
     if (since === undefined) invalid('Changes requires --since');
@@ -482,6 +505,6 @@ export async function runCli(argv: readonly string[]): Promise<void> {
       ? { code: error.code, message: error.message, ...(details !== undefined ? { details } : {}) }
       : describeUnexpectedError(error);
     process.stderr.write(JSON.stringify({ error: reported }) + '\n');
-    process.exitCode = known ? ({ 400: 2, 404: 3, 409: 4 }[error.status] ?? 1) : 1;
+    process.exitCode = known ? (keepaliveExitCodes[error.code] ?? { 400: 2, 404: 3, 409: 4 }[error.status] ?? 1) : 1;
   }
 }

@@ -53,6 +53,9 @@ Commands:
         [--agent-label TEXT] [--request-id UUID]
   claim renew --claim-proof JSON --expected-revision N [--ttl 30..3600] [--request-id UUID]
   claim release --claim-proof JSON --expected-revision N [--request-id UUID]
+  claim keepalive --claim-proof JSON [--ttl 30..3600] [--max-duration 1..28800]
+        [--kill-on-loss] (--pid PID | -- COMMAND [ARGS...])
+                                Renew a lease until COMMAND or PID exits; refuses main-lock issues.
   dependency list ID [--after ID] [--limit 1..100]
   dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
   dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]
@@ -92,6 +95,8 @@ Force overrides prerequisites only. Closed issues remain claimable. Acquisition 
 Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID. Keep one UUID per caller session.
 Claims require the observed store incarnation. Claim timestamps use database Unix seconds, not agent liveness.
 TTL defaults to 300 seconds. Agent labels are nullable acquisition metadata, bounded at 64 UTF-8 bytes.
+Keepalive stops after --max-duration seconds (default 7200). It exits with the command's code, 0 on release,
+5 with claim_lost, and 6 with keepalive_max_duration. It kills the command only with --kill-on-loss.
 Retain the claim request UUID, incarnation, session and payload for retries. No automatic retry or reacquisition occurs.
 Ready and blocked accept FILTERS except --status. Worklists observe current state; they do not claim work.
 Dependency mutations use a separate aggregate revision. Reuse the request UUID and identical payload on retry.

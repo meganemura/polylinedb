@@ -135,6 +135,33 @@ Observe the current incarnation and choose a new request UUID for a deliberate n
 An arbitrary raw copy with an unchanged incarnation requires explicit offline rotation before use.
 See [D1 restoration](d1-migration.md) and [ownership design](adr/0009-issue-ownership.md).
 
+## Keep a claim through long checks
+
+A required check can outlast the 3600 second maximum TTL, and a process that waits on a background command has no turn in which to renew.
+`pd claim keepalive` renews the lease for as long as a command or process runs, using only `claim_show` and `claim_renew`:
+
+```sh
+pd claim keepalive --claim-proof "$PROOF_JSON" --ttl 600 -- sh -c 'npm test && npm run test:d1 && npm run test:package'
+pd claim keepalive --claim-proof "$PROOF_JSON" --ttl 600 --pid 12345
+```
+
+It renews at once, then one third of the TTL before each deadline on the database clock.
+A renewal conflict from the same session is reread and retried; three failures in a row stop it with the store error.
+It stops in these cases:
+
+- The command or process exits. The exit code is the command's code, or 0 for `--pid`.
+- The claim is released. The exit code is 0.
+- The claim is lost: expired, taken by a new generation, invalidated, or held by another actor. The exit code is 5 and stderr carries `claim_lost`.
+- `--max-duration` seconds pass. The default is 7200 and the maximum is 28800. The exit code is 6 and stderr carries `keepalive_max_duration`; the lease then ends at its last deadline.
+
+The command keeps running in the last two cases unless you pass `--kill-on-loss`, which sends it SIGTERM.
+The helper refuses an issue labeled `main-lock`, so lock claims stay short.
+It renews as the actor of the CLI connection, which must be the claim's actor.
+
+Cloud agents must not log the CLI in with the owner's OAuth, because that would be a different actor and a borrowed identity.
+A cloud agent renews with the MCP `claim_renew` tool between long steps, reading `claim_show` for the revision, and runs long checks as separate commands.
+Use keepalive on hosts that hold their own CLI credentials.
+
 ## Gate agent work
 
 An actor has a kind, `human` or `agent`.
