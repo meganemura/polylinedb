@@ -1,6 +1,9 @@
-/** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
+/** Renders the /ui pages for phones. GET stays free of side effects. The issue page posts Dispatch; other writes go through the operation endpoints. */
 import { activeClaimIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
+import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
+
+type Viewer = { actor: Actor; dispatch: DispatchControl };
 
 const listLimit = 50;
 const projectSummaryLimit = 201;
@@ -159,7 +162,16 @@ function childrenSection(children: readonly IssueLink[], more: boolean): string 
   return `<section class="quiet-section"><h2>Children</h2>${extra}${body}</section>`;
 }
 
-function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>): string {
+function dispatchForm(issueId: string, control: DispatchControl): string {
+  if (control === 'hidden') return '';
+  const action = `/ui/i/${escape(issueId)}/dispatch`;
+  const button = control === 'unavailable'
+    ? '<button type="submit" disabled>Dispatch</button><p class="quiet-note">Dispatch is not set up.</p>'
+    : '<button type="submit">Dispatch</button>';
+  return `<form method="post" action="${action}">${button}</form>`;
+}
+
+function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>, dispatch: DispatchControl): string {
   const labelLine = issue.labels.length === 0 ? '<span class="secondary">No labels.</span>' : `<span class="secondary">${issue.labels.map(label => escape(label)).join(' ')}</span>`;
   const commentList = comments.length === 0 ? '<p class="quiet-note">No comments.</p>' : `<ul class="quiet-list">${comments.map(comment => commentItem(comment, labels)).join('')}</ul>`;
   const open = blockers.filter(blocker => blockerIsActive(blocker.status));
@@ -174,6 +186,7 @@ function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisp
 <span class="secondary">${escape(issue.project)}</span>
 ${labelLine}
 ${detailClaim(claim, labels)}
+${dispatchForm(issue.id, dispatch)}
 ${parentLine(parent)}
 ${childrenSection(children, moreChildren)}
 <div class="prose">${escape(bodyAfterTitle(issue.body))}</div>
@@ -391,6 +404,42 @@ const htmlHeaders = {
 };
 const { 'content-type': _, ...revalidationHeaders } = htmlHeaders;
 
+function dispatchSentence(outcome: Exclude<DispatchOutcome, { kind: 'not_found' }>): string {
+  switch (outcome.kind) {
+    case 'sent': return 'Sent.';
+    case 'already_sent': return outcome.phase === 'in_flight' ? 'Already sending.' : 'Already sent.';
+    case 'retried': return outcome.delivered ? 'Sent on retry.' : 'Not sent. Press Dispatch again to retry.';
+    case 'not_sent': return 'Not sent. Press Dispatch again to retry.';
+    case 'conflict': return 'This dispatch conflicts with the send already open for this issue.';
+    case 'unavailable': return 'Dispatch is not set up.';
+    case 'not_permitted': return 'Dispatch is not available for this actor.';
+    case 'invalid_form': return 'Dispatch could not read that form.';
+    default: { const unreachable: never = outcome; return unreachable; }
+  }
+}
+
+function dispatchStatus(outcome: Exclude<DispatchOutcome, { kind: 'not_found' }>): number {
+  switch (outcome.kind) {
+    case 'sent':
+    case 'already_sent': return 200;
+    case 'retried': return outcome.delivered ? 200 : 502;
+    case 'not_sent': return 502;
+    case 'conflict': return 409;
+    case 'unavailable': return 503;
+    case 'not_permitted': return 403;
+    case 'invalid_form': return 400;
+    default: { const unreachable: never = outcome; return unreachable; }
+  }
+}
+
+export function dispatchResponse(outcome: DispatchOutcome, issueId: string): Response {
+  if (outcome.kind === 'not_found') return uiNotFoundResponse();
+  const sentence = dispatchSentence(outcome);
+  return new Response(document('Dispatch', `<p><a href="/ui/i/${escape(issueId)}">${escape(issueId)}</a></p>\n<p>${escape(sentence)}</p>`), {
+    status: dispatchStatus(outcome), headers: htmlHeaders,
+  });
+}
+
 async function issueBlockers(db: SqlExecutor, id: string, actor: Actor): Promise<{ id: string; status: Status }[]> {
   const blockers: { id: string; status: Status }[] = [];
   const seen = new Set<string>();
@@ -406,7 +455,8 @@ async function issueBlockers(db: SqlExecutor, id: string, actor: Actor): Promise
   }
 }
 
-async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, actor: Actor): Promise<string | null> {
+async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, viewer: Viewer): Promise<string | null> {
+  const actor = viewer.actor;
   if (route.page === 'issue') {
     try {
       const [result, blockers, parent, children] = await Promise.all([
@@ -416,7 +466,7 @@ async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, ro
         issueChildren(db, route.id, childLimit),
       ]);
       if (!('comments' in result)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
-      return detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, parent, children.slice(0, shownChildren), children.length > shownChildren, labels);
+      return detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, parent, children.slice(0, shownChildren), children.length > shownChildren, labels, viewer.dispatch);
     } catch (error) {
       if (error instanceof PolylinedbError && error.code === 'not_found') return null;
       throw error;
@@ -467,8 +517,8 @@ function revalidates(ifNoneMatch: string | null, etag: string): boolean {
   return ifNoneMatch.split(',').some(tag => tag.trim().replace(/^W\//, '') === etag);
 }
 
-export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, actor: Actor, ifNoneMatch: string | null): Promise<Response> {
-  const html = await pageHtml(db, labels, route, actor);
+export async function uiResponse(db: SqlExecutor, labels: ReadonlyMap<string, string>, route: UiRoute, viewer: Viewer, ifNoneMatch: string | null): Promise<Response> {
+  const html = await pageHtml(db, labels, route, viewer);
   if (html === null) return uiNotFoundResponse();
   const etag = await entityTag(html);
   if (revalidates(ifNoneMatch, etag)) return new Response(null, { status: 304, headers: { ...revalidationHeaders, etag } });

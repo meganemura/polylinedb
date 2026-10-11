@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { storageOf } from 'solarsql/node';
 import { createAccessVerifier } from "../src/service/access.ts";
+import { createDispatcher, dispatchSecretNames } from "../src/service/dispatch.ts";
+import * as dispatchModule from "../src/service/dispatch.ts";
 import { handleRequest } from "../src/service/index.ts";
 import { SCHEMA_SQL } from "../src/records/schema.ts";
 import { issueSortKey } from "../src/records/issue-id.ts";
@@ -592,7 +594,22 @@ function speculationRules(html: string): string {
 }
 
 function assertNoApplicationControls(html: string): void {
-  assert.equal(/<(form|input|button)\b/.test(html), false);
+  const forms = [...html.matchAll(/<form\b[^>]*>[\s\S]*?<\/form>/g)].map(match => match[0]);
+  if (forms.length === 0) {
+    assert.equal(/<(form|input|button)\b/.test(html), false);
+  } else {
+    assert.equal(forms.length, 1);
+    const form = forms[0] ?? '';
+    assert.match(form, /^<form method="post" action="\/ui\/i\/[a-z][a-z0-9]{0,15}-[1-9][0-9]*(?:\.[1-9][0-9]*){0,7}\/dispatch">/);
+    assert.equal(/<input\b/.test(html), false);
+    assert.equal(html.includes('name="notes"'), false);
+    const button = form.includes('disabled')
+      ? '<button type="submit" disabled>Dispatch</button>'
+      : '<button type="submit">Dispatch</button>';
+    assert.deepEqual([...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]), [button]);
+    if (form.includes('disabled')) assert.ok(form.includes('Dispatch is not set up.'));
+    else assert.equal(form.includes('Dispatch is not set up.'), false);
+  }
   speculationRules(html);
 }
 
@@ -689,7 +706,7 @@ test('ui: every page reports the Worker time in Server-Timing, and a rejected ca
 });
 
 test('ui: a page revalidates with its ETag only after Access accepts the caller, and a 304 carries no page data', async () => {
-  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+  const { sqlite, env } = fixture('["access:owner","access:peer",{"actor":"access:viewer","role":"reader"}]');
   const token = await assertion();
   const auth = { 'cf-access-jwt-assertion': token };
   const reads: string[] = [];
@@ -717,7 +734,12 @@ test('ui: a page revalidates with its ETag only after Access accepts the caller,
       assert.equal(again.headers.get('content-type'), null);
     }
     const reader = await issueRequest({ 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }), 'if-none-match': etag });
-    assert.equal(reader.status, 304);
+    assert.equal(reader.status, 200);
+    const readerHtml = await reader.text();
+    assert.equal(/<(form|button)\b/.test(readerHtml), false);
+    assert.ok(readerHtml.includes('Cached title'));
+    const peer = await issueRequest({ 'cf-access-jwt-assertion': await assertion({ sub: 'peer' }), 'if-none-match': etag });
+    assert.equal(peer.status, 304);
     const stale = await issueRequest({ ...auth, 'if-none-match': '"0123456789abcdef0123456789abcdef"' });
     assert.equal(stale.status, 200);
     assert.ok((await stale.text()).includes('Cached title'));
@@ -1712,5 +1734,455 @@ test('pd-144: a project update time is escaped', async () => {
     const projects = uiSection(await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text(), 'Projects');
     assert.ok(projects.includes('datetime="&quot;&gt;&lt;img"'));
     assert.ok(!projects.includes('<img'));
+  } finally { sqlite.close(); }
+});
+
+const webhookUrl = 'https://fixture.invalid/dispatch';
+const webhookKey = 'test-sender-key';
+const dispatchOpenedAt = 1_791_700_000_000;
+const dispatchActors = JSON.stringify(['access:owner', { actor: 'access:viewer', role: 'reader' }, { actor: 'service:robot', role: 'agent' }, 'service:bot']);
+
+function withWebhook(env: ReturnType<typeof fixture>['env'], secrets: {
+  POLYLINEDB_DISPATCH_WEBHOOK_URL?: string;
+  POLYLINEDB_DISPATCH_WEBHOOK_KEY?: string;
+} = { POLYLINEDB_DISPATCH_WEBHOOK_URL: webhookUrl, POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey }, origins = '[]') {
+  return { ...env, ALLOWED_ORIGINS: origins, ...secrets };
+}
+
+type ReceivedPost = { url: string; authorization: string | null; contentType: string | null; redirect: RequestRedirect | undefined; body: string };
+
+function fixtureReceiver(replies: readonly (number | 'throw')[] = []) {
+  const posts: ReceivedPost[] = [];
+  let index = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const headers = new Headers(init?.headers);
+    posts.push({
+      url,
+      authorization: headers.get('authorization'),
+      contentType: headers.get('content-type'),
+      redirect: init?.redirect,
+      body: typeof init?.body === 'string' ? init.body : '',
+    });
+    const reply = replies[index] ?? 204;
+    index += 1;
+    if (reply === 'throw') throw new Error('fixture network failure');
+    return new Response(null, { status: reply });
+  };
+  return { fetch: fetchImpl, posts };
+}
+
+function pressDispatch(env: ReturnType<typeof fixture>['env'], id: string, token: string | null, dispatcher: ReturnType<typeof createDispatcher>, init: {
+  origin?: string; body?: string; contentType?: string; method?: string;
+} = {}) {
+  const headers: Record<string, string> = {};
+  if (token !== null) headers['cf-access-jwt-assertion'] = token;
+  if (init.origin !== undefined) headers.origin = init.origin;
+  if (init.contentType !== undefined) headers['content-type'] = init.contentType;
+  return handleRequest(new Request(`https://issues.example/ui/i/${encodeURIComponent(id)}/dispatch`, {
+    method: init.method ?? 'POST',
+    headers,
+    ...(init.body === undefined ? {} : { body: init.body }),
+  }), env, authenticate, dispatcher);
+}
+
+function browserPress() {
+  return { origin: 'https://issues.example', body: '', contentType: 'application/x-www-form-urlencoded' };
+}
+
+function storedIssue(sqlite: DatabaseSync, id: string) {
+  return sqlite.prepare('SELECT * FROM issues WHERE id = ?').get(id);
+}
+
+async function assertOutcome(response: Response, status: number, sentence: string, id: string): Promise<string> {
+  assert.equal(response.status, status);
+  assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(response.headers.get('cache-control'), 'private, no-cache');
+  assert.equal(response.headers.get('etag'), null);
+  assert.equal(response.headers.get('server-timing'), null);
+  const html = await response.text();
+  assert.ok(html.includes(`<p>${sentence}</p>`), html);
+  assert.ok(html.includes(`<a href="/ui/i/${id}">${id}</a>`));
+  assert.equal(html.includes('<button'), false);
+  assert.equal(/<input\b/.test(html), false);
+  assertNoApplicationControls(html);
+  return html;
+}
+
+function assertWebhook(post: ReceivedPost, id: string, now: number, notes?: string): void {
+  assert.equal(post.url, webhookUrl);
+  assert.equal(post.authorization, `Bearer ${webhookKey}`);
+  assert.equal(post.contentType, 'application/json');
+  assert.equal(post.redirect, 'manual');
+  const body = JSON.parse(post.body) as Record<string, unknown>;
+  assert.equal(Object.hasOwn(body, 'notes'), notes !== undefined);
+  assert.deepEqual(body, {
+    intent: 'dispatch', project: 'compiler/parser', issue_id: id, event_id: body.event_id,
+    idempotency_key: `${id}:dispatch`, occurred_at: Math.floor(now / 1000),
+    ...(notes === undefined ? {} : { notes }),
+  });
+  assert.match(String(body.event_id), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(Number.isInteger(body.occurred_at), true);
+}
+
+test('dispatch module exports only the factory and the secret names', () => {
+  assert.deepEqual(Object.keys(dispatchModule).sort(), ['createDispatcher', 'dispatchSecretNames']);
+  assert.deepEqual(dispatchSecretNames, ['POLYLINEDB_DISPATCH_WEBHOOK_URL', 'POLYLINEDB_DISPATCH_WEBHOOK_KEY']);
+});
+
+test('dispatch: no JWT, and actors who cannot press, get no webhook', async () => {
+  const { sqlite, env } = fixture(dispatchActors);
+  const owner = await assertion();
+  const configured = withWebhook(env);
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  try {
+    const id = await createIssue(env, owner, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const anonymous = await pressDispatch(configured, id, null, dispatcher, browserPress());
+    assert.equal(anonymous.status, 401);
+    assert.equal(anonymous.headers.get('content-type'), 'application/json');
+    assert.deepEqual(await anonymous.json(), { error: { code: 'invalid_assertion', message: 'Authentication required' } });
+    const denied = [
+      ['reader', await assertion({ sub: 'viewer' })],
+      ['agent', await assertion({ sub: '', common_name: 'robot' })],
+      ['service human', await assertion({ sub: '', common_name: 'bot' })],
+    ] as const;
+    for (const [role, token] of denied) {
+      const page = await viewIssue(configured, id, { 'cf-access-jwt-assertion': token });
+      assert.equal(page.status, 200, role);
+      const html = await page.text();
+      assert.equal(html.includes('<form'), false, role);
+      assert.equal(html.includes('<button'), false, role);
+      assert.equal(html.includes('Dispatch'), false, role);
+      const response = await pressDispatch(configured, id, token, dispatcher, browserPress());
+      await assertOutcome(response, 403, 'Dispatch is not available for this actor.', id);
+    }
+    assert.equal(receiver.posts.length, 0);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: unset or invalid secrets show a disabled button and do not fetch', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const secrets = [
+      {},
+      { POLYLINEDB_DISPATCH_WEBHOOK_URL: '', POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey },
+      { POLYLINEDB_DISPATCH_WEBHOOK_URL: '   ', POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey },
+      { POLYLINEDB_DISPATCH_WEBHOOK_URL: webhookUrl, POLYLINEDB_DISPATCH_WEBHOOK_KEY: '' },
+      { POLYLINEDB_DISPATCH_WEBHOOK_URL: webhookUrl, POLYLINEDB_DISPATCH_WEBHOOK_KEY: '   ' },
+      { POLYLINEDB_DISPATCH_WEBHOOK_URL: webhookUrl, POLYLINEDB_DISPATCH_WEBHOOK_KEY: 'has space' },
+      { POLYLINEDB_DISPATCH_WEBHOOK_URL: 'http://fixture.invalid/dispatch', POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey },
+      { POLYLINEDB_DISPATCH_WEBHOOK_URL: 'https://user:pass@fixture.invalid/dispatch', POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey },
+    ];
+    for (const secret of secrets) {
+      const target = withWebhook(env, secret);
+      const page = await viewIssue(target, id, { 'cf-access-jwt-assertion': token });
+      const html = await page.text();
+      assert.ok(html.includes(`<form method="post" action="/ui/i/${id}/dispatch"><button type="submit" disabled>Dispatch</button><p class="quiet-note">Dispatch is not set up.</p></form>`));
+      assert.equal(html.includes('<input'), false);
+      const response = await pressDispatch(target, id, token, dispatcher, browserPress());
+      await assertOutcome(response, 503, 'Dispatch is not set up.', id);
+      assert.deepEqual(storedIssue(sqlite, id), before);
+    }
+    assert.equal(receiver.posts.length, 0);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: a press sends one envelope, and the next press inside the window does not', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const configured = withWebhook(env);
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const page = await (await viewIssue(configured, id, { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(page.includes(`<form method="post" action="/ui/i/${id}/dispatch"><button type="submit">Dispatch</button></form>`));
+    assert.equal(page.includes('name="notes"'), false);
+    assert.equal(page.includes('<input'), false);
+    const sent = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    const sentHtml = await assertOutcome(sent, 200, 'Sent.', id);
+    assert.equal(sentHtml.includes('<p>Already sent.</p>'), false);
+    assert.equal(receiver.posts.length, 1);
+    const post = receiver.posts[0];
+    assert.ok(post);
+    assertWebhook(post, id, dispatchOpenedAt);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+    const again = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    await assertOutcome(again, 200, 'Already sent.', id);
+    assert.equal(receiver.posts.length, 1);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: an overlapping press is already sending and does not fetch again', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const configured = withWebhook(env);
+  const posts: ReceivedPost[] = [];
+  let release: (response: Response) => void = () => {};
+  const gate = new Promise<Response>(resolve => { release = resolve; });
+  const dispatcher = createDispatcher({
+    fetch: async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const headers = new Headers(init?.headers);
+      posts.push({
+        url, authorization: headers.get('authorization'), contentType: headers.get('content-type'),
+        redirect: init?.redirect, body: typeof init?.body === 'string' ? init.body : '',
+      });
+      return gate;
+    },
+    now: () => dispatchOpenedAt,
+  });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const first = pressDispatch(configured, id, token, dispatcher, browserPress());
+    for (let turn = 0; posts.length === 0 && turn < 50; turn += 1) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(posts.length, 1);
+    const second = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    await assertOutcome(second, 200, 'Already sending.', id);
+    assert.equal(posts.length, 1);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+    release(new Response(null, { status: 204 }));
+    const sent = await first;
+    await assertOutcome(sent, 200, 'Sent.', id);
+    assert.equal(posts.length, 1);
+    const post = posts[0];
+    assert.ok(post);
+    assertWebhook(post, id, dispatchOpenedAt);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+  } finally {
+    release(new Response(null, { status: 500 }));
+    sqlite.close();
+  }
+});
+
+test('dispatch: a failed press retries the same bytes, and a thrown fetch does too', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const configured = withWebhook(env);
+  const receiver = fixtureReceiver([500, 204]);
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  const thrown = fixtureReceiver(['throw', 204]);
+  const retryDispatcher = createDispatcher({ fetch: thrown.fetch, now: () => dispatchOpenedAt });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const failed = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    await assertOutcome(failed, 502, 'Not sent. Press Dispatch again to retry.', id);
+    assert.equal(receiver.posts.length, 1);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+    const retried = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    await assertOutcome(retried, 200, 'Sent on retry.', id);
+    assert.equal(receiver.posts.length, 2);
+    assert.equal(receiver.posts[0]?.body, receiver.posts[1]?.body);
+    const first = receiver.posts[0];
+    assert.ok(first);
+    assertWebhook(first, id, dispatchOpenedAt);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+
+    const other = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Second parcel' });
+    const otherBefore = storedIssue(sqlite, other);
+    const network = await pressDispatch(configured, other, token, retryDispatcher, browserPress());
+    await assertOutcome(network, 502, 'Not sent. Press Dispatch again to retry.', other);
+    const networkRetry = await pressDispatch(configured, other, token, retryDispatcher, browserPress());
+    await assertOutcome(networkRetry, 200, 'Sent on retry.', other);
+    assert.equal(thrown.posts.length, 2);
+    assert.equal(thrown.posts[0]?.body, thrown.posts[1]?.body);
+    assert.deepEqual(storedIssue(sqlite, other), otherBefore);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: changed notes conflict, and the same notes do not send again', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const configured = withWebhook(env);
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  const form = { origin: 'https://issues.example', contentType: 'application/x-www-form-urlencoded; charset=UTF-8' };
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const sent = await pressDispatch(configured, id, token, dispatcher, { ...form, body: 'notes=%20hello%0D%0Aworld%20' });
+    await assertOutcome(sent, 200, 'Sent.', id);
+    assert.equal(receiver.posts.length, 1);
+    const post = receiver.posts[0];
+    assert.ok(post);
+    assertWebhook(post, id, dispatchOpenedAt, 'hello\nworld');
+    assert.deepEqual(storedIssue(sqlite, id), before);
+    const conflict = await pressDispatch(configured, id, token, dispatcher, { ...form, body: 'notes=other' });
+    await assertOutcome(conflict, 409, 'This dispatch conflicts with the send already open for this issue.', id);
+    assert.equal(receiver.posts.length, 1);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+    const same = await pressDispatch(configured, id, token, dispatcher, { ...form, body: 'notes=hello%0Aworld' });
+    await assertOutcome(same, 200, 'Already sent.', id);
+    assert.equal(receiver.posts.length, 1);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: a press at 60 seconds uses a new event id and the same idempotency key', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const configured = withWebhook(env);
+  let now = dispatchOpenedAt;
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => now });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const sent = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    await assertOutcome(sent, 200, 'Sent.', id);
+    now = dispatchOpenedAt + 59_999;
+    const inside = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    await assertOutcome(inside, 200, 'Already sent.', id);
+    assert.equal(receiver.posts.length, 1);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+    now = dispatchOpenedAt + 60_000;
+    const after = await pressDispatch(configured, id, token, dispatcher, browserPress());
+    await assertOutcome(after, 200, 'Sent.', id);
+    assert.equal(receiver.posts.length, 2);
+    const first = JSON.parse(receiver.posts[0]?.body ?? '') as { event_id: string; idempotency_key: string; occurred_at: number };
+    const second = JSON.parse(receiver.posts[1]?.body ?? '') as { event_id: string; idempotency_key: string; occurred_at: number };
+    assert.notEqual(first.event_id, second.event_id);
+    assert.equal(first.idempotency_key, `${id}:dispatch`);
+    assert.equal(second.idempotency_key, first.idempotency_key);
+    assert.equal(second.occurred_at, first.occurred_at + 60);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: cross-origin is forbidden even when listed, and a missing Origin is allowed', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const listed = withWebhook(env, { POLYLINEDB_DISPATCH_WEBHOOK_URL: webhookUrl, POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey }, '["https://client.example"]');
+    const cross = await pressDispatch(listed, id, token, dispatcher, { ...browserPress(), origin: 'https://client.example' });
+    assert.equal(cross.status, 403);
+    assert.equal(cross.headers.get('content-type'), 'application/json');
+    assert.deepEqual(await cross.json(), { error: { code: 'forbidden_origin', message: 'Origin is not allowed.' } });
+    assert.equal(receiver.posts.length, 0);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+
+    const broken = fixtureReceiver();
+    const brokenDispatcher = createDispatcher({ fetch: broken.fetch, now: () => dispatchOpenedAt });
+    const same = await pressDispatch(withWebhook(env, { POLYLINEDB_DISPATCH_WEBHOOK_URL: webhookUrl, POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey }, '{'), id, token, brokenDispatcher, browserPress());
+    await assertOutcome(same, 200, 'Sent.', id);
+    assert.equal(broken.posts.length, 1);
+    const post = broken.posts[0];
+    assert.ok(post);
+    assertWebhook(post, id, dispatchOpenedAt);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+
+    const missing = fixtureReceiver();
+    const missingDispatcher = createDispatcher({ fetch: missing.fetch, now: () => dispatchOpenedAt });
+    const open = await pressDispatch(withWebhook(env), id, token, missingDispatcher, { body: '' });
+    await assertOutcome(open, 200, 'Sent.', id);
+    assert.equal(missing.posts.length, 1);
+    const openPost = missing.posts[0];
+    assert.ok(openPost);
+    assertWebhook(openPost, id, dispatchOpenedAt);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: issue POST stays GET-only, and dispatch GET is POST-only after auth', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const postIssue = await handleRequest(new Request(`https://issues.example/ui/i/${id}`, {
+      method: 'POST', headers: { 'cf-access-jwt-assertion': token },
+    }), env, authenticate, dispatcher);
+    assert.equal(postIssue.status, 405);
+    assert.equal(postIssue.headers.get('allow'), 'GET');
+    assert.equal(postIssue.headers.get('content-type'), 'application/json');
+    const getDispatch = await pressDispatch(env, id, token, dispatcher, { method: 'GET' });
+    assert.equal(getDispatch.status, 405);
+    assert.equal(getDispatch.headers.get('allow'), 'POST');
+    assert.equal(getDispatch.headers.get('content-type'), 'application/json');
+    assert.deepEqual(await getDispatch.json(), { error: { code: 'method_not_allowed', message: 'Use POST.' } });
+    const anonymous = await pressDispatch(env, id, null, dispatcher, { method: 'GET' });
+    assert.equal(anonymous.status, 401);
+    const bad = await handleRequest(new Request('https://issues.example/ui/i/not-an-id/dispatch', { method: 'POST' }), env, authenticate, dispatcher);
+    assert.equal(bad.status, 404);
+    assert.equal(bad.headers.get('content-type'), 'application/json');
+    assert.deepEqual(await bad.json(), { error: { code: 'not_found', message: 'Route not found.' } });
+    assert.equal(receiver.posts.length, 0);
+  } finally { sqlite.close(); }
+});
+
+test('dispatch: a bad form and a missing issue do not send, and a missing issue does not stick', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const configured = withWebhook(env);
+  const receiver = fixtureReceiver();
+  const dispatcher = createDispatcher({ fetch: receiver.fetch, now: () => dispatchOpenedAt });
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
+    const before = storedIssue(sqlite, id);
+    const form = { origin: 'https://issues.example', contentType: 'application/x-www-form-urlencoded' };
+    const rejected = [
+      { ...form, body: 'actor=access%3Aowner' },
+      { ...form, body: 'notes=a&notes=b' },
+      { ...form, body: 'notes=a%01b' },
+      { ...form, body: `notes=${'a'.repeat(4097)}` },
+      { ...form, body: 'x'.repeat(16 * 1024 + 1) },
+      { origin: 'https://issues.example', contentType: 'text/plain', body: 'notes=hello' },
+    ];
+    for (const init of rejected) {
+      const response = await pressDispatch(configured, id, token, dispatcher, init);
+      await assertOutcome(response, 400, 'Dispatch could not read that form.', id);
+      assert.deepEqual(storedIssue(sqlite, id), before);
+    }
+    assert.equal(receiver.posts.length, 0);
+    const accepted = await pressDispatch(configured, id, token, dispatcher, { ...form, body: `notes=${'a'.repeat(4096)}` });
+    await assertOutcome(accepted, 200, 'Sent.', id);
+    assert.equal(receiver.posts.length, 1);
+    const post = receiver.posts[0];
+    assert.ok(post);
+    assert.equal(JSON.parse(post.body).notes, 'a'.repeat(4096));
+    assert.deepEqual(storedIssue(sqlite, id), before);
+
+    const missing = await pressDispatch(configured, 'pd-999', token, dispatcher, browserPress());
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get('content-type'), 'text/html; charset=utf-8');
+    const missingHtml = await missing.text();
+    assert.ok(missingHtml.includes('Issue was not found.'));
+    assertNoApplicationControls(missingHtml);
+    assert.equal(receiver.posts.length, 1);
+
+    let reads = 0;
+    const probeReceiver = fixtureReceiver();
+    const probe = createDispatcher({
+      fetch: probeReceiver.fetch,
+      now: () => dispatchOpenedAt,
+      readScope: async () => {
+        reads += 1;
+        return reads === 1 ? null : { tool: 'compiler', project: 'parser' };
+      },
+    });
+    const hidden = await pressDispatch(configured, id, token, probe, browserPress());
+    assert.equal(hidden.status, 404);
+    assert.equal(probeReceiver.posts.length, 0);
+    const followed = await pressDispatch(configured, id, token, probe, browserPress());
+    await assertOutcome(followed, 200, 'Sent.', id);
+    assert.equal(probeReceiver.posts.length, 1);
+    assert.deepEqual(storedIssue(sqlite, id), before);
   } finally { sqlite.close(); }
 });

@@ -408,6 +408,15 @@ export async function issueChildren(db: SqlExecutor, issueId: string, limit: num
   return (await db.reads.all(issueQueries.issueChildren, { id: issueId, limit })).map(issueLink);
 }
 
+export async function issueDispatchScope(db: SqlExecutor, issueId: string): Promise<{ tool: string; project: string } | null> {
+  const row = (await db.reads.all(issueQueries.issueDispatchScope, { id: issueId }))[0];
+  if (row === undefined) return null;
+  if (typeof row.tool !== 'string' || row.tool.length === 0 || typeof row.project !== 'string' || row.project.length === 0) {
+    throw new PolylinedbError('invalid_store', 'Stored issue scope is invalid', 500);
+  }
+  return { tool: row.tool, project: row.project };
+}
+
 export type BlockedIssue = { issue: Issue; openBlockers: number };
 export async function blockedIssues(db: SqlExecutor, limit: number): Promise<BlockedIssue[]> {
   return (await db.reads.all(issueQueries.blockedIssues, { limit })).map(row => ({ issue: issueRow(row), openBlockers: storedCount(row.open_blockers) }));

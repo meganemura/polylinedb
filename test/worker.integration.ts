@@ -306,6 +306,20 @@ try {
   const projectHtml = await projectPage.text();
   assert.ok(projectHtml.includes(`${id}`));
   assert.ok(!projectHtml.includes(`${draftIssue.id}`));
+  const beforeDispatch = await database.prepare('SELECT status, body, tool_v, project_v, body_v, status_v, type_v, priority_v, labels_v FROM issues WHERE id = ?').bind(id).first();
+  const egressBefore = jwksRequests.length;
+  const dispatched = await runtime.dispatchFetch(`http://polylinedb.test/ui/i/${id}/dispatch`, {
+    method: 'POST',
+    headers: { 'cf-access-jwt-assertion': owner, 'content-type': 'application/x-www-form-urlencoded', origin: 'http://polylinedb.test' },
+    body: '',
+  });
+  assert.equal(dispatched.status, 503);
+  assert.equal(dispatched.headers.get('content-type'), 'text/html; charset=utf-8');
+  const dispatchedHtml = await dispatched.text();
+  assert.ok(dispatchedHtml.includes('Dispatch is not set up.'));
+  assert.equal(dispatchedHtml.includes('https://'), false);
+  assert.equal(jwksRequests.length, egressBefore);
+  assert.deepEqual(await database.prepare('SELECT status, body, tool_v, project_v, body_v, status_v, type_v, priority_v, labels_v FROM issues WHERE id = ?').bind(id).first(), beforeDispatch);
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
@@ -318,5 +332,6 @@ try {
       'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
       'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
       '/ui speculation rules prefetch behind a CSP hash', '/ui cross-document view transition',
+      'dispatch without secrets makes no egress',
     ], productionOAuth: 'not verified' }) + '\n');
 } finally { await runtime.dispose(); }
