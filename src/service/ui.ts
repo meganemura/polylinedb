@@ -1,5 +1,5 @@
 /** Renders the /ui pages for phones. GET stays free of side effects. The issue page posts Dispatch; other writes go through the operation endpoints. */
-import { activeClaimIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { activeClaimIssues, attentionIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type Attention, type AttentionIssue, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type OpenIssue, type OwnerGroup, type OwnerLabel, type OwnerQueue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
 
@@ -15,7 +15,6 @@ const shownChildren = 100;
 const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
 
 export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'working' } | { page: 'blocked' } | { page: 'recent' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
-const inboxLabels = ['owner-decision', 'owner-action', 'main-wait'] as const;
 const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox'], ['/ui/working', 'Working'], ['/ui/blocked', 'Blocked'], ['/ui/recent', 'Recent'], ['/ui/search', 'Search']];
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 // Fixed prefetch hint. It is not application code: the page policy allows this text by hash and no other script.
@@ -247,21 +246,72 @@ ${body}
 </html>`;
 }
 
-export function uiPage(lists: { projects: readonly ProjectSummary[]; moreProjects: boolean; awaitingMain: readonly Issue[] }, labels: ReadonlyMap<string, string>): string {
-  return document('Projects', `<h1>Projects</h1>
-${projectsSection(lists.projects, lists.moreProjects)}
-${section('Waiting for main', lists.awaitingMain, labels, 'Nothing is waiting for main.', 'Open issues with the main-wait label.')}`);
+const ownerHeadings: Record<OwnerLabel, string> = { 'owner-decision': 'To decide', 'owner-action': 'To do' };
+
+/** "a", "a or b", "a, b, or c". */
+function phrase(words: readonly string[]): string {
+  if (words.length <= 1) return words[0] ?? '';
+  if (words.length === 2) return `${words[0]} or ${words[1]}`;
+  const last = words[words.length - 1] ?? '';
+  return `${words.slice(0, -1).join(', ')}, or ${last}`;
 }
 
-function inboxItem(issue: Issue): string {
-  const shown = inboxLabels.filter(label => issue.labels.includes(label));
+/** Coarse buckets keep the HTML, and so the ETag, unchanged between boundaries. */
+function waitedFor(seconds: number): string {
+  if (seconds < 3600) return 'under an hour';
+  if (seconds < 86400) {
+    const hours = Math.floor(seconds / 3600);
+    return hours === 1 ? '1 hour' : `${hours} hours`;
+  }
+  const days = Math.floor(seconds / 86400);
+  return days === 1 ? '1 day' : `${days} days`;
+}
+
+function ownerRow(issue: OpenIssue, waitingSeconds: number | null): string {
+  const waited = waitingSeconds === null ? '' : ` · <time datetime="${escape(issue.created_at)}">waiting ${waitedFor(waitingSeconds)}</time>`;
+  return `<li class="quiet-row"><a href="${escape(issueHref(issue.id))}">
+<span class="primary">${escape(title(issue.body))}</span>
+<span class="secondary">${escape(issue.id)} · ${escape(issue.project)}${waited}</span>
+</a></li>`;
+}
+
+function ownerGroup(group: OwnerGroup, waiting: ReadonlyMap<string, number | null>): string {
+  if (group.issues.length === 0) return '';
+  return `<h3>${ownerHeadings[group.label]}</h3><ul class="quiet-list">${group.issues.map(issue => ownerRow(issue, waiting.get(issue.id) ?? null)).join('')}</ul>`;
+}
+
+function ownerSection(queue: OwnerQueue, rows: readonly AttentionIssue[], more: boolean): string {
+  const waiting = new Map(rows.map(row => [row.issue.id, row.waitingSeconds]));
+  const total = queue.groups.reduce((sum, group) => sum + group.issues.length, 0);
+  const count = more ? `${total}+` : String(total);
+  const tally = `<p class="tally"><span class="count">${count}</span> ${total === 1 ? 'issue' : 'issues'} · `
+    + queue.groups.map(group => `${group.issues.length} ${ownerHeadings[group.label].toLowerCase()}`).join(' · ') + '</p>';
+  const body = total === 0 ? '<p class="quiet-note">Nothing is waiting on you.</p>' : tally + queue.groups.map(group => ownerGroup(group, waiting)).join('');
+  const overflow = more ? '<p class="section-note">More issues are not shown.</p>' : '';
+  const elsewhere = queue.notOpen === 0 ? ''
+    : ` <a href="/ui/inbox">Inbox</a> also lists ${queue.notOpen} more ${queue.notOpen === 1 ? 'that is' : 'that are'} deferred or in progress.`;
+  const note = `<p class="section-note">Open issues labeled ${escape(phrase(queue.groups.map(group => group.label)))}, across all projects. `
+    + `Higher priority first, then the longest waiting. The time is how long since the issue was created.${elsewhere}</p>`;
+  return `<section class="quiet-section"><h2>Waiting on you</h2>${body}${overflow}${note}</section>`;
+}
+
+export function uiPage(lists: { projects: readonly ProjectSummary[]; moreProjects: boolean; attention: Attention }, labels: ReadonlyMap<string, string>): string {
+  return document('Projects', `<h1>Projects</h1>
+${ownerSection(lists.attention.waitingOnOwner, lists.attention.issues, lists.attention.more)}
+${projectsSection(lists.projects, lists.moreProjects)}
+${section('Waiting for main', lists.attention.waitingForMain.slice(0, listLimit), labels, 'Nothing is waiting for main.', 'Open issues with the main-wait label.')}`);
+}
+
+function inboxItem(row: AttentionIssue): string {
+  const issue = row.issue;
   return `<li class="quiet-row"><a href="${escape(issueHref(issue.id))}">
 <span class="primary">${escape(title(issue.body))}</span>
 <span class="secondary">${escape(issue.id)}</span>
 <span class="secondary">${escape(issue.status)}</span>
 <span class="secondary">${escape(issue.tool)}</span>
 <span class="secondary">${escape(issue.project)}</span>
-${shown.length === 0 ? '' : `<span class="secondary">${shown.map(label => escape(label)).join(' ')}</span>\n`}<span class="secondary">Last updated <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
+<span class="secondary">${row.labels.map(label => escape(label)).join(' ')}</span>
+<span class="secondary">Last updated <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
 </a></li>`;
 }
 
@@ -363,11 +413,11 @@ function workingPage(rows: readonly ActiveClaimIssue[], labels: ReadonlyMap<stri
 ${body}`);
 }
 
-function inboxPage(issues: readonly Issue[], more: boolean): string {
+function inboxPage(rows: readonly AttentionIssue[], more: boolean): string {
   const note = more ? '<p class="section-note">More issues are not shown.</p>' : '';
-  const body = issues.length === 0 ? '<p class="quiet-note">Nothing is waiting for you.</p>' : `<ul class="quiet-list">${issues.map(inboxItem).join('')}</ul>`;
+  const body = rows.length === 0 ? '<p class="quiet-note">Nothing is waiting for you.</p>' : `<ul class="quiet-list">${rows.map(inboxItem).join('')}</ul>`;
   return document('Inbox', `<h1>Inbox</h1>
-<p class="section-note">Open issues labeled owner-decision, owner-action, or main-wait.</p>
+<p class="section-note">Issues labeled owner-decision, owner-action, or main-wait, with status open, in_progress, or deferred.</p>
 ${body}
 ${note}`);
 }
@@ -505,7 +555,7 @@ async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, ro
     return searchPage(route.query, found.hits, found.more, found.rejected);
   }
   if (route.page === 'inbox') {
-    const issues = await ownerInboxIssues(db, listLimit + 1);
+    const { issues } = await attentionIssues(db);
     return inboxPage(issues.slice(0, listLimit), issues.length > listLimit);
   }
   if (route.page === 'project') {
@@ -515,10 +565,8 @@ async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, ro
     ]);
     return projectPage(route.tool, route.project, issues.slice(0, shownProjectIssues), closed, labels, issues.length > shownProjectIssues, { status: route.status, label: route.label });
   }
-  const [projects, awaitingMain] = await Promise.all([
-    projectSummaries(db, projectSummaryLimit), issuesAwaitingMain(db, listLimit),
-  ]);
-  return uiPage({ projects: projects.slice(0, shownProjects), moreProjects: projects.length > shownProjects, awaitingMain }, labels);
+  const [projects, waiting] = await Promise.all([projectSummaries(db, projectSummaryLimit), attentionIssues(db)]);
+  return uiPage({ projects: projects.slice(0, shownProjects), moreProjects: projects.length > shownProjects, attention: waiting }, labels);
 }
 
 async function entityTag(html: string): Promise<string> {
@@ -590,6 +638,9 @@ h1 {
   font-weight: 500;
   line-height: 1.4;
 }
+.tally { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+.tally .count { color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 22px; line-height: 1; }
+.quiet-section h3 { margin: 20px 0 0; font-size: 12px; font-weight: 700; line-height: 1.3; letter-spacing: .16em; text-transform: uppercase; }
 .section-note, .quiet-note { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .quiet-note { margin-top: 18px; font-size: 18px; }
 .filters { display: grid; gap: 18px; margin: 28px 0 8px; }

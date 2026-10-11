@@ -957,6 +957,7 @@ test('/ui shows quiet notes when nothing waits for main and nothing has closed',
   try {
     const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
     assert.ok(html.includes('<p class="quiet-note">Nothing is waiting for main.</p>'));
+    assert.ok(html.includes('<p class="quiet-note">Nothing is waiting on you.</p>'));
     const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': await assertion() })).text();
     assert.ok(project.includes('<p class="quiet-note">Nothing has closed yet.</p>'));
   } finally { sqlite.close(); }
@@ -1423,6 +1424,79 @@ test('ui: owner inbox lists owner-decision, owner-action, and main-wait across p
     assert.ok(!html.includes(readyOnly));
     assert.ok(!html.includes('Closed decision'));
     assertNoApplicationControls(html);
+  } finally { sqlite.close(); }
+});
+
+test('ui: home lists what waits on the owner above the projects', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const decision = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '判断待ちの件', labels: ['owner-decision'], priority: 2 });
+    const hours = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Needs an action', labels: ['owner-action'], priority: 1 });
+    const fresh = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '<img src=x onerror=alert(1)>', labels: ['owner-action'], priority: 2 });
+    const deferred = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Deferred owner work', status: 'deferred', labels: ['owner-decision'] });
+    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Closed owner work', labels: ['owner-decision'] });
+    const ready = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Ready only work', labels: ['ready'] });
+    const main = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Only waiting for main', labels: ['main-wait'] });
+    const now = Date.now();
+    const decisionAt = new Date(now - 3.5 * 86400_000).toISOString();
+    const hoursAt = new Date(now - 5.5 * 3600_000).toISOString();
+    const freshAt = new Date(now).toISOString();
+    const stamp = sqlite.prepare('UPDATE issues SET created_at = ?, status = ? WHERE id = ?');
+    stamp.run(decisionAt, 'open', decision);
+    stamp.run(hoursAt, 'open', hours);
+    stamp.run(freshAt, 'open', fresh);
+    sqlite.prepare("UPDATE issues SET status = 'closed' WHERE id = ?").run(closed);
+
+    const html = await (await viewUi(env, auth)).text();
+    const heading = html.indexOf('<h1>Projects</h1>');
+    const waitingOnYou = html.indexOf('<h2>Waiting on you</h2>');
+    const projects = html.indexOf('<h2>Projects</h2>');
+    const waitingForMain = html.indexOf('<h2>Waiting for main</h2>');
+    assert.ok(heading !== -1 && heading < waitingOnYou && waitingOnYou < projects && projects < waitingForMain);
+    const part = uiSection(html, 'Waiting on you');
+    assert.ok(part.includes('<span class="count">3</span> issues · 1 to decide · 2 to do'));
+    assert.equal(part.includes('<span class="count">3+</span>'), false);
+    assert.equal(part.includes('More issues are not shown.'), false);
+    assert.ok(part.indexOf('<h3>To decide</h3>') < part.indexOf('<h3>To do</h3>'));
+    assert.deepEqual([...part.matchAll(/href="\/ui\/i\/(pd-\d+)"/g)].map(match => match[1]), [decision, hours, fresh]);
+    assert.ok(part.includes(`<a href="/ui/i/${decision}">\n<span class="primary">判断待ちの件</span>\n<span class="secondary">${decision} · meganemura/polylinedb · <time datetime="${decisionAt}">waiting 3 days</time></span>\n</a>`));
+    assert.ok(part.includes('waiting 5 hours'));
+    assert.ok(part.includes('waiting under an hour'));
+    assert.ok(part.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;</span>'));
+    assert.equal(part.includes('<img'), false);
+    assert.equal(part.includes(deferred), false);
+    assert.equal(part.includes('Deferred owner work'), false);
+    assert.equal(part.includes(closed), false);
+    assert.equal(part.includes('Closed owner work'), false);
+    assert.equal(part.includes(ready), false);
+    assert.equal(part.includes('Ready only work'), false);
+    assert.equal(part.includes(main), false);
+    assert.equal(part.includes('Only waiting for main'), false);
+    assert.ok(part.includes('<a href="/ui/inbox">Inbox</a> also lists 1 more that is deferred or in progress.'));
+    speculationRules(html);
+    assertNoApplicationControls(html);
+  } finally { sqlite.close(); }
+});
+
+test('ui: home marks the owner tally as a lower bound when Attention is capped', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, 'polylinedb', 'meganemura/polylinedb', ?, 'open', 'task', ?, '["owner-action"]', ?, 'access:owner', ?, 'access:owner')`);
+    insert.run('pd-1', issueSortKey('pd-1'), 'Oldest priority zero', 0, '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z');
+    for (let number = 2; number <= 101; number += 1) {
+      const id = `pd-${number}`;
+      insert.run(id, issueSortKey(id), `Shown ${number}`, 2, '2026-10-10T00:00:00.000Z', '2026-10-11T00:00:00.000Z');
+    }
+    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
+    const part = uiSection(html, 'Waiting on you');
+    assert.ok(part.includes('<span class="count">100+</span> issues · 0 to decide · 100 to do'));
+    assert.ok(part.includes('More issues are not shown.'));
+    assert.equal(part.includes('Oldest priority zero'), false);
+    assert.equal(part.includes('href="/ui/i/pd-1"'), false);
   } finally { sqlite.close(); }
 });
 

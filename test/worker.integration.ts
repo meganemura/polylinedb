@@ -279,6 +279,7 @@ try {
   await database.prepare('UPDATE issues SET labels_json = ?, updated_at = ? WHERE id = ?')
     .bind('["main-wait"]', '2026-10-04T00:00:00.000Z', draftIssue.id).run();
   await database.prepare("UPDATE issues SET updated_at = ? WHERE tool = 'compiler' AND project IN ('parser', 'other')").bind('2026-10-02T00:00:00.000Z').run();
+  await database.prepare('UPDATE issues SET labels_json = ? WHERE id = ?').bind('["owner-action"]', id).run();
   assert.equal((await view(null)).status, 401);
   assert.equal((await view(viewer, 'POST')).status, 405);
   const page = await view(viewer);
@@ -311,6 +312,10 @@ try {
   assert.equal(anonymousBody.includes(`${draftIssue.id}`), false);
   assert.equal(anonymousBody.includes('speculationrules'), false);
   assert.ok(html.includes(`${draftIssue.id} · Last updated`));
+  const waitingOnYou = html.split('<h2>').find(part => part.startsWith('Waiting on you</h2>'));
+  assert.ok(waitingOnYou);
+  assert.ok(waitingOnYou.includes(`${id}`));
+  assert.match(waitingOnYou, /<time datetime="[^"]+">waiting under an hour<\/time>/);
   assert.ok(!html.includes('Recently closed'));
   assert.ok(!html.includes('Ready work'));
   const gatedPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/gated', { headers: { 'cf-access-jwt-assertion': viewer } });
@@ -353,6 +358,7 @@ try {
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
       'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
       'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
+      'Waiting on you lists an owner-action issue with a store-clock age',
       '/ui speculation rules prefetch behind a CSP hash', '/ui cross-document view transition',
       'dispatch without secrets makes no egress',
     ], productionOAuth: 'not verified' }) + '\n');

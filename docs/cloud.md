@@ -632,8 +632,18 @@ The store does not record when an issue closed.
 A shown update time is `updated_at`.
 A comment does not change `updated_at`.
 On **Working now**, the time is when the claim expires.
+On **Waiting on you**, the time is how long since the issue was created.
 
 ### Projects
+
+**Waiting on you** comes first, above the project list.
+It lists open issues labeled `owner-decision` or `owner-action`, across all projects, and says how many there are.
+`owner-decision` issues are under **To decide**, and `owner-action` issues are under **To do**. An issue with both labels is under **To decide** only.
+Each group lists higher priority first, then the issue that has waited longest.
+Each row shows the first line of the body, the issue ID, the project, and how long the issue has waited, and opens the issue.
+The waiting time counts from `created_at`, by the store clock, in whole hours or days. The store does not record when a label was added.
+The section reads the same Attention rule as the [Inbox](#inbox). It lists only the `open` issues, and it counts the deferred and in-progress owner issues and links to the Inbox for them.
+The rule is read at most 100 issues at a time; when more exist, the section says so.
 
 `/ui` lists projects.
 Each row names the tool and the project.
@@ -728,7 +738,8 @@ Pressing Dispatch does not change the issue.
 
 ### Inbox
 
-`/ui/inbox` lists issues that are not closed and that carry `owner-decision`, `owner-action`, or `main-wait`.
+`/ui/inbox` lists everything the Attention rule selects: issues that are not closed and that carry `owner-decision`, `owner-action`, or `main-wait`.
+**Waiting on you** lists the open owner subset of that rule.
 Rows are newest first.
 The page shows at most 50.
 Each row links to the issue.
