@@ -243,6 +243,8 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+## 0.5.0 (2026-10-12)
+
 - Send `/ui` pages, including their `304 Not Modified` answers, with `Referrer-Policy: same-origin` instead of `no-referrer`. Under `no-referrer`, browsers sent `Origin: null` on the same-origin form POST to `/ui/i/<id>/dispatch`, so the Dispatch button always failed with 403 `forbidden_origin`. Now that POST carries the page's real origin, and cross-origin requests still get no referrer. Dispatch origin checks are unchanged: only a missing `Origin` or the request's own origin is accepted, and `Origin: null` stays `forbidden_origin` even when `ALLOWED_ORIGINS` lists `"null"`. The speculation-rules prefetch keeps `referrer_policy: "no-referrer"`, because prefetches are GET navigations that dispatch does not see. No schema, secret, or binding change; it takes effect on the next Worker deploy.
 - Ship `dist/records/attention.js` in the npm package. `src/records/index.ts` loads it, so an install that omits the file makes `pd create` exit 1 with `internal_error` and `ERR_MODULE_NOT_FOUND` instead of exit 2 `invalid_input`.
 - The polylinedb-queue skill now requires the full test suite on the rebased commits after the final rebase and before the `queue` push, also after a rejected push, and reports test counts only from that run. A failure on the queue tip blocks the push. It forbids killing processes by pattern (`pkill -f`, `killall`) and allows killing only PIDs the agent started. Skill text only; no code, schema, or Worker change. `.github/workflows/check.yml` already runs on every push, including `queue`.
@@ -266,17 +268,6 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 - Record who closed an issue and when in `closed_at` and `closed_by`. A status change into `closed`, forced or not, and a creation with status `closed` set them to the write time and the actor. Closing an issue that is already closed keeps the first closure. Reopen and any other status change away from `closed` clear them; other edits keep them. Issues closed before schema 8 keep null; no time is guessed from `updated_at`. Local results, MCP, and `pd show --human` report them. `/v1/operations` omits them, so released cloud CLIs keep reading the same issue shape. The change feed records a close as `status_changed` with `fields: ["status"]`, as before. Snapshot 6 carries both fields; convert snapshot 5 with `pd snapshot convert --from 5`.
 - Add a store-wide change feed in schema 7. The new read operation `changes` returns issue change events after a `since` sequence number, oldest first, through `pd changes`, HTTP, and a read-only MCP tool. Each event has `seq`, `incarnation`, `issue_id`, `kind`, `fields`, `occurred_at` in database time, and `actor`. The kinds are `created`, `updated` and `status_changed` with the written field names, `commented`, `claim_acquired`, `claim_released`, `dependency_added`, `dependency_removed`, and `became_ready` for an `open` dependent whose last active blocker closed or was removed. An active blocker has any status other than `closed`. Filter by `project`, `issue_ids`, and `kinds`, and continue from `next_since` with the returned `incarnation`. The store keeps the newest 10,000 events. An older cursor gets `cursor_expired`, and a cursor from another store incarnation gets `incarnation_mismatch`. Both return status 409 with the current `incarnation` and `next_since`. See the change feed section of `docs/operations.md`.
 - Record each event in the same transaction as its write, on local SQLite and on D1. A rejected write, a request replay, `claim_renew`, an unchanged prerequisite edit, memory operations, a lapsed lease, snapshot import, and the D1 restore and merge operators record no event. Every existing request and response keeps its shape.
-
-### Upgrade from 0.4.0
-
-Schema 7 adds the `change_events` and `change_writer` tables and their triggers. Schema 8 adds the nullable `closed_at` and `closed_by` issue columns. Snapshot 6 adds the closure fields to issues and carries no events.
-Back up a local store with `pd export`, then run `pd upgrade`; it accepts canonical schemas 2 through 7. `pd export --historical` now also reads schemas 6 and 7.
-The new Worker fails issue, comment, claim, and prerequisite writes against a schema 6 database, and fails every status change and every closed creation against a schema 7 database.
-Upgrade D1 first with the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-5-6-or-7-deployment): `node scripts/schema.ts --upgrade-from 6` for a 0.4.0 database, or `--upgrade-from 7` for a database that already has the change feed. Then deploy the Worker.
-A 0.4.0 Worker keeps working against an upgraded database; its writes record no events and no closures.
-After the new Worker closes issues, rolling the Worker back makes reopen fail on those issues. See [the rollback cost](docs/d1-migration.md#rollback-cost-of-the-schema-8-upgrade).
-The 0.4.0 CLI keeps working against the new Worker; it has no `changes` command.
-
 - When an agent's own lease has expired, the agent-gate `claim_required` says `The agent's own claim expired`. `details.claim` reports `state`, `generation`, and `expires_at` next to `id`. A write with no lease, or another agent's lease, still returns only `id`.
 - When `update`, `close`, or `reopen` includes a `claim_proof` and the store rejects it with `claim_required`, `details.claim` sits next to `details.issue`. A lease reports `state`, `generation`, and `expires_at`. An issue that was never claimed reports `state` `never_claimed`. A rejection with no proof still returns only the issue. The cloud CLI drops `claim`, so a released CLI still accepts the response. MCP and a direct HTTP client see `claim`.
 - Reject a `reason` sent without `force` with `reason is accepted only with force: true`. The MCP schema for `reason` on `update` and `close` says the same thing. `force` without a nonempty `reason` still reports `force requires true and a nonempty reason`. The call stays refused, and the text is not stored.
@@ -287,6 +278,20 @@ The 0.4.0 CLI keeps working against the new Worker; it has no `changes` command.
 - Wait up to 5 seconds when a local command meets another command's database lock. If the lock is still held, the command reports `store_busy` instead of `internal_error`. Retry the command.
 - Stop the memory context child of the host hook after 10 s instead of 15 s. The host still caps the hook at 15 s, so a slow child now ends with the `unavailable` notice instead of a hook that the host kills without output.
 - Tell where each search hit matched. A `search` request with `with_matches: true` also returns `matches`: for each issue, the body and each matching comment ID, with an excerpt of at most 160 UTF-8 bytes around the first match. A request without the field keeps the 0.3.1 result, so older CLIs still decode it. `pd search` and the MCP `search` tool always request matches, and `--human` prints a `Matched in` line for each. A Worker that predates the field rejects it. The cloud client then sends the search once more without the field and returns that page without `matches`, so the CLI and the Worker can be updated in either order.
+
+### Upgrade from 0.4.0
+
+Version 0.5.0 uses schema 8 and snapshot 6. Version 0.4.0 used schema 6 and snapshot 5.
+Schema 7 adds the `change_events` and `change_writer` tables and their triggers. Schema 8 adds the nullable `closed_at` and `closed_by` issue columns. Snapshot 6 adds the closure fields to issues and carries no events.
+Back up a local store with `pd export`, then run `pd upgrade`; it accepts canonical schemas 2 through 7. The 0.5.0 CLI refuses a store that has not been upgraded. `pd export --historical` now also reads schemas 6 and 7.
+A snapshot written by 0.4.0 is snapshot 5. Convert it with `pd snapshot convert --from 5` before you import or restore it with 0.5.0. The conversion leaves `closed_at` and `closed_by` null.
+The new Worker fails issue, comment, claim, and prerequisite writes against a schema 6 database, and fails every status change and every closed creation against a schema 7 database.
+Upgrade D1 first with the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-5-6-or-7-deployment): `node scripts/schema.ts --upgrade-from 6` for a 0.4.0 database, or `--upgrade-from 7` for a database that already has the change feed. Then deploy the Worker.
+A 0.4.0 Worker keeps working against an upgraded database; its writes record no events and no closures.
+After the new Worker closes issues, rolling the Worker back makes reopen fail on those issues. See [the rollback cost](docs/d1-migration.md#rollback-cost-of-the-schema-8-upgrade).
+The 0.4.0 CLI keeps working against the new Worker; it has no `changes` command.
+The 0.5.0 CLI works against a 0.4.0 Worker. `pd search` and the expired-lease `pd claim release` retry once without their new fields. A Worker without the `changes`, `wait`, or `dependency_owner_waits` operation answers those commands with `invalid_input`.
+Worker deployment remains a separate step.
 
 ## 0.4.0 (2026-10-09)
 

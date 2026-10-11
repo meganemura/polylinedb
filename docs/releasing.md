@@ -10,6 +10,7 @@ Version `0.0.1` is the initial version. Version `0.1.0` adds the verified local 
 Version `0.2.0` adds prerequisites, memory freshness, and automatic host hooks.
 Version `0.3.1` adds session-owned issue claims and explicit human CLI output.
 Version `0.4.0` accepts unknown cloud response fields and completes `show` without `claim` through `claim_show`.
+Version `0.5.0` adds the change feed, `pd wait`, owner waits, claim keepalive, and issue closure records, with schema 8 and snapshot 6.
 Database upgrades and Worker deployments require separate verification and approval.
 Verify local installation, persistence, and field conflicts with the installed package.
 Verify the deployed Worker, D1 persistence, Access policy, and cloud-agent OAuth reuse with the [cloud acceptance checks](cloud.md#verify-each-host-and-d1).
