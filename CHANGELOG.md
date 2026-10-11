@@ -99,6 +99,7 @@ The keys are `issue`, `commits`, `surface`, `change`, `fields`, `errors`, `compa
 
 ## Unreleased
 
+- pd-160: the polylinedb-queue skill now requires the full test suite on the rebased commits after the final rebase and before the `queue` push, also after a rejected push, and reports test counts only from that run. A failure on the queue tip blocks the push. It forbids killing processes by pattern (`pkill -f`, `killall`) and allows killing only PIDs the agent started. Skill text only; no code, schema, or Worker change. `.github/workflows/check.yml` already runs on every push, including `queue`.
 - pd-154: show a favicon on every `/ui` page: a polyline on the page paper, drawn in the page colors with a night variant for a dark color scheme. It is an inline SVG `data:` URI in the page head, so it adds no request, and the existing `img-src data:` policy allows it. The Content-Security-Policy, caching, and prefetch rules are unchanged.
 
 - Branch a claim worktree from the `queue` tip. The main-lock steps belong to the owner who lands `queue` onto main. If the claim expires after the queue push, acquire the issue again to write the tip. See `docs/agent-actors.md` and `docs/claims.md`.

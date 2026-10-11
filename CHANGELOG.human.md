@@ -12,6 +12,9 @@ Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines
 
 `/ui` pages now show a small icon in the browser tab: a line through a few points, in the same colors as the pages, with a darker version when your device uses a dark theme.
 
+Agents now run every test again after catching up with the shared `queue` branch and before adding their work to it, so a broken `queue` is caught before it reaches main.
+Agents that share a machine also stop only the processes they started themselves, so they no longer cut short each other's test runs.
+
 ## 2026-10-11
 
 An issue page in `/ui` now has a Dispatch button for signed-in people who can write.

@@ -43,9 +43,19 @@ If the rebase conflicts, finish it. Resolve the conflicts in the code.
 Do not stop and ask a human only because the rebase conflicted, and do not abort the rebase.
 After a conflict, rerun the affected tests. If they fail, fix the fallout of the resolve and run them again.
 
+After the final rebase, run the full test suite on the rebased commits before you push `queue`.
+A failure on the queue tip blocks the push too. Fix it, or report it and do not push.
+Report test counts only from this post-rebase run. A run from before the rebase does not count.
+
 Push `queue`. Do not use `--force` or `--force-with-lease`.
-If the push is rejected, fetch, rebase onto the fetched branch, resolve again the same way, and push again.
+If the push is rejected, fetch, rebase onto the fetched branch, resolve again the same way, rerun the full suite, and push again.
 Never rewrite commits that other agents pushed.
+
+## Stop only your own processes
+
+Other agents may run tests in the same container.
+Never kill processes by pattern, as with `pkill -f`, `killall`, or `kill $(pgrep ...)`.
+Kill only the PIDs that you started.
 
 ## Keep the claim
 
