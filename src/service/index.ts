@@ -34,7 +34,7 @@ const descriptions: Record<string, string> = {
   claim_list: 'List claim inspections with tool/project filters and numeric issue pagination, including never-claimed issues.',
   claim_acquire: 'Acquire one available issue using the observed incarnation and caller session UUID. Success returns open_blockers, the ids of active blockers, or an empty list. Acquire does not fail because of blockers. If that list is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist. Retain the request UUID and payload for retries.',
   claim_renew: 'Renew an unexpired claim using its proof and observed revision. Retries return the original receipt.',
-  claim_release: 'Release a current claim using its proof and observed revision. Release does not change the issue status. When the lease is expired and the proof names it, release succeeds and writes nothing.',
+  claim_release: 'Release a current claim using its proof and observed revision. Release does not change the issue status. With expired_noop: true, a proof that names an expired lease returns released: false and writes nothing.',
   dependency_list: 'Read a dependent issue prerequisite revision and a bounded page of blockers. Closed blockers remain attached.',
   dependency_add: 'Add dependent to blocker prerequisite with the observed aggregate revision. Retain the request UUID and payload for retries.',
   dependency_remove: 'Remove a prerequisite with the observed aggregate revision. A retry returns its original immutable receipt.',

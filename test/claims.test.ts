@@ -182,7 +182,7 @@ test('a supplied claim_proof that the store rejects names the observed claim', a
   });
   const shown = await run({ op: 'show', id: issue.id }); assert.ok('issue' in shown); assert.deepEqual(shown.issue.labels, []); assert.equal(shown.issue.versions.labels, 1);
 });
-test('release of an expired own lease is a no-op, and a newer lease still conflicts', async t => {
+test('an opted-in release of an expired own lease is a no-op, and a default release or a newer lease still conflicts', async t => {
   const { run, db } = fixture(t);
   const issue = await create(run);
   const owner = await acquire(run, issue.id);
@@ -199,9 +199,16 @@ test('release of an expired own lease is a no-op, and a newer lease still confli
   assert.equal((await shown()).state, 'expired');
   assert.equal((await shown()).lease?.revision, 1);
   const beforeReceipts = await receipts();
+  await assert.rejects(run({ op: 'claim_release', claim_proof: own, expected_revision: 1, request_id: request() }),
+    (error: unknown) => error instanceof PolylinedbError && error.code === 'claim_conflict' && error.status === 409
+      && JSON.stringify(error.details).includes('"state":"expired"'));
+  assert.equal((await shown()).lease?.revision, 1);
+  assert.equal(await receipts(), beforeReceipts);
+  assert.throws(() => parseOperation({ op: 'claim_release', claim_proof: own, expected_revision: 1, request_id: request(), expired_noop: false }),
+    { code: 'invalid_input', message: 'expired_noop must be true when present' });
   await assert.rejects(run({ op: 'claim_renew', claim_proof: own, expected_revision: 1, request_id: request(), ttl: 300 }), { code: 'claim_conflict' });
   await assert.rejects(run({ op: 'update', id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof: own }), { code: 'claim_required' });
-  const released = body(await run({ op: 'claim_release', claim_proof: own, expected_revision: 1, request_id: request() }));
+  const released = body(await run({ op: 'claim_release', claim_proof: own, expected_revision: 1, request_id: request(), expired_noop: true }));
   assert.equal(released.released, false);
   assert.equal(released.current?.state, 'expired');
   assert.equal(released.current?.lease?.revision, 1);
@@ -211,31 +218,32 @@ test('release of an expired own lease is a no-op, and a newer lease still confli
   assert.equal((await shown()).lease?.revision, 1);
   assert.equal((await shown()).state, 'expired');
   assert.equal(await receipts(), beforeReceipts);
-  const stale = body(await run({ op: 'claim_release', claim_proof: own, expected_revision: 99, request_id: request() }));
+  const stale = body(await run({ op: 'claim_release', claim_proof: own, expected_revision: 99, request_id: request(), expired_noop: true }));
   assert.equal(stale.released, false);
   assert.equal(stale.current?.lease?.revision, 1);
   assert.equal(await receipts(), beforeReceipts);
-  await assert.rejects(run({ op: 'claim_release', claim_proof: { ...own, session_id: request() }, expected_revision: 1, request_id: request() }), { code: 'claim_conflict' });
-  await assert.rejects(run({ op: 'claim_release', claim_proof: own, expected_revision: 1, request_id: request() }, 'test:other'), { code: 'claim_conflict' });
+  await assert.rejects(run({ op: 'claim_release', claim_proof: { ...own, session_id: request() }, expected_revision: 1, request_id: request(), expired_noop: true }), { code: 'claim_conflict' });
+  await assert.rejects(run({ op: 'claim_release', claim_proof: { ...own, generation: 2 }, expected_revision: 1, request_id: request(), expired_noop: true }), { code: 'claim_conflict' });
+  await assert.rejects(run({ op: 'claim_release', claim_proof: own, expected_revision: 1, request_id: request(), expired_noop: true }, 'test:other'), { code: 'claim_conflict' });
   assert.equal((await shown()).lease?.revision, 1);
   const newer = await acquire(run, issue.id);
   assert.equal(newer.receipt.generation, 2);
   assert.equal(newer.receipt.revision, 2);
-  await assert.rejects(run({ op: 'claim_release', claim_proof: own, expected_revision: 2, request_id: request() }), { code: 'claim_conflict' });
+  await assert.rejects(run({ op: 'claim_release', claim_proof: own, expected_revision: 2, request_id: request(), expired_noop: true }), { code: 'claim_conflict' });
   assert.equal((await shown()).state, 'active');
   assert.equal((await shown()).lease?.revision, 2);
   assert.equal((await shown()).lease?.session_id, newer.receipt.session_id);
-  const active = body(await run({ op: 'claim_release', claim_proof: proof(newer.receipt), expected_revision: 2, request_id: request() }));
+  const active = body(await run({ op: 'claim_release', claim_proof: proof(newer.receipt), expected_revision: 2, request_id: request(), expired_noop: true }));
   assert.equal(active.claim_receipt?.outcome, 'released');
   assert.equal(active.claim_receipt?.revision, 3);
   assert.equal(active.claim_receipt?.released_at !== null, true);
   const third = await acquire(run, issue.id);
   await expire();
-  await assert.rejects(run({ op: 'claim_release', claim_proof: proof(newer.receipt), expected_revision: third.receipt.revision, request_id: request() }), { code: 'claim_conflict' });
+  await assert.rejects(run({ op: 'claim_release', claim_proof: proof(newer.receipt), expected_revision: third.receipt.revision, request_id: request(), expired_noop: true }), { code: 'claim_conflict' });
   assert.equal((await shown()).state, 'expired');
   assert.equal((await shown()).lease?.revision, third.receipt.revision);
   assert.equal((await shown()).lease?.session_id, third.receipt.session_id);
-  const cleanup = body(await run({ op: 'claim_release', claim_proof: proof(third.receipt), expected_revision: 1, request_id: request() }));
+  const cleanup = body(await run({ op: 'claim_release', claim_proof: proof(third.receipt), expected_revision: 1, request_id: request(), expired_noop: true }));
   assert.equal(cleanup.released, false);
   assert.equal(cleanup.current?.state, 'expired');
   assert.equal(cleanup.current?.lease?.revision, third.receipt.revision);

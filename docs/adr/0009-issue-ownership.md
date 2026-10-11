@@ -11,7 +11,7 @@ An acquisition does not change the issue status, and closed issues remain claima
 The caller supplies the observed store incarnation when acquiring a claim.
 The database accepts acquisition only when that incarnation matches the current singleton and the issue has no active claim.
 Every acquisition increases generation and revision, including acquisition after release, expiry, or incarnation rotation.
-Renewal and release of an active lease increase revision and require the observed revision and a current ownership proof. Release of the caller's own expired lease does not write and does not increase revision.
+Renewal and release of an active lease increase revision and require the observed revision and a current ownership proof. A release that opts in with `expired_noop: true` of the caller's own expired lease does not write and does not increase revision. Without the option, that release is a conflict.
 
 The proof contains the issue ID, store incarnation, session UUID, and generation.
 The database compares the proof with the current claim, current store incarnation, and actor at the write.

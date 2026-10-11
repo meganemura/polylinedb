@@ -1,6 +1,6 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
-// Two older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
-// and a search rejected for `with_matches` runs once more without that field.
+// Three older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
+// and a search rejected for `with_matches` or a release rejected for `expired_noop` runs once more without that field.
 import { PolylinedbError, type Issue, type SearchMatch } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
@@ -112,7 +112,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { claims, next_cursor };
     }
     case 'claim_acquire': case 'claim_renew': case 'claim_release': {
-      if (operation.op === 'claim_release') {
+      if (operation.op === 'claim_release' && operation.expired_noop === true) {
         const raw = object(value);
         if (Object.hasOwn(raw, 'released')) {
           if (Object.hasOwn(raw, 'claim_receipt') || raw.released !== false) return invalid();
@@ -423,6 +423,12 @@ export async function executeCloudOperation(input: {
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'search' && input.operation.with_matches === true && /\bwith_matches\b/.test(error.message)) {
         // A Worker released before search matches names the unknown field only in this message. Its page without matches still answers the search.
         const { with_matches: _, ...plain } = input.operation;
+        retried = true;
+        return await executeCloudOperation({ ...input, operation: plain });
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'claim_release' && input.operation.expired_noop === true && /\bexpired_noop\b/.test(error.message)) {
+        // A Worker released before the no-op release rejects the field before any write, so the same request UUID is still unused.
+        const { expired_noop: _, ...plain } = input.operation;
         retried = true;
         return await executeCloudOperation({ ...input, operation: plain });
       }

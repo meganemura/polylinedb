@@ -177,6 +177,10 @@
       "request_id": {
         "type": "string",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "expired_noop": {
+        "const": true,
+        "description": "When the proof names an expired lease, answer released: false and the current claim instead of claim_conflict."
       }
     },
     "required": [

@@ -89,6 +89,9 @@ globalThis.fetch = async (input, init) => {
     if (mode === 'search-without-matches' && operation.op === 'search' && operation.with_matches) {
       return Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: with_matches' } }, { status: 400 });
     }
+    if (mode === 'release-without-expired-noop' && operation.op === 'claim_release' && operation.expired_noop) {
+      return Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: expired_noop' } }, { status: 400 });
+    }
     initializeStore({ directory });
     const store = openStore({ directory });
     try {

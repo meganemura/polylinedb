@@ -231,6 +231,48 @@ test('an older Worker that rejects with_matches answers a search through one pla
   } finally { sqlite.close(); }
 });
 
+test('a release that asks for expired_noop gets a clear answer from an older Worker that rejects or ignores the field', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const created = await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Old Worker release' });
+    const issue_id = (created.body.issue as { id: string }).id;
+    const incarnation = ((await wire({ op: 'claim_show', issue_id })).body.claim as { store_incarnation: string }).store_incarnation;
+    const acquire = async () => {
+      const session_id = crypto.randomUUID();
+      const receipt = (await wire({ op: 'claim_acquire', issue_id, incarnation, session_id, request_id: crypto.randomUUID() })).body.claim_receipt as { generation: number; revision: number };
+      return { claim_proof: { issue_id, incarnation, session_id, generation: receipt.generation }, revision: receipt.revision };
+    };
+    const recorded = (reply: (operation: Record<string, unknown>) => Response | Promise<Response>) => {
+      const sent: Record<string, unknown>[] = [];
+      const fetch: typeof globalThis.fetch = async (_url, options) => { const operation = JSON.parse(String(options?.body)); sent.push(operation); return reply(operation); };
+      return { sent, fetch };
+    };
+    const forwarded = (operation: Record<string, unknown>) => transport('https://issues.example/v1/operations', { body: JSON.stringify(operation) });
+    const withoutField = ({ expired_noop: _, ...plain }: Record<string, unknown>) => plain;
+    const rejecting = () => recorded(operation => 'expired_noop' in operation
+      ? Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: expired_noop' } }, { status: 400 })
+      : forwarded(operation));
+    const expired = await acquire();
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue_id);
+    const release = { op: 'claim_release', claim_proof: expired.claim_proof, expected_revision: expired.revision, request_id: crypto.randomUUID(), expired_noop: true };
+    const older = rejecting();
+    assert.deepEqual(await outcome(decode(release, older.fetch)), { error: { code: 'claim_conflict', status: 409, details: { current: (await wire({ op: 'claim_show', issue_id })).body.claim } } });
+    assert.deepEqual(older.sent, [release, withoutField(release)]);
+    const ignoring = recorded(operation => forwarded(withoutField(operation)));
+    await assert.rejects(decode(release, ignoring.fetch), { code: 'claim_conflict', status: 409 });
+    assert.equal(ignoring.sent.length, 1);
+    const current = await decode(release, transport);
+    assert.equal('released' in current && current.released, false);
+    await assert.rejects(decode(withoutField(release), answer(current)), { code: 'cloud_invalid_response' });
+    const active = await acquire();
+    const activeRelease = { op: 'claim_release', claim_proof: active.claim_proof, expected_revision: active.revision, request_id: crypto.randomUUID(), expired_noop: true };
+    const olderActive = rejecting();
+    const released = await decode(activeRelease, olderActive.fetch);
+    assert.equal('claim_receipt' in released && released.claim_receipt.outcome, 'released');
+    assert.deepEqual(olderActive.sent, [activeRelease, withoutField(activeRelease)]);
+  } finally { sqlite.close(); }
+});
+
 test('missing required fields and retyped fields stay cloud_invalid_response at every level', async () => {
   const { sqlite, wire } = await worker();
   try {

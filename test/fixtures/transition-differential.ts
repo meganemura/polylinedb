@@ -111,7 +111,7 @@ export function differentialCases(db: SqlExecutor, label: string) {
       const op = tc.draw(gs.sampledFrom(['claim_acquire', 'claim_renew', 'claim_release'] as const));
       const command = op === 'claim_acquire'
         ? { op, issue_id: issue.id, incarnation: tc.draw(gs.booleans()) ? store : otherIncarnation, session_id: session, request_id: crypto.randomUUID(), ttl: 300 }
-        : { op, claim_proof: await proofFor(issue.id, tc.draw(gs.sampledFrom(proofs.filter(kind => kind !== 'none')))), expected_revision: (claim?.revision ?? 1) + (tc.draw(gs.booleans()) ? 0 : 1), request_id: crypto.randomUUID(), ...(op === 'claim_renew' ? { ttl: 300 } : {}) };
+        : { op, claim_proof: await proofFor(issue.id, tc.draw(gs.sampledFrom(proofs.filter(kind => kind !== 'none')))), expected_revision: (claim?.revision ?? 1) + (tc.draw(gs.booleans()) ? 0 : 1), request_id: crypto.randomUUID(), ...(op === 'claim_renew' ? { ttl: 300 } : {}), ...(op === 'claim_release' && tc.draw(gs.booleans()) ? { expired_noop: true } : {}) };
       const parsed = parseOperation(command);
       assert.ok(parsed.op === 'claim_acquire' || parsed.op === 'claim_renew' || parsed.op === 'claim_release');
       const clock = await now(); observeClock(claim, clock);

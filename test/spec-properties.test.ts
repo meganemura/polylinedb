@@ -110,15 +110,15 @@ function describe(world: object): string {
 
 type ClaimWorld =
   | { op: 'claim_acquire'; lease: Lease; clock: Clock; caller: Caller; incarnation: 'current' | 'former' }
-  | { op: 'claim_renew' | 'claim_release'; lease: Lease; clock: Clock; caller: Caller; differs: ReadonlySet<ProofField>; revision: 'observed' | 'stale' };
+  | { op: 'claim_renew' | 'claim_release'; lease: Lease; clock: Clock; caller: Caller; differs: ReadonlySet<ProofField>; revision: 'observed' | 'stale'; expiredNoop: boolean };
 
 function expiredOwnRelease(world: ClaimWorld): boolean {
-  return world.op === 'claim_release' && world.lease === 'held' && world.clock !== 'before' && world.caller === 'holder' && world.differs.size === 0;
+  return world.op === 'claim_release' && world.expiredNoop && world.lease === 'held' && world.clock !== 'before' && world.caller === 'holder' && world.differs.size === 0;
 }
 const claimRules: Rule<ClaimWorld>[] = [
   { code: 'claim_conflict', source: 'docs/adr/0009-issue-ownership.md: The database accepts acquisition only when that incarnation matches the current singleton and the issue has no active claim.',
     violated: world => world.op === 'claim_acquire' && (world.incarnation !== 'current' || specState(world.lease, world.clock) === 'active') },
-  { code: 'claim_conflict', source: 'docs/adr/0009-issue-ownership.md: Renewal and release of an active lease increase revision and require the observed revision and a current ownership proof. docs/claims.md "Renew, release, and retry": release of the caller\'s own expired lease does not write.',
+  { code: 'claim_conflict', source: 'docs/adr/0009-issue-ownership.md: Renewal and release of an active lease increase revision and require the observed revision and a current ownership proof. docs/claims.md "Renew, release, and retry": With the option, release of an expired lease succeeds when the proof names that lease\'s session and generation and the caller is that lease\'s actor.',
     violated: world => world.op !== 'claim_acquire' && !expiredOwnRelease(world) && (world.revision !== 'observed' || !currentProof({ ...world, proof: { supplied: true, differs: world.differs } })) },
 ];
 
@@ -129,15 +129,18 @@ function* claimWorlds(): Generator<ClaimWorld> {
   for (const lease of leases) for (const clock of clocks) for (const caller of callers) {
     for (const incarnation of ['current', 'former'] as const) yield { op: 'claim_acquire', lease, clock, caller, incarnation };
     for (const op of ['claim_renew', 'claim_release'] as const) for (const differs of leaseProofs)
-      for (const observed of ['observed', 'stale'] as const) yield { op, lease, clock, caller, differs, revision: observed };
+      for (const observed of ['observed', 'stale'] as const) for (const expiredNoop of op === 'claim_release' ? [false, true] : [false])
+        yield { op, lease, clock, caller, differs, revision: observed, expiredNoop };
   }
 }
-const claimDomainSize = leases.length * clocks.length * callers.length * (2 + 2 * leaseProofs.length * 2);
+const claimDomainSize = leases.length * clocks.length * callers.length * (2 + 3 * leaseProofs.length * 2);
 
 function decideClaim(world: ClaimWorld) {
   const command = world.op === 'claim_acquire'
     ? { op: world.op, incarnation: world.incarnation === 'current' ? store : formerStore }
-    : { op: world.op, claim_proof: concreteProof(world.lease, world.differs), expected_revision: world.revision === 'observed' ? revision : revision + 1 };
+    : world.op === 'claim_release' && world.expiredNoop
+      ? { op: world.op, claim_proof: concreteProof(world.lease, world.differs), expected_revision: world.revision === 'observed' ? revision : revision + 1, expired_noop: true as const }
+      : { op: world.op, claim_proof: concreteProof(world.lease, world.differs), expected_revision: world.revision === 'observed' ? revision : revision + 1 };
   return decideClaimMutation(observedClaim(world.lease), store, command, actorId(world.caller), clockValue[world.clock]);
 }
 
@@ -203,7 +206,7 @@ test('property: a proof whose deadline equals the clock cannot change the status
   }
   for (const world of claimWorlds()) {
     if (world.clock !== 'equal' || world.op === 'claim_acquire') continue;
-    const cleanup = world.op === 'claim_release' && world.lease === 'held' && world.caller === 'holder' && world.differs.size === 0;
+    const cleanup = world.op === 'claim_release' && world.expiredNoop && world.lease === 'held' && world.caller === 'holder' && world.differs.size === 0;
     assert.equal(decideClaim(world).accepted, cleanup, describe(world));
   }
   assert.ok(matchingProofs > 0);

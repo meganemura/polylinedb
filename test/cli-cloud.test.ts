@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { childStarted, runChild } from './fixtures/child-run.ts';
 
@@ -305,6 +306,29 @@ test('cloud CLI acquires from an older Worker that omits open_blockers', async c
   const newer = await run(['claim', 'acquire', fresh.id, '--incarnation', freshShown.claim.store_incarnation, '--session-id', crypto.randomUUID(), '--request-id', crypto.randomUUID()]);
   assert.deepEqual(newer.open_blockers, []);
   assert.equal(newer.claim_receipt.issue_id, fresh.id);
+});
+
+test('cloud CLI releases an expired own lease as a no-op, and an older Worker answers claim_conflict', async context => {
+  const { root, run, requests } = await fixture(context);
+  const { issue } = await run(['create', '--body', 'Expired release']);
+  const shown = await run(['show', issue.id]);
+  const acquired = await run(['claim', 'acquire', issue.id, '--incarnation', shown.claim.store_incarnation, '--session-id', crypto.randomUUID()]);
+  const database = new DatabaseSync(join(root, 'remote-domain-store', 'polylinedb.sqlite'));
+  try { database.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue.id); }
+  finally { database.close(); }
+  const proof = JSON.stringify(acquired.claim_receipt);
+  const before = requests().length;
+  const released = await run(['claim', 'release', '--claim-proof', proof, '--expected-revision', '1']);
+  assert.equal(released.released, false);
+  assert.equal(released.current.state, 'expired');
+  assert.equal(released.current.lease.revision, 1);
+  assert.equal(released.current.lease.released_at, null);
+  const request_id = crypto.randomUUID();
+  const older = await run(['claim', 'release', '--claim-proof', proof, '--expected-revision', '1', '--request-id', request_id], { mode: 'release-without-expired-noop', status: 4 });
+  assert.equal(older.error.code, 'claim_conflict');
+  assert.equal(older.error.details.current.state, 'expired');
+  assert.deepEqual(requests().slice(before).map(request => [request.op, 'expired_noop' in request, request.request_id === request_id]),
+    [['claim_release', true, false], ['claim_release', true, true], ['claim_release', false, true]]);
 });
 
 test('cloud CLI searches an older Worker that rejects with_matches through one plain search', async context => {
