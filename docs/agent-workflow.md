@@ -29,7 +29,8 @@ The issue pointer is a comment from the claim holder whose whole body is `tip: <
 A verified remote SHA precedes the tip comment because a local commit does not establish a remote tip.
 Any number of agents may push `queue` without force at the same time. A rejected push leads to fetch, rebase, conflict resolution, and another push, so `queue` needs no lock.
 After the enqueue, the agent sets the issue `open`, replaces `ready` with `main-wait`, and releases the lease.
-Whoever lands `queue` onto main closes the issue. Close precedes release because close requires a current ownership proof.
+Whoever lands `queue` onto main claims the issue again, closes it, and then releases that claim.
+Close comes first, because close requires the current proof.
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
 
 ## `/ui` latency budget

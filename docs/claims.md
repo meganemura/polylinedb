@@ -160,6 +160,12 @@ The agent label in a claim is display text; the actor identifies the holder.
 
 ## Publish under the main-lock
 
+Agents do not use this section.
+They enqueue finished commits on the `queue` branch, leave the issue open with the `main-wait` label, and release the claim.
+They do not acquire the main-lock, and they do not push main.
+
+The owner uses this section to land `queue` onto main.
+
 Each repository has one lock issue with the labels `main-lock` and `ready`, for example with the body `main-lock: OWNER/REPO`.
 A human creates it once. Find it with `pd list --label main-lock`; the ready worklist never shows it.
 
@@ -180,4 +186,5 @@ pd claim release --claim-proof "$LOCK_PROOF_JSON" --expected-revision LOCK_REVIS
 
 The newest `tip:` comment from the claim holder is the pointer for that issue.
 The comment holds only the SHA line, with no reasoning and no tool output.
-Close the work issue with its own proof and then release its claim.
+The owner then closes the work issue with its own proof and releases its claim.
+Close comes first, because close requires the current proof.

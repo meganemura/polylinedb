@@ -56,8 +56,9 @@ Cloud agents renew through the MCP connector. Do not log in to the CLI with owne
 ## Record the enqueue
 
 After a successful push, verify the remote queue tip.
-The agent must hold the claim on the issue. An agent can `comment` and `update` only with that claim; otherwise the write fails with `claim_required`.
-If the agent does not hold the claim, stop. Do not acquire a claim only to write these records.
+The agent must hold the claim on the issue while it writes these records. An agent can `comment` and `update` only with that claim; otherwise the write fails with `claim_required`.
+If this session's lease expired after the push, acquire the issue again and then write the records.
+Do not acquire an issue this session did not push, only to write these records.
 A cloud connector reports a human actor until per-agent tokens exist and does not enforce the agent gate. Hold the claim there too.
 
 1. Write a `comment` whose whole body is `tip: ` followed by the 40-character SHA of the queue tip. It holds only that line, with no reasoning and no tool output.

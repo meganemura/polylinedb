@@ -97,10 +97,11 @@ The HTTP endpoint remains `/v1/operations`; MCP tool names match the operation n
 
 ## Skill installation and lifecycle
 
-The package includes `skills/polylinedb/SKILL.md`.
-Copy or link its complete directory into the host's supported skill directory, then refresh skill discovery.
+The package includes `skills/polylinedb/SKILL.md` and `skills/polylinedb-queue/SKILL.md`.
+Copy or link both complete directories into the host's supported skill directory, then refresh skill discovery.
+A consumer repository does not carry these skills, so install them on the agent host.
 The documented user directories are `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`.
-Keep existing host configuration and choose one installed source for this skill.
+Keep existing host configuration and choose one installed source for each skill.
 The skill prefers the installed CLI in local coding sessions, including CLI connections to Cloudflare.
 Cloud sessions can use the configured remote MCP connector. An explicit MCP request takes precedence.
 Keep the cloud connector available when changing local routing. A routing preference does not remove a connector.
