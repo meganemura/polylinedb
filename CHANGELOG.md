@@ -19,6 +19,40 @@ Whoever lands `queue` onto main writes both entries in one commit on top of the 
 Each change under it is a `####` heading that names the change in words, and a list of `key: value` lines, so a search such as `grep -n '^- secrets:' CHANGELOG.md` finds it.
 The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`, `schema`, `secrets`, `deploy`, and `status`. A key that does not apply is left out.
 
+### 2026-10-12 main f6a4e41
+
+- main: f6a4e41a8f2e1236f97785b19506be4963789239
+- previous main: 1c52b67e9bcf36c21e185fedaad83eb84b3e07e0
+- landed commits: a2a2c26, 2f44fea, f6a4e41
+- schema: 8. This landing does not change D1.
+- deploy: not done. No Worker deploy in this landing.
+- cli: `package.json` is 0.5.1. The push of this landing to main changes `package.json`, so it starts the `Publish` workflow, which waits for the owner to approve the `publish` environment before npm publication. Version 0.5.0 was never published and has no tag.
+
+#### Release automatically when a push to main changes the version
+
+- commits: a2a2c26 ci(publish): release automatically when a push to main changes the version
+- surface: `.github/workflows/publish.yml`, `scripts/release-version.ts`, `scripts/npm-release.ts`, `scripts/github-release.ts`.
+- change: the `Publish` workflow runs on a push to `main` that changes `package.json`; `workflow_dispatch` and its `version` and `commit` inputs are gone. Job `check` (`contents: read`) requires an `X.Y.Z` version in `package.json` equal to both lockfile versions and outputs `tag` and `version` only when `git ls-remote --exit-code --tags origin refs/tags/v<version>` finds nothing. Job `publish` (`needs: check`, environment `publish`, `contents: read` and `id-token: write`) runs every earlier verification step on the pushed commit, publishes the tested tarball, and verifies the registry integrity. Job `release` (`needs: [check, publish]`, `contents: write`) writes the notes and creates the annotated tag and the GitHub Release on `GITHUB_SHA`. The workflow default is `permissions: {}`, and the `npm-publish` concurrency group does not cancel a running release.
+- errors: `check` fails when a lockfile version differs from `package.json` or when the tag lookup fails. On a re-run, `publish` skips `npm publish` only when the registry already has the version with the tarball's integrity, and fails when it has a different tarball. `scripts/github-release.ts` now takes the commit from `GITHUB_SHA` and no longer reads `APPROVED_COMMIT`.
+- compatibility: the npm trusted publisher stays bound to the `publish.yml` filename and the `publish` environment. A push that changes `package.json` to a version that already has a tag releases nothing.
+- schema: none.
+- deploy: none. The workflow never deploys the Worker.
+
+#### docs/releasing.md is the single release guide
+
+- commits: 2f44fea docs(release): make docs/releasing.md the single release guide
+- surface: `docs/releasing.md`, `CLAUDE.md`, both queue skill copies.
+- change: the guide covers cutting a release through `queue`, the three workflow jobs, who approves and who may tag or publish, re-runs and recovery, and the separation of CLI releases from Worker and D1 changes. `CLAUDE.md` and the queue skill link to it. Tests pin the guide's statements about the workflow.
+- schema: none.
+
+#### Prepare the 0.5.1 release
+
+- commits: f6a4e41 release: prepare polylinedb 0.5.1
+- surface: `package.json`, `package-lock.json`, MCP `initialize` `serverInfo.version`, `CHANGELOG.md`, `CHANGELOG.human.md`.
+- change: the package version and `serverInfo.version` are 0.5.1. `## 0.5.1 (2026-10-12)` says 0.5.0 was never published and that 0.5.1 carries the 0.5.0 changes plus the release automation, and repeats the upgrade from 0.4.0 guidance. The 0.5.0 section stays.
+- schema: 8. Snapshot 6. No change in this landing.
+- deploy: npm publication after the owner approves the `publish` environment. Worker deployment and the D1 upgrade stay separate steps.
+
 ### 2026-10-12 main c543fb5
 
 - main: c543fb5e634ab4b64e8252d7d80a3705c2cab78f
