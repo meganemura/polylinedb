@@ -95,6 +95,7 @@ globalThis.fetch = async (input, init) => {
       const result = await executeOperation(store.db, operation, 'oauth:synthetic-owner');
       if (mode === 'ambiguous') throw new Error('synthetic-private-token');
       if (mode === 'show-without-claim' && 'claim' in result && 'comments' in result) { const { claim: _, ...older } = result; return Response.json(older); }
+      if (mode === 'acquire-without-blockers' && operation.op === 'claim_acquire' && 'open_blockers' in result) { const { open_blockers: _, ...older } = result; return Response.json(older); }
       if (mode === 'future-fields') return Response.json({ ...futureFields(result) as object, ...(operation.op === 'claim_acquire' ? { open_blockers: [] } : {}) });
       return Response.json(result);
     } catch (error) {

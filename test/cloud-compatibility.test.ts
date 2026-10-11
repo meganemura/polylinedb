@@ -126,6 +126,24 @@ test('a newer Worker response with unknown top-level and nested fields decodes t
   } finally { sqlite.close(); }
 });
 
+test('an older Worker claim_acquire without open_blockers decodes the receipt', async () => {
+  const { sqlite, wire } = await worker();
+  try {
+    await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Blocker' });
+    await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Dependent' });
+    await wire({ op: 'dependency_add', dependent_id: 'pd-2', blocker_id: 'pd-1', expected_revision: 1, request_id: crypto.randomUUID() });
+    const shown = await wire({ op: 'claim_show', issue_id: 'pd-2' });
+    const acquire = { op: 'claim_acquire', issue_id: 'pd-2', incarnation: (shown.body.claim as { store_incarnation: string }).store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
+    const acquired = (await wire(acquire)).body as { claim_receipt: Record<string, unknown>; open_blockers: unknown };
+    const current = await decode(acquire, answer(acquired));
+    assert.deepEqual(current, { claim_receipt: acquired.claim_receipt, open_blockers: ['pd-1'] });
+    const { open_blockers: _, ...older } = acquired;
+    assert.equal(Object.hasOwn(older, 'open_blockers'), false);
+    assert.deepEqual(await decode(acquire, answer(older)), { claim_receipt: acquired.claim_receipt });
+    await assert.rejects(decode(acquire, answer({ ...acquired, open_blockers: ['pd-2'] })), { code: 'cloud_invalid_response' });
+  } finally { sqlite.close(); }
+});
+
 test('an older Worker show without claim completes through one claim_show request', async () => {
   const { sqlite, transport, wire } = await worker();
   try {
