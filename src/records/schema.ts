@@ -3,6 +3,7 @@ import { CLAIM_STATEMENTS } from './claims-sql.ts';
 import { CHANGE_STATEMENTS } from './changes-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
 export { SCHEMA_V6_SQL } from './schema-v6.ts';
+export { SCHEMA_V7_SQL } from './schema-v7.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
 export { statuses, issueTypes, fields };
 export const SCHEMA_VERSION = 7;
