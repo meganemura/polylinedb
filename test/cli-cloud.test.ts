@@ -331,6 +331,27 @@ test('cloud CLI releases an expired own lease as a no-op, and an older Worker an
     [['claim_release', true, false], ['claim_release', true, true], ['claim_release', false, true]]);
 });
 
+test('cloud CLI decodes the deployed no-op after the Worker rejects expired_noop', async context => {
+  const { root, run, requests } = await fixture(context);
+  const { issue } = await run(['create', '--body', 'Deployed expired release']);
+  const shown = await run(['show', issue.id]);
+  const session_id = crypto.randomUUID();
+  const acquired = await run(['claim', 'acquire', issue.id, '--incarnation', shown.claim.store_incarnation, '--session-id', session_id]);
+  const database = new DatabaseSync(join(root, 'remote-domain-store', 'polylinedb.sqlite'));
+  try { database.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue.id); }
+  finally { database.close(); }
+  const request_id = crypto.randomUUID();
+  const before = requests().length;
+  const released = await run(['claim', 'release', '--claim-proof', JSON.stringify(acquired.claim_receipt), '--expected-revision', '1', '--request-id', request_id], { mode: 'deployed-expired-release' });
+  assert.equal(released.released, false);
+  assert.equal(released.current.state, 'expired');
+  assert.equal(released.current.lease.revision, 1);
+  assert.equal(released.current.lease.released_at, null);
+  assert.equal(released.current.lease.session_id, session_id);
+  assert.deepEqual(requests().slice(before).map(request => [request.op, Object.hasOwn(request, 'expired_noop'), request.request_id]),
+    [['claim_release', true, request_id], ['claim_release', false, request_id]]);
+});
+
 test('cloud CLI searches an older Worker that rejects with_matches through one plain search', async context => {
   const { run, requests } = await fixture(context);
   const { issue } = await run(['create', '--body', 'Older Worker search']);

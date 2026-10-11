@@ -92,10 +92,16 @@ globalThis.fetch = async (input, init) => {
     if (mode === 'release-without-expired-noop' && operation.op === 'claim_release' && operation.expired_noop) {
       return Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: expired_noop' } }, { status: 400 });
     }
+    if (mode === 'deployed-expired-release' && operation.op === 'claim_release' && operation.expired_noop) {
+      return Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: expired_noop' } }, { status: 400 });
+    }
     initializeStore({ directory });
     const store = openStore({ directory });
     try {
-      const result = await executeOperation(store.db, operation, 'oauth:synthetic-owner');
+      const executed = mode === 'deployed-expired-release' && operation.op === 'claim_release'
+        ? { ...operation, expired_noop: true as const }
+        : operation;
+      const result = await executeOperation(store.db, executed, 'oauth:synthetic-owner');
       if (mode === 'ambiguous') throw new Error('synthetic-private-token');
       if (mode === 'show-without-claim' && 'claim' in result && 'comments' in result) { const { claim: _, ...older } = result; return Response.json(older); }
       if (mode === 'acquire-without-blockers' && operation.op === 'claim_acquire' && 'open_blockers' in result) { const { open_blockers: _, ...older } = result; return Response.json(older); }

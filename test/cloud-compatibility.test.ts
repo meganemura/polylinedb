@@ -275,6 +275,37 @@ test('a release that asks for expired_noop gets a clear answer from an older Wor
   } finally { sqlite.close(); }
 });
 
+test('a deployed Worker that rejects expired_noop and returns the no-op on the plain release decodes', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const created = await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Deployed release' });
+    const issue_id = (created.body.issue as { id: string }).id;
+    const incarnation = ((await wire({ op: 'claim_show', issue_id })).body.claim as { store_incarnation: string }).store_incarnation;
+    const session_id = crypto.randomUUID();
+    const receipt = (await wire({ op: 'claim_acquire', issue_id, incarnation, session_id, request_id: crypto.randomUUID() })).body.claim_receipt as { generation: number; revision: number };
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue_id);
+    const release = { op: 'claim_release', claim_proof: { issue_id, incarnation, session_id, generation: receipt.generation }, expected_revision: receipt.revision, request_id: crypto.randomUUID(), expired_noop: true };
+    const noop = await decode(release, transport);
+    assert.equal('released' in noop && noop.released, false);
+    const sent: Record<string, unknown>[] = [];
+    const fetch: typeof globalThis.fetch = async (_url, options) => {
+      const operation = JSON.parse(String(options?.body)) as Record<string, unknown>;
+      sent.push(operation);
+      if ('expired_noop' in operation) return Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: expired_noop' } }, { status: 400 });
+      return Response.json(noop);
+    };
+    const decoded = await decode(release, fetch);
+    assert.equal('released' in decoded && decoded.released, false);
+    assert.equal('current' in decoded && decoded.current.state, 'expired');
+    if (!('current' in decoded) || decoded.current.lease === null) throw new Error('missing lease');
+    assert.equal(decoded.current.lease.session_id, session_id);
+    assert.equal(decoded.current.lease.revision, receipt.revision);
+    assert.equal(decoded.current.lease.released_at, null);
+    assert.deepEqual(sent.map(operation => Object.hasOwn(operation, 'expired_noop')), [true, false]);
+    assert.equal(sent[1]?.request_id, release.request_id);
+  } finally { sqlite.close(); }
+});
+
 test('missing required fields and retyped fields stay cloud_invalid_response at every level', async () => {
   const { sqlite, wire } = await worker();
   try {
