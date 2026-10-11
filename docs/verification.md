@@ -7,6 +7,7 @@ Run these checks before committing a behavior or boundary change:
 npm run typecheck
 npm run check:architecture
 npm test
+npm run check:ui-latency
 npm run test:d1
 npm run test:worker
 npm run test:package
@@ -19,7 +20,7 @@ The package check installs the tarball into a temporary prefix and executes its 
 ## CI runtime and operating systems
 
 CI runs every required check on Ubuntu 24.04 and Ubuntu 26.04 with Node 24.20.0 and Node 26.7.0.
-The four jobs verify generated SQL, types, architecture boundaries, unit tests, D1, the Worker, and the installed package.
+The four jobs verify generated SQL, types, architecture boundaries, unit tests, the `/ui` latency budget, D1, the Worker, and the installed package.
 Explicit operating-system labels keep the verification conditions stable when GitHub changes `ubuntu-latest`.
 
 The workflow pins `actions/checkout` v7.0.1 and `actions/setup-node` v7.0.0 to full commit SHAs.

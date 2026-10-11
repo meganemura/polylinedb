@@ -29,3 +29,11 @@ A verified remote SHA precedes the tip comment because a local commit does not e
 The main-lock covers reconciliation, push, and the tip comment.
 Completion closes the issue before releasing its lease because close requires a current ownership proof.
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
+
+## `/ui` latency budget
+
+[Measure `/ui` latency](ui-latency.md) sets the budget for the Worker `/ui` pages.
+`npm run check:ui-latency` is a required check for a change that touches those pages.
+The Check workflow runs it on every push and pull request.
+A budget miss fails the change.
+A feature that cannot meet the budget needs an owner decision before it lands.
