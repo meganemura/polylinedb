@@ -19,6 +19,32 @@ Whoever lands `queue` onto main writes both entries in one commit on top of the 
 Each change under it is a `####` heading that names the change in words, and a list of `key: value` lines, so a search such as `grep -n '^- secrets:' CHANGELOG.md` finds it.
 The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`, `schema`, `secrets`, `deploy`, and `status`. A key that does not apply is left out.
 
+### 2026-10-12 main da88994
+
+- main: da88994c56f4ff9dcc5bec6b6e80a52ed0ed0d13
+- previous main: 196b57e91d8e1927169453852a62d3bb4ab063bf
+- landed commits: 9ed09fb, 79bf984, da88994
+- schema: 8. This landing does not change D1.
+- deploy: not done. No Worker deploy in this landing.
+- cli: `package.json` is 0.5.2. The push of this landing to main changes `package.json`, so it starts the `Publish` workflow, which waits for the owner to approve the `publish` environment before npm publication. Version 0.5.1 is on npm without a tag or a GitHub Release.
+
+#### Send gh api POST bodies in the release job
+
+- commits: 9ed09fb test(release): pin that the gh client sends POST bodies with --input -; 79bf984 fix(release): send gh api POST bodies with --input -
+- surface: `scripts/github-release.ts`, the `release` job of `.github/workflows/publish.yml`.
+- change: `gh api` reads a request body from standard input only with `--input -`. The client now passes it for every POST, so the annotated tag, its ref, and the GitHub Release are created with their bodies. GET requests are unchanged. A test runs the client against a stand-in `gh` and checks each call's arguments and body.
+- errors: before the fix, GitHub answered the tag POST with HTTP 422 and the `release` job failed after npm publication.
+- compatibility: `ghClient` is exported for the test. No CLI, Worker, or schema change.
+- schema: none.
+
+#### Prepare the 0.5.2 release
+
+- commits: da88994 release: prepare polylinedb 0.5.2
+- surface: `package.json`, `package-lock.json`, MCP `initialize` `serverInfo.version`, `CHANGELOG.md`, `CHANGELOG.human.md`, `docs/releasing.md`.
+- change: the package version and `serverInfo.version` are 0.5.2. `## 0.5.2 (2026-10-12)` says 0.5.1 reached npm without a tag or a GitHub Release and that 0.5.2 carries the release job fix with the same CLI and Worker, and adds an upgrade note from 0.5.1.
+- schema: 8. Snapshot 6. No change in this landing.
+- deploy: npm publication after the owner approves the `publish` environment. Worker deployment stays a separate step.
+
 ### 2026-10-12 main f6a4e41
 
 - main: f6a4e41a8f2e1236f97785b19506be4963789239

@@ -10,7 +10,11 @@ The newest landing comes first.
 
 Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
 
+## 2026-10-12, landing da88994
+
 Version 0.5.2 finishes what 0.5.1 started. Version 0.5.1 reached npm, but the last step of the release, creating its tag and its GitHub Release, failed, so neither exists for 0.5.1. Version 0.5.2 fixes that step. The `pd` command itself works the same as in 0.5.1, so there is nothing to change when you move from 0.5.1 to 0.5.2.
+
+This landing puts version 0.5.2 on main. That push starts the Publish workflow, which waits for the owner to approve it before anything reaches npm. No Worker was deployed.
 
 ## 2026-10-12, landing f6a4e41
 
