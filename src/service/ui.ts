@@ -37,17 +37,23 @@ function japanTime(iso: string): string {
   return `${new Date(time + 9 * 3600_000).toISOString().slice(0, 16).replace('T', ' ')} JST`;
 }
 
-function row(issue: Issue, labels: ReadonlyMap<string, string>): string {
+function shownTime(issue: Issue, when: 'update' | 'closure'): { label: 'Last updated' | 'Closed'; at: string; by: string } {
+  if (when === 'closure' && issue.closed_at != null && issue.closed_by != null) return { label: 'Closed', at: issue.closed_at, by: issue.closed_by };
+  return { label: 'Last updated', at: issue.updated_at, by: issue.updated_by };
+}
+
+function row(issue: Issue, labels: ReadonlyMap<string, string>, when: 'update' | 'closure' = 'update'): string {
+  const stamp = shownTime(issue, when);
   return `<li class="quiet-row">
 <span class="primary">${escape(title(issue.body))}</span>
-<span class="secondary">${escape(issue.id)} · Last updated <time datetime="${escape(issue.updated_at)}">${escape(japanTime(issue.updated_at))}</time></span>
-<span class="secondary">${escape(labels.get(issue.updated_by) ?? issue.updated_by)}</span>
+<span class="secondary">${escape(issue.id)} · ${stamp.label} <time datetime="${escape(stamp.at)}">${escape(japanTime(stamp.at))}</time></span>
+<span class="secondary">${escape(person(stamp.by, labels))}</span>
 </li>`;
 }
 
-function section(heading: string, issues: readonly Issue[], labels: ReadonlyMap<string, string>, empty: string, note?: string): string {
+function section(heading: string, issues: readonly Issue[], labels: ReadonlyMap<string, string>, empty: string, note?: string, when: 'update' | 'closure' = 'update'): string {
   const notice = note === undefined ? '' : `<p class="section-note">${note}</p>`;
-  const body = issues.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${issues.map(issue => row(issue, labels)).join('')}</ul>`;
+  const body = issues.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${issues.map(issue => row(issue, labels, when)).join('')}</ul>`;
   return `<section class="quiet-section"><h2>${heading}</h2>${notice}${body}</section>`;
 }
 
@@ -392,7 +398,7 @@ function projectPage(tool: string, project: string, issues: readonly ProjectIssu
 </div>
 ${body}
 ${note}
-${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered by last update. The close time is not recorded.')}`);
+${section('Recently closed', closed, labels, 'Nothing has closed yet.', 'Ordered by close time. A row without a close record shows its last update, which is not the close time.', 'closure')}`);
 }
 
 const htmlHeaders = {

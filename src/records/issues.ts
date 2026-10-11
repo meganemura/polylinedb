@@ -394,7 +394,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
   }
 }
 
-// Orders by the last update, which an edit after the close can move; comments never touch updated_at.
+// A recorded closure sorts by closed_at. A null closure, from a close before schema 8, sorts after those by updated_at. Comments never touch updated_at.
 export async function recentlyClosedIssues(db: SqlExecutor, limit: number): Promise<Issue[]> {
   return (await db.reads.all(issueQueries.recentlyClosed, { limit })).map(issueRow);
 }

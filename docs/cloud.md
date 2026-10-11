@@ -686,9 +686,11 @@ The list shows at most 100 issues.
 It says when more match.
 
 **Recently closed** stays under the filtered list for every chip.
-It lists this project's closed issues, newest update first, at most 50.
-The time is the last update.
-Choosing the `closed` chip shows those issues in the filtered list as well.
+It lists this project's closed issues, newest close first, at most 50.
+A recorded close shows `closed_at` and `closed_by`.
+An issue with no close record sorts after the recorded closes and shows its last update, which is not the close time.
+An edit after the close does not move a recorded close.
+Choosing the `closed` chip shows those issues in the filtered list as well, still ordered by last update.
 
 ### Issue detail
 

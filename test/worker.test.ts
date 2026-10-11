@@ -9,6 +9,7 @@ import { createDispatcher, dispatchSecretNames } from "../src/service/dispatch.t
 import * as dispatchModule from "../src/service/dispatch.ts";
 import { handleRequest } from "../src/service/index.ts";
 import { SCHEMA_SQL } from "../src/records/schema.ts";
+import { statements } from "../src/records/solarsql.generated.ts";
 import { issueSortKey } from "../src/records/issue-id.ts";
 import { assertSnapshot } from "./fixtures/snapshot.ts";
 
@@ -866,6 +867,34 @@ test('/ui lists main-wait issues and closed issues by last update, with escaped 
     assert.ok(project.includes('<span class="secondary">access:&lt;b&gt;&quot;x&quot;</span>'));
     assert.ok(!project.includes('<img'));
     assertNoApplicationControls(project);
+  } finally { sqlite.close(); }
+});
+
+test('/ui orders recently closed by close time, and a later edit does not move a recorded close', async () => {
+  const { sqlite, env } = fixture(JSON.stringify(['access:owner', { actor: 'service:closer', role: 'agent', label: 'Closer' }]));
+  const token = await assertion();
+  try {
+    const legacy = await seedIssue(env, token, '# Legacy close');
+    const edited = await seedIssue(env, token, '# Edited after close');
+    const tied = await seedIssue(env, token, '# Same close, older edit');
+    const latest = await seedIssue(env, token, '# Latest close');
+    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ?, updated_by = ?, closed_at = ?, closed_by = ? WHERE id = ?');
+    stamp.run('closed', '2026-10-08T00:00:00.000Z', 'access:owner', null, null, legacy);
+    stamp.run('closed', '2026-10-09T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'service:closer', edited);
+    stamp.run('closed', '2026-10-03T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner', tied);
+    stamp.run('closed', '2026-10-02T00:00:00.000Z', 'access:owner', '2026-10-05T00:00:00.000Z', 'service:closer', latest);
+
+    const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': token })).text();
+    const closedPart = uiSection(project, 'Recently closed');
+    const ids = [...closedPart.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
+    assert.deepEqual(ids, [latest, edited, tied, legacy]);
+    assert.match(closedPart, /^Recently closed<\/h2><p class="section-note">Ordered by close time\. A row without a close record shows its last update, which is not the close time\.<\/p>/);
+    assert.ok(closedPart.includes(`<span class="primary">Latest close</span>\n<span class="secondary">${latest} · Closed <time datetime="2026-10-05T00:00:00.000Z">2026-10-05 09:00 JST</time></span>\n<span class="secondary">Closer</span>`));
+    assert.ok(closedPart.includes(`<span class="primary">Edited after close</span>\n<span class="secondary">${edited} · Closed <time datetime="2026-10-01T00:00:00.000Z">2026-10-01 09:00 JST</time></span>\n<span class="secondary">Closer</span>`));
+    assert.ok(closedPart.includes(`<span class="primary">Legacy close</span>\n<span class="secondary">${legacy} · Last updated <time datetime="2026-10-08T00:00:00.000Z">2026-10-08 09:00 JST</time></span>\n<span class="secondary">access:owner</span>`));
+    assert.equal(closedPart.includes(`${legacy} · Closed`), false);
+    const globalIds = sqlite.prepare(statements.recentlyClosed).all({ limit: 10 }).map(row => String(row.id));
+    assert.deepEqual(globalIds, [latest, edited, tied, legacy]);
   } finally { sqlite.close(); }
 });
 
