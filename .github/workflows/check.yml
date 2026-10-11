@@ -27,6 +27,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run check:architecture
       - run: npm test
+      - run: npm run check:ui-latency
       - run: npm run test:d1
       - run: npm exec -- vite build
         env:

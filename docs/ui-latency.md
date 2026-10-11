@@ -17,6 +17,50 @@ The budget counts from the input that starts a step to the first paint of the ne
 A step that waits for the network cannot meet 100 ms on a phone link once the round trip and the Worker's D1 reads add up to more than that.
 Such a step meets the budget only when the browser already holds the next page.
 
+## Check the budget in CI
+
+`scripts/ui-latency-budget.ts` is the CI gate.
+It renders `/ui` through the Worker handler on local SQLite.
+It does not start Chrome, and it does not seed the 1,000-issue store that `scripts/ui-latency.ts` uses.
+
+```sh
+npm run check:ui-latency
+```
+
+The Check workflow runs that command on every push and pull request.
+A change that touches the Worker `/ui` code fails the workflow when a budgeted step misses.
+`npm test` runs the same gate, including the cases that remove prefetch, add a server delay, or drop the back-forward cache.
+
+The tolerance for CI noise is 0 ms.
+The gate does not sample paint, so it has no paint sample to smooth.
+A step fails when its bound is greater than its budget.
+
+The bound uses the numbers in the budget table and in the measurement below.
+It does not add a Chrome timing.
+
+A followed link after the first load has a budget of 100 ms.
+When the page prefetches `/ui` and `/ui/*`, the bound is the longest `animation-duration` in the page.
+The current crossfade is 80 ms, which is inside 100 ms.
+When those URLs are not prefetched, the bound is the 150 ms phone stand-in from the measurement below, and the link misses 100 ms.
+A server delay longer than the 300 ms rest is on that same path.
+The bound is then 150 ms plus the delay.
+A delay of 150 ms stays off the path, because a rested prefetch already hides that stand-in.
+First load and search submit have no budget, so the gate does not fail them.
+
+Back and forward have a budget of one frame, 16 ms.
+The bound is 16 ms when the page can return from the back-forward cache.
+`Cache-Control: private, no-cache` can.
+`no-store` cannot.
+An `onbeforeunload` attribute cannot, and neither can a script that listens for `beforeunload` or `pagehide`.
+Without that cache, the bound is the 150 ms stand-in, and the step misses the frame.
+
+A budget miss fails the change.
+A feature that cannot meet the budget needs an owner decision before it lands.
+Keep the prefetch rules, the private `no-cache` header, and the 80 ms crossfade unless that decision says otherwise.
+
+`scripts/ui-latency.ts` remains the way to measure paint in Chrome.
+The gate does not replace those measurements.
+
 ## Measure on local workerd
 
 `scripts/ui-latency.ts` runs the built Worker in local workerd with a synthetic D1 store.
