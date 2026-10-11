@@ -23,6 +23,11 @@ Names exclude control characters.
 Bodies exclude NUL and whitespace-only content.
 Each label follows the same rules as a tool name.
 An issue also contains `versions`, `created_at`, `created_by`, `updated_at`, and `updated_by`.
+Local results and MCP add `closed_at` and `closed_by`: the time and actor of the transition into `closed`.
+Both are null while the issue is not closed, and for an issue closed before schema 8.
+Closing an issue that is already closed keeps the first closure.
+Reopen and any other status change away from `closed` clear them, and other edits keep them.
+`/v1/operations` responses omit both fields, so released cloud clients keep reading the same issue shape.
 Timestamps use UTC ISO strings.
 
 Use `tool` for the affected tool or component, such as `compiler`, `editor`, or `polylinedb`.
@@ -64,6 +69,7 @@ See [issue prerequisites](prerequisites.md) for aggregate conflicts, immutable r
 Close and updates that request `in_progress` or `closed` accept `force: true` with a nonempty `reason` for an explicit exception.
 The reason becomes an attributed comment in the successful status transaction. Ordinary operation results retain their existing shapes.
 Schema 7 adds the [change feed](#change-feed) and keeps every operation result unchanged.
+Schema 8 adds `closed_at` and `closed_by` to issues in local results and MCP.
 Version 0.3.0 uses schema 6 and adds issue ownership while retaining all seven ordinary issue fields.
 Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
@@ -162,6 +168,7 @@ One write can record several events. They take consecutive numbers in this order
 An active blocker has any status other than `closed`, including `in_progress` and `deferred`.
 A dependent with two active blockers records `became_ready` only when the second one closes or is removed.
 Closing an issue that is already closed records `status_changed` and no `became_ready`.
+`closed_at` and `closed_by` have no field versions, so `fields` never names them; a close records `status`, and a reader reads the issue again for its closure.
 A dependent that is not `open`, or that becomes blocked again, records no event of its own.
 
 These writes record no event:
@@ -402,14 +409,17 @@ These maintenance commands operate on local SQLite stores.
 The Worker API does not expose them, and the CLI does not synchronize SQLite with D1.
 
 Schema 7 adds the change feed and keeps portable snapshot 5. A snapshot carries no change events.
+Schema 8 records who closed an issue and when, and portable snapshot 6 carries `closed_at` and `closed_by` on every issue.
 Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, or 6 store after making a private backup.
-The upgrade to schema 7 starts with an empty change feed.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, or 7 store after making a private backup.
+An upgrade from schema 2 through 6 starts with an empty change feed.
+Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
+After the upgrade, an installed CLI that predates schema 8 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3 or v4 snapshot, use `--from 3` or `--from 4` instead.
+For a v3, v4, or v5 snapshot, use `--from 3`, `--from 4`, or `--from 5` instead.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.
