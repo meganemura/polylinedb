@@ -1929,7 +1929,9 @@ test('dispatch: an overlapping press is already sending and does not fetch again
   const configured = withWebhook(env);
   const posts: ReceivedPost[] = [];
   let release: (response: Response) => void = () => {};
+  let markStarted: () => void = () => {};
   const gate = new Promise<Response>(resolve => { release = resolve; });
+  const fetchStarted = new Promise<void>(resolve => { markStarted = resolve; });
   const dispatcher = createDispatcher({
     fetch: async (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -1938,6 +1940,7 @@ test('dispatch: an overlapping press is already sending and does not fetch again
         url, authorization: headers.get('authorization'), contentType: headers.get('content-type'),
         redirect: init?.redirect, body: typeof init?.body === 'string' ? init.body : '',
       });
+      markStarted();
       return gate;
     },
     now: () => dispatchOpenedAt,
@@ -1946,7 +1949,11 @@ test('dispatch: an overlapping press is already sending and does not fetch again
     const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
     const before = storedIssue(sqlite, id);
     const first = pressDispatch(configured, id, token, dispatcher, browserPress());
-    for (let turn = 0; posts.length === 0 && turn < 50; turn += 1) await new Promise(resolve => setImmediate(resolve));
+    const observed = await Promise.race([
+      fetchStarted.then(() => 'fetch' as const),
+      first.then(() => 'response' as const),
+    ]);
+    assert.equal(observed, 'fetch');
     assert.equal(posts.length, 1);
     const second = await pressDispatch(configured, id, token, dispatcher, browserPress());
     await assertOutcome(second, 200, 'Already sending.', id);
