@@ -27,58 +27,69 @@ function jobs(source: string): Map<string, string> {
 
 const job = jobs(publish);
 
-test('publish stays the approved npm job and release follows it', () => {
-  assert.deepEqual([...job.keys()], ['publish', 'release']);
-  const release = job.get('release') ?? '';
-  const npm = job.get('publish') ?? '';
-  assert.match(npm, /^    if: github\.ref == 'refs\/heads\/main'$/m);
-  assert.match(npm, /^    environment: publish$/m);
-  assert.match(npm, /    permissions:\n      contents: read\n      id-token: write\n/);
-  assert.doesNotMatch(npm, /contents: write/);
-  assert.match(release, /^    needs: publish$/m);
-  assert.match(release, /^    if: github\.ref == 'refs\/heads\/main'$/m);
-  assert.match(release, /    permissions:\n      contents: write\n/);
-  assert.doesNotMatch(release, /id-token/);
-  assert.doesNotMatch(release, /environment:/);
-  assert.match(publish, /^permissions:\n  contents: read$/m);
-  assert.equal(publish.match(/id-token: write/g)?.length, 1);
-  assert.equal(publish.match(/contents: write/g)?.length, 1);
-  assert.equal(publish.match(/persist-credentials: false/g)?.length, 2);
+test('a push to main that changes package.json starts the workflow, with no manual path', () => {
+  assert.match(publish, /^on:\n  push:\n    branches: \[main\]\n    paths: \[package\.json\]\n\n/m);
+  assert.doesNotMatch(publish, /workflow_dispatch|\binputs\b|APPROVED_COMMIT/);
+  assert.match(publish, /^permissions: \{\}$/m);
+  assert.match(publish, /^concurrency:\n  group: npm-publish\n  cancel-in-progress: false$/m);
 });
 
-test('release notes are checked before npm publish and written before the tag step', () => {
+test('check gates publish, publish holds the only OIDC grant, and release holds the only write grant', () => {
+  assert.deepEqual([...job.keys()], ['check', 'publish', 'release']);
+  const check = job.get('check') ?? '';
   const npm = job.get('publish') ?? '';
   const release = job.get('release') ?? '';
-  const check = npm.indexOf('name: Check the release notes');
-  const install = npm.indexOf('npm ci --ignore-scripts');
-  const integrity = npm.indexOf('name: Verify registry integrity');
-  assert.ok(check > -1 && install > check && integrity > install);
+  assert.match(check, /    permissions:\n      contents: read\n    outputs:\n      tag: \$\{\{ steps\.version\.outputs\.tag \}\}\n      version: \$\{\{ steps\.version\.outputs\.version \}\}\n/);
+  assert.match(check, /run: node scripts\/release-version\.ts/);
+  assert.doesNotMatch(check, /environment:|needs:/);
+  assert.match(npm, /^    needs: check$/m);
+  assert.match(npm, /^    if: needs\.check\.outputs\.tag != ''$/m);
+  assert.match(npm, /^    environment: publish$/m);
+  assert.match(npm, /    permissions:\n      contents: read\n      id-token: write\n/);
+  assert.match(release, /^    needs: \[check, publish\]$/m);
+  assert.match(release, /    permissions:\n      contents: write\n/);
+  assert.doesNotMatch(release, /id-token|environment:/);
+  assert.equal(publish.match(/id-token: write/g)?.length, 1);
+  assert.equal(publish.match(/contents: write/g)?.length, 1);
+  assert.equal(publish.match(/environment:/g)?.length, 1);
+  assert.equal(publish.match(/persist-credentials: false/g)?.length, 3);
+});
+
+test('publish verifies before npm, skips an already published identical tarball, and always checks the registry', () => {
+  const npm = job.get('publish') ?? '';
+  const order = ['name: Check the release notes', 'npm ci --ignore-scripts', 'npm run typecheck', 'npm run check:architecture', 'npm test',
+    'npm run test:d1', 'npm exec -- vite build', 'node test/worker.integration.ts', 'npm audit', 'name: Verify the distributable',
+    'decision="$(node scripts/npm-release.ts)"', '--dry-run', 'name: Verify registry integrity'];
+  const positions = order.map(step => npm.indexOf(step));
+  assert.ok(positions.every(position => position > -1), String(positions));
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions);
+  assert.match(npm, /if \[ "\$decision" = publish \]; then\n {12}npm publish "\$RELEASE_TARBALL" --dry-run/);
+  assert.doesNotMatch(npm.slice(npm.indexOf('name: Verify registry integrity')), /^\s+if:/m);
+});
+
+test('release writes the notes before it tags the pushed commit', () => {
+  const release = job.get('release') ?? '';
   assert.match(release, /node scripts\/release-notes\.ts/);
   assert.match(release, /node scripts\/github-release\.ts/);
   assert.ok(release.indexOf('node scripts/release-notes.ts') < release.indexOf('node scripts/github-release.ts'));
   assert.match(release, /GH_TOKEN: \$\{\{ github\.token \}\}/);
-  assert.equal(release.split('GH_TOKEN').length, 2);
+  assert.equal(publish.split('GH_TOKEN').length, 2);
 });
 
-test('workflow actions are GitHub-owned and pinned, and inputs stay in env bindings', () => {
+test('workflow actions are GitHub-owned and pinned, and expressions stay in env bindings', () => {
   const uses: string[] = [];
   for (const name of workflows) {
     const source = readFileSync(new URL(`.github/workflows/${name}`, root), 'utf8');
     for (const line of source.split('\n')) {
       const use = line.trim().replace(/^- /, '');
       if (use.startsWith('uses:')) uses.push(use);
-      if (!line.includes('${{ inputs.')) continue;
-      assert.match(line, /^\s+[A-Z][A-Z0-9_]*: \$\{\{ inputs\.(version|commit) \}\}$/);
+      if (!line.includes('${{ needs.check.outputs.')) continue;
+      assert.match(line, /^\s+(?:[A-Z][A-Z0-9_]*: \$\{\{ needs\.check\.outputs\.version \}\}|if: needs\.check\.outputs\.tag != '')$/);
     }
   }
-  assert.deepEqual(uses, [
+  const pair = [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
     'uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-    'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-    'uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-    'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-    'uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-    'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-    'uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-  ]);
+  ];
+  assert.deepEqual(uses, [...pair, ...pair, ...pair, ...pair, ...pair]);
 });

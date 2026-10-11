@@ -78,7 +78,7 @@ function canonicalNotes(value: string): string {
 
 export async function ensureRelease(client: ReleaseClient, input: { version: string; commit: string; notes: string }): Promise<ReleaseOutcome> {
   if (!versionPattern.test(input.version)) refuse(`Invalid version: ${input.version}`);
-  if (!commitPattern.test(input.commit)) refuse('The approved commit must be a full lowercase SHA');
+  if (!commitPattern.test(input.commit)) refuse('The release commit must be a full lowercase SHA');
   if (input.notes.trim() === '') refuse('Release notes are empty');
   const tag = releaseTag(input.version);
   const refName = `refs/tags/${tag}`;
@@ -214,10 +214,10 @@ function ghClient(repo: string, date: () => string): ReleaseClient {
 
 export async function runRelease(env: NodeJS.ProcessEnv, client: ReleaseClient): Promise<ReleaseOutcome> {
   const version = env.RELEASE_VERSION ?? '';
-  const commit = env.APPROVED_COMMIT ?? '';
+  // The workflow runs on the push to main that changed the version, so the released commit is the pushed commit.
+  const commit = env.GITHUB_SHA ?? '';
   const notesPath = env.RELEASE_NOTES_FILE ?? '';
-  if (!commitPattern.test(commit)) refuse('APPROVED_COMMIT must be a full lowercase SHA');
-  if ((env.GITHUB_SHA ?? '') !== commit) refuse('GITHUB_SHA does not match the approved commit');
+  if (!commitPattern.test(commit)) refuse('GITHUB_SHA must be a full lowercase SHA');
   if (notesPath === '') refuse('RELEASE_NOTES_FILE is missing');
   let notes = '';
   try {

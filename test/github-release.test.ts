@@ -48,7 +48,7 @@ function client(options: { refs?: TagRef[]; release?: ReleaseRecord | null; comm
   return { github, calls, created };
 }
 
-test('a missing tag and release are created on the approved commit', async () => {
+test('a missing tag and release are created on the release commit', async () => {
   const fake = client();
   const outcome = await ensureRelease(fake.github, { version: '1.2.3', commit, notes });
   assert.deepEqual(outcome, { tag: 'created', release: 'created' });
@@ -101,19 +101,21 @@ test('a different title or notes fails without creating another release', async 
   await assert.rejects(() => ensureRelease(rewritten.github, { version: '1.2.3', commit, notes }), /does not match/);
 });
 
-test('the command reads notes and refuses a commit that is not the workflow SHA', async context => {
+test('the command reads notes and releases the pushed workflow SHA', async context => {
   const root = mkdtempSync(join(tmpdir(), 'pd-release-'));
   context.after(() => rmSync(root, { recursive: true, force: true }));
   const notesPath = join(root, 'notes.md');
   writeFileSync(notesPath, notes);
   const fake = client();
   const outcome = await runRelease({
-    RELEASE_VERSION: '1.2.3', APPROVED_COMMIT: commit, GITHUB_SHA: commit, RELEASE_NOTES_FILE: notesPath,
+    RELEASE_VERSION: '1.2.3', GITHUB_SHA: commit, RELEASE_NOTES_FILE: notesPath,
   }, fake.github);
   assert.equal(outcome.release, 'created');
+  assert.equal(fake.created.tag?.sha, tagObject);
   await assert.rejects(() => runRelease({
-    RELEASE_VERSION: '1.2.3', APPROVED_COMMIT: commit, GITHUB_SHA: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', RELEASE_NOTES_FILE: notesPath,
-  }, fake.github), /GITHUB_SHA does not match/);
+    RELEASE_VERSION: '1.2.3', GITHUB_SHA: 'main', RELEASE_NOTES_FILE: notesPath,
+  }, fake.github), /GITHUB_SHA must be a full lowercase SHA/);
+  await assert.rejects(() => runRelease({ RELEASE_VERSION: '1.2.3', RELEASE_NOTES_FILE: notesPath }, fake.github), /GITHUB_SHA must be a full lowercase SHA/);
 });
 
 test('GitHub responses keep the annotated tag distinct from its commit', () => {
