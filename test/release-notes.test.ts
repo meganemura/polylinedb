@@ -160,3 +160,11 @@ test('the command prints the real 0.4.0 and 0.3.1 notes and fails for a missing 
   assert.match(missing.stderr, /no section for 9\.9\.9/);
   assert.equal(missing.stdout, '');
 });
+
+// Readers cannot open pd, so a pd issue id in a changelog means nothing to them.
+test('neither changelog names a pd issue id', () => {
+  for (const file of ['CHANGELOG.md', 'CHANGELOG.human.md']) {
+    const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(text, /\bpd\s*[-#]?\s*\d/i, `${file} names no pd issue id`);
+  }
+});

@@ -93,7 +93,8 @@ Every landing of `queue` onto main updates both changelog files at the repositor
 `CHANGELOG.md` is the agent changelog. `CHANGELOG.human.md` is the changelog for people.
 Whoever lands `queue` onto main adds one entry for that landing to each file, in one commit on top of the commits being landed, and lands that commit with them.
 The `CHANGELOG.md` entry goes under `## Main landings`, newest first, with the heading `### YYYY-MM-DD main SHORT_SHA`, where the SHA is the newest landed commit below the changelog commit.
-It ties each change to its commits and its pd issue, and names MCP and CLI behavior, return fields, error and no-op semantics, required Worker secrets and bindings, D1 schema versions and migrations, and deploy prerequisites.
+It ties each change to its commits and describes it in words, and names MCP and CLI behavior, return fields, error and no-op semantics, required Worker secrets and bindings, D1 schema versions and migrations, and deploy prerequisites.
 The `CHANGELOG.human.md` entry says in a few plain sentences what people can now do or what changed in `/ui` and the workflow, without internals.
 Name Worker secrets and bindings only by name. Never write secret values, tokens, account IDs, or webhook URLs into either file.
+Never write pd issue ids, such as `pd-149`, into either file, including under `## Unreleased`. Readers cannot open pd, so describe the change in words.
 An agent that enqueues may add its own line under `## Unreleased` in `CHANGELOG.md`. The landing entries belong to whoever lands `queue`.

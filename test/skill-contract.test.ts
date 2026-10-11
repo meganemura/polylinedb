@@ -43,3 +43,9 @@ test('the skill takes capabilities from advertised schemas rather than release s
   assert.doesNotMatch(skill, /\bschema \d/i, 'the skill names no schema number');
   assert.doesNotMatch(skill, /\bunreleased\b|\bpre-release\b|\bnot yet (released|published)\b/i, 'the skill has no release status');
 });
+
+test('the queue skill copies match and keep pd issue ids out of the changelogs', () => {
+  const queue = readFileSync(new URL('../skills/polylinedb-queue/SKILL.md', import.meta.url), 'utf8');
+  assert.equal(readFileSync(new URL('../.cursor/skills/polylinedb-queue/SKILL.md', import.meta.url), 'utf8'), queue);
+  assert.ok(queue.includes('Never write pd issue ids, such as `pd-149`, into either file'));
+});
