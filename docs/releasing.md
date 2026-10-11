@@ -13,6 +13,7 @@ Version `0.4.0` accepts unknown cloud response fields and completes `show` witho
 Version `0.5.0` adds the change feed, `pd wait`, owner waits, claim keepalive, and issue closure records, with schema 8 and snapshot 6.
 Version `0.5.0` was prepared on main but never published to npm.
 Version `0.5.1` is the first release from the automatic workflow and carries the changes of `0.5.0`.
+Version `0.5.1` reached npm, but its `release` job failed, so it has no tag and no GitHub Release. Version `0.5.2` fixes that job and has the same CLI and Worker as `0.5.1`.
 
 ## Cut a release
 

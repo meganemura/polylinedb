@@ -1,6 +1,6 @@
 {
   "name": "polylinedb",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "description": "Polyline database: project memory and task tracking for local tools and cloud agents",
   "engines": {

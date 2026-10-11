@@ -295,7 +295,17 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
-- Send the request body in the `release` job of the Publish workflow. `scripts/github-release.ts` passed JSON to `gh api` on standard input without `--input -`, so the POSTs that create the annotated tag, its ref, and the GitHub Release sent no body, and GitHub answered the tag request with HTTP 422. The 0.5.1 run published to npm but created no tag or release. After this fix lands on main, re-run only the failed `release` job of that run; it creates `v0.5.1` and the release on the published commit. No npm, schema, or Worker change.
+## 0.5.2 (2026-10-12)
+
+Version 0.5.1 was published to npm, but the `release` job of its Publish run failed, so it has no `v0.5.1` tag and no GitHub Release.
+Version 0.5.2 contains the fix for that job. The `pd` CLI and the Worker are the same as in 0.5.1.
+
+- Send the request body in the `release` job of the Publish workflow. `scripts/github-release.ts` passed JSON to `gh api` on standard input without `--input -`, so the POSTs that create the annotated tag, its ref, and the GitHub Release sent no body, and GitHub answered the tag request with HTTP 422. The 0.5.1 run published to npm but created no tag or release. A re-run of that failed job runs the code of the 0.5.1 commit, so it cannot pick up this fix. Version 0.5.1 therefore keeps no tag and no GitHub Release, and 0.5.2 carries the fix. No CLI, schema, or Worker change.
+
+### Upgrade from 0.5.1
+
+No action is needed. Version 0.5.2 uses schema 8 and snapshot 6, as 0.5.1 does.
+From 0.4.0, follow [the upgrade from 0.4.0](CHANGELOG.md#upgrade-from-040) in the 0.5.1 section.
 
 ## 0.5.1 (2026-10-12)
 

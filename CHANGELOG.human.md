@@ -10,6 +10,8 @@ The newest landing comes first.
 
 Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
 
+Version 0.5.2 finishes what 0.5.1 started. Version 0.5.1 reached npm, but the last step of the release, creating its tag and its GitHub Release, failed, so neither exists for 0.5.1. Version 0.5.2 fixes that step. The `pd` command itself works the same as in 0.5.1, so there is nothing to change when you move from 0.5.1 to 0.5.2.
+
 ## 2026-10-12, landing f6a4e41
 
 Version 0.5.1 is the next `pd` release on npm. Version 0.5.0 was prepared but never published, so 0.5.1 brings everything listed for 0.5.0: the change feed, `pd wait`, owner waits, claim keepalive, issue close records, and the `/ui` fixes. Moving from 0.4.0 still means running `pd upgrade` on your local store and converting an older snapshot with `pd snapshot convert --from 5`.
