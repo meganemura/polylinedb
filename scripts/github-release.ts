@@ -178,7 +178,10 @@ function ghResult(args: string[], input?: string): { status: number; stdout: str
 }
 
 function ghApi(method: string, path: string, body?: unknown): unknown {
-  const result = ghResult(['api', '--method', method, path], body === undefined ? undefined : JSON.stringify(body));
+  // gh api sends standard input as the request body only with --input -.
+  const result = body === undefined
+    ? ghResult(['api', '--method', method, path])
+    : ghResult(['api', '--method', method, path, '--input', '-'], JSON.stringify(body));
   return interpretGh(method, result.status, result.stdout, result.stderr);
 }
 
