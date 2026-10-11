@@ -10,6 +10,12 @@ The newest landing comes first.
 
 Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
 
+## 2026-10-12, landing c543fb5
+
+The `pd` command on main is now version 0.5.0, and the tag `v0.5.0` marks it. The package is not published to npm yet; that happens in a separate step the owner approves.
+The 0.5.0 notes in `CHANGELOG.md` say how to move from 0.4.0: upgrade your local store with `pd upgrade`, and convert an older snapshot with `pd snapshot convert --from 5` before you import it.
+No Worker was deployed in this landing.
+
 ## 2026-10-11, landing 55af219
 
 The **Dispatch** button in `/ui` works again. Pressing it used to fail with "Origin is not allowed." because the page told the browser to hide where the request came from. `/ui` pages now share that only with the same site, so other sites still learn nothing, and requests from other sites are still refused. This takes effect after the next Worker deploy, which this landing does not do.

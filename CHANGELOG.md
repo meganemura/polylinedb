@@ -19,6 +19,24 @@ Whoever lands `queue` onto main writes both entries in one commit on top of the 
 Each change under it is a `####` heading that names the change in words, and a list of `key: value` lines, so a search such as `grep -n '^- secrets:' CHANGELOG.md` finds it.
 The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`, `schema`, `secrets`, `deploy`, and `status`. A key that does not apply is left out.
 
+### 2026-10-12 main c543fb5
+
+- main: c543fb5e634ab4b64e8252d7d80a3705c2cab78f
+- previous main: a797df837109f670d46678ca015e2ca980ff0bbb
+- landed commits: c543fb5
+- schema: 8. This landing does not change D1.
+- deploy: not done. No Worker deploy in this landing.
+- cli: `package.json` is 0.5.0. No npm publish in this landing. The annotated tag `v0.5.0` marks this landing's main tip.
+
+#### Prepare the 0.5.0 release
+
+- commits: c543fb5 release: prepare polylinedb 0.5.0
+- surface: `package.json`, `package-lock.json`, MCP `initialize` `serverInfo.version`, `CHANGELOG.md` release sections, `docs/releasing.md`.
+- change: the package version and the MCP `serverInfo.version` are 0.5.0. The former `## Unreleased` section is now `## 0.5.0 (2026-10-12)`, and an empty `## Unreleased` section sits above it. Its `### Upgrade from 0.4.0` subsection is now the last part of the 0.5.0 section, so `scripts/release-notes.ts` includes it in the release notes. It states that 0.5.0 uses schema 8 and snapshot 6, that a local store needs `pd upgrade`, that a 0.4.0 snapshot needs `pd snapshot convert --from 5`, and how the 0.5.0 CLI and a 0.4.0 Worker work together.
+- compatibility: the publish workflow's version checks pass for 0.5.0: the manifest and both lockfile versions match, and the release notes section is not empty.
+- schema: 8. Snapshot 6. No change in this landing.
+- deploy: npm publication is a separate, owner-approved run of `publish.yml`. Worker deployment and the D1 upgrade stay separate steps.
+
 ### 2026-10-11 main 55af219
 
 - main: 55af2190d3e7c97a9fd1aa6ad60eafbc9acfd11b
