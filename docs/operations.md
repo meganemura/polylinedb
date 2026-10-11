@@ -51,7 +51,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
 | `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ..., "open_blockers": [...] }` |
 | `claim_renew` | `claim_proof`, `expected_revision`, `request_id`; optional `ttl` | `{ "claim_receipt": ... }` |
-| `claim_release` | `claim_proof`, `expected_revision`, `request_id` | `{ "claim_receipt": ... }` |
+| `claim_release` | `claim_proof`, `expected_revision`, `request_id`; optional `expired_noop: true` | `{ "claim_receipt": ... }`; with `expired_noop` and the caller's expired lease, `{ "released": false, "current": ... }` |
 | `changes` | `since`; `incarnation` when `since` is greater than 0; optional `project`, `issue_ids`, `kinds`, `limit` | `{ "incarnation": ..., "changes": [...], "next_since": ... }` |
 
 Unknown arguments are rejected.
@@ -335,11 +335,12 @@ It also must not send a new discriminator value, a new success shape, or details
 The client rejects each of these.
 Version 0.4.0 accepts unknown response fields. The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
 
-Three fields are optional so that the client works with Workers on both sides of a change:
+Four fields are optional so that the client works with Workers on both sides of a change:
 
 - `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
 - `open_blockers` in `claim_acquire`. When the Worker sends it, it must be an array of issue IDs in issue order that does not contain the claimed issue, and the client includes that array. When the Worker omits it, the result has no `open_blockers` key.
 - `matches` in `search`. A Worker that predates `with_matches` answers the request with `invalid_input`, and only the error message names the field. The client then sends the search once more without `with_matches` and returns that page without `matches`. If that request fails, the search fails with its error. A successful response to a request with `with_matches` must still contain `matches`.
+- `expired_noop` in `claim_release`. A Worker answers `{ "released": false, "current": ... }` only to a request with `expired_noop: true`, so a request without it keeps the `claim_receipt` or `claim_conflict` answer that older clients decode. The client accepts that shape only for a request with the field, and only when `current` is the expired lease that the proof names. A Worker that predates the field answers `invalid_input`, and only the error message names the field. Nothing is written, so the client sends the release once more with the same request UUID and without the field. That Worker answers `claim_conflict` for an expired lease.
 
 ## Local repository defaults
 

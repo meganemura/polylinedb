@@ -90,11 +90,12 @@ test('claim acquisition needs the current incarnation and no active lease', () =
   assert.deepEqual(decideClaimMutation(lease({ released_at: 1, revision: Number.MAX_SAFE_INTEGER }), store, acquire, 'alice', 999), { accepted: false, reason: 'counter_exhausted' });
 });
 
-test('only the proof holder of an expired lease owns it for cleanup', () => {
-  const release = { op: 'claim_release', claim_proof: proof, expected_revision: 5 } as const;
+test('only the proof holder of an expired lease owns it for an opted-in cleanup', () => {
+  const release = { op: 'claim_release', claim_proof: proof, expected_revision: 5, expired_noop: true } as const;
   assert.deepEqual(decideClaimMutation(lease(), store, release, 'alice', 1000), { accepted: true });
+  assert.deepEqual(decideClaimMutation(lease(), store, { op: 'claim_release', claim_proof: proof, expected_revision: 5 }, 'alice', 1000), { accepted: false, reason: 'proof_rejected' });
   assert.deepEqual(decideClaimMutation(lease(), store, { ...release, expected_revision: 4 }, 'alice', 1001), { accepted: true });
-  assert.deepEqual(decideClaimMutation(lease(), store, { ...release, op: 'claim_renew' }, 'alice', 1000), { accepted: false, reason: 'proof_rejected' });
+  assert.deepEqual(decideClaimMutation(lease(), store, { op: 'claim_renew', claim_proof: proof, expected_revision: 5 }, 'alice', 1000), { accepted: false, reason: 'proof_rejected' });
   assert.deepEqual(decideClaimMutation(lease(), store, release, 'bob', 1000), { accepted: false, reason: 'proof_rejected' });
   assert.deepEqual(decideClaimMutation(lease({ session_id: '00000000-0000-4000-8000-000000000099' }), store, release, 'alice', 1000), { accepted: false, reason: 'proof_rejected' });
   assert.deepEqual(decideClaimMutation(lease({ generation: 9 }), store, release, 'alice', 1000), { accepted: false, reason: 'proof_rejected' });

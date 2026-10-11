@@ -12,7 +12,7 @@ import type { SqlStatement } from '../src/records/issues.ts';
 import type { SqlExecutor } from '../src/records/issues.ts';
 import { node } from 'solarsql/node';
 import { d1Executor } from '../src/service/d1.ts';
-import { executeOperation, parseOperation } from '../src/records/index.ts';
+import { executeOperation, parseOperation, PolylinedbError } from '../src/records/index.ts';
 
 type Row = Record<string, unknown>;
 type Backend = { batch(statements: readonly SqlStatement[]): Promise<readonly Row[][]>; dispose(): Promise<void> };
@@ -185,8 +185,12 @@ try {
     const expiredProof = proof(expiredOwner.claim_receipt);
     const revisionBefore = expiredOwner.claim_receipt.revision;
     await db.batch([sql("UPDATE issue_claims SET acquired_at=MIN(acquired_at,unixepoch()-1),expires_at=unixepoch() WHERE issue_id='pd-8'")]);
+    await assert.rejects(product({ op: 'claim_release', claim_proof: expiredProof, expected_revision: revisionBefore, request_id: crypto.randomUUID() }),
+      (error: unknown) => error instanceof PolylinedbError && error.code === 'claim_conflict' && error.status === 409 && JSON.stringify(error.details).includes('"state":"expired"'));
+    await assert.rejects(product({ op: 'claim_release', claim_proof: { ...expiredProof, session_id: session() }, expected_revision: revisionBefore, request_id: crypto.randomUUID(), expired_noop: true }), { code: 'claim_conflict' });
+    await assert.rejects(product({ op: 'claim_release', claim_proof: { ...expiredProof, generation: expiredProof.generation + 1 }, expected_revision: revisionBefore, request_id: crypto.randomUUID(), expired_noop: true }), { code: 'claim_conflict' });
     const asBody = (value: unknown) => JSON.parse(JSON.stringify(value)) as { released?: boolean; current?: { state?: string; lease?: { revision?: number; released_at?: number | null } | null } };
-    const noop = asBody(await product({ op: 'claim_release', claim_proof: expiredProof, expected_revision: revisionBefore, request_id: crypto.randomUUID() }));
+    const noop = asBody(await product({ op: 'claim_release', claim_proof: expiredProof, expected_revision: revisionBefore, request_id: crypto.randomUUID(), expired_noop: true }));
     assert.equal(noop.released, false);
     assert.equal(noop.current?.state, 'expired');
     assert.equal(noop.current?.lease?.revision, revisionBefore);
@@ -195,19 +199,19 @@ try {
     assert.equal(shownExpired.claim.state, 'expired');
     assert.equal(shownExpired.claim.lease?.revision, revisionBefore);
     const foreign = await product({ ...expiredAcquire, session_id: session(), request_id: crypto.randomUUID() }); assert.ok('claim_receipt' in foreign);
-    await assert.rejects(product({ op: 'claim_release', claim_proof: expiredProof, expected_revision: foreign.claim_receipt.revision, request_id: crypto.randomUUID() }), { code: 'claim_conflict' });
+    await assert.rejects(product({ op: 'claim_release', claim_proof: expiredProof, expected_revision: foreign.claim_receipt.revision, request_id: crypto.randomUUID(), expired_noop: true }), { code: 'claim_conflict' });
     const activeForeign = await product({ op: 'claim_show', issue_id: 'pd-8' }); assert.ok('claim' in activeForeign);
     assert.equal(activeForeign.claim.state, 'active');
     assert.equal(activeForeign.claim.lease?.revision, foreign.claim_receipt.revision);
     await db.batch([sql("UPDATE issue_claims SET acquired_at=MIN(acquired_at,unixepoch()-1),expires_at=unixepoch() WHERE issue_id='pd-8'")]);
-    await assert.rejects(product({ op: 'claim_release', claim_proof: expiredProof, expected_revision: foreign.claim_receipt.revision, request_id: crypto.randomUUID() }), { code: 'claim_conflict' });
+    await assert.rejects(product({ op: 'claim_release', claim_proof: expiredProof, expected_revision: foreign.claim_receipt.revision, request_id: crypto.randomUUID(), expired_noop: true }), { code: 'claim_conflict' });
     const stillForeign = await product({ op: 'claim_show', issue_id: 'pd-8' }); assert.ok('claim' in stillForeign);
     assert.equal(stillForeign.claim.state, 'expired');
     assert.equal(stillForeign.claim.lease?.revision, foreign.claim_receipt.revision);
-    const cleanup = asBody(await product({ op: 'claim_release', claim_proof: proof(foreign.claim_receipt), expected_revision: 1, request_id: crypto.randomUUID() }));
+    const cleanup = asBody(await product({ op: 'claim_release', claim_proof: proof(foreign.claim_receipt), expected_revision: 1, request_id: crypto.randomUUID(), expired_noop: true }));
     assert.equal(cleanup.released, false);
     assert.equal(cleanup.current?.lease?.revision, foreign.claim_receipt.revision);
-    process.stdout.write(`PASS ${name} product: expired own lease release no-op, newer lease release conflict\n`);
+    process.stdout.write(`PASS ${name} product: default expired own lease release conflict, opted-in expired own lease release no-op, other session, generation, and newer lease release conflict\n`);
     process.stdout.write(`PASS ${name} product: strict claim parser, generated inspection, immutable replay classification, closed acquisition, close/reopen fencing, force denial\n`);
     process.stdout.write(`PASS ${name}: concurrent acquisition and UUID admission, original receipt history, actor/session/payload conflicts, CAS, equality expiry, caller incarnation fencing, missing old receipt rejection, rollback sentinel, MAX counters, old proof with no claim row\n`);
   }

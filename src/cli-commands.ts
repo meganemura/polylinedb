@@ -391,6 +391,7 @@ async function main(argv: readonly string[]): Promise<void> {
     if (one('agent-label') !== undefined) raw.agent_label = one('agent-label');
     raw.request_id = one('request-id') ?? randomUUID();
   }
+  if (command === 'claim_release') raw.expired_noop = true;
   if (command === 'claim_renew' || command === 'claim_release') {
     raw.request_id = one('request-id') ?? randomUUID(); const expected = one('expected-revision');
     if (expected !== undefined) raw.expected_revision = integer(expected);

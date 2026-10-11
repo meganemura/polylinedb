@@ -38,7 +38,7 @@ export const claimSchemas = {
   claim_list: objectSchema({ tool: { type: 'string', minLength: 1, maxLength: 256 }, project: { type: 'string', minLength: 1, maxLength: 256 }, after: idSchema, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } }, []),
   claim_acquire: objectSchema({ issue_id: idSchema, incarnation: incarnationSchema, session_id: uuidSchema, request_id: uuidSchema, ttl: ttlSchema, agent_label: { type: ['string', 'null'], minLength: 1, maxLength: 64, description: 'Caller metadata, at most 64 UTF-8 bytes. Omitted labels become null.' } }, ['issue_id', 'incarnation', 'session_id', 'request_id']),
   claim_renew: objectSchema({ ...mutationProperties, ttl: ttlSchema }, ['claim_proof', 'expected_revision', 'request_id']),
-  claim_release: objectSchema(mutationProperties, ['claim_proof', 'expected_revision', 'request_id']),
+  claim_release: objectSchema({ ...mutationProperties, expired_noop: { const: true, description: 'When the proof names an expired lease, answer released: false and the current claim instead of claim_conflict.' } }, ['claim_proof', 'expected_revision', 'request_id']),
 };
 const invalid = (message: string): never => { throw new PolylinedbError('invalid_input', message); };
 function object(value: unknown): Record<string, unknown> {
@@ -77,7 +77,11 @@ export function parseClaimOperation(value: unknown): ClaimOperation {
   const request_id = identifier(parseRequestId, input.request_id);
   if (op === 'claim_acquire') return { op, issue_id: identifier(parseIssueId, input.issue_id), incarnation: parseIncarnation(input.incarnation), session_id: identifier(value => parseRequestId(value, 'session_id'), input.session_id), request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600), agent_label: input.agent_label === undefined || input.agent_label === null ? null : name(input.agent_label, 'agent_label', 64) };
   const claim_proof = parseClaimProof(input.claim_proof); const expected_revision = integer(input.expected_revision, 'expected_revision', 1);
-  return op === 'claim_release' ? { op, claim_proof, expected_revision, request_id } : { op, claim_proof, expected_revision, request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600) };
+  if (op === 'claim_release') {
+    if (input.expired_noop !== undefined && input.expired_noop !== true) return invalid('expired_noop must be true when present');
+    return { op, claim_proof, expected_revision, request_id, ...(input.expired_noop === true ? { expired_noop: true } : {}) };
+  }
+  return { op, claim_proof, expected_revision, request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600) };
 }
 export function claimRow(row: Record<string, unknown>): Claim {
   try {
@@ -159,7 +163,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   const observed = results.at(observeBlockers ? -2 : -1)?.rows[0];
   if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
   if (operation.op === 'claim_acquire') rejectAgentWrite(caller, 'claim_acquire', issue_id, JSON.parse(String(observed.labels_json)), observed);
-  if (operation.op === 'claim_release') {
+  if (operation.op === 'claim_release' && operation.expired_noop === true) {
     const current = inspection(observed);
     if (ownsExpiredLease(current.lease, current.store_incarnation, operation.claim_proof, current.issue_id, actor, current.observed_at)) return { released: false, current };
   }

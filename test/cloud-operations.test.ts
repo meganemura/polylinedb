@@ -399,7 +399,7 @@ test('transport keeps the read-only and agent gate rejections of the Worker', as
   await assert.rejects(send(comment, 409, { error: { code: 'not_ready', message: 'ready', details: { id: 'pd-1' } } }), { code: 'cloud_invalid_response' });
 });
 
-test('cloud client decodes a no-op release of an expired own lease and rejects a lease the proof does not name', async () => {
+test('cloud client decodes a requested no-op release of an expired own lease and rejects a lease the proof does not name', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
   const worker = (async (_url, options) => handleRequest(new Request('https://issues.example/v1/operations', { ...options, headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token } }), env, authenticate)) satisfies typeof fetch;
@@ -415,13 +415,14 @@ test('cloud client decodes a no-op release of an expired own lease and rejects a
     assert.ok('claim_receipt' in acquired);
     const claim_proof = { issue_id: created.issue.id, incarnation: acquired.claim_receipt.incarnation, session_id, generation: acquired.claim_receipt.generation };
     sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(created.issue.id);
-    const released = JSON.parse(JSON.stringify(await run({ op: 'claim_release', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() })));
+    await assert.rejects(run({ op: 'claim_release', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() }), { code: 'claim_conflict', status: 409 });
+    const released = JSON.parse(JSON.stringify(await run({ op: 'claim_release', claim_proof, expected_revision: 1, request_id: crypto.randomUUID(), expired_noop: true })));
     assert.equal(released.released, false);
     assert.equal(released.current.state, 'expired');
     assert.equal(released.current.lease.revision, 1);
     assert.equal(released.current.lease.released_at, null);
     const current = released.current;
-    const operation = parseOperation({ op: 'claim_release', claim_proof, expected_revision: 99, request_id: crypto.randomUUID() });
+    const operation = parseOperation({ op: 'claim_release', claim_proof, expected_revision: 99, request_id: crypto.randomUUID(), expired_noop: true });
     const decoded = JSON.parse(JSON.stringify(await executeCloudOperation({ origin: 'https://issues.example', operation, authorize: async () => 'synthetic', fetch: reply({ released: false, current, extra: true }) })));
     assert.equal(decoded.released, false);
     assert.equal(decoded.current.state, 'expired');

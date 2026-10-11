@@ -6,7 +6,7 @@ export type { ClaimProof };
 export type ClaimMutation =
   | { op: 'claim_acquire'; issue_id: string; incarnation: string; session_id: string; request_id: string; ttl: number; agent_label: string | null }
   | { op: 'claim_renew'; claim_proof: ClaimProof; expected_revision: number; request_id: string; ttl: number }
-  | { op: 'claim_release'; claim_proof: ClaimProof; expected_revision: number; request_id: string };
+  | { op: 'claim_release'; claim_proof: ClaimProof; expected_revision: number; request_id: string; expired_noop?: true };
 const counter = "INTEGER NOT NULL CHECK(typeof(%s) = 'integer' AND %s BETWEEN 1 AND 9007199254740991)";
 const numeric = (column: string) => counter.replaceAll('%s', column);
 export const CLAIM_STATEMENTS = [
