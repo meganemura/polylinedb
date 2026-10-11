@@ -13,6 +13,7 @@ Use the selected MCP connector's advertised tools and argument schemas.
 If the connector does not advertise a tool that this skill names, stop and report the gap. Do not substitute another tool.
 Keep the same connector and explicit project throughout the work.
 This skill does not grant permission to publish. Follow the user's authorization boundary before an external write.
+A release is a version bump that lands on main through `queue`, as `docs/releasing.md` in the repository describes. Never push a release tag or run `npm publish` by hand.
 
 ## Use the queue branch
 
@@ -105,3 +106,4 @@ The `CHANGELOG.human.md` entry says in a few plain sentences what people can now
 Name Worker secrets and bindings only by name. Never write secret values, tokens, account IDs, or webhook URLs into either file.
 Never write pd issue ids, such as `pd-149`, into either file, including under `## Unreleased`. Readers cannot open pd, so describe the change in words.
 An agent that enqueues may add its own line under `## Unreleased` in `CHANGELOG.md`. The landing entries belong to whoever lands `queue`.
+A release commit turns `## Unreleased` into a version section, as `docs/releasing.md` describes.

@@ -93,3 +93,18 @@ test('workflow actions are GitHub-owned and pinned, and expressions stay in env 
   ];
   assert.deepEqual(uses, [...pair, ...pair, ...pair, ...pair, ...pair]);
 });
+
+test('the release guide states the rules the workflow enforces', () => {
+  const guide = readFileSync(new URL('docs/releasing.md', root), 'utf8');
+  for (const promise of [
+    'runs on a push to `main` that changes `package.json`. It has no manual trigger.',
+    'npm trusted publishing is bound to the filename `publish.yml`, so never rename the file.',
+    'When the tag exists, it logs that and releases nothing.',
+    'The owner\'s approval is the last gate before npm.',
+    'skips `npm publish` only when the registry integrity equals the new tarball\'s integrity',
+    'Nobody pushes a release tag, runs `npm publish`, or creates a GitHub Release by hand.',
+    'Claude cloud sessions cannot push tags.',
+    'A CLI release and a Worker deployment are separate steps.',
+  ]) assert.ok(guide.includes(promise), promise);
+  assert.doesNotMatch(guide, /workflow_dispatch|gh workflow run|APPROVED_SHA/);
+});

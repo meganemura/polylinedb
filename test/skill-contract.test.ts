@@ -49,4 +49,6 @@ test('the queue skill copies match and keep pd issue ids out of the changelogs a
   assert.equal(readFileSync(new URL('../.cursor/skills/polylinedb-queue/SKILL.md', import.meta.url), 'utf8'), queue);
   assert.ok(queue.includes('Never write pd issue ids, such as `pd-149`, into either file'));
   assert.ok(queue.includes('Never write a pd issue id, such as `pd-149` or `pd-65.3`, into a commit message.'));
+  assert.ok(queue.includes('as `docs/releasing.md` in the repository describes. Never push a release tag or run `npm publish` by hand.'));
+  assert.ok(readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8').includes('[docs/releasing.md](docs/releasing.md)'));
 });

@@ -1,8 +1,8 @@
-# Prepare and publish a release
+# Release polylinedb
 
+This is the single release guide for polylinedb.
 The npm package contains the compiled CLI, its local store modules, the license, documentation, and the polylinedb agent skill.
-The Worker requires a source checkout and separate deployment.
-The GitHub repository can remain private while the npm package is public.
+The Worker requires a source checkout and a separate deployment, described in [the cloud guide](cloud.md).
 
 ## Release stages
 
@@ -11,24 +11,108 @@ Version `0.2.0` adds prerequisites, memory freshness, and automatic host hooks.
 Version `0.3.1` adds session-owned issue claims and explicit human CLI output.
 Version `0.4.0` accepts unknown cloud response fields and completes `show` without `claim` through `claim_show`.
 Version `0.5.0` adds the change feed, `pd wait`, owner waits, claim keepalive, and issue closure records, with schema 8 and snapshot 6.
-Database upgrades and Worker deployments require separate verification and approval.
-Verify local installation, persistence, and field conflicts with the installed package.
+Version `0.5.0` was prepared on main but never published to npm.
+Version `0.5.1` is the first release from the automatic workflow and carries the changes of `0.5.0`.
+
+## Cut a release
+
+1. Choose a version that has never been tagged or published. A version that npm or a tag already holds cannot be reused.
+2. In one commit, set the version in `package.json`, in both `version` and `packages[""].version` of `package-lock.json`, and in the MCP `serverInfo.version` in `src/service/index.ts`.
+   `npm version X.Y.Z --no-git-tag-version` updates the manifest and the lockfile; edit `src/service/index.ts` by hand. The Worker integration test compares `serverInfo.version` with `package.json`.
+3. In the same commit, turn `## Unreleased` in `CHANGELOG.md` into `## X.Y.Z (YYYY-MM-DD)` and add an empty `## Unreleased` above it. End the section with an `### Upgrade from` subsection when users must act. Mention the release in `CHANGELOG.human.md`.
+4. Check the notes from a source checkout. The command fails when the section is missing or empty:
+
+   ```sh
+   RELEASE_VERSION=X.Y.Z node scripts/release-notes.ts
+   ```
+
+5. Enqueue the commit on `queue` with the queue skill (`skills/polylinedb-queue/SKILL.md`), including the full test suite after the final rebase.
+6. The owner lands `queue` onto main, with the landing changelog commit on top.
+7. The push to main that changes `package.json` starts the `Publish` workflow. The owner reviews the run and approves the `publish` environment.
+
+Nobody pushes a release tag, runs `npm publish`, or creates a GitHub Release by hand. The workflow does all three.
+
+## The Publish workflow
+
+`.github/workflows/publish.yml` runs on a push to `main` that changes `package.json`. It has no manual trigger.
+npm trusted publishing is bound to the filename `publish.yml`, so never rename the file.
+The workflow grants no permissions by default. One run at a time holds the `npm-publish` concurrency group, and a queued run waits instead of cancelling another.
+Every action is pinned to a full commit SHA.
+
+### check
+
+`check` reads the `package.json` version and requires the `X.Y.Z` form.
+Both lockfile versions must equal it, or the job fails.
+It looks for the tag `vX.Y.Z` with `git ls-remote --exit-code --tags origin`.
+When the tag exists, it logs that and releases nothing. This covers a push that changes `package.json` without a new version, and a revert of a version bump.
+When the tag is missing, it passes the version to the next jobs.
+It has `contents: read` only.
+
+### publish
+
+`publish` runs only when `check` found a new version.
+It uses the `publish` environment, whose required reviewer is the owner. The owner's approval is the last gate before npm.
+It has `contents: read` and `id-token: write`, and it is the only job with the OIDC grant.
+On the pushed commit it checks the release notes, then runs `npm ci --ignore-scripts`, the typecheck, the architecture check, the unit tests, the D1 tests, the Worker build and integration test, `npm audit`, and the package check that writes the tested tarball.
+It publishes that tarball with `--ignore-scripts --access public`, after a dry run, without another pack or build.
+It then reads `dist.integrity` from the registry and requires it to equal the tarball's SHA-512.
+
+Configure the `publish` environment with the owner as a required reviewer, and allow the owner to approve their own runs.
+Register the trusted publisher once from an authenticated owner session:
+
+```sh
+npm trust github polylinedb --repo meganemura/polylinedb --file publish.yml --allow-publish
+npm trust list polylinedb
+```
+
+See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for the OIDC requirements.
+
+### release
+
+`release` runs after `publish` succeeds. It has `contents: write` only, and no environment, so it needs no second approval.
+It writes the notes from the `CHANGELOG.md` section, then creates the annotated tag `vX.Y.Z` with the message `polylinedb X.Y.Z` on the pushed commit, and the GitHub Release `polylinedb X.Y.Z`, marked latest.
+The tag's tagger is `github-actions[bot]`.
+
+## Who does what
+
+- Lanes prepare release commits and enqueue them on `queue`. A lane lands `queue` onto main only when the owner authorizes that landing.
+- Only the owner approves the `publish` environment.
+- Nobody pushes tags or runs `npm publish` by hand.
+- Claude cloud sessions cannot push tags. Their git proxy answers 403 to a tag push, while branch pushes work.
+
+## Re-runs and recovery
+
+- **A job failed after a partial run.** Re-run the failed jobs only. A re-run keeps the outputs of `check`.
+- **npm already has the version.** On a re-run, `publish` skips `npm publish` only when the registry integrity equals the new tarball's integrity, then verifies the registry as usual. Any other existing tarball fails the job, because npm never accepts a version twice. Choose a new version.
+- **The tag already exists.** A new run's `check` releases nothing. A re-run of `release` reads the tag: an annotated tag on the pushed commit is kept, including one created by hand, and its message is not compared. A lightweight tag, or an annotated tag on another commit, fails the job. The workflow never deletes or moves a tag.
+- **The GitHub Release already exists.** `release` keeps a published release whose title and notes match, and fails on a draft, a prerelease, or a different title or notes. It does not edit or delete a release. Correct or remove it, then re-run the failed `release` job.
+- **A version bump is reverted.** Its tag either exists, so `check` releases nothing, or the version was never released. Do not reuse a version that reached npm or a tag; choose a new one.
+- **A tag exists without an npm package.** `check` releases nothing for that version. Choose a new version.
+
+Install the published version in a clean prefix and check `pd --help` before announcing the release.
+
+## Before a release that touches the Worker or D1
+
+A CLI release and a Worker deployment are separate steps. The workflow publishes the npm package only; it never deploys the Worker or changes D1.
+Before a Worker deployment, run the D1 schema check and upgrade from [the D1 migration guide](d1-migration.md#upgrade-an-existing-schema-2-3-4-5-6-or-7-deployment), then deploy, with the owner's explicit approval.
+State in the version's `### Upgrade from` subsection which CLI and Worker versions work together.
 Verify the deployed Worker, D1 persistence, Access policy, and cloud-agent OAuth reuse with the [cloud acceptance checks](cloud.md#verify-each-host-and-d1).
 Local workerd tests support development but do not satisfy deployed Cloudflare acceptance.
 Repository visibility changes require explicit owner approval.
 
-## Prepare an artifact
+## Verify an artifact locally
 
-Use a source checkout with the exact development dependencies from the lockfile.
+The workflow repeats these checks, but run them before you enqueue a release commit:
 
 ```sh
 npm ci --ignore-scripts
 npm run typecheck
+npm run check:architecture
 npm test
 npm run test:d1
 npm run test:worker
 npm audit
-npm run test:package -- /absolute/path/polylinedb-0.4.0.tgz
+npm run test:package -- /absolute/path/polylinedb-X.Y.Z.tgz
 ```
 
 The package check runs `npm pack`, including its `prepack` build.
@@ -42,7 +126,6 @@ Run the check on supported Node 24 and the current development runtime before re
 Inspect the tarball file list and its documentation before publication.
 Check the Git history and release files for credentials, personal deployment identifiers, and machine paths.
 Keep local evidence and article drafts outside the published artifact.
-Record the commit, runtime versions, test results, and tarball integrity for the owner's final review.
 
 The build emits JavaScript because Node does not strip TypeScript inside installed packages.
 See [Node TypeScript support](https://nodejs.org/api/typescript.html#type-stripping-in-dependencies).
@@ -50,46 +133,8 @@ Consumers need Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later
 They do not need a compiler.
 Package inclusion follows npm's [files and bin settings](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/).
 
-## Publish the tested artifact
+## Release notes
 
-Publication requires explicit owner approval immediately before execution.
-Confirm the package name, version, MIT license, reviewed commit, and file list with the owner.
-The approved workflow builds its tarball from that commit and verifies it before publication.
-The `publish.yml` workflow uses npm trusted publishing through GitHub OIDC.
-The job requests `id-token: write`. It does not use an npm token or a local npm login.
-Configure the GitHub Environment `publish` with the owner as a required reviewer.
-Allow the owner to approve their own workflow runs.
-The publish job waits for this approval before it starts.
-Register the workflow once from an authenticated owner session:
-
-```sh
-npm trust github polylinedb --repo meganemura/polylinedb --file publish.yml --allow-publish
-npm trust list polylinedb
-```
-
-Push the reviewed commit to `main` and start the workflow with the exact version:
-
-```sh
-gh workflow run publish.yml --ref main -f version=0.4.0 -f commit=APPROVED_SHA
-npm view polylinedb@0.4.0 version dist.integrity --registry=https://registry.npmjs.org/
-```
-
-Replace `APPROVED_SHA` with the full reviewed commit SHA.
-Open the workflow run and review its commit and version before you approve the `publish` environment.
-The workflow checks its source commit and the requested version before tests.
-It compares the version with the manifest and lockfile.
-It reads the release notes from `CHANGELOG.md` before installation, so a missing section stops the run before publication.
-It builds and installs the tarball, publishes that same tarball, and compares its integrity with the registry.
-Keep the workflow filename consistent with the trusted publisher configuration.
-See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for the OIDC requirements.
-Publish the tested tarball without another pack or build step.
-Choose a new version for later changes, and update both the manifest and lockfile before packing.
-
-## Tag and GitHub Release
-
-When the publish job and its registry integrity check succeed, the `release` job tags that commit and creates the GitHub Release.
-The annotated tag is `v<version>` with the message `polylinedb <version>`.
-The release title is `polylinedb <version>`, and the release is marked latest when it is created.
 The notes are the `CHANGELOG.md` section for that version, followed by:
 
 ```sh
@@ -115,36 +160,3 @@ Text in inline code spans and fenced code blocks stays unchanged.
 Indented code blocks and raw HTML are not recognized, so use fenced code and Markdown links in the section.
 A link that leaves the repository, such as `../other.md`, fails the publish job before `npm publish`.
 `CHANGELOG.md` keeps its relative links, so it still reads correctly on GitHub and in the npm package.
-
-Preview the notes from a source checkout:
-
-```sh
-RELEASE_VERSION=0.4.0 node scripts/release-notes.ts
-```
-
-The release job requests `contents: write` only.
-`id-token: write` stays on the publish job.
-The release job does not use the `publish` environment.
-That environment is the owner approval gate for npm publication, and the release job has no environment secrets.
-It runs only after the approved publish job in the same workflow run.
-A failed tag or release step can then be re-run by itself, without a second approval and without publishing the package again.
-
-The tag is created through the GitHub API as an annotated tag.
-Its tagger is `github-actions[bot]`.
-When `v<version>` already exists, the job reads it.
-An annotated tag whose commit is the approved commit is left unchanged, including one created by hand.
-The existing tag message is not compared.
-A lightweight tag fails the job, as does an annotated tag that points at another commit.
-The workflow does not delete or move a tag.
-Replace a lightweight tag with an annotated tag on the approved commit, or move an annotated tag onto that commit, then re-run the failed release job.
-
-The job then looks for a GitHub Release on that tag.
-A published release whose title and notes match is left in place, so a re-run does not create a duplicate.
-That re-run does not change which release is marked latest.
-A draft, a prerelease, a different title, or different notes fails the job.
-The workflow does not edit or delete the existing release.
-Correct it, or remove it, then re-run the failed release job.
-
-Re-running the whole workflow after npm has accepted the version repeats `npm publish`.
-When the package is already in the registry, re-run only the failed release job.
-Install the published version in a clean prefix and check `pd --help` before announcing the release.
