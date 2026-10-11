@@ -597,8 +597,9 @@ The `open`, `in_progress`, and `deferred` choices use that same order.
 The `closed` choice lists closed issues, newest update first.
 **Mark** is a label on the issue. It does not change the status.
 The choices are separate tickets, not segments of the state bar.
-They are **Any label**, `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action`.
-**Any label** is selected when the address has no `label`.
+**Any label** is the first ticket. It clears the mark and is selected when the address has no `label`.
+The other tickets sit under three roles, in order: **Start** (`ready`), **Landing** (`ready-for-land-queue`, `main-wait`, and `main-lock`), and **Owner** (`owner-decision` and `owner-action`).
+A state and a mark combine. Both apply, and choosing one does not change the other.
 A mark keeps issues that carry that label.
 The selected state is filled with the page ink. The selected mark is filled with a different color.
 A `status` other than those four values returns the not-found page.
