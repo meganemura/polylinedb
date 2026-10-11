@@ -10,6 +10,8 @@ The newest landing comes first.
 
 Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
 
+The **Dispatch** button in `/ui` works again. Pressing it used to fail with "Origin is not allowed." because the page told the browser to hide where the request came from. `/ui` pages now share that only with the same site, so other sites still learn nothing, and requests from other sites are still refused.
+
 ## 2026-10-11, landing 5779921
 
 An issue now remembers who closed it and when. Closing it again keeps that first close. Opening it again clears the memory. An issue that was already closed before this change has no close time, and a later edit is not used as one.

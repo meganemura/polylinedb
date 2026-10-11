@@ -444,7 +444,9 @@ Schema stays 7.
 
 The press is a same-origin form POST.
 Dispatch allows a missing `Origin`, or an `Origin` equal to the Worker origin.
-It ignores `ALLOWED_ORIGINS`.
+It ignores `ALLOWED_ORIGINS`, and it rejects the opaque `Origin: null` with `forbidden_origin`.
+`/ui` pages are sent with `Referrer-Policy: same-origin`, so the browser puts the Worker origin on the press.
+Under `no-referrer`, browsers send `Origin: null` instead, and every press fails.
 Leave that list empty unless a connector needs an entry.
 
 Verify by pressing Dispatch once on an issue while signed in as an Access human, then pressing again within a minute.

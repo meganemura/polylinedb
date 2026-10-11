@@ -766,6 +766,8 @@ test('ui: a page revalidates with its ETag only after Access accepts the caller,
     const first = await issueRequest(auth);
     assert.equal(first.status, 200);
     assert.equal(first.headers.get('cache-control'), 'private, no-cache');
+    // no-referrer would make the same-origin Dispatch POST carry Origin: null, which dispatch rejects.
+    assert.equal(first.headers.get('referrer-policy'), 'same-origin');
     const etag = first.headers.get('etag') ?? '';
     assert.match(etag, /^"[0-9a-f]{32}"$/);
     const html = await first.text();
@@ -779,7 +781,7 @@ test('ui: a page revalidates with its ETag only after Access accepts the caller,
       assert.equal(again.headers.get('cache-control'), 'private, no-cache');
       assert.equal(again.headers.get('content-security-policy'), first.headers.get('content-security-policy'));
       assert.equal(again.headers.get('x-content-type-options'), 'nosniff');
-      assert.equal(again.headers.get('referrer-policy'), 'no-referrer');
+      assert.equal(again.headers.get('referrer-policy'), 'same-origin');
       assert.equal(again.headers.get('content-type'), null);
     }
     const reader = await issueRequest({ 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }), 'if-none-match': etag });
@@ -2232,6 +2234,13 @@ test('dispatch: cross-origin is forbidden even when listed, and a missing Origin
     assert.equal(cross.status, 403);
     assert.equal(cross.headers.get('content-type'), 'application/json');
     assert.deepEqual(await cross.json(), { error: { code: 'forbidden_origin', message: 'Origin is not allowed.' } });
+    assert.equal(receiver.posts.length, 0);
+    assert.deepEqual(storedIssue(sqlite, id), before);
+
+    // An opaque origin stays forbidden, even when ALLOWED_ORIGINS lists the string "null".
+    const opaque = await pressDispatch(withWebhook(env, { POLYLINEDB_DISPATCH_WEBHOOK_URL: webhookUrl, POLYLINEDB_DISPATCH_WEBHOOK_KEY: webhookKey }, '["null"]'), id, token, dispatcher, { ...browserPress(), origin: 'null' });
+    assert.equal(opaque.status, 403);
+    assert.deepEqual(await opaque.json(), { error: { code: 'forbidden_origin', message: 'Origin is not allowed.' } });
     assert.equal(receiver.posts.length, 0);
     assert.deepEqual(storedIssue(sqlite, id), before);
 

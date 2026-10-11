@@ -465,7 +465,8 @@ const htmlHeaders = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'private, no-cache',
   'x-content-type-options': 'nosniff',
-  'referrer-policy': 'no-referrer',
+  // Under no-referrer, browsers send Origin: null on the same-origin Dispatch POST, and dispatch rejects that origin.
+  'referrer-policy': 'same-origin',
   'content-security-policy': "default-src 'none'; script-src 'sha256-wN5fn7M/0mts3B5WgddVicrWGcNvCBQK0rFn0GgjQx8='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
 const { 'content-type': _, ...revalidationHeaders } = htmlHeaders;
