@@ -19,6 +19,41 @@ Whoever lands `queue` onto main writes both entries in one commit on top of the 
 Each change under it is a `####` heading that names the change in words, and a list of `key: value` lines, so a search such as `grep -n '^- secrets:' CHANGELOG.md` finds it.
 The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`, `schema`, `secrets`, `deploy`, and `status`. A key that does not apply is left out.
 
+### 2026-10-11 main 55af219
+
+- main: 55af2190d3e7c97a9fd1aa6ad60eafbc9acfd11b
+- previous main: fe52b3cac067f61f5ce0164caa14f5ca8fe94de2
+- landed commits: c6cae06, 8c45333, 55af219
+- schema: 8. This landing does not change D1.
+- deploy: not done. No Worker deploy in this landing. The `/ui` Referrer-Policy change takes effect on the next Worker deploy.
+- cli: `package.json` stays 0.4.0. No npm publish in this landing.
+
+#### /ui pages send Referrer-Policy same-origin, so Dispatch works
+
+- commits: 8c45333 fix(ui): send /ui pages with Referrer-Policy same-origin so Dispatch works
+- surface: Worker `/ui` pages, including their `304 Not Modified` answers, and the Dispatch form POST to `/ui/i/<id>/dispatch`.
+- change: `/ui` pages send `Referrer-Policy: same-origin` instead of `no-referrer`. Under `no-referrer`, browsers sent `Origin: null` on the same-origin Dispatch POST, so every press failed with 403 `forbidden_origin`. The POST now carries the page's real origin, and cross-origin requests still get no referrer. The speculation-rules prefetch keeps `referrer_policy: "no-referrer"`, because a prefetch is a GET that dispatch does not see.
+- errors: the dispatch origin check is unchanged. It accepts only a missing `Origin` or the request's own origin. `Origin: null` stays 403 `forbidden_origin`, also when `ALLOWED_ORIGINS` lists `"null"`.
+- schema: none.
+- secrets: none new. Dispatch still needs `POLYLINEDB_DISPATCH_WEBHOOK_URL` and `POLYLINEDB_DISPATCH_WEBHOOK_KEY`.
+- deploy: Worker deploy. This landing does not deploy. No D1 migration.
+
+#### No pd issue ids in the changelogs
+
+- commits: c6cae06 docs(changelog): remove pd issue ids and forbid them in the changelog rules
+- surface: `CHANGELOG.md`, `CHANGELOG.human.md`, both queue skill copies, `docs/agent-workflow.md`, `docs/claims.md`, `docs/releasing.md`.
+- change: landing headings and `## Unreleased` lines describe changes in words, and the `issue` key is gone. `test/release-notes.test.ts` fails when either changelog names a pd issue id, and `test/skill-contract.test.ts` fails when the two queue skill copies drift apart.
+- schema: none.
+
+#### No pd issue ids in commit messages
+
+- commits: 55af219 docs(workflow): keep pd issue ids out of commit messages and check pushed ranges
+- surface: `CLAUDE.md`, both queue skill copies, `docs/agent-workflow.md`, `scripts/commit-messages.ts`, and the new `commit-messages` job in `.github/workflows/check.yml`.
+- change: commit messages describe the change in words and never name a pd issue id. The `tip:` comment on the pd issue links it to git. The job runs on push and pull request with full history. It checks the commits from `github.event.before` to `github.sha`, or from the pull request base to its head. A new branch, or a `before` commit that the clone lacks, checks the pushed tip alone. History before the pushed range is not checked. No git hook is added.
+- errors: the job fails and prints each offending commit with the ids it names.
+- schema: none.
+- deploy: none.
+
 ### 2026-10-11 main 5779921
 
 - main: 5779921cb92c697f2478ecfd681eaf645cb79624

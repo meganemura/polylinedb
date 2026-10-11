@@ -10,7 +10,11 @@ The newest landing comes first.
 
 Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
 
-The **Dispatch** button in `/ui` works again. Pressing it used to fail with "Origin is not allowed." because the page told the browser to hide where the request came from. `/ui` pages now share that only with the same site, so other sites still learn nothing, and requests from other sites are still refused.
+## 2026-10-11, landing 55af219
+
+The **Dispatch** button in `/ui` works again. Pressing it used to fail with "Origin is not allowed." because the page told the browser to hide where the request came from. `/ui` pages now share that only with the same site, so other sites still learn nothing, and requests from other sites are still refused. This takes effect after the next Worker deploy, which this landing does not do.
+
+The changelogs and commit messages describe each change in words and no longer name pd issues, because only the owner's agents can open pd. A check on every push rejects a new commit message that names one. The link from a pd issue to its commits stays in pd.
 
 ## 2026-10-11, landing 5779921
 
