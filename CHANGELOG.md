@@ -261,7 +261,26 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+## 0.5.1 (2026-10-12)
+
+Version 0.5.0 was prepared on main but never published to npm. Version 0.5.1 is the first npm release since 0.4.0, and the first from the automatic Publish workflow.
+It carries every change in [the 0.5.0 section](CHANGELOG.md#050-2026-10-12), plus the change in this section.
+
 - Release automatically when a push to main changes the version. The `Publish` workflow in `.github/workflows/publish.yml` now runs on a push to `main` that changes `package.json`, and has no manual `workflow_dispatch` path. Job `check` reads the `package.json` version, requires both `package-lock.json` versions to match it, and releases nothing when the tag `v<version>` already exists, for example after a revert. Job `publish` runs under the `publish` environment, so the owner's approval is still the last gate, and keeps every earlier verification step on the pushed commit. On a re-run it skips `npm publish` only when npm already has that version with the same tarball integrity, and it always checks the registry integrity. Job `release` writes the notes and creates the annotated tag and the GitHub Release on the pushed commit; it verifies an existing annotated tag and matching release instead of recreating them. Only `publish` has `id-token: write`, only `release` has `contents: write`, and the workflow default is no permissions. The trusted publisher on npm stays bound to the `publish.yml` filename.
+
+### Upgrade from 0.4.0
+
+Version 0.5.1 uses schema 8 and snapshot 6, as 0.5.0 does. Version 0.4.0 used schema 6 and snapshot 5.
+Schema 7 adds the `change_events` and `change_writer` tables and their triggers. Schema 8 adds the nullable `closed_at` and `closed_by` issue columns. Snapshot 6 adds the closure fields to issues and carries no events.
+Back up a local store with `pd export`, then run `pd upgrade`; it accepts canonical schemas 2 through 7. The 0.5.1 CLI refuses a store that has not been upgraded. `pd export --historical` now also reads schemas 6 and 7.
+A snapshot written by 0.4.0 is snapshot 5. Convert it with `pd snapshot convert --from 5` before you import or restore it with 0.5.1. The conversion leaves `closed_at` and `closed_by` null.
+The new Worker fails issue, comment, claim, and prerequisite writes against a schema 6 database, and fails every status change and every closed creation against a schema 7 database.
+Upgrade D1 first with the [database upgrade procedure](docs/d1-migration.md#upgrade-an-existing-schema-2-3-4-5-6-or-7-deployment): `node scripts/schema.ts --upgrade-from 6` for a 0.4.0 database, or `--upgrade-from 7` for a database that already has the change feed. Then deploy the Worker.
+A 0.4.0 Worker keeps working against an upgraded database; its writes record no events and no closures.
+After the new Worker closes issues, rolling the Worker back makes reopen fail on those issues. See [the rollback cost](docs/d1-migration.md#rollback-cost-of-the-schema-8-upgrade).
+The 0.4.0 CLI keeps working against the new Worker; it has no `changes` command.
+The 0.5.1 CLI works against a 0.4.0 Worker. `pd search` and the expired-lease `pd claim release` retry once without their new fields. A Worker without the `changes`, `wait`, or `dependency_owner_waits` operation answers those commands with `invalid_input`.
+Worker deployment remains a separate step.
 
 ## 0.5.0 (2026-10-12)
 

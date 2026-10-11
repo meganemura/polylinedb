@@ -10,6 +10,10 @@ The newest landing comes first.
 
 Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
 
+Version 0.5.1 is the next `pd` release on npm. Version 0.5.0 was prepared but never published, so 0.5.1 brings everything listed for 0.5.0: the change feed, `pd wait`, owner waits, claim keepalive, issue close records, and the `/ui` fixes. Moving from 0.4.0 still means running `pd upgrade` on your local store and converting an older snapshot with `pd snapshot convert --from 5`.
+
+Releases now start by themselves. When a change to the version in `package.json` reaches main, the Publish workflow tests the package, waits for the owner to approve, publishes it to npm, and then creates the tag and the GitHub Release. Nobody publishes or tags by hand any more. `docs/releasing.md` is the one guide for this.
+
 ## 2026-10-12, landing c543fb5
 
 The `pd` command on main is now version 0.5.0, and the tag `v0.5.0` marks it. The package is not published to npm yet; that happens in a separate step the owner approves.
