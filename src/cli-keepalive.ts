@@ -51,6 +51,22 @@ function pidAlive(pid: number): boolean {
   catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
+export const killGraceMs = 5000;
+
+// --kill-on-loss promises the command is gone when claim_lost is reported, and an unreaped child can
+// linger as a zombie once this process exits. So wait for the exit, escalating to SIGKILL after a grace period.
+async function terminate(child: ReturnType<typeof spawn>, exited: Promise<Outcome>): Promise<void> {
+  const gone = exited.then(() => undefined, () => undefined);
+  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+    child.kill(signal);
+    const timer = new AbortController();
+    const result = await Promise.race([gone.then(() => 'gone' as const), delay(killGraceMs, 'timeout' as const, { signal: timer.signal })]);
+    timer.abort();
+    if (result === 'gone') return;
+  }
+  child.unref();
+}
+
 type Outcome = { kind: 'exited'; code: number } | { kind: 'released' } | { kind: 'lost'; error: PolylinedbError } | { kind: 'max_duration' };
 
 // Resolves the process exit code; throws PolylinedbError for loss, the duration bound, or a failed store call.
@@ -127,9 +143,12 @@ export async function runKeepalive(options: KeepaliveOptions): Promise<number> {
 
   if (outcome.kind === 'exited') return outcome.code;
   if (outcome.kind === 'released') return 0;
-  if (options.killOnLoss && child !== undefined && child.exitCode === null) child.kill('SIGTERM');
-  // A running command that is spared must not keep this process alive.
-  child?.unref();
+  if (options.killOnLoss && child !== undefined && child.exitCode === null && child.signalCode === null) {
+    await terminate(child, exited);
+  } else {
+    // A running command that is spared must not keep this process alive.
+    child?.unref();
+  }
   if (outcome.kind === 'lost') throw outcome.error;
   throw new PolylinedbError('keepalive_max_duration', `Stopped renewing ${proof.issue_id} after ${options.maxDurationSeconds} seconds; the lease ends at its current deadline`, 409, { id: proof.issue_id, max_duration: options.maxDurationSeconds, elapsed: Math.round((Date.now() - startedAt) / 1000) });
 }
