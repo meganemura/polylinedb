@@ -346,7 +346,7 @@ Check the Worker name, `DB` database name, Access domain, audience, actors, and 
 Complete this checklist before each deployment:
 
 1. Run the deployment as a dry run first. Find the dry-run flag with `cf deploy --help`. Confirm that the output shows nonempty values for `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_ACTORS`, and `ALLOWED_ORIGINS`. For `ALLOWED_ORIGINS`, the value `[]` is correct when no connector sends an Origin header.
-2. Confirm that the deployed Worker has no secrets. This configuration supplies every setting as text, and the inspection above does not show secrets.
+2. Confirm that the deployed Worker has exactly two secrets, `POLYLINEDB_DISPATCH_WEBHOOK_URL` and `POLYLINEDB_DISPATCH_WEBHOOK_KEY`, or neither. `worker.config.json` does not contain their values. They are not text bindings. Every other setting is text, and the inspection above does not show secret values.
 3. Record the current version ID outside Git with `cf workers versions get latest --worker-id "$POLYLINEDB_WORKER_NAME"`. A rollback is manual: you restore that version yourself.
 
 After approving those values, deploy:
@@ -381,6 +381,78 @@ Neither compilation nor a deployment receipt proves the database binding or the 
 If `cf` reports a missing platform-specific workerd binary, repair the CLI installation before deployment.
 Preserve optional dependencies when installing `cf`.
 Do not change the application to bypass that installation failure.
+
+### Set the dispatch webhook
+
+The Worker may have exactly two runtime secrets, or neither.
+`cloudflare.config.ts` does not declare them, and `worker.config.json` does not contain their values.
+A deploy with both unset succeeds.
+The issue page then shows a disabled Dispatch button and the text `Dispatch is not set up.`
+
+Deploy once in that state and open an issue while signed in as an Access human.
+Confirm the disabled control.
+Then write a mode `0600` file outside the checkout that names both secrets.
+`cf` 1.0.0-beta.12 reads that file with `cf workers secrets bulk --worker` and `--file`.
+`--worker` is the script name, the same value as `POLYLINEDB_WORKER_NAME`.
+
+```sh
+umask 077
+cat > "$HOME/polylinedb-dispatch.secrets" <<'EOF'
+{
+	"secrets": {
+		"POLYLINEDB_DISPATCH_WEBHOOK_URL": {
+			"name": "POLYLINEDB_DISPATCH_WEBHOOK_URL",
+			"type": "secret_text",
+			"text": "https://RECEIVER_HOST/dispatch"
+		},
+		"POLYLINEDB_DISPATCH_WEBHOOK_KEY": {
+			"name": "POLYLINEDB_DISPATCH_WEBHOOK_KEY",
+			"type": "secret_text",
+			"text": "RECEIVER_KEY"
+		}
+	}
+}
+EOF
+chmod 0600 "$HOME/polylinedb-dispatch.secrets"
+cf workers secrets bulk --worker "$POLYLINEDB_WORKER_NAME" --file "$HOME/polylinedb-dispatch.secrets"
+```
+
+Replace `RECEIVER_HOST` and `RECEIVER_KEY` outside Git.
+The file body is the JSON Merge Patch that `cf workers secrets bulk` sends.
+A secret object creates or updates that name.
+A name left out of the file is left unchanged.
+
+`cf` 1.0.0-beta.7 and later keeps secrets that `cloudflare.config.ts` does not declare.
+This repo's documented CLI is 1.0.0-beta.12, which includes that behavior.
+The changelog entry is `146c3c1` in 1.0.0-beta.7.
+Run `cf deploy` again without passing the secret file.
+Confirm both names are still on the latest version:
+
+```sh
+cf deploy
+cf workers versions get latest --worker-id "$POLYLINEDB_WORKER_NAME"
+```
+
+The version lists the secret names and does not print their values.
+
+Only an Access human with write access can press Dispatch.
+The actor id has to start with `access:`.
+A reader, an agent, or a service actor, including a bare roster string, sees no button.
+A press does not change the issue.
+No D1 migration is required.
+Schema stays 7.
+
+The press is a same-origin form POST.
+Dispatch allows a missing `Origin`, or an `Origin` equal to the Worker origin.
+It ignores `ALLOWED_ORIGINS`.
+Leave that list empty unless a connector needs an entry.
+
+Verify by pressing Dispatch once on an issue while signed in as an Access human, then pressing again within a minute.
+The second press must not create a second delivery.
+The window is 60 seconds, keyed by project and issue id, in memory on one isolate.
+Another isolate or an eviction can deliver again inside that window.
+A failed delivery retries the same `event_id` until the window ends.
+A new press after the window uses a new `event_id` and the same idempotency key (`<issue_id>:dispatch`).
 
 ### Connect the cloud host
 
@@ -537,7 +609,7 @@ The Worker serves HTML pages under `/ui` for a phone browser.
 The pages do not change the store.
 They contain no application JavaScript.
 The only script is the prefetch hint described under [Speed](#speed).
-Every page accepts only `GET`.
+Every page accepts only `GET`, except `POST /ui/i/<id>/dispatch`.
 The same Access check as the operation endpoints runs before any page is returned.
 A bad Access configuration returns `503 invalid_access_configuration`.
 A missing or invalid assertion returns `401`.
@@ -644,6 +716,14 @@ It says when there are none.
 **Closed blockers** lists the blockers that are closed.
 A missing issue returns the not-found page.
 
+The issue page can show one Dispatch button.
+An Access human who can write sees it.
+When dispatch is not set up, the button is disabled and the page says `Dispatch is not set up.`
+A reader, an agent, or a service actor sees no button.
+The button posts to `/ui/i/<id>/dispatch`.
+The page has no notes field.
+Pressing Dispatch does not change the issue.
+
 ### Inbox
 
 `/ui/inbox` lists issues that are not closed and that carry `owner-decision`, `owner-action`, or `main-wait`.
@@ -654,8 +734,8 @@ It shows the title, ID, status, tool, project, the matching labels, and the last
 
 ### Search
 
-`/ui/search` is the only page with a form.
-The form sends `GET`.
+`/ui/search` sends a `GET` form.
+The issue page has the only `POST` form, Dispatch.
 The query is `q`.
 An empty box asks for an issue ID or words from the text.
 Words match the issue body or a comment.

@@ -13,6 +13,7 @@ The budget counts from the input that starts a step to the first paint of the ne
 | Follow a link to home, a project, a filter chip, an issue, or a view after the first load | 100 ms, ideally the next frame (16 ms) |
 | Go back or forward | Next frame |
 | Submit a search | No budget. A search is a query against the store. |
+| Press Dispatch | No budget. The press is a form submission. GET `/ui` is unchanged. |
 
 A step that waits for the network cannot meet 100 ms on a phone link once the round trip and the Worker's D1 reads add up to more than that.
 Such a step meets the budget only when the browser already holds the next page.
