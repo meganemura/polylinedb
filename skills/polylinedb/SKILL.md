@@ -54,6 +54,10 @@ This unconditional refetch also applies when the connector supplies no expiry ti
 Keep one lowercase session UUID for this caller session and one request UUID for each logical claim mutation.
 Read `show` for the selected ID and retain its `claim.store_incarnation`; `claim_show` returns the same value.
 Call `claim_acquire` with the selected `issue_id`, `incarnation`, `session_id`, and `request_id`.
+A successful `claim_acquire` returns `open_blockers`, the ids of blockers whose status is not `closed`, in issue order, as observed at acquire time.
+An empty list means there are none.
+Acquire does not fail because of those blockers.
+If `open_blockers` is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist.
 For an agent actor, `claim_acquire` rejects an issue without the `ready` label with `not_ready`.
 The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.
 The store checks both rules in the same transaction as the write. A recommendation never overrides a rejection.

@@ -25,6 +25,12 @@ pd claim acquire ISSUE_ID --incarnation OBSERVED_HEX --session-id SESSION_UUID \
 Replace the placeholders with the issue ID, the returned `claim.store_incarnation`, and retained lowercase UUIDs.
 `show` returns the issue, its comments, and `claim`, the same inspection that `claim show` returns.
 Acquire returns `claim_receipt` with the owner, session, generation, revision, deadline, and acquisition label.
+It also returns `open_blockers`, the ids of blockers whose status is not `closed`, in issue order, as observed in that acquisition.
+The list is empty when the issue has no blockers or only closed blockers.
+A deferred blocker is included.
+Acquire does not fail because those blockers are open, so a lock issue stays acquirable.
+A replay of the same request reads `open_blockers` again, because the stored receipt does not keep the observation.
+When the list is non-empty and the claim was meant to start work, release the claim immediately and pick another issue from the ready worklist.
 It leaves the issue status unchanged and can claim a closed issue.
 Concurrent acquisitions elect one winner.
 An already active claim rejects a fresh acquisition, including one from the same session.

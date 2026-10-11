@@ -302,8 +302,10 @@ test('existing operation responses keep the keys a released client decodes', asy
     const inspection = await wire({ op: 'claim_show', issue_id: id });
     assertShape(inspection.body, { claim: { ...inspectionShape, lease: null } });
     const acquire = { op: 'claim_acquire', issue_id: id, incarnation: (inspection.body.claim as { store_incarnation: string }).store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
-    assertShape((await wire(acquire)).body, { claim_receipt: { ...claimShape, outcome: 'string' } });
-    assert.equal(Object.hasOwn((await wire(acquire)).body, 'open_blockers'), false);
+    const acquiredBody = (await wire(acquire)).body;
+    assertShape(acquiredBody, { claim_receipt: { ...claimShape, outcome: 'string' }, open_blockers: ['string'] });
+    assert.deepEqual(acquiredBody.open_blockers, [blocker.id]);
+    assert.deepEqual((await wire(acquire)).body.open_blockers, [blocker.id]);
     const replay = await wire({ ...acquire, agent_label: 'Other' });
     assertShape(replay.body, { error: { code: 'string', message: 'string' } });
     assert.equal((replay.body.error as { code: string }).code, 'claim_request_conflict');

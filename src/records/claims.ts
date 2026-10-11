@@ -2,6 +2,7 @@
 import { PolylinedbError, requireFields } from './errors.ts';
 import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
+import { statements } from './solarsql.generated.ts';
 import { claimMutationStatements } from './claims-sql.ts';
 import { recordingChanges } from './changes-sql.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
@@ -23,7 +24,7 @@ export function claimDisplay(inspection: ClaimInspection): ClaimDisplay {
 }
 export type ClaimOperation = ClaimMutation | { op: 'claim_show'; issue_id: string }
   | { op: 'claim_list'; tool?: string; project?: string; after?: string; limit: number };
-export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection };
+export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claim_receipt: ClaimReceipt; open_blockers: string[] } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection };
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const uuidSchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' };
 const incarnationSchema = { type: 'string', pattern: '^[a-f0-9]{32}$' };
@@ -138,17 +139,24 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   let results;
   const issue_id = operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id;
   const gate = operation.op === 'claim_acquire' ? agentMayAcquire(caller, 'issues.labels_json') : undefined;
-  try { results = await recordingChanges(db, actor).batch([...claimMutationStatements(operation, actor, gate), claimObservation(issue_id)]); }
+  const observeBlockers = operation.op === 'claim_acquire';
+  try { results = await recordingChanges(db, actor).batch([...claimMutationStatements(operation, actor, gate), claimObservation(issue_id), ...(observeBlockers ? [openBlockerRead(issue_id)] : [])]); }
   catch (error) {
     if (!duplicateReceipt(error)) throw error;
     const row = (await db.reads.all(issueQueries.claimRequest, { request_id: operation.request_id }))[0];
     if (!row) throw new PolylinedbError('storage_error', 'Committed claim receipt is unavailable', 503);
     if (decideReplay(row, actor, payload) === 'request_conflict') throw new PolylinedbError('claim_request_conflict', 'The request ID belongs to a different actor, session, or payload', 409);
-    return { claim_receipt: receipt(row) };
+    const claim_receipt = receipt(row);
+    if (!observeBlockers) return { claim_receipt };
+    return { claim_receipt, open_blockers: openBlockerIds(await db.reads.all(issueQueries.openBlockers, { issue_id })) };
   }
-  const row = results.at(-2)?.rows[0];
-  if (row) return { claim_receipt: receipt(row) };
-  const observed = results.at(-1)?.rows[0];
+  const row = results.at(observeBlockers ? -3 : -2)?.rows[0];
+  if (row) {
+    const claim_receipt = receipt(row);
+    if (!observeBlockers) return { claim_receipt };
+    return { claim_receipt, open_blockers: openBlockerIds(results.at(-1)?.rows ?? []) };
+  }
+  const observed = results.at(observeBlockers ? -2 : -1)?.rows[0];
   if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
   if (operation.op === 'claim_acquire') rejectAgentWrite(caller, 'claim_acquire', issue_id, JSON.parse(String(observed.labels_json)), observed);
   if (operation.op === 'claim_release') {
@@ -156,6 +164,12 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     if (ownsExpiredLease(current.lease, current.store_incarnation, operation.claim_proof, current.issue_id, actor, current.observed_at)) return { released: false, current };
   }
   throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current: inspection(observed) });
+}
+function openBlockerIds(rows: readonly Record<string, unknown>[]): string[] {
+  return rows.map(row => parseIssueId(row.id));
+}
+function openBlockerRead(issue_id: string): SqlStatement {
+  return { sql: statements.openBlockers.replaceAll(':issue_id', '?'), params: [issue_id] };
 }
 function claimObservation(issue_id: string): SqlStatement {
   return { sql: `SELECT issues.id AS issue_id, issues.labels_json, identity.incarnation AS store_incarnation, CAST(unixepoch() AS INTEGER) AS observed_at, claim.incarnation, claim.actor,

@@ -10,6 +10,10 @@ The current MCP vocabulary represents ready work as `dependency_worklist` with `
 The skill reads schemas at runtime and uses separate issue and main-lock proofs.
 Repository publication policy selects main-direct or PR work.
 
+A successful `claim_acquire` returns `open_blockers`, the ids of blockers whose status is not `closed`, observed at acquire time.
+An empty list means there are none.
+Acquire does not fail because of those blockers.
+If `open_blockers` is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist.
 An agent actor claims only issues labeled `ready`, and the store checks that label in the same transaction as the acquisition.
 An agent update, close, reopen, comment, or prerequisite edit succeeds only while the agent holds an active claim on the issue, checked in the same transaction as the write.
 Local connections set the agent kind and actor per host, as [local agent actors](agent-actors.md) describes.
