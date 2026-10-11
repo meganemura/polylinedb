@@ -403,10 +403,6 @@ export async function projectClosedIssues(db: SqlExecutor, tool: string, project
   return (await db.reads.all(issueQueries.projectClosed, { tool, project, limit })).map(issueRow);
 }
 
-export async function ownerInboxIssues(db: SqlExecutor, limit: number): Promise<Issue[]> {
-  return (await db.reads.all(issueQueries.ownerInbox, { limit })).map(issueRow);
-}
-
 export async function recentUpdates(db: SqlExecutor, limit: number): Promise<Issue[]> {
   return (await db.reads.all(issueQueries.recentUpdates, { limit })).map(issueRow);
 }
@@ -457,11 +453,6 @@ export async function activeClaimIssues(db: SqlExecutor, limit: number): Promise
     if (state !== 'active') return [];
     return [{ issue, actor: lease.actor, agentLabel: lease.agent_label, expiresAt: lease.expires_at }];
   });
-}
-
-// `main-wait` keeps an issue open while its merge sits in a local land queue that the remote trunk does not yet contain.
-export async function issuesAwaitingMain(db: SqlExecutor, limit: number): Promise<Issue[]> {
-  return (await db.reads.all(issueQueries.awaitingMain, { limit })).map(issueRow);
 }
 
 export type ProjectSummary = {

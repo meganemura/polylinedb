@@ -1,6 +1,8 @@
 // Exposes record commands and their domain types; storage and snapshot details use the persistence entry.
 export { executeOperation, parseOperation, operationSchemas } from './operations.ts';
-export { recentlyClosedIssues, issuesAwaitingMain, projectSummaries, projectIssues, projectClosedIssues, ownerInboxIssues, activeClaimIssues, blockedIssues, recentUpdates, issueParent, issueChildren, issueDispatchScope } from './issues.ts';
+export { recentlyClosedIssues, projectSummaries, projectIssues, projectClosedIssues, activeClaimIssues, blockedIssues, recentUpdates, issueParent, issueChildren, issueDispatchScope } from './issues.ts';
+export { attentionIssues } from './attention.ts';
+export type { Attention, AttentionIssue, AttentionLabel, OpenIssue, OwnerGroup, OwnerLabel, OwnerQueue } from './attention.ts';
 export type { ProjectSummary, ProjectIssue, ActiveClaimIssue, BlockedIssue, IssueLink } from './issues.ts';
 export { claimDisplay } from './claims.ts';
 export type { ClaimDisplay } from './claims.ts';
