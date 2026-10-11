@@ -11,7 +11,7 @@ import { fields } from '../records/persistence.ts';
 import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence.ts';
 import { claimRow } from '../records/persistence.ts';
-import { parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels } from '../records/index.ts';
+import { parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels, waitPageLimit } from '../records/index.ts';
 import type { Claim, ClaimInspection, ChangeEvent } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
@@ -141,10 +141,11 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       if (expected !== 'released' && parsed.released_at === null) return blockers === undefined ? { claim_receipt: { ...parsed, outcome: expected, released_at: null } } : { claim_receipt: { ...parsed, outcome: expected, released_at: null }, open_blockers: blockers };
       return invalid();
     }
-    case 'changes': {
+    case 'changes': case 'wait': {
       const row = known(value, ['incarnation', 'changes', 'next_since']);
       const incarnation = parseIncarnation(row.incarnation);
-      if ((operation.incarnation !== undefined && incarnation !== operation.incarnation) || !Array.isArray(row.changes) || row.changes.length > operation.limit) return invalid();
+      const limit = operation.op === 'changes' ? operation.limit : waitPageLimit;
+      if ((operation.incarnation !== undefined && incarnation !== operation.incarnation) || !Array.isArray(row.changes) || row.changes.length > limit) return invalid();
       const changes = row.changes.map(entry => changeEvent(entry, incarnation));
       let previous = operation.since;
       for (const change of changes) {
@@ -306,7 +307,7 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       return { issue: current };
     }
     case 'incarnation_mismatch': case 'cursor_expired': {
-      if (operation.op !== 'changes') return invalid();
+      if (operation.op !== 'changes' && operation.op !== 'wait') return invalid();
       const row = known(value, ['incarnation', 'next_since']);
       const incarnation = parseIncarnation(row.incarnation); const next_since = count(row.next_since, 0);
       if (code === 'incarnation_mismatch' ? operation.incarnation === undefined || incarnation === operation.incarnation
@@ -411,7 +412,8 @@ export async function executeCloudOperation(input: {
   const token = await input.authorize();
   if (!token || /[\r\n]/.test(token)) throw new PolylinedbError('auth_required', 'Run auth login for this cloud connection.', 401);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const waitBudget = input.operation.op === 'wait' ? Math.min(input.operation.timeout * 1000 + 5_000, 2_147_483_647) : timeoutMs;
+  const timer = setTimeout(() => controller.abort(), Math.max(timeoutMs, waitBudget));
   let response: Response | undefined;
   let retried = false;
   try {

@@ -271,7 +271,11 @@ test('cloud decoding reads change feed pages and cursor errors and rejects pages
       { seq: 2, issue_id: 'pd-1', kind: 'commented', fields: [], actor: 'access:owner' },
     ]);
     assert.equal(page.next_since, 2);
+    const waited = await run({ op: 'wait', since: 0, timeout: 0 });
+    assert.ok('changes' in waited);
+    assert.deepEqual(waited.changes.map(change => change.seq), [1, 2]);
     const other = 'f'.repeat(32);
+    await assert.rejects(run({ op: 'wait', since: 1, incarnation: other, timeout: 0 }), { code: 'incarnation_mismatch', details: { incarnation, next_since: 2 } });
     await assert.rejects(run({ op: 'changes', since: 1, incarnation: other }), { code: 'incarnation_mismatch', details: { incarnation, next_since: 2 } });
     sqlite.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10000)
       INSERT INTO change_events(issue_id, kind, fields_json, occurred_at, actor) SELECT 'pd-1', 'commented', '[]', unixepoch(), 'retention' FROM n`);

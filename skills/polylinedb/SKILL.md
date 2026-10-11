@@ -81,6 +81,16 @@ Read current ownership before further work. A replayed receipt does not prove cu
 After a version conflict, reread and reconsider the change.
 Do not silently replace versions, incarnations, or proofs.
 
+## Wait for a change
+
+Use `wait` when you need a later change, such as a review comment, a closed blocker, or a released claim.
+Call the MCP tool `wait`, or run `pd wait --since SEQ --timeout SECONDS`.
+Both `since` and `timeout` are required. There is no default timeout.
+The call returns when a matching change-feed event exists after `since`.
+If the timeout elapses first, the result has no events and the current cursor. Call `wait` again with that cursor.
+`wait` is a read. It does not claim an issue and it does not change one.
+Do not sleep in a loop and poll `show`, `list`, or the ready worklist.
+
 ## Work in your own worktree
 
 After a successful acquisition, create a git worktree and branch for the issue from the current queue tip, for example `git worktree add ../work-ISSUE_ID -b work/ISSUE_ID origin/queue`.

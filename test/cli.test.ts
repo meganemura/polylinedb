@@ -135,6 +135,45 @@ test('CLI reads the change feed with repeated filters, paging, and cursor errors
     details: { incarnation: all.incarnation, next_since: 5 },
   });
 });
+test('CLI wait returns a new commit within about 2 seconds and a timeout cursor writes nothing', async t => {
+  const { run, cwd, directory } = fixture(t);
+  run(['init']);
+  run(['create', '--tool', 'codex', '--project', 'feed', '--body', 'issue']);
+  const digest = () => {
+    const database = new DatabaseSync(join(directory, 'polylinedb.sqlite'), { readOnly: true });
+    try {
+      const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
+      return JSON.stringify(tables.map(table => [String(table.name), database.prepare(`SELECT * FROM "${String(table.name)}"`).all()]));
+    } finally { database.close(); }
+  };
+  const present = run(['wait', '--since', '0', '--timeout', '5', '--kind', 'created']);
+  assert.deepEqual(present.changes.map((change: { kind: string }) => change.kind), ['created']);
+  const before = digest();
+  const quietStarted = Date.now();
+  const quiet = run(['wait', '--since', String(present.next_since), '--incarnation', present.incarnation, '--timeout', '1', '--kind', 'commented']);
+  const quietMs = Date.now() - quietStarted;
+  assert.deepEqual(quiet.changes, []);
+  assert.equal(quiet.next_since, present.next_since);
+  assert.equal(quiet.incarnation, present.incarnation);
+  assert.ok(quietMs < 2000, `timeout returned in ${quietMs}ms`);
+  assert.equal(digest(), before);
+  assert.equal(run(['wait', '--since', '0'], { status: 2 }).error.message, 'Wait requires --timeout');
+  assert.equal(run(['wait', '--timeout', '1'], { status: 2 }).error.message, 'Wait requires --since');
+  const pending = startCommand(cwd, directory, ['wait', '--since', String(quiet.next_since), '--incarnation', quiet.incarnation, '--timeout', '5', '--kind', 'commented']);
+  await delay(1200);
+  const committedAt = Date.now();
+  run(['comment', '1', '--body', 'while waiting']);
+  const finished = await pending;
+  const waitedMs = Date.now() - committedAt;
+  assert.equal(finished.status, 0, finished.stderr);
+  assert.equal(finished.stderr, '');
+  const matched = JSON.parse(finished.stdout);
+  assert.ok(waitedMs < 2000, `wait returned ${waitedMs}ms after the comment`);
+  assert.deepEqual(matched.changes.map((change: { kind: string }) => change.kind), ['commented']);
+  const continued = run(['wait', '--since', String(matched.next_since), '--incarnation', matched.incarnation, '--timeout', '0', '--kind', 'commented']);
+  assert.deepEqual(continued.changes, []);
+  assert.equal(continued.next_since, matched.next_since);
+});
 test('CLI human reads show full details and comments, safe previews, and page cursors', t => {
   const { run } = fixture(t);
   run(['init']);

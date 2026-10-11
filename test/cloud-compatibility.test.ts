@@ -379,6 +379,8 @@ test('existing operation responses keep the keys a released client decodes', asy
     assertShape((await wire(memoryRequest)).body, { memory: { id: 'string', project: 'string', title: 'string', body: 'string', version: 'number', created_at: 'string', created_by: 'string', updated_at: 'string', updated_by: 'string' } });
     const feed = await wire({ op: 'changes', since: 0, limit: 1 });
     assertShape(feed.body, { incarnation: 'string', changes: [{ seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' }], next_since: 'number' });
+    const waited = await wire({ op: 'wait', since: 0, timeout: 0 });
+    assertShape(waited.body, { incarnation: 'string', changes: [{ seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' }], next_since: 'number' });
   } finally { sqlite.close(); }
 });
 

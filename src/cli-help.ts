@@ -62,6 +62,11 @@ Commands:
   changes --since SEQ [--incarnation HEX] [--project NAME] [--issue ID ...]
           [--kind KIND ...] [--limit 1..100]
                                 Issue change events after SEQ; continue from next_since.
+  wait --since SEQ --timeout SECONDS [--incarnation HEX] [--project NAME]
+       [--issue ID ...] [--kind KIND ...]
+                                Return when a matching event exists after SEQ.
+                                On timeout, return no events and the current cursor.
+                                This command only reads.
   ready [FILTERS]                Open issues with resolved prerequisites.
   blocked [FILTERS]              Unfinished issues with active blockers.
   owner-waits [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]

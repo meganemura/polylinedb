@@ -160,6 +160,27 @@ try {
   const afterMemory = await http({ op: 'changes', since: 2, incarnation: feed.incarnation });
   assert.deepEqual(afterMemory.changes, []);
   assert.equal(afterMemory.next_since, 2);
+  const waitTool = listed.tools.map(record).find(tool => tool.name === 'wait');
+  assert.ok(waitTool);
+  assert.equal(record(waitTool.annotations).readOnlyHint, true);
+  assert.equal(record(waitTool.annotations).destructiveHint, false);
+  const eventsBefore = await database.prepare('SELECT COUNT(*) AS n FROM change_events').first();
+  const quiet = await http({ op: 'wait', since: afterMemory.next_since, incarnation: feed.incarnation, timeout: 1, kinds: ['commented'] });
+  assert.deepEqual(quiet.changes, []);
+  assert.equal(quiet.next_since, afterMemory.next_since);
+  assert.equal(quiet.incarnation, feed.incarnation);
+  assert.deepEqual(await database.prepare('SELECT COUNT(*) AS n FROM change_events').first(), eventsBefore);
+  const waiting = http({ op: 'wait', since: quiet.next_since, incarnation: quiet.incarnation, timeout: 5, kinds: ['commented'] });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const committedAt = Date.now();
+  await http({ op: 'comment', id, body: 'arrived while waiting' });
+  const matched = await waiting;
+  const waitedMs = Date.now() - committedAt;
+  assert.ok(waitedMs < 2000, `wait returned ${waitedMs}ms after the comment`);
+  assert.equal(record(Array.isArray(matched.changes) ? matched.changes[0] : undefined).kind, 'commented');
+  const continued = await http({ op: 'wait', since: matched.next_since, incarnation: matched.incarnation, timeout: 0, kinds: ['commented'] });
+  assert.deepEqual(continued.changes, []);
+  assert.equal(continued.next_since, matched.next_since);
   const memoryUpdated = record((await http({ op: 'memory_update', project: 'parser', id: memory.id, title: 'Build fact', body: 'Shared HTTP and MCP state', expected: 1 })).memory);
   assert.equal(memoryUpdated.version, 2);
   const memoryContext = await rpc('tools/call', { name: 'memory_context', arguments: { project: 'parser' } });
@@ -324,7 +345,8 @@ try {
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
       'real JWT verification', 'missing and invalid credentials rejected', 'HTTP create', 'MCP initialize and show',
-      'MCP update', 'HTTP and MCP stale conflicts', 'change feed paging and incarnation_mismatch', 'memory writes record no change event',
+      'MCP update', 'HTTP and MCP stale conflicts', 'change feed paging and incarnation_mismatch',
+      'wait returns a matching comment within 2 seconds and a timeout writes nothing', 'memory writes record no change event',
       'D1 atomicity and persisted audit identity', 'JWKS cache',
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',

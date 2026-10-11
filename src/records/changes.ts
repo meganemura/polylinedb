@@ -8,22 +8,36 @@ import type { ChangeKind } from './changes-sql.ts';
 import type { SqlExecutor } from './issues.ts';
 
 export type { ChangeKind };
-export type ChangesOperation = { op: 'changes'; since: number; incarnation?: string; project?: string; issue_ids?: string[]; kinds?: ChangeKind[]; limit: number };
+type FeedFilter = { since: number; incarnation?: string; project?: string; issue_ids?: string[]; kinds?: ChangeKind[] };
+export type ChangesOperation = FeedFilter & { op: 'changes'; limit: number };
+export type WaitOperation = FeedFilter & { op: 'wait'; timeout: number };
 export type ChangeEvent = { seq: number; incarnation: string; issue_id: string; kind: string; fields: string[]; occurred_at: number; actor: string };
 export type ChangesResult = { incarnation: string; changes: ChangeEvent[]; next_since: number };
 
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 export const maximumIssueFilters = 50;
+export const waitPollIntervalMs = 1000;
+export const waitPageLimit = 50;
+const feedProperties = {
+  since: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'Return events after this seq. Start with 0, then pass next_since.' },
+  incarnation: { type: 'string', pattern: '^[a-f0-9]{32}$', description: 'Required when since is greater than 0: the incarnation of the earlier page.' },
+  project: { type: 'string', minLength: 1, maxLength: 256 },
+  issue_ids: { type: 'array', items: idSchema, minItems: 1, maxItems: maximumIssueFilters, uniqueItems: true },
+  kinds: { type: 'array', items: { type: 'string', enum: changeKinds }, minItems: 1, maxItems: changeKinds.length, uniqueItems: true },
+};
 export const changesSchemas = {
   changes: {
     type: 'object', additionalProperties: false, required: ['since'],
     properties: {
-      since: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'Return events after this seq. Start with 0, then pass next_since.' },
-      incarnation: { type: 'string', pattern: '^[a-f0-9]{32}$', description: 'Required when since is greater than 0: the incarnation of the earlier page.' },
-      project: { type: 'string', minLength: 1, maxLength: 256 },
-      issue_ids: { type: 'array', items: idSchema, minItems: 1, maxItems: maximumIssueFilters, uniqueItems: true },
-      kinds: { type: 'array', items: { type: 'string', enum: changeKinds }, minItems: 1, maxItems: changeKinds.length, uniqueItems: true },
+      ...feedProperties,
       limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+    },
+  },
+  wait: {
+    type: 'object', additionalProperties: false, required: ['since', 'timeout'],
+    properties: {
+      ...feedProperties,
+      timeout: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'Seconds to wait. Required. There is no default.' },
     },
   },
 };
@@ -39,26 +53,38 @@ function list<T>(value: unknown, name: string, maximum: number, parse: (item: un
   if (new Set(items).size !== items.length) return invalid(`${name} must not repeat an entry`);
   return items;
 }
-export function parseChangesOperation(value: unknown): ChangesOperation {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) return invalid('Changes input must be a plain object');
+function parseFeed(value: unknown, op: 'changes' | 'wait'): ChangesOperation | WaitOperation {
+  const label = op === 'changes' ? 'Changes' : 'Wait';
+  if (!value || typeof value !== 'object' || Array.isArray(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) return invalid(`${label} input must be a plain object`);
   const input = value as Record<string, unknown>;
-  const schema = changesSchemas.changes;
+  const schema = changesSchemas[op];
   requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
-  if (input.op !== 'changes') return invalid('Unknown changes operation');
+  if (input.op !== op) return invalid(`Unknown ${op} operation`);
   const since = integer(input.since, 'since', 0);
   if (since > 0 && input.incarnation === undefined) return invalid('incarnation is required when since is greater than 0');
   const project = input.project;
   if (project !== undefined && (typeof project !== 'string' || !project.trim() || /\p{Cc}/u.test(project) || new TextEncoder().encode(project).length > 256)) return invalid('Invalid project');
-  return {
-    op: 'changes', since,
+  const filter: FeedFilter = {
+    since,
     ...(input.incarnation === undefined ? {} : { incarnation: parseIncarnation(input.incarnation) }),
     ...(project === undefined ? {} : { project: project as string }),
     ...(input.issue_ids === undefined ? {} : { issue_ids: list(input.issue_ids, 'issue_ids', maximumIssueFilters, item => {
       try { return parseIssueId(item); } catch (error) { return invalid(error instanceof Error ? error.message : 'Invalid issue ID'); }
     }) }),
     ...(input.kinds === undefined ? {} : { kinds: list(input.kinds, 'kinds', changeKinds.length, item => changeKinds.find(kind => kind === item) ?? invalid(`kinds entries must be one of ${changeKinds.join(', ')}`)) }),
-    limit: input.limit === undefined ? 50 : integer(input.limit, 'limit', 1, 100),
   };
+  if (op === 'wait') return { op, ...filter, timeout: integer(input.timeout, 'timeout', 0) };
+  return { op, ...filter, limit: input.limit === undefined ? 50 : integer(input.limit, 'limit', 1, 100) };
+}
+export function parseChangesOperation(value: unknown): ChangesOperation {
+  const operation = parseFeed(value, 'changes');
+  if (operation.op !== 'changes') return invalid('Unknown changes operation');
+  return operation;
+}
+export function parseWaitOperation(value: unknown): WaitOperation {
+  const operation = parseFeed(value, 'wait');
+  if (operation.op !== 'wait') return invalid('Unknown wait operation');
+  return operation;
 }
 
 function storedEvent(row: Record<string, unknown>, incarnation: string): ChangeEvent {
@@ -91,4 +117,26 @@ export async function executeChangesOperation(db: SqlExecutor, operation: Change
   const events = rows.filter(row => row.seq !== null).map(row => storedEvent(row, incarnation));
   const changes = events.slice(0, operation.limit);
   return { incarnation, changes, next_since: events.length > operation.limit ? changes.at(-1)?.seq ?? latest : latest };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => { setTimeout(resolve, ms); });
+}
+
+export async function executeWaitOperation(db: SqlExecutor, operation: WaitOperation): Promise<ChangesResult> {
+  const deadline = Date.now() + operation.timeout * 1000;
+  const read = () => executeChangesOperation(db, {
+    op: 'changes', since: operation.since, limit: waitPageLimit,
+    ...(operation.incarnation === undefined ? {} : { incarnation: operation.incarnation }),
+    ...(operation.project === undefined ? {} : { project: operation.project }),
+    ...(operation.issue_ids === undefined ? {} : { issue_ids: operation.issue_ids }),
+    ...(operation.kinds === undefined ? {} : { kinds: operation.kinds }),
+  });
+  while (true) {
+    const page = await read();
+    if (page.changes.length > 0) return page;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return page;
+    await sleep(Math.min(waitPollIntervalMs, remaining));
+  }
 }

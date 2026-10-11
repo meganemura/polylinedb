@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeStore, openStore, upgradeStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
@@ -94,4 +95,76 @@ test('changes input requires a cursor, a valid incarnation, and known filters', 
     [{ since: 0, project: ' ' }, /project/i],
     [{ since: 0, cursor: 'x' }, /cursor/],
   ] satisfies [Record<string, unknown>, RegExp][]) assert.throws(() => parseOperation({ op: 'changes', ...input }), { code: 'invalid_input', message }, JSON.stringify(input));
+});
+
+function storeDigest(path: string): string {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
+    return JSON.stringify(tables.map(table => {
+      const name = String(table.name);
+      return [name, database.prepare(`SELECT * FROM "${name}"`).all()];
+    }));
+  } finally { database.close(); }
+}
+
+test('wait input requires since and timeout and rejects a defaulted or unknown field', () => {
+  const incarnation = 'a'.repeat(32);
+  assert.deepEqual(parseOperation({ op: 'wait', since: 0, timeout: 0 }), { op: 'wait', since: 0, timeout: 0 });
+  assert.deepEqual(parseOperation({ op: 'wait', since: 4, timeout: 30, incarnation, project: 'feed', issue_ids: ['cf-2'], kinds: ['commented'] }),
+    { op: 'wait', since: 4, timeout: 30, incarnation, project: 'feed', issue_ids: ['cf-2'], kinds: ['commented'] });
+  for (const [input, message] of [
+    [{ since: 0 }, /timeout/],
+    [{ timeout: 1 }, /since/],
+    [{ since: 0, timeout: -1 }, /timeout/],
+    [{ since: 0, timeout: 1.5 }, /timeout/],
+    [{ since: 1, timeout: 1 }, /incarnation is required/],
+    [{ since: 0, timeout: 1, limit: 1 }, /limit/],
+  ] satisfies [Record<string, unknown>, RegExp][]) assert.throws(() => parseOperation({ op: 'wait', ...input }), { code: 'invalid_input', message }, JSON.stringify(input));
+});
+
+test('wait returns an existing match without waiting, and a timeout writes nothing and keeps a cursor', async t => {
+  const { place, database_path } = location(t);
+  const store = openStore(place);
+  try {
+    await executeOperation(store.db, created(), 'alice');
+    const before = storeDigest(database_path);
+    const started = Date.now();
+    const matched = await executeOperation(store.db, parseOperation({ op: 'wait', since: 0, timeout: 5, kinds: ['created'] }), 'reader');
+    assert.ok(Date.now() - started < 500, `existing match took ${Date.now() - started}ms`);
+    assert.ok('changes' in matched);
+    assert.deepEqual(matched.changes.map(change => change.kind), ['created']);
+    const quietStarted = Date.now();
+    const quiet = await executeOperation(store.db, parseOperation({ op: 'wait', since: matched.next_since, incarnation: matched.incarnation, timeout: 1, kinds: ['commented'] }), 'reader');
+    const quietMs = Date.now() - quietStarted;
+    assert.ok('changes' in quiet);
+    assert.deepEqual(quiet.changes, []);
+    assert.equal(quiet.next_since, matched.next_since);
+    assert.equal(quiet.incarnation, matched.incarnation);
+    assert.ok(quietMs >= 900 && quietMs < 2000, `timeout of 1 second returned in ${quietMs}ms`);
+    assert.equal(storeDigest(database_path), before);
+    await executeOperation(store.db, parseOperation({ op: 'comment', id: 'cf-1', body: 'later' }), 'alice');
+    const continued = await executeOperation(store.db, parseOperation({ op: 'wait', since: quiet.next_since, incarnation: quiet.incarnation, timeout: 0, kinds: ['commented'] }), 'reader');
+    assert.ok('changes' in continued);
+    assert.deepEqual(continued.changes.map(change => [change.seq, change.kind]), [[quiet.next_since + 1, 'commented']]);
+  } finally { store.close(); }
+});
+
+test('a matching commit returns a waiting read within about 2 seconds', async t => {
+  const store = openStore(location(t).place);
+  try {
+    await executeOperation(store.db, created(), 'alice');
+    const cursor = await executeOperation(store.db, parseOperation({ op: 'changes', since: 0 }), 'reader');
+    assert.ok('next_since' in cursor);
+    const pending = executeOperation(store.db, parseOperation({ op: 'wait', since: cursor.next_since, incarnation: cursor.incarnation, timeout: 5, kinds: ['commented'] }), 'reader');
+    await delay(50);
+    const committedAt = Date.now();
+    await executeOperation(store.db, parseOperation({ op: 'comment', id: 'cf-1', body: 'while waiting' }), 'alice');
+    const matched = await pending;
+    const waitedMs = Date.now() - committedAt;
+    assert.ok(waitedMs < 2000, `wait returned ${waitedMs}ms after the comment`);
+    assert.ok('changes' in matched);
+    assert.deepEqual(matched.changes.map(change => change.kind), ['commented']);
+    assert.ok(matched.changes[0] && matched.changes[0].seq > cursor.next_since);
+  } finally { store.close(); }
 });

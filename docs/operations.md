@@ -217,6 +217,23 @@ pd changes --since 0 --limit 20
 pd changes --since 42 --incarnation HEX --project parser --kind became_ready --kind status_changed
 ```
 
+### Waiting
+
+`wait` uses the same cursor, filters, and page as `changes`.
+The page holds at most 50 matching events. `wait` has no `limit` argument.
+The Worker and the local CLI read the feed once at the start, then about once a second, until a matching event exists or `timeout` seconds have elapsed.
+`since` and `timeout` are both required. `timeout` is a number of seconds and has no default.
+When a matching event is already present, the call returns that page without waiting.
+When the timeout elapses first, `changes` is empty and `next_since` with `incarnation` is the current cursor.
+Pass that cursor to the next `wait` or `changes` call.
+`wait` does not write a row. The MCP tool marks it read-only.
+A timeout of N seconds, with no matching event, performs N + 1 feed reads. That number counts reads. It is not a D1 bill.
+
+```sh
+pd wait --since 0 --timeout 30
+pd wait --since 42 --incarnation HEX --timeout 30 --issue pd-7 --kind commented
+```
+
 ## CLI diagnostic details
 
 The CLI expands issue numbers and memory shorthand with the selected prefix.

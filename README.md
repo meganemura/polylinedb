@@ -92,6 +92,7 @@ Give each local agent its own actor with [local agent actors](docs/agent-actors.
 
 Schema 7 adds a store-wide change feed.
 `pd changes --since 0` lists issue changes in commit order; continue with the returned `next_since` and `incarnation`.
+`pd wait --since SEQ --timeout SECONDS` returns when a matching event exists after that cursor, and on timeout it returns no events and the current cursor.
 An event names the issue, the kind of change, and the actor, so an agent can follow other agents' work without rereading every issue.
 See the [change feed](docs/operations.md#change-feed).
 

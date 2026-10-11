@@ -41,6 +41,7 @@ const commandFlags: Record<string, readonly string[]> = {
   claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
   changes: ['since', 'incarnation', 'project', 'issue', 'kind', 'limit'],
   'owner-waits': ['tool', 'project', 'after', 'limit'],
+  wait: ['since', 'incarnation', 'project', 'issue', 'kind', 'timeout'],
   ready: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'], blocked: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'],
   memory_create: ['project', 'title', 'body', 'body-file', 'request-id'],
   memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
@@ -421,10 +422,15 @@ async function main(argv: readonly string[]): Promise<void> {
     if (expected !== undefined) raw.expected_revision = integer(expected);
   }
   const ttl = one('ttl'); if (ttl !== undefined && command !== 'claim_keepalive') raw.ttl = integer(ttl);
-  if (command === 'changes') {
+  if (command === 'changes' || command === 'wait') {
     const since = one('since');
-    if (since === undefined) invalid('Changes requires --since');
+    if (since === undefined) invalid(`${command === 'wait' ? 'Wait' : 'Changes'} requires --since`);
     raw.since = integer(since);
+    if (command === 'wait') {
+      const timeout = one('timeout');
+      if (timeout === undefined) invalid('Wait requires --timeout');
+      raw.timeout = integer(timeout);
+    }
     if (one('incarnation') !== undefined) raw.incarnation = one('incarnation');
     if (flags.has('issue')) raw.issue_ids = flags.get('issue')?.map(value => expandedId(value, false));
     if (flags.has('kind')) raw.kinds = flags.get('kind');
