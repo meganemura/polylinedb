@@ -28,12 +28,14 @@ Worktrees are optional. Do not require a branch named `work/<issue id>`.
 ## Rebase and push the queue branch
 
 Rebase the finished commits onto the fetched `queue` branch.
-Running tests locally is optional.
-If the rebase conflicts, stop and say so. Abort the rebase. Do not resolve the conflicts or push.
+Running tests locally is optional when the rebase applies cleanly.
+
+If the rebase conflicts, finish it. Resolve the conflicts in the code.
+Do not stop and ask a human only because the rebase conflicted, and do not abort the rebase.
+If tests can be run, run them. If they fail, fix the fallout of the resolve and run them again.
 
 Push `queue`. Do not use `--force` or `--force-with-lease`.
-If the push is rejected, fetch, rebase onto the fetched branch, and push again.
-If that rebase conflicts, stop and say so. Abort the rebase. Do not resolve it.
+If the push is rejected, fetch, rebase onto the fetched branch, resolve again the same way, and push again.
 
 Pushing `queue` is what this skill is for.
 Do not push any other branch, and do not treat this as permission to push main.
