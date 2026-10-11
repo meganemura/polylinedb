@@ -182,7 +182,7 @@ function ghApi(method: string, path: string, body?: unknown): unknown {
   return interpretGh(method, result.status, result.stdout, result.stderr);
 }
 
-function ghClient(repo: string, date: () => string): ReleaseClient {
+export function ghClient(repo: string, date: () => string): ReleaseClient {
   return {
     async matchingRefs(tag) {
       const value = ghApi('GET', `repos/${repo}/git/matching-refs/tags/${tag}`);

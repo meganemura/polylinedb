@@ -1,11 +1,11 @@
 // Decides tag and release creation without calling GitHub.
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import {
-  annotatedTagRequest, ensureRelease, interpretGh, parseAnnotatedTag, parseReleaseRecord, parseTagRef,
+  annotatedTagRequest, ensureRelease, ghClient, interpretGh, parseAnnotatedTag, parseReleaseRecord, parseTagRef,
   releaseRequest, releaseTitle, runRelease, tagMessage, type ReleaseClient, type ReleaseRecord, type TagRef,
 } from '../scripts/github-release.ts';
 
@@ -137,4 +137,50 @@ test('GitHub responses keep the annotated tag distinct from its commit', () => {
     },
   });
   assert.equal(releaseRequest({ tag: 'v1.2.3', title: 'polylinedb 1.2.3', notes }).make_latest, 'true');
+});
+
+// A stand-in `gh` on PATH records each call's arguments and standard input, and answers like the GitHub API.
+const fakeGh = `#!/usr/bin/env node
+const { appendFileSync, readFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+const input = args.includes('--input') ? readFileSync(0, 'utf8') : '';
+appendFileSync(process.env.GH_FAKE_LOG, JSON.stringify({ args, input }) + '\\n');
+const path = args[3];
+if (path.endsWith('/git/matching-refs/tags/v1.2.3')) process.stdout.write('[]');
+else if (path.endsWith('/git/tags')) process.stdout.write(JSON.stringify({ sha: '${tagObject}' }));
+else if (path.endsWith('/releases/tags/v1.2.3')) { process.stderr.write('gh: Not Found (HTTP 404)'); process.exit(1); }
+else process.stdout.write('{}');
+`;
+
+test('the gh client sends each POST body on standard input with --input -', async context => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-gh-'));
+  const path = process.env.PATH;
+  context.after(() => {
+    process.env.PATH = path;
+    delete process.env.GH_FAKE_LOG;
+    rmSync(root, { recursive: true, force: true });
+  });
+  writeFileSync(join(root, 'gh'), fakeGh);
+  chmodSync(join(root, 'gh'), 0o755);
+  process.env.PATH = `${root}:${path}`;
+  process.env.GH_FAKE_LOG = join(root, 'calls.jsonl');
+
+  const outcome = await ensureRelease(ghClient('owner/repo', () => '2026-10-12T00:00:00.000Z'), { version: '1.2.3', commit, notes });
+  assert.deepEqual(outcome, { tag: 'created', release: 'created' });
+  const calls = readFileSync(join(root, 'calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(calls.map(call => call.args), [
+    ['api', '--method', 'GET', 'repos/owner/repo/git/matching-refs/tags/v1.2.3'],
+    ['api', '--method', 'POST', 'repos/owner/repo/git/tags', '--input', '-'],
+    ['api', '--method', 'POST', 'repos/owner/repo/git/refs', '--input', '-'],
+    ['api', '--method', 'GET', 'repos/owner/repo/releases/tags/v1.2.3'],
+    ['api', '--method', 'POST', 'repos/owner/repo/releases', '--input', '-'],
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].input), {
+    tag: 'v1.2.3', message: 'polylinedb 1.2.3\n', object: commit, type: 'commit',
+    tagger: { name: 'github-actions[bot]', email: '41898282+github-actions[bot]@users.noreply.github.com', date: '2026-10-12T00:00:00.000Z' },
+  });
+  assert.deepEqual(JSON.parse(calls[2].input), { ref: 'refs/tags/v1.2.3', sha: tagObject });
+  assert.deepEqual(JSON.parse(calls[4].input), {
+    tag_name: 'v1.2.3', name: 'polylinedb 1.2.3', body: notes, draft: false, prerelease: false, make_latest: 'true',
+  });
 });
