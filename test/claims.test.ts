@@ -65,6 +65,48 @@ test('force overrides prerequisites while the claim guard stays atomic', async t
   await run({ op: 'close', id: issue.id, expected: 1, force: true, reason: 'Accepted prerequisite risk', claim_proof: proof(owner.receipt) });
   const output = await run({ op: 'show', id: issue.id }); assert.ok('comments' in output); assert.equal(output.issue.status, 'closed'); assert.equal(output.comments[0]?.body, 'Accepted prerequisite risk');
 });
+test('acquire reports open blockers as an observation and still acquires', async t => {
+  const { run } = fixture(t);
+  const dependent = await create(run);
+  const open = await create(run);
+  const closed = await create(run);
+  const clear = await create(run);
+  const onlyClosed = await create(run);
+  for (let index = 0; index < 4; index++) await create(run);
+  const deferred = await create(run);
+  assert.deepEqual([dependent.id, open.id, closed.id, clear.id, onlyClosed.id, deferred.id], ['pd-1', 'pd-2', 'pd-3', 'pd-4', 'pd-5', 'pd-10']);
+  await run({ op: 'update', id: deferred.id, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
+  await run({ op: 'close', id: closed.id, expected: 1 });
+  const link = (dependent_id: string, blocker_id: string, expected_revision: number) => run({ op: 'dependency_add', dependent_id, blocker_id, expected_revision, request_id: request() });
+  await link(dependent.id, deferred.id, 1);
+  await link(dependent.id, open.id, 2);
+  await link(dependent.id, closed.id, 3);
+  await link(onlyClosed.id, closed.id, 1);
+  const shown = await run({ op: 'claim_show', issue_id: dependent.id }); assert.ok('claim' in shown);
+  const command = { op: 'claim_acquire', issue_id: dependent.id, incarnation: shown.claim.store_incarnation, session_id: request(), request_id: request(), ttl: 300 };
+  const acquired = await run(command);
+  assert.ok('claim_receipt' in acquired);
+  assert.equal(acquired.claim_receipt.outcome, 'acquired');
+  assert.equal(acquired.claim_receipt.generation, 1);
+  assert.equal(acquired.claim_receipt.revision, 1);
+  assert.deepEqual('open_blockers' in acquired ? acquired.open_blockers : undefined, [open.id, deferred.id]);
+  const without = async (issue_id: string) => {
+    const inspection = await run({ op: 'claim_show', issue_id }); assert.ok('claim' in inspection);
+    const result = await run({ op: 'claim_acquire', issue_id, incarnation: inspection.claim.store_incarnation, session_id: request(), request_id: request() });
+    assert.ok('claim_receipt' in result);
+    assert.equal(result.claim_receipt.outcome, 'acquired');
+    assert.deepEqual('open_blockers' in result ? result.open_blockers : undefined, []);
+  };
+  await without(clear.id);
+  await without(onlyClosed.id);
+  await run({ op: 'close', id: open.id, expected: 1 });
+  const replay = await run(command);
+  assert.ok('claim_receipt' in replay);
+  assert.deepEqual(replay.claim_receipt, acquired.claim_receipt);
+  assert.deepEqual('open_blockers' in replay ? replay.open_blockers : undefined, [deferred.id]);
+  const renewed = await run({ op: 'claim_renew', claim_proof: proof(acquired.claim_receipt), expected_revision: 1, request_id: request() });
+  assert.deepEqual(Object.keys(renewed).sort(), ['claim_receipt']);
+});
 test('a supplied claim_proof that the store rejects names the observed claim', async t => {
   const { run, db } = fixture(t); const issue = await create(run); const owner = await acquire(run, issue.id);
   const current = proof(owner.receipt);

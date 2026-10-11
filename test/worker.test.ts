@@ -506,6 +506,41 @@ test('claim_acquire without a session UUID fails with a session_id usage error o
   } finally { sqlite.close(); }
 });
 
+test('claim_acquire returns open blockers on HTTP and MCP and still acquires', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const post = (path: string, body: unknown) => handleRequest(new Request(`https://issues.example${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': token },
+    body: JSON.stringify(body),
+  }), env, authenticate);
+  try {
+    const dependent = await seedIssue(env, token, 'dependent');
+    const open = await seedIssue(env, token, 'open blocker');
+    const closed = await seedIssue(env, token, 'closed blocker');
+    const clear = await seedIssue(env, token, 'clear');
+    assert.equal((await post('/v1/operations', { op: 'close', id: closed, expected: 1 })).status, 200);
+    assert.equal((await post('/v1/operations', { op: 'dependency_add', dependent_id: dependent, blocker_id: open, expected_revision: 1, request_id: crypto.randomUUID() })).status, 200);
+    assert.equal((await post('/v1/operations', { op: 'dependency_add', dependent_id: dependent, blocker_id: closed, expected_revision: 2, request_id: crypto.randomUUID() })).status, 200);
+    assert.equal((await post('/v1/operations', { op: 'dependency_add', dependent_id: clear, blocker_id: closed, expected_revision: 1, request_id: crypto.randomUUID() })).status, 200);
+    const incarnation = (await (await post('/v1/operations', { op: 'claim_show', issue_id: dependent })).json()).claim.store_incarnation;
+    const args = { issue_id: dependent, incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() };
+    const http = await (await post('/v1/operations', { op: 'claim_acquire', ...args })).json();
+    assert.equal(http.claim_receipt.outcome, 'acquired');
+    assert.equal(http.claim_receipt.generation, 1);
+    assert.deepEqual(http.open_blockers, [open]);
+    const mcp = (await (await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'claim_acquire', arguments: args } })).json()).result;
+    assert.equal(mcp.isError, false);
+    assert.deepEqual(mcp.structuredContent, http);
+    const clearArgs = { issue_id: clear, incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() };
+    const clearHttp = await (await post('/v1/operations', { op: 'claim_acquire', ...clearArgs })).json();
+    assert.equal(clearHttp.claim_receipt.outcome, 'acquired');
+    assert.deepEqual(clearHttp.open_blockers, []);
+    const clearMcp = (await (await post('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'claim_acquire', arguments: clearArgs } })).json()).result;
+    assert.equal(clearMcp.isError, false);
+    assert.deepEqual(clearMcp.structuredContent.open_blockers, []);
+  } finally { sqlite.close(); }
+});
+
 test('tools/list advertises the pinned inputSchema of every MCP tool and requires session_id for claim_acquire', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
