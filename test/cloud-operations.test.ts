@@ -398,3 +398,42 @@ test('transport keeps the read-only and agent gate rejections of the Worker', as
     { code: 'not_ready', status: 409, details: { id: 'pd-3' } });
   await assert.rejects(send(comment, 409, { error: { code: 'not_ready', message: 'ready', details: { id: 'pd-1' } } }), { code: 'cloud_invalid_response' });
 });
+
+test('cloud client decodes a no-op release of an expired own lease and rejects a lease the proof does not name', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const worker = (async (_url, options) => handleRequest(new Request('https://issues.example/v1/operations', { ...options, headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token } }), env, authenticate)) satisfies typeof fetch;
+  const run = (value: unknown, transport: typeof fetch = worker) => executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation(value), authorize: async () => 'synthetic', fetch: transport });
+  const reply = (body: unknown, status = 200) => async () => Response.json(body, { status });
+  try {
+    const created = await run({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'cloud', body: 'Claim' });
+    assert.ok('issue' in created);
+    const inspection = await run({ op: 'claim_show', issue_id: created.issue.id });
+    assert.ok('claim' in inspection);
+    const session_id = crypto.randomUUID();
+    const acquired = await run({ op: 'claim_acquire', issue_id: created.issue.id, incarnation: inspection.claim.store_incarnation, session_id, request_id: crypto.randomUUID() });
+    assert.ok('claim_receipt' in acquired);
+    const claim_proof = { issue_id: created.issue.id, incarnation: acquired.claim_receipt.incarnation, session_id, generation: acquired.claim_receipt.generation };
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(created.issue.id);
+    const released = JSON.parse(JSON.stringify(await run({ op: 'claim_release', claim_proof, expected_revision: 1, request_id: crypto.randomUUID() })));
+    assert.equal(released.released, false);
+    assert.equal(released.current.state, 'expired');
+    assert.equal(released.current.lease.revision, 1);
+    assert.equal(released.current.lease.released_at, null);
+    const current = released.current;
+    const operation = parseOperation({ op: 'claim_release', claim_proof, expected_revision: 99, request_id: crypto.randomUUID() });
+    const decoded = JSON.parse(JSON.stringify(await executeCloudOperation({ origin: 'https://issues.example', operation, authorize: async () => 'synthetic', fetch: reply({ released: false, current, extra: true }) })));
+    assert.equal(decoded.released, false);
+    assert.equal(decoded.current.state, 'expired');
+    assert.equal(decoded.current.lease.session_id, session_id);
+    for (const body of [
+      { released: true, current },
+      { released: false, current: { ...current, state: 'active' } },
+      { released: false, current: { ...current, issue_id: 'pd-999' } },
+      { released: false, current: { ...current, lease: { ...current.lease, session_id: crypto.randomUUID() } } },
+      { released: false, current, claim_receipt: acquired.claim_receipt },
+    ]) {
+      await assert.rejects(executeCloudOperation({ origin: 'https://issues.example', operation, authorize: async () => 'synthetic', fetch: reply(body) }), { code: 'cloud_invalid_response' });
+    }
+  } finally { sqlite.close(); }
+});

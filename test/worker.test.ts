@@ -407,6 +407,79 @@ test('MCP update names the expired claim when the supplied proof no longer holds
   } finally { sqlite.close(); }
 });
 
+test('HTTP and MCP release an expired own lease as a no-op and refuse a newer lease', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const post = async (path: string, body: unknown) => {
+    const response = await handleRequest(new Request(`https://issues.example${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': token },
+      body: JSON.stringify(body),
+    }), env, authenticate);
+    return { status: response.status, body: await response.json() };
+  };
+  const mcp = async (name: string, args: Record<string, unknown>) => (await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })).body.result;
+  try {
+    const issue = (await post('/v1/operations', { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'pd', project: 'test', body: 'Issue' })).body.issue;
+    const incarnation = (await post('/v1/operations', { op: 'claim_show', issue_id: issue.id })).body.claim.store_incarnation;
+    const session_id = crypto.randomUUID();
+    const acquired = await post('/v1/operations', { op: 'claim_acquire', issue_id: issue.id, incarnation, session_id, request_id: crypto.randomUUID(), ttl: 3600 });
+    assert.equal(acquired.status, 200);
+    assert.equal(acquired.body.claim_receipt.revision, 1);
+    const own = { issue_id: issue.id, incarnation, session_id, generation: 1 };
+    const active = await post('/v1/operations', { op: 'claim_release', claim_proof: own, expected_revision: 1, request_id: crypto.randomUUID() });
+    assert.equal(active.status, 200);
+    assert.equal(active.body.claim_receipt.outcome, 'released');
+    assert.equal(active.body.claim_receipt.revision, 2);
+    const again = crypto.randomUUID();
+    const second = await mcp('claim_acquire', { issue_id: issue.id, incarnation, session_id: again, request_id: crypto.randomUUID(), ttl: 3600 });
+    assert.equal(second.isError, false);
+    assert.equal(second.structuredContent.claim_receipt.revision, 3);
+    assert.equal(second.structuredContent.claim_receipt.generation, 2);
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue.id);
+    const httpCleanup = await post('/v1/operations', { op: 'claim_release', claim_proof: { issue_id: issue.id, incarnation, session_id: again, generation: 2 }, expected_revision: 3, request_id: crypto.randomUUID() });
+    assert.equal(httpCleanup.status, 200);
+    assert.equal(httpCleanup.body.released, false);
+    assert.equal(httpCleanup.body.current.state, 'expired');
+    assert.equal(httpCleanup.body.current.lease.revision, 3);
+    assert.equal(httpCleanup.body.current.lease.released_at, null);
+    const mcpCleanup = await mcp('claim_release', { claim_proof: { issue_id: issue.id, incarnation, session_id: again, generation: 2 }, expected_revision: 99, request_id: crypto.randomUUID() });
+    assert.equal(mcpCleanup.isError, false);
+    assert.equal(mcpCleanup.structuredContent.released, false);
+    assert.equal(mcpCleanup.structuredContent.current.state, 'expired');
+    assert.equal(mcpCleanup.structuredContent.current.lease.revision, 3);
+    assert.equal(sqlite.prepare('SELECT revision, released_at FROM issue_claims WHERE issue_id = ?').get(issue.id)?.revision, 3);
+    assert.equal(sqlite.prepare('SELECT released_at FROM issue_claims WHERE issue_id = ?').get(issue.id)?.released_at, null);
+    const foreignSession = crypto.randomUUID();
+    const foreign = await post('/v1/operations', { op: 'claim_acquire', issue_id: issue.id, incarnation, session_id: foreignSession, request_id: crypto.randomUUID() });
+    assert.equal(foreign.body.claim_receipt.revision, 4);
+    const oldProof = { issue_id: issue.id, incarnation, session_id: again, generation: 2 };
+    const httpConflict = await post('/v1/operations', { op: 'claim_release', claim_proof: oldProof, expected_revision: 4, request_id: crypto.randomUUID() });
+    assert.equal(httpConflict.status, 409);
+    assert.equal(httpConflict.body.error.code, 'claim_conflict');
+    const mcpConflict = await mcp('claim_release', { claim_proof: oldProof, expected_revision: 4, request_id: crypto.randomUUID() });
+    assert.equal(mcpConflict.isError, true);
+    assert.equal(mcpConflict.structuredContent.error.code, 'claim_conflict');
+    assert.equal((await post('/v1/operations', { op: 'claim_show', issue_id: issue.id })).body.claim.lease.revision, 4);
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue.id);
+    const expiredConflict = await post('/v1/operations', { op: 'claim_release', claim_proof: oldProof, expected_revision: 4, request_id: crypto.randomUUID() });
+    assert.equal(expiredConflict.status, 409);
+    assert.equal(expiredConflict.body.error.code, 'claim_conflict');
+    const expiredMcp = await mcp('claim_release', { claim_proof: oldProof, expected_revision: 4, request_id: crypto.randomUUID() });
+    assert.equal(expiredMcp.isError, true);
+    assert.equal(expiredMcp.structuredContent.error.code, 'claim_conflict');
+    assert.equal(sqlite.prepare('SELECT revision FROM issue_claims WHERE issue_id = ?').get(issue.id)?.revision, 4);
+    const foreignProof = { issue_id: issue.id, incarnation, session_id: foreignSession, generation: foreign.body.claim_receipt.generation };
+    const foreignCleanup = await mcp('claim_release', { claim_proof: foreignProof, expected_revision: 4, request_id: crypto.randomUUID() });
+    assert.equal(foreignCleanup.isError, false);
+    assert.equal(foreignCleanup.structuredContent.released, false);
+    assert.equal(foreignCleanup.structuredContent.current.state, 'expired');
+    assert.equal(foreignCleanup.structuredContent.current.lease.revision, 4);
+    const write = await post('/v1/operations', { op: 'update', id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof: foreignProof });
+    assert.equal(write.status, 409);
+    assert.equal(write.body.error.code, 'claim_required');
+  } finally { sqlite.close(); }
+});
+
 test('claim_acquire without a session UUID fails with a session_id usage error on HTTP and MCP', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
