@@ -32,6 +32,13 @@ Starting from the queue tip avoids most rebase conflicts with work that is alrea
 You may push `work/<issue id>` without force to keep finished commits on the remote before the queue push.
 Push no branch other than `work/<issue id>` and `queue`.
 
+## Keep pd issue ids out of git
+
+Only the owner's agents can read pd, so a pd issue id in git means nothing to other readers.
+Never write a pd issue id, such as `pd-149` or `pd-65.3`, into a commit message. Describe the change in words.
+The link between an issue and its commits lives in pd, as the `tip:` comment on the issue, not in git.
+The check workflow rejects a pushed commit whose message names a pd issue id.
+
 ## Rebase and push the queue branch
 
 Any number of agents may push `queue` at the same time. There is no queue lock.

@@ -33,6 +33,8 @@ Whoever lands `queue` onto main claims the issue again, closes it, and then rele
 Close comes first, because close requires the current proof.
 Every landing of `queue` onto main adds an entry to both changelogs: [CHANGELOG.md](../CHANGELOG.md) for agents, with commits, fields, errors, secrets by name, schema, and deploy steps, and [CHANGELOG.human.md](../CHANGELOG.human.md) for people, in plain English.
 Neither changelog names pd issue ids, because readers cannot open pd. Each entry describes the change in words.
+Commit messages follow the same rule: they describe the change in words and never name a pd issue id. The `tip:` comment on the issue links pd to git.
+The `commit-messages` job in `.github/workflows/check.yml` runs `scripts/commit-messages.ts` on the pushed range only, so earlier history is not checked again.
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
 
 ## `/ui` latency budget

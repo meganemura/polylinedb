@@ -35,3 +35,18 @@ jobs:
           CLOUDFLARE_VITE_FORCE_BUILD_OUTPUT: 'true'
       - run: node test/worker.integration.ts
       - run: npm run test:package
+
+  commit-messages:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+      - run: node scripts/commit-messages.ts
+        env:
+          COMMIT_RANGE_BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          COMMIT_RANGE_AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
