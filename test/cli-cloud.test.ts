@@ -289,6 +289,24 @@ test('cloud CLI reads show and claim acquire from older and newer Worker respons
   assert.deepEqual(JSON.parse(acquired), await run(acquisition));
 });
 
+test('cloud CLI acquires from an older Worker that omits open_blockers', async context => {
+  const { run } = await fixture(context);
+  const { issue } = await run(['create', '--body', 'Older acquire']);
+  const shown = await run(['show', issue.id]);
+  const session_id = crypto.randomUUID();
+  const request_id = crypto.randomUUID();
+  const older = await run(['claim', 'acquire', issue.id, '--incarnation', shown.claim.store_incarnation, '--session-id', session_id, '--request-id', request_id], { mode: 'acquire-without-blockers' });
+  assert.equal(Object.hasOwn(older, 'open_blockers'), false);
+  assert.equal(older.claim_receipt.issue_id, issue.id);
+  assert.equal(older.claim_receipt.outcome, 'acquired');
+  assert.equal(older.claim_receipt.session_id, session_id);
+  const { issue: fresh } = await run(['create', '--body', 'Newer acquire']);
+  const freshShown = await run(['show', fresh.id]);
+  const newer = await run(['claim', 'acquire', fresh.id, '--incarnation', freshShown.claim.store_incarnation, '--session-id', crypto.randomUUID(), '--request-id', crypto.randomUUID()]);
+  assert.deepEqual(newer.open_blockers, []);
+  assert.equal(newer.claim_receipt.issue_id, fresh.id);
+});
+
 test('cloud CLI searches an older Worker that rejects with_matches through one plain search', async context => {
   const { run, requests } = await fixture(context);
   const { issue } = await run(['create', '--body', 'Older Worker search']);
