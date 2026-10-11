@@ -115,7 +115,7 @@ Retry that cleanup with a new request UUID. The store reads the lease again.
 Release of an active lease returns its receipt with or without the option.
 Renewal still requires an unexpired proof.
 A proof that names a different session or generation returns `claim_conflict` and leaves the revision unchanged, with or without the option, including when that newer lease is also expired.
-A Worker released before the option rejects the field with `invalid_input`. The cloud client then sends the release once more without it, and that Worker answers `claim_conflict` for an expired lease.
+A Worker released before the option rejects the field with `invalid_input`. The cloud client then sends the release once more without it. An older Worker answers `claim_conflict` for an expired lease. A Worker that answers the no-op for that plain release is decoded as `released: false`.
 A status write under an expired lease still requires a new acquisition.
 Closed issues remain claimable for reopening.
 Release followed by acquisition provides explicit handoff.

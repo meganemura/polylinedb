@@ -265,7 +265,9 @@ test('a release that asks for expired_noop gets a clear answer from an older Wor
     assert.equal(ignoring.sent.length, 1);
     const current = await decode(release, transport);
     assert.equal('released' in current && current.released, false);
-    await assert.rejects(decode(withoutField(release), answer(current)), { code: 'cloud_invalid_response' });
+    const plain = await decode(withoutField(release), answer(current));
+    assert.equal('released' in plain && plain.released, false);
+    assert.equal('current' in plain && plain.current.state, 'expired');
     const active = await acquire();
     const activeRelease = { op: 'claim_release', claim_proof: active.claim_proof, expected_revision: active.revision, request_id: crypto.randomUUID(), expired_noop: true };
     const olderActive = rejecting();

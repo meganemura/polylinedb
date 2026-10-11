@@ -112,7 +112,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { claims, next_cursor };
     }
     case 'claim_acquire': case 'claim_renew': case 'claim_release': {
-      if (operation.op === 'claim_release' && operation.expired_noop === true) {
+      if (operation.op === 'claim_release') {
         const raw = object(value);
         if (Object.hasOwn(raw, 'released')) {
           if (Object.hasOwn(raw, 'claim_receipt') || raw.released !== false) return invalid();
@@ -457,7 +457,7 @@ export async function executeCloudOperation(input: {
         return await executeCloudOperation({ ...input, operation: plain });
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'claim_release' && input.operation.expired_noop === true && /\bexpired_noop\b/.test(error.message)) {
-        // A Worker released before the no-op release rejects the field before any write, so the same request UUID is still unused.
+        // A Worker that does not know expired_noop rejects the field before any write, so the same request UUID is still unused.
         const { expired_noop: _, ...plain } = input.operation;
         retried = true;
         return await executeCloudOperation({ ...input, operation: plain });
