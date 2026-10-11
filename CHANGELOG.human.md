@@ -10,10 +10,31 @@ The newest landing comes first.
 
 Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
 
-`/ui` pages now show a small icon in the browser tab: a line through a few points, in the same colors as the pages, with a darker version when your device uses a dark theme.
+## 2026-10-11, landing 5779921
 
-Agents now run every test again after catching up with the shared `queue` branch and before adding their work to it, so a broken `queue` is caught before it reaches main.
-Agents that share a machine also stop only the processes they started themselves, so they no longer cut short each other's test runs.
+An issue now remembers who closed it and when. Closing it again keeps that first close. Opening it again clears the memory. An issue that was already closed before this change has no close time, and a later edit is not used as one.
+
+On a project page, **Recently closed** follows that close time. A recorded close shows who closed it. An issue with no close record stays below those and still shows its last edit.
+
+The home page shows **Waiting on you** above the project list. Open issues that need a decision are under **To decide**. Open issues that need you to act are under **To do**. The inbox uses the same split and also lists work that is waiting to land.
+
+Every `/ui` page shows a small icon in the browser tab. It is a line through a few points, in the same colors as the pages, with a darker version when the device uses a dark theme.
+
+Issues that are waiting on the owner no longer appear as ready work. A separate list shows those issues and the work that is directly waiting on them.
+
+You can ask `pd` to wait until a change you name has happened, or until a time limit you set runs out. The wait does not change the issue.
+
+An agent can keep its claim while a long check runs. If the claim is lost and the agent asked to stop the check, `pd` waits until that check has actually exited.
+
+The `pd` command in this tree can let go of your own expired claim without an error. The published `pd` 0.4.0 still reports an error for that case. This landing does not publish a new package.
+
+The package list now includes a file that creating an issue loads. The next published package has to include that file, or `pd create` fails as soon as it starts. The published 0.4.0 package does not load the file, so it does not fail this way. This landing does not publish.
+
+Agents that add work to the shared queue run the full test suite after they catch up with that branch. They stop only the processes they started.
+
+This file says the landing in plain language. `CHANGELOG.md` lists the fields, the errors, and the commands.
+
+This landing does not change the live database and does not deploy the Worker. Upgrade the database before you deploy the Worker. If you deploy first, closing an issue on the new Worker fails.
 
 ## 2026-10-11
 

@@ -18,6 +18,133 @@ Whoever lands `queue` onto main writes both entries in one commit on top of the 
 Each change under it is a `####` heading and a list of `key: value` lines, so a search such as `grep -n '^- issue: pd-81' CHANGELOG.md` or `grep -n '^- secrets:' CHANGELOG.md` finds it.
 The keys are `issue`, `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`, `schema`, `secrets`, `deploy`, and `status`. A key that does not apply is left out.
 
+### 2026-10-11 main 5779921
+
+- main: 5779921cb92c697f2478ecfd681eaf645cb79624
+- previous main: 748c720332b925c8c89618868d7e43e722c950b3
+- landed commits: c44204e, 9b56052, 6b4e3a8, f1aefdd, 1ce0048, 2b68b03, 6ec16e9, 4c08fe9, 4921dbc, e323f9d, 8d3238a, e985279, e9f8b29, 9475535, 6a25b3d, b795077, 5415cae, 182e2af, bcfa445, a09b209, f4017f8, 4434696, f0ca165, 46e3d2a, f01e320, fbfbe34, 5779921
+- reverted: 6b4e3a8 added a Claude Code allow rule for pd MCP tools, and f1aefdd removed it. The rule is not in the tree.
+- schema: 8. This landing does not change D1. Upgrade D1 before deploying the Worker.
+- deploy: not done. No Worker deploy in this landing.
+- cli: `package.json` stays 0.4.0. No npm publish in this landing.
+
+#### pd-99 schema 8 records closed_at and closed_by
+
+- issue: pd-99
+- commits: e985279 feat(schema): freeze the schema 7 reference; e9f8b29 refactor(service): keep released issue rows on /v1/operations; 9475535 feat(schema): store issue closure in schema 8 and snapshot 6; 6a25b3d feat(records): record who closed an issue and when; b795077 feat(cli): show the closure in human issue details; 5415cae test(closure): restore and verify closures through the D1 operator; 182e2af docs: record the issue closure decision and the schema 8 procedures; a09b209 fix(records): type owner-wait rows with the closure columns
+- surface: local SQLite, D1, MCP issue results, `pd show --human`, snapshot 6, `pd upgrade`, `pd snapshot convert --from 5`, `pd export --historical`. HTTP `/v1/operations` omits the new fields.
+- fields: local results and MCP add `closed_at` and `closed_by` on each issue. Both are null while the issue is not closed, and for an issue closed before schema 8. A status change into `closed`, forced or not, sets them to the write time and the actor, so `closed_at` equals the new `updated_at`. A creation with status `closed` sets them to the creation time and the creator. Closing an issue that is already closed keeps the first closure. Reopen and any other status change away from `closed` clear them. Other edits keep them. `/v1/operations` success and error bodies omit both keys, so a released cloud CLI still reads the same issue shape. `pd show --human` prints `Closed <time> by <actor>` only when a closure is recorded.
+- errors: the column check allows both columns null, or both nonempty text with status `closed`. A schema 8 Worker on a schema 7 database reads issues, and every status change and every creation with status `closed` fails, because those writes name the new columns.
+- compatibility: the upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones. It does not copy `updated_at`. The change feed still records a close as `status_changed` with `fields: ["status"]`. Snapshot 6 carries both fields. `pd snapshot convert --from 5` fills null closures. `pd upgrade` accepts canonical schemas 2 through 7. `pd export --historical` reads schemas 6 and 7. An installed CLI that predates schema 8 refuses an upgraded local store with `unsupported_schema`. CLI 0.4.0 is that CLI.
+- schema: 8. Schema 7 is frozen. Snapshot 6.
+- deploy: upgrade D1 before deploying the Worker. For a database that already has the change feed, run `node scripts/schema.ts --upgrade-from 7` and apply that batch. See `docs/d1-migration.md`. A schema 7 Worker keeps working on schema 8 and writes no closure. After a schema 8 Worker closes issues, rolling the Worker back makes reopen fail on those issues. This landing does not change D1 and does not deploy.
+- status: pd-99 stays open until the owner closes it. No production migration in this landing.
+
+#### pd-153 Attention and Waiting on you
+
+- issue: pd-153
+- commits: 46e3d2a Add one Attention read for owner and main-wait issues; f01e320 Show Waiting on you above the project list
+- surface: Worker `/ui` home and `/ui/inbox`. No MCP tool and no CLI command.
+- change: home shows **Waiting on you** above the project list. It lists open issues labeled `owner-decision` or `owner-action`, across projects. `owner-decision` is under **To decide**, and `owner-action` is under **To do**. An issue with both labels is under **To decide** only. Each group is higher priority first, then the issue that has waited longest. The wait is counted from `created_at`, because the store does not record when a label was added. Each row shows the first line of the body, the issue id, the project, and the wait, and opens the issue. The section lists only `open` issues. It counts deferred and in-progress owner issues and links to the inbox for them. The read stops at 100 issues and the page says when more exist. The inbox lists every not-closed issue the same rule selects, including `main-wait`, newest first, at most 50.
+- schema: none.
+- deploy: Worker deploy. This landing does not deploy. No D1 migration.
+
+#### pd-154 /ui favicon
+
+- issue: pd-154
+- commits: 4434696 Add an inline SVG favicon to every /ui page
+- surface: Worker `/ui`, every page.
+- change: the page head uses an inline SVG `data:` URI instead of an empty icon. The icon is a polyline in the page colors, with a night variant for `prefers-color-scheme: dark`. It adds no request. The existing `img-src data:` policy allows it. The Content-Security-Policy, caching, and prefetch rules are unchanged.
+- schema: none.
+- deploy: Worker deploy. This landing does not deploy.
+
+#### pd-119 recently closed order
+
+- issue: pd-119, pd-99
+- commits: bcfa445 feat(ui): order recently closed issues by closed_at
+- surface: Worker `/ui` project page, **Recently closed**.
+- change: the list orders by `closed_at` descending, then by the last update. A recorded close shows that time and `closed_by`. An issue with no close record sorts after the recorded closes and shows its last update, which is not the close time. An edit after the close does not move a recorded close. The `closed` chip still orders the filtered list by last update.
+- schema: none of its own. The queries read the schema 8 columns from pd-99.
+- deploy: the same Worker deploy as pd-99, and only after that D1 upgrade. This landing does not deploy.
+
+#### pd-125 claim keepalive
+
+- issue: pd-125
+- commits: 2b68b03 Add pd claim keepalive to renew a lease during long checks; f4017f8 Wait for the command to exit when pd claim keepalive kills it on loss
+- surface: local and cloud CLI `pd claim keepalive`. It calls the existing `claim_show` and `claim_renew` operations. No new Worker route.
+- change: `pd claim keepalive --claim-proof JSON [--ttl 30..3600] [--max-duration 1..28800] [--kill-on-loss] (--pid PID | -- COMMAND ...)` renews until the command or process exits. It renews at once, then one third of the TTL before each deadline. `--max-duration` defaults to 7200 seconds and is capped at 28800. The exit code is the command's code, 0 when the watched pid exits or the claim is released, 5 with `claim_lost`, or 6 with `keepalive_max_duration`. It refuses an issue labeled `main-lock`. `--kill-on-loss` sends SIGTERM and waits for the command to exit, then SIGKILL after 5 seconds, so the command is gone when `claim_lost` is reported. Without that flag the command keeps running.
+- errors: three renewal conflicts in a row from the same session stop it with the store error. A lost claim exits 5. The duration bound exits 6.
+- compatibility: no Worker or schema change. Cloud agents still renew through MCP `claim_renew` and do not log the CLI in with owner credentials.
+- schema: none.
+
+#### pd-139.2 wait polling
+
+- issue: pd-139.2
+- commits: 4921dbc feat(wait): poll the change feed until a match or a timeout
+- surface: `pd wait`, HTTP `wait`, read-only MCP `wait`. Local SQLite and D1.
+- fields: same page as `changes`, at most 50 matching events. `wait` has no `limit`. `since` and `timeout` are required. `timeout` is seconds and has no default. A match that is already present returns that page without waiting. A timeout returns no events and the current `next_since` and `incarnation`.
+- errors: the feed errors are unchanged. `incarnation_mismatch` and `cursor_expired` are 409. `since` past the newest `seq` is `invalid_input`.
+- compatibility: the call writes nothing. The Worker and the local CLI reread the feed about once a second. A timeout of N seconds with no match reads the feed N + 1 times. That count is not a D1 bill. An older Worker answers `invalid_input` for the unknown operation.
+- schema: none. It reads the schema 7 change feed.
+- deploy: Worker deploy before cloud `pd wait` works. This landing does not deploy.
+
+#### pd-90 owner-wait worklist
+
+- issue: pd-90
+- commits: 4c08fe9 feat(worklist): keep owner waits off the ready worklist and list them
+- surface: `dependency_worklist` with `state: "ready"`, `pd ready`, new `dependency_owner_waits`, `pd owner-waits`. Local SQLite and D1.
+- fields: `dependency_owner_waits` returns unfinished issues labeled `owner-decision` or `owner-action`, in id order. Each entry has `issue`, `dependents` (`id`, `project`, `status`, at most 50, in id order), and `dependents_next` (the last returned dependent id when more exist, otherwise null). Filters are `tool`, `project`, `after`, and `limit` 1..100, default 50.
+- change: the ready worklist leaves out `owner-decision` and `owner-action` for every actor, as it already did for `main-lock`. Naming one of those labels in the filter does not bring the issue back. `main-wait` is not an owner wait and stays on the ready worklist. The claim gate still checks only the `ready` label.
+- errors: an older Worker answers `invalid_input` for `dependency_owner_waits`.
+- compatibility: no schema change. The change feed is unchanged. An issue that carries both `ready` and an owner label leaves the ready worklist after deploy. A claim an agent already holds stays until release or expiry. a09b209 teaches the owner-wait row type the schema 8 closure columns. It adds no migration.
+- schema: none.
+- deploy: Worker deploy. This landing does not deploy.
+
+#### pd-117 and pd-108 expired-release decode
+
+- issue: pd-117, pd-108
+- commits: 9b56052 fix(claims): make the expired-lease release no-op opt-in; e323f9d test(cloud): expect the deployed expired-release no-op to decode; 8d3238a fix(cloud-client): decode the deployed expired-release no-op
+- surface: MCP `claim_release`, HTTP `/v1/operations`, `pd claim release`, the cloud client. Local SQLite and D1.
+- fields: a request opts in with `expired_noop: true`. `pd claim release` always sends it. When the proof names the caller's expired lease, the result is `{ released: false, current }` and `current.state` is `expired`. The revision stays the same, `released_at` stays null, and the store writes no receipt. A stale `expected_revision` still succeeds.
+- errors: without `expired_noop`, the store keeps `claim_conflict`. A proof for a different session or generation still returns `claim_conflict`, including when that newer lease is expired. A Worker that does not know the field rejects it with `invalid_input` and writes nothing.
+- compatibility: the cloud client sends the release once more without the field, with the same request UUID. An older Worker answers `claim_conflict`, and the CLI reports that code. A Worker that answers `{ released: false, current }` for the plain release is decoded as the no-op when `current` is the expired lease the proof names. Production still does that, because main 748c720 deployed the no-op as the default and this landing does not deploy the opt-in. Published CLI 0.4.0 still decodes a release success only as `claim_receipt`, so `pd claim release` of an expired own lease still gets `cloud_invalid_response` until the next npm publish. pd-118, the optional `open_blockers` decode, is already on main 748c720. These commits do not change it.
+- schema: none.
+- deploy: Worker deploy before production requires `expired_noop`. This landing does not deploy.
+- status: pd-117 and pd-108 stay open until the owner closes them.
+
+#### pd-161 packed attention.js
+
+- issue: pd-161
+- commits: fbfbe34 Expect the packed CLI to include dist/records/attention.js; 5779921 Include dist/records/attention.js in the packed CLI
+- surface: the npm package file list. `src/records/index.ts` loads `dist/records/attention.js`.
+- change: `package.json` `files` includes `dist/records/attention.js`. A pack that omits it makes `pd create` exit 1 with `internal_error` and `ERR_MODULE_NOT_FOUND` instead of exit 2 `invalid_input`. Tag v0.4.0 does not load that module, so the published 0.4.0 package is not this failure.
+- schema: none.
+- deploy: none. No npm publish in this landing.
+
+#### pd-160 queue skill checks and own-PID kills
+
+- issue: pd-160
+- commits: f0ca165 Require a post-rebase full suite and own-PID kills in the queue skill
+- surface: the polylinedb-queue skill, both copies. No code, schema, or Worker change.
+- change: after the final rebase onto `queue`, and again after a rejected push, the agent runs the full test suite on the rebased commits before pushing `queue`. Test counts in the enqueue record come only from that run. A failure on the queue tip blocks the push. The agent kills only PIDs it started. It does not use `pkill -f`, `killall`, or `kill` on a `pgrep` list. `.github/workflows/check.yml` already runs on every push, including `queue`.
+- schema: none.
+
+#### pd-148 queue is the agent landing path
+
+- issue: pd-148
+- commits: c44204e Make the queue branch the agent landing path in the skills; 1ce0048 Align the leftover agent docs with the queue branch
+- surface: agent skills and `docs/agent-actors.md`, `docs/claims.md`. No runtime change.
+- change: agents branch from the `queue` tip, may push `work/<issue id>` without force, and push `queue` without force. A rejected push is fetch, rebase, and push again. After an enqueue the issue goes back to `open` with `main-wait`, and the claim is released. The owner lands `queue` onto main and closes the issue. Agents do not push main and do not take `main-lock`. If the claim expires after the queue push, the agent acquires the issue again and then writes the tip comment.
+- schema: none.
+
+#### pd-149 changelog split
+
+- issue: pd-149
+- commits: 6ec16e9 Split the changelog into an agent file and a human file
+- surface: `CHANGELOG.md`, `CHANGELOG.human.md`, the queue skill, `docs/claims.md`, `docs/agent-workflow.md`, `docs/releasing.md`. `CHANGELOG.human.md` is in the npm `files` list.
+- change: `CHANGELOG.md` is the agent changelog. `CHANGELOG.human.md` is the plain-language changelog. The 748c720 landing entry was backfilled in this commit. Release headings below `## Main landings` stay, because the publish workflow reads them. No MCP, CLI, schema, or Worker behavior changes in this commit.
+- schema: none.
+
 ### 2026-10-11 main 748c720
 
 - main: 748c720332b925c8c89618868d7e43e722c950b3
