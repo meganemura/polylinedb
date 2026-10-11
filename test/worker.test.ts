@@ -8,6 +8,7 @@ import { createAccessVerifier } from "../src/service/access.ts";
 import { createDispatcher, dispatchSecretNames } from "../src/service/dispatch.ts";
 import * as dispatchModule from "../src/service/dispatch.ts";
 import { handleRequest } from "../src/service/index.ts";
+import { dispatchResponse } from "../src/service/ui.ts";
 import { SCHEMA_SQL } from "../src/records/schema.ts";
 import { statements } from "../src/records/solarsql.generated.ts";
 import { issueSortKey } from "../src/records/issue-id.ts";
@@ -717,6 +718,39 @@ test('ui: every page reports the Worker time in Server-Timing, and a rejected ca
       assert.equal(rejected.headers.get('server-timing'), null);
       assert.ok(!(await rejected.text()).includes('Timed title'));
     }
+  } finally { sqlite.close(); }
+});
+
+function favicon(html: string): string {
+  const links = [...html.matchAll(/<link\b[^>]*\brel="icon"[^>]*>/g)].map(match => match[0]);
+  assert.equal(links.length, 1);
+  const match = /^<link rel="icon" type="image\/svg\+xml" href="data:image\/svg\+xml,([^"]*)">$/.exec(links[0] ?? '');
+  assert.ok(match, links[0]);
+  assert.equal(/[\s#<>%"&]/.test((match[1] ?? '').replace(/%[0-9A-F]{2}/g, '')), false);
+  return decodeURIComponent(match[1] ?? '');
+}
+
+test('ui: every page, including not found and a dispatch result, carries the same inline SVG favicon', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Icon title' });
+    const pages: string[] = [];
+    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/search', '/ui/search?q=Icon', '/ui/p/polylinedb/meganemura/polylinedb', '/ui/p/polylinedb/meganemura/polylinedb?status=open', `/ui/i/${id}`, '/ui/i/pd-999']) {
+      const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
+      assert.match(response.headers.get('content-security-policy') ?? '', /; img-src data:;/, path);
+      pages.push(await response.text());
+    }
+    pages.push(await dispatchResponse({ kind: 'not_sent' }, id).text());
+    const icons = new Set(pages.map(favicon));
+    assert.equal(icons.size, 1);
+    const [svg] = icons;
+    assert.match(svg ?? '', /^<svg xmlns='http:\/\/www\.w3\.org\/2000\/svg' viewBox='0 0 32 32'>[\s\S]*<\/svg>$/);
+    assert.ok(svg?.includes('<path d='));
+    assert.ok(svg?.includes('#9a3412') && svg.includes('#f0a07a'));
+    assert.ok(svg?.includes('@media (prefers-color-scheme:dark)'));
+    assert.equal(/\b(href|src)=|url\(|<script/.test(svg ?? ''), false);
   } finally { sqlite.close(); }
 });
 

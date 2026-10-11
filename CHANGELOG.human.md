@@ -6,6 +6,12 @@ Agents and scripts should read [CHANGELOG.md](CHANGELOG.md), which lists the exa
 Every landing of `queue` onto main adds a short entry here and a detailed entry to `CHANGELOG.md`.
 The newest landing comes first.
 
+## Unreleased
+
+Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
+
+`/ui` pages now show a small icon in the browser tab: a line through a few points, in the same colors as the pages, with a darker version when your device uses a dark theme.
+
 ## 2026-10-11
 
 An issue page in `/ui` now has a Dispatch button for signed-in people who can write.

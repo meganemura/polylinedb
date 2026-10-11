@@ -20,6 +20,16 @@ const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], 
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 // Fixed prefetch hint. It is not application code: the page policy allows this text by hash and no other script.
 const speculationRules = '{"prefetch":[{"source":"document","where":{"or":[{"href_matches":"/ui"},{"href_matches":"/ui/*"}]},"eagerness":"moderate","referrer_policy":"no-referrer"}]}';
+// A polyline on the page paper, in the page colors and their night variants. It is a data: URI, so it needs no
+// request, and the existing img-src data: allows it.
+const faviconSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+  + '<style>rect{fill:#f5f1e8;stroke:#cfc6b8}path{stroke:#9a3412}circle{fill:#393730}'
+  + '@media (prefers-color-scheme:dark){rect{fill:#1c1916;stroke:#5c5348}path{stroke:#f0a07a}circle{fill:#f3ece3}}</style>'
+  + "<rect x='1' y='1' width='30' height='30' rx='7' stroke-width='2'/>"
+  + "<path d='M7 22 13 11 19 18 25 9' fill='none' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/>"
+  + "<circle cx='7' cy='22' r='2.5'/><circle cx='13' cy='11' r='2.5'/><circle cx='19' cy='18' r='2.5'/><circle cx='25' cy='9' r='2.5'/>"
+  + '</svg>';
+const faviconHref = `data:image/svg+xml,${faviconSvg.replace(/[%#<>"\s]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`)}`;
 
 function escape(value: string): string {
   return value.replace(/[&<>"']/g, character => escapes[character] ?? character);
@@ -224,7 +234,7 @@ function document(pageTitle: string, body: string): string {
 <meta name="theme-color" content="#1c1916" media="(prefers-color-scheme: dark)">
 <meta name="robots" content="noindex">
 <title>${escape(pageTitle)}</title>
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/svg+xml" href="${faviconHref}">
 <script type="speculationrules">${speculationRules}</script>
 <style>${styles}</style>
 </head>
