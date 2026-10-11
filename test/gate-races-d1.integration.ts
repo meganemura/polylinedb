@@ -5,6 +5,7 @@ import { d1Executor } from '../src/service/d1.ts';
 import { SCHEMA_STATEMENTS } from '../src/records/persistence.ts';
 import { runGateRaces } from './fixtures/gate-races.ts';
 import { runMainLockFlow } from './fixtures/main-lock-flow.ts';
+import { runOwnerWaitFlow } from './fixtures/owner-wait-flow.ts';
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');
 const runtime = new Miniflare({ workers: [{ config: { name: 'gate-races-test', compatibilityDate: '2026-09-25', manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: 'export default { fetch() { return new Response(null); } }' } } }, env: { DB: { type: 'd1', name: 'gate-races-test' } } } }] });
@@ -13,5 +14,6 @@ try {
   const covered = await runGateRaces(d1Executor(database), 'r');
   assert.equal(covered.length, 10);
   await runMainLockFlow(d1Executor(database));
-  process.stdout.write(`PASS: workerd D1 agent gates hold across ${covered.length} gate-to-write interleavings, and the main-lock flow passes\n`);
+  await runOwnerWaitFlow(d1Executor(database));
+  process.stdout.write(`PASS: workerd D1 agent gates hold across ${covered.length} gate-to-write interleavings, and the main-lock and owner-wait flows pass\n`);
 } finally { await runtime.dispose(); }

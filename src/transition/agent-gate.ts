@@ -6,6 +6,7 @@ export const actorKinds = ['human', 'agent'] as const;
 export type ActorKind = typeof actorKinds[number];
 export type Actor = { id: string; kind: ActorKind };
 export const readyLabel = 'ready';
+export const ownerWaitLabels = ['owner-decision', 'owner-action'] as const;
 export type GatedWrite = 'claim_acquire' | 'issue_write';
 export type GateObservation = { labels: readonly string[]; claim: ObservedClaim | null; store_incarnation: string; now: number };
 export type GateDecision = { admitted: true } | { admitted: false; code: 'not_ready' | 'claim_required' };

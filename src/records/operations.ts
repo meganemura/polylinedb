@@ -48,7 +48,7 @@ async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, sto
       return executeClaimOperation(db, operation, actor);
     case 'changes':
       return executeChangesOperation(db, operation);
-    case 'dependency_add': case 'dependency_remove': case 'dependency_list': case 'dependency_worklist':
+    case 'dependency_add': case 'dependency_remove': case 'dependency_list': case 'dependency_worklist': case 'dependency_owner_waits':
       return executeDependencyOperation(db, operation, actor);
     case 'memory_create': case 'memory_show': case 'memory_list': case 'memory_search': case 'memory_update': case 'memory_delete': case 'memory_context':
       return executeMemoryOperation(db, operation, actor.id, store);

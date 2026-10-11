@@ -18,7 +18,12 @@ _Avoid_: Using a parent-child relationship to mean a dependency.
 A blocker whose status is not `closed`.
 
 **Ready issue**:
-An `open` issue with no active blockers.
+An `open` issue with no active blockers that is neither the `main-lock` issue nor an owner wait.
+
+**Owner wait**:
+An unfinished issue that carries the `owner-decision` or `owner-action` label.
+It is not a ready issue for any actor, and `pd owner-waits` lists it with its direct dependents.
+_Avoid_: Calling `main-wait` an owner wait; it means the work waits in the land queue.
 
 **Blocked issue**:
 An unfinished issue with at least one active blocker.

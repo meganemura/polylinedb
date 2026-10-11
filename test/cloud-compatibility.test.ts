@@ -97,6 +97,8 @@ test('a newer Worker response with unknown top-level and nested fields decodes t
     await decodedAlike({ op: 'dependency_add', dependent_id: 'pd-2', blocker_id: 'pd-1', expected_revision: 1, request_id: crypto.randomUUID() });
     await decodedAlike({ op: 'dependency_list', dependent_id: 'pd-2' });
     await decodedAlike({ op: 'dependency_worklist', state: 'blocked' });
+    await decodedAlike({ op: 'update', id: 'pd-1', changes: [{ field: 'labels', expected: 1, value: ['owner-action'] }] });
+    await decodedAlike({ op: 'dependency_owner_waits', project: 'compat' });
     const shown = await wire({ op: 'claim_show', issue_id: 'pd-2' });
     await decodedAlike({ op: 'claim_show', issue_id: 'pd-2' });
     const claim = shown.body.claim as { store_incarnation: string };
@@ -359,6 +361,7 @@ test('existing operation responses keep the keys a released client decodes', asy
     assertShape((await wire({ op: 'dependency_add', dependent_id: id, blocker_id: blocker.id, expected_revision: 1, request_id: crypto.randomUUID() })).body, { dependency: { dependent_id: 'string', blocker_id: 'string', revision: 'number', outcome: 'string' } });
     assertShape((await wire({ op: 'dependency_list', dependent_id: id })).body, { dependent_id: 'string', revision: 'number', blockers: [{ id: 'string', project: 'string', status: 'string' }], next_cursor: 'string|null' });
     assertShape((await wire({ op: 'dependency_worklist', state: 'blocked' })).body, { issues: [issueShape], next_cursor: 'string|null' });
+    assertShape((await wire({ op: 'dependency_owner_waits' })).body, { waits: [], next_cursor: 'string|null' });
     const inspection = await wire({ op: 'claim_show', issue_id: id });
     assertShape(inspection.body, { claim: { ...inspectionShape, lease: null } });
     const acquire = { op: 'claim_acquire', issue_id: id, incarnation: (inspection.body.claim as { store_incarnation: string }).store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };

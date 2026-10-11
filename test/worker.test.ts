@@ -73,7 +73,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -90,6 +90,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['create', false, false, true, false],
       ['dependency_add', false, false, true, false],
       ['dependency_list', true, false, true, false],
+      ['dependency_owner_waits', true, false, true, false],
       ['dependency_remove', false, true, true, false],
       ['dependency_worklist', true, false, true, false],
       ['list', true, false, true, false],
@@ -354,7 +355,7 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     await repeat('update', { id: issue.id, changes: [{ field: 'priority', value: 1, expected: 1 }] });
     await repeat('dependency_add', { dependent_id: issue.id, blocker_id: blocker.id, expected_revision: 1, request_id: crypto.randomUUID() });
     await read('dependency_list', { dependent_id: issue.id });
-    await read('dependency_worklist', { state: 'blocked' }); await read('dependency_worklist', { state: 'ready' });
+    await read('dependency_owner_waits', {}); await read('dependency_worklist', { state: 'blocked' }); await read('dependency_worklist', { state: 'ready' });
     await repeat('dependency_remove', { dependent_id: issue.id, blocker_id: blocker.id, expected_revision: 2, request_id: crypto.randomUUID() });
     await repeat('close', { id: issue.id, expected: 1 });
     await repeat('reopen', { id: issue.id, expected: 2 });

@@ -34,8 +34,10 @@ pd ready --project demo
 pd blocked --tool compiler --project demo --after demo-10 --limit 50
 ```
 
-Ready issues have status `open`, no active blockers, and no `main-lock` label.
+Ready issues have status `open`, no active blockers, no `main-lock` label, and neither the `owner-decision` nor the `owner-action` label.
 A `main-lock` issue is a repository lock, so the ready worklist leaves it out even when the filter names that label; find it with `pd list --label main-lock`.
+An issue that waits on an owner decision or action leaves the ready worklist for every actor, because no agent should start it and a human should not mistake it for open work.
+Naming one of those labels in the filter does not bring the issue back; list owner waits as described below.
 Blocked issues have status `open`, `in_progress`, or `deferred`, with an active blocker.
 A blocker is active when its status differs from `closed`.
 Filters select dependent issues. Worklists observe current state and do not establish exclusive ownership.
@@ -47,7 +49,28 @@ The reason becomes an attributed comment in the same transaction as the successf
 A stale or rejected update creates no exception comment. Reasons use the comment limit of 65536 UTF-8 bytes.
 Reopen uses normal status CAS.
 
-HTTP and MCP use `dependency_list`, `dependency_add`, `dependency_remove`, and `dependency_worklist` through the shared operation boundary.
+## Owner waits
+
+The labels `owner-decision` and `owner-action` mark an issue that waits on the owner.
+The store has no owner identity, so "owner" means any human.
+An agent may add one of these labels as a handoff: set the status to `open`, add the label with the proof as a comment, and release the claim.
+The labels act through the ready worklist only. `claim_acquire` still follows [the agent gate](claims.md#gate-agent-work), so an agent must not claim an owner wait by ID.
+`main-wait` is not an owner wait. It means the work sits in the land queue and is not yet on main, and it does not leave the ready worklist.
+
+```sh
+pd owner-waits --project demo --limit 50
+```
+
+`owner-waits` returns each unfinished issue that carries either label, in ID order, with its direct unfinished dependents.
+Each entry has `issue`, `dependents` (`id`, `project`, `status`, at most 50, in ID order), and `dependents_next`, which is the last returned dependent ID when more exist and otherwise `null`.
+Only direct dependents are reported, as in `dependency list`. Filters are `--tool`, `--project`, `--after`, and `--limit 1..100` (default 50).
+The change feed is unchanged: adding or removing an owner label appears as an `updated` event, and `became_ready` still fires only when the last active blocker closes or is removed.
+
+Existing issues need no migration. They carry the same labels, and an issue that holds `ready` together with an owner label leaves the ready worklist when this version is deployed.
+Audit them with `pd list --label owner-decision` and `pd list --label owner-action`.
+A claim that an agent already holds stays in force; the owner releases it or waits for expiry.
+
+HTTP and MCP use `dependency_list`, `dependency_add`, `dependency_remove`, `dependency_worklist`, and `dependency_owner_waits` through the shared operation boundary.
 The worklist operation accepts `state: "ready"` or `state: "blocked"` and the same issue filters.
 Existing issue results and their seven field versions retain their shapes.
 

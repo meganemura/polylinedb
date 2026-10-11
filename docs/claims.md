@@ -173,6 +173,7 @@ They reject `--actor-kind` and ignore `POLYLINEDB_ACTOR_KIND`.
 An agent claims only an issue with the `ready` label.
 A different issue returns `not_ready`.
 An agent reads the ready worklist only through the `ready` label, so `pd ready` shows an agent only labeled issues.
+The ready worklist leaves out owner waits (`owner-decision`, `owner-action`) for every actor; see [owner waits](prerequisites.md#owner-waits). The claim gate itself checks only the `ready` label.
 
 An agent needs its own active claim before it changes an issue.
 The rule covers `update`, `close`, `reopen`, `comment`, and prerequisite edits where the issue is the dependent.

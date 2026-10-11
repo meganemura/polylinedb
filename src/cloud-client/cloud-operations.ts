@@ -11,7 +11,7 @@ import { fields } from '../records/persistence.ts';
 import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence.ts';
 import { claimRow } from '../records/persistence.ts';
-import { parseIncarnation } from '../records/index.ts';
+import { parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels } from '../records/index.ts';
 import type { Claim, ClaimInspection, ChangeEvent } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
@@ -177,6 +177,34 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
       if (next_cursor !== null && (blockers.length !== operation.limit || next_cursor !== blockers.at(-1)?.id)) return invalid();
       return { dependent_id: operation.dependent_id, revision: row.revision, blockers, next_cursor };
+    }
+    case 'dependency_owner_waits': {
+      const row = known(value, ['waits', 'next_cursor']);
+      if (!Array.isArray(row.waits) || row.waits.length > operation.limit) return invalid();
+      let previous = operation.after === undefined ? '' : issueSortKey(operation.after);
+      const waits = row.waits.map(entry => {
+        const wait = known(entry, ['issue', 'dependents', 'dependents_next']);
+        const current = issue(wait.issue); const sort = issueSortKey(current.id);
+        if (sort <= previous || current.status === 'closed' || (operation.tool !== undefined && current.tool !== operation.tool) || (operation.project !== undefined && current.project !== operation.project)
+          || !ownerWaitLabels.some(label => current.labels.includes(label)) || !Array.isArray(wait.dependents) || wait.dependents.length > ownerWaitDependentLimit) return invalid();
+        previous = sort;
+        let last = '';
+        const dependents = wait.dependents.map(value => {
+          const dependent = known(value, ['id', 'project', 'status']);
+          const status = statuses.find(status => status === dependent.status);
+          if (typeof dependent.project !== 'string' || !dependent.project.trim() || /\p{Cc}/u.test(dependent.project) || new TextEncoder().encode(dependent.project).length > 256 || status === undefined || status === 'closed') return invalid();
+          const id = parseIssueId(dependent.id); const key = issueSortKey(id);
+          if (key <= last) return invalid();
+          last = key;
+          return { id, project: dependent.project, status };
+        });
+        const dependents_next = wait.dependents_next === null ? null : parseIssueId(wait.dependents_next);
+        if (dependents_next !== null && (dependents.length !== ownerWaitDependentLimit || dependents_next !== dependents.at(-1)?.id)) return invalid();
+        return { issue: current, dependents, dependents_next };
+      });
+      const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
+      if (next_cursor !== null && (waits.length !== operation.limit || next_cursor !== waits.at(-1)?.issue.id)) return invalid();
+      return { waits, next_cursor };
     }
     case 'memory_create': case 'memory_show': case 'memory_update': {
       const parsed = memory(known(value, ['memory']).memory);

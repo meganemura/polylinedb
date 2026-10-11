@@ -12,14 +12,18 @@ import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from
 type WorkFilters = Omit<Extract<IssueOperation, { op: 'list' }>, 'op' | 'status'>;
 export type DependencyMutation = { op: 'dependency_add' | 'dependency_remove'; dependent_id: string; blocker_id: string; expected_revision: number; request_id: string };
 export type DependencyOperation = DependencyMutation | { op: 'dependency_list'; dependent_id: string; after?: string; limit: number }
-  | ({ op: 'dependency_worklist'; state: 'ready' | 'blocked' } & WorkFilters);
+  | ({ op: 'dependency_worklist'; state: 'ready' | 'blocked' } & WorkFilters)
+  | { op: 'dependency_owner_waits'; tool?: string; project?: string; after?: string; limit: number };
 export type DependencyOutcome = 'added' | 'already_present' | 'removed' | 'already_absent';
 export type DependencyReceipt = { dependent_id: string; blocker_id: string; revision: number; outcome: DependencyOutcome };
 export type DependencyRequest = { request_id: string; actor: string; payload: string; dependent_id: string; blocker_id: string; result_revision: number; outcome: DependencyOutcome; created_at: string };
 export type Dependency = { dependent_id: string; blocker_id: string };
 export type DependencyRevision = { dependent_id: string; revision: number };
 export type DependencyResult = { dependency: DependencyReceipt } | { dependent_id: string; revision: number; blockers: { id: string; project: string; status: Status }[]; next_cursor: string | null }
-  | { issues: Issue[]; next_cursor: string | null };
+  | { issues: Issue[]; next_cursor: string | null }
+  | { waits: OwnerWait[]; next_cursor: string | null };
+export type OwnerWait = { issue: Issue; dependents: { id: string; project: string; status: Status }[]; dependents_next: string | null };
+export const ownerWaitDependentLimit = 50;
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const limitSchema = { type: 'integer', minimum: 1, maximum: 100, default: 50 };
 const revisionSchema = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
@@ -31,6 +35,7 @@ export const dependencySchemas = {
   dependency_add: mutationSchema, dependency_remove: mutationSchema,
   dependency_list: { type: 'object', additionalProperties: false, required: ['dependent_id'], properties: { dependent_id: idSchema, after: idSchema, limit: limitSchema } },
   dependency_worklist: { type: 'object', additionalProperties: false, required: ['state'], properties: { state: { type: 'string', enum: ['ready', 'blocked'] }, tool: nameSchema, project: nameSchema, type: { type: 'string', enum: ['bug', 'task', 'epic', 'feature', 'chore'] }, priority: { type: 'integer', minimum: 0, maximum: 4 }, label: nameSchema, after: idSchema, limit: limitSchema } },
+  dependency_owner_waits: { type: 'object', additionalProperties: false, required: [], properties: { tool: nameSchema, project: nameSchema, after: idSchema, limit: limitSchema } },
 };
 const invalid = (message: string): never => { throw new PolylinedbError('invalid_input', message); };
 function revision(value: unknown): number {
@@ -41,7 +46,7 @@ export function parseDependencyOperation(value: unknown): DependencyOperation {
   if (!value || typeof value !== 'object' || Array.isArray(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) return invalid('operation must be a plain object');
   if (!('op' in value)) return invalid('Missing op');
   const op = value.op;
-  if (op !== 'dependency_add' && op !== 'dependency_remove' && op !== 'dependency_list' && op !== 'dependency_worklist') return invalid('Unknown dependency operation');
+  if (op !== 'dependency_add' && op !== 'dependency_remove' && op !== 'dependency_list' && op !== 'dependency_worklist' && op !== 'dependency_owner_waits') return invalid('Unknown dependency operation');
   const schema = dependencySchemas[op];
   requireFields(value as Record<string, unknown>, ['op', ...Object.keys(schema.properties)], schema.required);
   try {
@@ -52,6 +57,12 @@ export function parseDependencyOperation(value: unknown): DependencyOperation {
       if (filters.op !== 'list') return invalid('Invalid filters');
       const { op: _, status: __, ...workFilters } = filters;
       return { op, state, ...workFilters };
+    }
+    if (op === 'dependency_owner_waits') {
+      const { op: _, ...input } = value;
+      const filters = parseIssue({ ...input, op: 'list' });
+      if (filters.op !== 'list') return invalid('Invalid filters');
+      return { op, ...(filters.tool === undefined ? {} : { tool: filters.tool }), ...(filters.project === undefined ? {} : { project: filters.project }), ...(filters.after === undefined ? {} : { after: filters.after }), limit: filters.limit };
     }
     if (!('dependent_id' in value)) return invalid('Missing dependent_id');
     const dependent_id = parseIssueId(value.dependent_id);
@@ -97,6 +108,17 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
     const rows = await db.reads.all(issueQueries.dependencyWorklist, { state: operation.state, tool: operation.tool ?? null, project: operation.project ?? null, type: operation.type ?? null, priority: operation.priority ?? null, label: operation.label ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 });
     const all = rows.map(issueRow); const issues = all.slice(0, operation.limit);
     return { issues, next_cursor: all.length > operation.limit ? issues.at(-1)?.id ?? null : null };
+  }
+  if (operation.op === 'dependency_owner_waits') {
+    const rows = (await db.reads.all(issueQueries.ownerWaits, { tool: operation.tool ?? null, project: operation.project ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 })).map(issueRow);
+    const issues = rows.slice(0, operation.limit);
+    const waits: OwnerWait[] = [];
+    for (const issue of issues) {
+      const found = (await db.reads.all(issueQueries.ownerWaitDependents, { blocker: issue.id, after: '', limit: ownerWaitDependentLimit + 1 })).map(issueRow);
+      const dependents = found.slice(0, ownerWaitDependentLimit).map(({ id, project, status }) => ({ id, project, status }));
+      waits.push({ issue, dependents, dependents_next: found.length > ownerWaitDependentLimit ? dependents.at(-1)?.id ?? null : null });
+    }
+    return { waits, next_cursor: rows.length > operation.limit ? issues.at(-1)?.id ?? null : null };
   }
   if (operation.op === 'dependency_list') {
     const result = await db.batch([

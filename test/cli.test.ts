@@ -282,6 +282,18 @@ test('CLI requires an explicit actor before parsing mutation payloads or opening
     assert.equal(existsSync(directory), false);
   }
 });
+test('CLI owner-waits lists owner waits with direct dependents and keeps them off the ready worklist', t => {
+  const { run } = fixture(t);
+  run(['init'], { actor: false });
+  run(['create', '--tool', 'test', '--project', 'test', '--body', 'Needs the owner', '--label', 'owner-decision']);
+  run(['create', '--tool', 'test', '--project', 'test', '--body', 'Waits on the decision']);
+  run(['dependency', 'add', '--dependent', 'pd-2', '--blocker', 'pd-1', '--expected-revision', '1']);
+  assert.deepEqual(run(['ready'], { actor: false }).issues, []);
+  const waits = run(['owner-waits', '--project', 'test'], { actor: false });
+  assert.deepEqual(waits.waits.map((wait: { issue: { id: string }; dependents: unknown }) => [wait.issue.id, wait.dependents]), [['pd-1', [{ id: 'pd-2', project: 'test', status: 'open' }]]]);
+  assert.deepEqual(run(['owner-waits', '--project', 'other'], { actor: false }).waits, []);
+  assert.equal(run(['owner-waits', '--status', 'open'], { actor: false, status: 2 }).error.code, 'invalid_input');
+});
 test('CLI ready and blocked retain local reader fallback, and unknown commands reach command validation', t => {
   const { run } = fixture(t);
   run(['init'], { actor: false });

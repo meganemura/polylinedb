@@ -47,6 +47,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `dependency_list` | `dependent_id`; optional `after`, `limit` | `{ "dependent_id": ..., "revision": ..., "blockers": [...], "next_cursor": ... }` |
 | `dependency_add`, `dependency_remove` | `dependent_id`, `blocker_id`, `expected_revision`, `request_id` | `{ "dependency": { "dependent_id": ..., "blocker_id": ..., "revision": ..., "outcome": ... } }` |
 | `dependency_worklist` | `state: "ready"` or `"blocked"`; optional issue filters except `status` | Same as list |
+| `dependency_owner_waits` | Optional `tool`, `project`, `after`, `limit` | `{ "waits": [{ "issue": ..., "dependents": [...], "dependents_next": ... }], "next_cursor": ... }` |
 | `claim_show` | `issue_id` | `{ "claim": ... }` |
 | `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
 | `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ..., "open_blockers": [...] }` |

@@ -10,6 +10,7 @@ import { executeOperation, parseOperation, PolylinedbError } from '../src/record
 import { admitAgentWrite } from '../src/transition/index.ts';
 import { runGateRaces } from './fixtures/gate-races.ts';
 import { runMainLockFlow } from './fixtures/main-lock-flow.ts';
+import { runOwnerWaitFlow } from './fixtures/owner-wait-flow.ts';
 
 const session = '00000000-0000-4000-8000-0000000000c1';
 const codex = { id: 'local:codex', kind: 'agent' } as const;
@@ -190,4 +191,12 @@ test('the main-lock issue stays out of the ready worklist and admits one agent a
   const store = openStore({ directory, cwd });
   t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
   await runMainLockFlow(store.db);
+});
+test('owner-wait issues leave the ready worklist and are listed with their dependents on SQLite', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-owner-wait-'));
+  const cwd = join(root, 'work'); const directory = join(root, 'store'); mkdirSync(cwd);
+  initializeStore({ directory, cwd });
+  const store = openStore({ directory, cwd });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  await runOwnerWaitFlow(store.db);
 });

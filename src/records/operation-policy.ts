@@ -33,6 +33,7 @@ const operationPolicy = {
   dependency_add: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   dependency_remove: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   dependency_list: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
+  dependency_owner_waits: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   dependency_worklist: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   claim_show: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   claim_list: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },

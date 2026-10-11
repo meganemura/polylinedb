@@ -53,6 +53,8 @@ Commands:
                                 Issue change events after SEQ; continue from next_since.
   ready [FILTERS]                Open issues with resolved prerequisites.
   blocked [FILTERS]              Unfinished issues with active blockers.
+  owner-waits [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
+                                Unfinished issues labeled owner-decision or owner-action, with their direct dependents.
   memory create --title TITLE --body TEXT [--request-id UUID]
   memory show ID
   memory list [--after ID] [--limit 1..100]
@@ -88,6 +90,7 @@ Keepalive stops after --max-duration seconds (default 7200). It exits with the c
 5 with claim_lost, and 6 with keepalive_max_duration. It kills the command only with --kill-on-loss.
 Retain the claim request UUID, incarnation, session and payload for retries. No automatic retry or reacquisition occurs.
 Ready and blocked accept FILTERS except --status. Worklists observe current state; they do not claim work.
+The ready worklist leaves out issues labeled main-lock, owner-decision, or owner-action.
 Dependency mutations use a separate aggregate revision. Reuse the request UUID and identical payload on retry.
 The prefix defaults to repository settings, otherwise pd. It matches [a-z][a-z0-9]{0,15}.
 Issue numbers expand with the selected prefix: show 42 reads pd-42, and show 42.1 reads pd-42.1.

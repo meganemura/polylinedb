@@ -40,6 +40,7 @@ const commandFlags: Record<string, readonly string[]> = {
   claim_keepalive: ['claim-proof', 'ttl', 'max-duration', 'pid', 'kill-on-loss'],
   claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
   changes: ['since', 'incarnation', 'project', 'issue', 'kind', 'limit'],
+  'owner-waits': ['tool', 'project', 'after', 'limit'],
   ready: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'], blocked: ['tool', 'project', 'type', 'priority', 'label', 'after', 'limit'],
   memory_create: ['project', 'title', 'body', 'body-file', 'request-id'],
   memory_show: ['project'], memory_list: ['project', 'after', 'limit'], memory_search: ['project', 'after', 'limit'],
@@ -290,7 +291,7 @@ async function main(argv: readonly string[]): Promise<void> {
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
   }
-  const policyName = command === 'ready' || command === 'blocked' ? 'dependency_worklist' : command;
+  const policyName = command === 'ready' || command === 'blocked' ? 'dependency_worklist' : command === 'owner-waits' ? 'dependency_owner_waits' : command;
   if (selected.kind === 'local' && (command === 'import' || command === 'upgrade' || command === 'claim_keepalive' || requiresExplicitLocalActor(policyName))
     && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
   if (command === 'upgrade') {
@@ -429,6 +430,7 @@ async function main(argv: readonly string[]): Promise<void> {
     if (flags.has('kind')) raw.kinds = flags.get('kind');
   }
   if (command === 'ready' || command === 'blocked') { raw.op = 'dependency_worklist'; raw.state = command; }
+  if (command === 'owner-waits') raw.op = 'dependency_owner_waits';
   if (command === 'dependency_add' || command === 'dependency_remove') {
     const dependent = one('dependent'); const blocker = one('blocker'); const expected = one('expected-revision');
     if (dependent === undefined || blocker === undefined || expected === undefined) invalid('Dependency mutation requires --dependent, --blocker and --expected-revision');

@@ -480,6 +480,33 @@
       }
     }
   },
+  "dependency_owner_waits": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+      "tool": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      }
+    }
+  },
   "dependency_remove": {
     "type": "object",
     "additionalProperties": false,
