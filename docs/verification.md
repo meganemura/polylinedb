@@ -195,3 +195,57 @@ Two mutants have no coverage.
 They delete the `default` arm of the update rejection switch.
 `UpdateRejection` has no other member, so that arm does not run.
 Deleting it does not change behavior.
+
+## Defect injections
+
+pd-142 keeps a known defect in front of each check that already exists.
+The production writer stays unchanged.
+A check that is not in the repository yet has no injection.
+
+### Change feed contract
+
+```sh
+node --test test/change-feed-defects.test.ts
+node --test --test-name-pattern='change feed records the shared flow' test/changes.test.ts
+```
+
+The contract is `runChangeFeedFlow` in `test/fixtures/change-feed-flow.ts`.
+pd-139.1 requires that shared command sequence.
+`test/changes.test.ts` runs it on local SQLite.
+`test/changes-d1.integration.ts` runs the same function on workerd D1.
+
+`test/change-feed-defects.test.ts` opens a real local SQLite store and wraps its executor.
+It calls `runChangeFeedFlow`.
+The test passes only when the contract's own assertion fails.
+
+On 2026-10-11, Node 24.21.0 reported both failures.
+
+A store that deletes the newest `change_events` row after the first committed event makes the contract expect the `created` event for `cf-1` at `seq` 1 and observe no events.
+The assertion text is `Expected values to be strictly deep-equal`, with actual `[]` and expected `issue_id: 'cf-1'`, `kind: 'created'`, `seq: 1`.
+
+A store that inserts one `change_events` row after the `request_conflict` create makes the contract report `rejected request_conflict recorded no event` with `4 !== 3`.
+The three earlier creates left `seq` 3.
+The rejected write left `seq` 4.
+That injection waits for the contract's second mutation that records nothing.
+The first is the create replay.
+The second is the `request_conflict` create.
+
+The same Node run passed `change feed records the shared flow on a local SQLite store` on an unmodified store.
+The contract file was not changed.
+
+### Interleaving model
+
+`docs/issue-authority.md` requires a `node:test` that interleaves port admissions, commits, aborts, lost responses, resets, and reordered or repeated signals before a per-issue or per-project split.
+The repository has no such test.
+These four mechanisms have no check to fail.
+
+- The order of restrictive and permissive changes between an issue authority and the port.
+- The release of claim request ID reservations.
+- Routing to objects named by the incarnation.
+- Creation of an issue authority from its creation receipt.
+
+### Cold reconciliation
+
+pd-51.8 describes a comparison of the store with the D1 projection.
+The repository has no `src/projection/` module and no reconciliation run.
+A projection that still shows a released claim is not counted as a missed revocation here, because that comparison does not exist.
