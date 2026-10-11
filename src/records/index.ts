@@ -15,6 +15,7 @@ export { parseMemoryId, parseMemoryRevision, observedMemoryProject } from './mem
 export type { Memory, MemoryStore, MemoryOperation, MemoryContext, MemoryRevision, MemoryFreshness, MemoryResult } from './memories.ts';
 export type { DependencyOperation, DependencyMutation, DependencyResult, DependencyReceipt, DependencyOutcome, DependencyRequest, DependencyRevision, Dependency } from './dependencies.ts';
 export { parseClaimProof, parseIncarnation } from './claims.ts';
+export { blockerIsActive } from './active-blocker.ts';
 export type { Claim, ClaimOperation, ClaimReceipt, ClaimRequest, ClaimInspection, ClaimState, ClaimResult } from './claims.ts';
 export type { ClaimProof, ClaimMutation } from './claims-sql.ts';
 export type { ChangesOperation, ChangesResult, ChangeEvent, ChangeKind } from './changes.ts';

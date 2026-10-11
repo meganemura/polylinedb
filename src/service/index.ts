@@ -30,7 +30,7 @@ const descriptions: Record<string, string> = {
   actor: 'Return the authenticated actor for this connection.',
   claim_show: 'Inspect claim history, database time, and the current store incarnation. This observation does not certify agent liveness.',
   claim_list: 'List claim inspections with tool/project filters and numeric issue pagination, including never-claimed issues.',
-  claim_acquire: 'Acquire one available issue using the observed incarnation and caller session UUID. Success returns open_blockers, the ids of blockers that are not closed, or an empty list. Acquire does not fail because of blockers. If that list is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist. Retain the request UUID and payload for retries.',
+  claim_acquire: 'Acquire one available issue using the observed incarnation and caller session UUID. Success returns open_blockers, the ids of active blockers, or an empty list. Acquire does not fail because of blockers. If that list is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist. Retain the request UUID and payload for retries.',
   claim_renew: 'Renew an unexpired claim using its proof and observed revision. Retries return the original receipt.',
   claim_release: 'Release a current claim using its proof and observed revision. Release does not change the issue status. When the lease is expired and the proof names it, release succeeds and writes nothing.',
   dependency_list: 'Read a dependent issue prerequisite revision and a bounded page of blockers. Closed blockers remain attached.',

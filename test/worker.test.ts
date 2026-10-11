@@ -654,7 +654,7 @@ test('ui: the issue page and an ID search start their independent reads together
     assert.equal(detail.response.status, 200);
     const html = await detail.response.text();
     assert.ok(html.includes(`Parent <a href="/ui/i/${epic}">Parallel epic</a>`));
-    assert.ok(uiSection(html, 'Open blockers').includes(`href="/ui/i/${blocker}"`));
+    assert.ok(uiSection(html, 'Active blockers').includes(`href="/ui/i/${blocker}"`));
     assert.equal(detail.rounds, 2);
 
     const missing = await counted.count(handleRequest(new Request('https://issues.example/ui/i/pd-999', { headers: auth }), counted.env, authenticate));
@@ -1206,7 +1206,7 @@ test('pd-136: project rows show active claims and open blocker counts, and detai
     assert.ok(!row('Only closed').includes('blocked'));
 
     const detail = await (await viewIssue(env, mixed, { 'cf-access-jwt-assertion': token })).text();
-    const openPart = uiSection(detail, 'Open blockers');
+    const openPart = uiSection(detail, 'Active blockers');
     const closedPart = uiSection(detail, 'Closed blockers');
     assert.ok(openPart.includes(`href="/ui/i/${deferredBlocker}"`));
     assert.ok(openPart.includes('deferred'));
@@ -1215,7 +1215,7 @@ test('pd-136: project rows show active claims and open blocker counts, and detai
     assert.ok(closedPart.includes('closed'));
     assert.ok(!closedPart.includes(deferredBlocker));
     const single = await (await viewIssue(env, one, { 'cf-access-jwt-assertion': token })).text();
-    const singleOpen = uiSection(single, 'Open blockers');
+    const singleOpen = uiSection(single, 'Active blockers');
     assert.ok(singleOpen.includes(`href="/ui/i/${openBlocker}"`));
     assert.ok(singleOpen.includes('open'));
     assert.ok(!single.includes(activeClaim.session));

@@ -90,7 +90,7 @@ The current code checks each of these rules inside one SQLite or D1 transaction:
 
 | Rule | State that the rule reads | Current enforcement |
 | --- | --- | --- |
-| Start or close needs no active blockers | Dependency edges and blocker statuses | The inline `NOT EXISTS` condition in `update()` in `src/records/issues.ts` |
+| Start or close needs no active blockers | Dependency edges and blocker statuses | `activeBlockerExists` in `update()` in `src/records/issues.ts` |
 | A dependency graph has no cycle | All edges | The `dependencies_acyclic` trigger in `src/records/schema.ts` |
 | Both ends of a dependency exist | Two issues | The admission condition in `src/records/dependencies.ts` |
 | An epic with children stays an epic | Children of the issue | The `epic_has_children` guard in `update()` in `src/records/issues.ts` |

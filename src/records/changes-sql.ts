@@ -1,6 +1,7 @@
 // Owns the change feed DDL; triggers record an event only while a mutation batch holds the writer row.
 import type { SqlExecutor } from './issues.ts';
 import { fields } from '../transition/index.ts';
+import { activeBlockerStatusSql } from './active-blocker.ts';
 
 export const changeKinds = ['created', 'updated', 'status_changed', 'commented', 'claim_acquired', 'claim_released', 'dependency_added', 'dependency_removed', 'became_ready'] as const;
 export type ChangeKind = typeof changeKinds[number];
@@ -11,7 +12,7 @@ const event = (issue: string, kind: string, fieldsJson = "'[]'") =>
 const writtenFields = `'[' || substr(${fields.map(field => `CASE WHEN NEW.${field}_v <> OLD.${field}_v THEN ',"${field}"' ELSE '' END`).join(' || ')},2) || ']'`;
 const anyFieldWritten = fields.map(field => `NEW.${field}_v <> OLD.${field}_v`).join(' OR ');
 const noActiveBlocker = (dependent: string) => `NOT EXISTS(SELECT 1 FROM dependencies AS other JOIN issues AS blocker ON blocker.id = other.blocker_id
-      WHERE other.dependent_id = ${dependent} AND blocker.status <> 'closed')`;
+      WHERE other.dependent_id = ${dependent} AND ${activeBlockerStatusSql()})`;
 
 // Restores, merges, and upgrades write without the change_writer row, so they record no events.
 export const CHANGE_STATEMENTS = [
@@ -40,7 +41,7 @@ export const CHANGE_STATEMENTS = [
         WHERE ${anyFieldWritten};
       ${event('dependent.id', "'became_ready'")}
         CROSS JOIN dependencies JOIN issues AS dependent ON dependent.id = dependencies.dependent_id
-        WHERE OLD.status <> 'closed' AND NEW.status = 'closed' AND dependencies.blocker_id = NEW.id AND dependent.status = 'open'
+        WHERE ${activeBlockerStatusSql('OLD')} AND NEW.status = 'closed' AND dependencies.blocker_id = NEW.id AND dependent.status = 'open'
         AND ${noActiveBlocker('dependent.id')}
         ORDER BY dependent.sort_key;
     END`,
@@ -56,7 +57,7 @@ export const CHANGE_STATEMENTS = [
       ${event('OLD.dependent_id', "'dependency_removed'")};
       ${event('dependent.id', "'became_ready'")}
         CROSS JOIN issues AS dependent CROSS JOIN issues AS removed
-        WHERE dependent.id = OLD.dependent_id AND removed.id = OLD.blocker_id AND removed.status <> 'closed' AND dependent.status = 'open'
+        WHERE dependent.id = OLD.dependent_id AND removed.id = OLD.blocker_id AND ${activeBlockerStatusSql('removed')} AND dependent.status = 'open'
         AND ${noActiveBlocker('dependent.id')};
     END`,
 ];

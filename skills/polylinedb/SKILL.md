@@ -54,7 +54,7 @@ This unconditional refetch also applies when the connector supplies no expiry ti
 Keep one lowercase session UUID for this caller session and one request UUID for each logical claim mutation.
 Read `show` for the selected ID and retain its `claim.store_incarnation`; `claim_show` returns the same value.
 Call `claim_acquire` with the selected `issue_id`, `incarnation`, `session_id`, and `request_id`.
-A successful `claim_acquire` returns `open_blockers`, the ids of blockers whose status is not `closed`, in issue order, as observed at acquire time.
+A successful `claim_acquire` returns `open_blockers`, the ids of active blockers, in issue order, as observed at acquire time.
 An empty list means there are none.
 Acquire does not fail because of those blockers.
 If `open_blockers` is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist.

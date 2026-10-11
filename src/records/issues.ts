@@ -12,6 +12,7 @@ import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 import { issueClaimGuard } from './claims-sql.ts';
 import { recordingChanges } from './changes-sql.ts';
+import { activeBlockerExists } from './active-blocker.ts';
 import type { ClaimProof } from './claims-sql.ts';
 
 export type Status = typeof statuses[number];
@@ -224,7 +225,7 @@ function notFound(issueId: string): never {
   throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issueId });
 }
 const observation = (issueId: string): SqlStatement => ({ sql: `SELECT issues.*,
-  EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed') AS has_active_blockers,
+  ${activeBlockerExists('issues.id')} AS has_active_blockers,
   EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children
   FROM issues WHERE id = ?`, params: [issueId] });
 
@@ -238,7 +239,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   const ownership = issueClaimGuard(issueId, proof, changes.some(change => change.field === 'status'), actor);
   conditions.push(ownership.sql); guards.push(...ownership.params);
   const guardedStatus = changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'));
-  if (guardedStatus && !override.force) conditions.push("NOT EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed')");
+  if (guardedStatus && !override.force) conditions.push(`NOT ${activeBlockerExists('issues.id')}`);
   for (const change of changes) {
     assignments.push(`${fieldRegistry[change.field].column} = ?`, `${change.field}_v = ${change.field}_v + 1`);
     params.push(change.field === 'labels' ? JSON.stringify(change.value) : change.value);
