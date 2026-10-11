@@ -107,6 +107,43 @@ test('acquire reports open blockers as an observation and still acquires', async
   const renewed = await run({ op: 'claim_renew', claim_proof: proof(acquired.claim_receipt), expected_revision: 1, request_id: request() });
   assert.deepEqual(Object.keys(renewed).sort(), ['claim_receipt']);
 });
+test('an active blocker is the same set for claim acquisition and the worklists', async t => {
+  for (const [status, blockers, ready, blocked] of [
+    ['open', ['pd-2'], false, true],
+    ['in_progress', ['pd-2'], false, true],
+    ['deferred', ['pd-2'], false, true],
+    ['closed', [], true, false],
+  ] as const) {
+    const { run } = fixture(t);
+    const dependent = await create(run);
+    const blocker = await create(run);
+    assert.deepEqual([dependent.id, blocker.id], ['pd-1', 'pd-2']);
+    if (status === 'closed') await run({ op: 'close', id: blocker.id, expected: 1 });
+    else if (status !== 'open') await run({ op: 'update', id: blocker.id, changes: [{ field: 'status', value: status, expected: 1 }] });
+    await run({ op: 'dependency_add', dependent_id: dependent.id, blocker_id: blocker.id, expected_revision: 1, request_id: request() });
+    const shown = await run({ op: 'claim_show', issue_id: dependent.id });
+    assert.ok('claim' in shown);
+    const acquired = await run({ op: 'claim_acquire', issue_id: dependent.id, incarnation: shown.claim.store_incarnation, session_id: request(), request_id: request() });
+    assert.ok('claim_receipt' in acquired);
+    assert.deepEqual('open_blockers' in acquired ? acquired.open_blockers : undefined, blockers, status);
+    const readyList = await run({ op: 'dependency_worklist', state: 'ready' });
+    const blockedList = await run({ op: 'dependency_worklist', state: 'blocked' });
+    assert.ok('issues' in readyList && 'issues' in blockedList);
+    assert.equal(readyList.issues.some(issue => issue.id === dependent.id), ready, `${status} ready`);
+    assert.equal(blockedList.issues.some(issue => issue.id === dependent.id), blocked, `${status} blocked`);
+    const claim_proof = proof(acquired.claim_receipt);
+    if (blocked) {
+      await assert.rejects(run({ op: 'close', id: dependent.id, expected: 1, claim_proof }), { code: 'dependency_blocked' });
+      const still = await run({ op: 'show', id: dependent.id });
+      assert.ok('issue' in still);
+      assert.equal(still.issue.status, 'open');
+    } else {
+      const closedDependent = await run({ op: 'close', id: dependent.id, expected: 1, claim_proof });
+      assert.ok('issue' in closedDependent);
+      assert.equal(closedDependent.issue.status, 'closed');
+    }
+  }
+});
 test('a supplied claim_proof that the store rejects names the observed claim', async t => {
   const { run, db } = fixture(t); const issue = await create(run); const owner = await acquire(run, issue.id);
   const current = proof(owner.receipt);
