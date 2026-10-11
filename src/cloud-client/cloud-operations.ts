@@ -68,7 +68,7 @@ function changeEvent(value: unknown, incarnation: string): ChangeEvent {
     || typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)) return invalid();
   return { seq: count(row.seq, 1), incarnation, issue_id: parseIssueId(row.issue_id), kind: changeName(row.kind), fields: row.fields.map(changeName), occurred_at: count(row.occurred_at, 0), actor: row.actor };
 }
-// A Worker that reports blockers on acquisition sends sorted open blocker IDs. An older Worker omits the field.
+// A Worker that reports blockers on acquisition sends sorted active blocker IDs. An older Worker omits the field.
 function openBlockers(value: unknown, dependent: string): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const ids: string[] = [];

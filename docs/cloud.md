@@ -640,7 +640,7 @@ The page says when more children exist.
 It says when there are none.
 
 **Comments** lists each comment with its time and author.
-**Open blockers** lists blockers whose status is not `closed`, and each one links to that issue.
+**Active blockers** lists active blockers, and each one links to that issue.
 **Closed blockers** lists the blockers that are closed.
 A missing issue returns the not-found page.
 
@@ -677,11 +677,11 @@ It shows the title, the project, the agent label when the claim has one, the act
 
 ### Blocked
 
-`/ui/blocked` lists issues that are not closed and that have at least one blocker that is not closed.
+`/ui/blocked` lists issues that are not closed and that have at least one active blocker.
 A deferred blocker counts.
-The most open blockers come first, then the lower priority numbers.
+The most active blockers come first, then the lower priority numbers.
 The page shows at most 50 issues.
-Each row links to the issue and shows the title, status, project, and the open-blocker count.
+Each row links to the issue and shows the title, status, project, and the active-blocker count.
 
 ### Recent updates
 

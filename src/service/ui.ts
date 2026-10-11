@@ -1,5 +1,5 @@
 /** Renders the read-only /ui pages for phones. They have no form, script, or write path; changes go through the operation endpoints. */
-import { activeClaimIssues, blockedIssues, claimDisplay, executeOperation, issueChildren, issueParent, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { activeClaimIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, issuesAwaitingMain, ownerInboxIssues, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 
 const listLimit = 50;
@@ -162,8 +162,8 @@ function childrenSection(children: readonly IssueLink[], more: boolean): string 
 function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>): string {
   const labelLine = issue.labels.length === 0 ? '<span class="secondary">No labels.</span>' : `<span class="secondary">${issue.labels.map(label => escape(label)).join(' ')}</span>`;
   const commentList = comments.length === 0 ? '<p class="quiet-note">No comments.</p>' : `<ul class="quiet-list">${comments.map(comment => commentItem(comment, labels)).join('')}</ul>`;
-  const open = blockers.filter(blocker => blocker.status !== 'closed');
-  const closed = blockers.filter(blocker => blocker.status === 'closed');
+  const open = blockers.filter(blocker => blockerIsActive(blocker.status));
+  const closed = blockers.filter(blocker => !blockerIsActive(blocker.status));
   return document(title(issue.body), `<p><a href="${escape(projectHref(issue.tool, issue.project))}">Project</a></p>
 <h1>${escape(title(issue.body))}</h1>
 <span class="secondary">${escape(issue.id)}</span>
@@ -178,7 +178,7 @@ ${parentLine(parent)}
 ${childrenSection(children, moreChildren)}
 <div class="prose">${escape(bodyAfterTitle(issue.body))}</div>
 <section class="quiet-section"><h2>Comments</h2>${commentList}</section>
-${blockerSection('Open blockers', open, 'No open blockers.')}
+${blockerSection('Active blockers', open, 'No active blockers.')}
 ${blockerSection('Closed blockers', closed, 'No closed blockers.')}`);
 }
 
@@ -323,7 +323,7 @@ ${body}`);
 function blockedPage(rows: readonly BlockedIssue[]): string {
   const body = rows.length === 0 ? '<p class="quiet-note">Nothing is blocked.</p>' : `<ul class="quiet-list">${rows.map(blockedItem).join('')}</ul>`;
   return document('Blocked', `<h1>Blocked</h1>
-<p class="section-note">Unfinished issues with a blocker that is not closed. Deferred blockers still count.</p>
+<p class="section-note">Unfinished issues with an active blocker. Deferred blockers still count.</p>
 ${body}`);
 }
 

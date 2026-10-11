@@ -67,7 +67,6 @@ export function parseDependencyOperation(value: unknown): DependencyOperation {
     return invalid(error instanceof Error ? error.message : 'Invalid dependency input');
   }
 }
-export const ACTIVE_BLOCKERS_SQL = "EXISTS(SELECT 1 FROM dependencies JOIN issues AS blocker ON blocker.id = dependencies.blocker_id WHERE dependencies.dependent_id = issues.id AND blocker.status <> 'closed')";
 function outcome(value: unknown): DependencyOutcome {
   if (value === 'added' || value === 'already_present' || value === 'removed' || value === 'already_absent') return value;
   throw new PolylinedbError('invalid_store', 'Invalid dependency outcome', 500);
