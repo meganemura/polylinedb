@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Group the `/ui` project mark tickets under three roles, after **Any label**. **Start** is `ready`. **Landing** is `ready-for-land-queue`, `main-wait`, and `main-lock`. **Owner** is `owner-decision` and `owner-action`. A state and a mark both apply, and choosing one leaves the other in place.
 - Ask Git once per directory for the rest of the process. A local command reuses that answer for repository defaults, the configuration path, and external-directory checks. A directory that is not a repository is remembered the same way. A failed Git start is not remembered, so a later call asks again. See `docs/performance.md`.
 - Split the `/ui` project filters into two kinds. **State** is one joined bar (one status at a time, and Unfinished means every status except closed). **Mark** is a separate row of tickets, because a label does not change the status. The selected state and the selected mark use different colors.
 - Cross-fade a same-origin `/ui` navigation for 80 ms, including the transition group, and only when the browser is not asking for reduced motion. A tap during that crossfade may not reach the new page.

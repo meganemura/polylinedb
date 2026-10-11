@@ -9,7 +9,12 @@ const projectIssueLimit = 101;
 const shownProjectIssues = 100;
 const childLimit = 101;
 const shownChildren = 100;
-const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
+const markRoles = [
+  { name: 'Start', labels: ['ready'], note: 'An agent may claim this. The ready list also needs status open.' },
+  { name: 'Landing', labels: ['ready-for-land-queue', 'main-wait', 'main-lock'], note: 'The inbox shows main-wait only when the status is open.' },
+  { name: 'Owner', labels: ['owner-decision', 'owner-action'], note: 'A person has to act. This is not a status.' },
+] as const;
+const attentionLabels = markRoles.flatMap(role => role.labels);
 
 export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'working' } | { page: 'blocked' } | { page: 'recent' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
 const inboxLabels = ['owner-decision', 'owner-action', 'main-wait'] as const;
@@ -355,6 +360,20 @@ function chip(href: string, label: string, current: boolean): string {
   return `<a href="${escape(href)}"${current ? ' aria-current="page"' : ''}>${escape(label)}</a>`;
 }
 
+function markRail(tool: string, project: string, status: Status | undefined, label: string | undefined): string {
+  const anyLabel = chip(filterHref(tool, project, status), 'Any label', label === undefined);
+  const roles = markRoles.map(role => {
+    const tickets = role.labels.map(name => chip(filterHref(tool, project, status, name), name, label === name)).join('');
+    return `<div class="mark-role">
+<span class="mark-role-name">${escape(role.name)}</span>
+<div class="stamps">${tickets}</div>
+<p class="filter-note">${escape(role.note)}</p>
+</div>`;
+  }).join('');
+  return `<nav class="stamps" aria-label="Mark">${anyLabel}
+<div class="mark-roles">${roles}</div></nav>`;
+}
+
 function projectPage(tool: string, project: string, issues: readonly ProjectIssue[], closed: readonly Issue[], labels: ReadonlyMap<string, string>, more: boolean, filter: { status?: Status; label?: string }): string {
   const note = more ? '<p class="section-note">More issues are not shown.</p>' : '';
   const filtered = filter.status !== undefined || filter.label !== undefined;
@@ -362,10 +381,10 @@ function projectPage(tool: string, project: string, issues: readonly ProjectIssu
   const body = issues.length === 0 ? `<p class="quiet-note">${empty}</p>` : `<ul class="quiet-list">${issues.map(row => projectIssueItem(row, labels)).join('')}</ul>`;
   const statuses = ['open', 'in_progress', 'deferred', 'closed'] as const;
   const statusChips = [chip(filterHref(tool, project, undefined, filter.label), 'Unfinished', filter.status === undefined), ...statuses.map(status => chip(filterHref(tool, project, status, filter.label), status, filter.status === status))].join('');
-  const labelChips = [chip(filterHref(tool, project, filter.status), 'Any label', filter.label === undefined), ...attentionLabels.map(label => chip(filterHref(tool, project, filter.status, label), label, filter.label === label))].join('');
   return document(tool, `<h1>${escape(tool)}</h1>
 <p class="section-note">${escape(project)}</p>
 <div class="filters">
+<p class="filter-compose">A state and a mark both apply. Neither one changes the other.</p>
 <section class="filter-rail filter-state">
 <p class="filter-kicker"><span class="filter-name">State</span> One status at a time</p>
 <nav class="segment" aria-label="State">${statusChips}</nav>
@@ -373,8 +392,7 @@ function projectPage(tool: string, project: string, issues: readonly ProjectIssu
 </section>
 <section class="filter-rail filter-mark">
 <p class="filter-kicker"><span class="filter-name">Mark</span> A label, not a status</p>
-<nav class="stamps" aria-label="Mark">${labelChips}</nav>
-<p class="filter-note">A mark sits on the issue. It does not change the status.</p>
+${markRail(tool, project, filter.status, filter.label)}
 </section>
 </div>
 ${body}
@@ -533,6 +551,7 @@ h1 {
 .filter-state .filter-name { color: var(--ink); }
 .filter-mark .filter-name { color: var(--mark); }
 .filter-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.filter-compose { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
 .segment { display: flex; overflow-x: auto; border: 2px solid var(--ink); }
 .segment a { flex: 1 0 auto; padding: 9px 10px; border-right: 1px solid var(--ink); color: inherit; text-align: center; text-decoration: none; font-size: 13px; line-height: 1.3; }
 .segment a:last-child { border-right: 0; }
@@ -541,6 +560,9 @@ h1 {
 .stamps a { border: 1.5px solid var(--mark); padding: 6px 10px; color: var(--mark); text-decoration: none; font-size: 13px; line-height: 1.3; background:
   linear-gradient(var(--mark), var(--mark)) left / 4px 100% no-repeat; padding-left: 12px; }
 .stamps a[aria-current="page"] { background: var(--mark); color: var(--paper); }
+.mark-roles { display: grid; gap: 16px; flex: 1 0 100%; margin-top: 8px; }
+.mark-role { display: grid; gap: 6px; }
+.mark-role-name { display: block; color: var(--mark); font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
 .views { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 28px; }
 .views a { color: inherit; font-size: 15px; line-height: 1.4; }
 .quiet-list { list-style: none; margin: 0; padding: 0; }
