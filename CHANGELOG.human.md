@@ -11,6 +11,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 Changes on `queue` or main that are not in a release yet.
 
+The CLI module-loading test now runs without opening your computer's credential store.
+
 Tests now stop before they start on an unsupported Node version. The message shows your Node version and the required range from the package.
 
 The checks that run on every push finish sooner. They now run in parallel pieces instead of one long line, and every check still runs.

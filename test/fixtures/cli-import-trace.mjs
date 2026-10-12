@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 
+Object.defineProperty(process, 'platform', { value: 'synthetic-unsupported' });
 const seen = [];
 registerHooks({
   load(url, context, nextLoad) {

@@ -320,6 +320,12 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+### Isolate the CLI module-loading test from host credentials
+
+- surface: CLI test fixture
+- change: the module-loading test uses an unsupported synthetic platform, so its authentication check never opens the host credential store.
+- compatibility: CLI behavior does not change.
+
 ### Reject unsupported Node before tests start
 
 - surface: `npm test`, `npm run test:d1`, `npm run test:properties`, `npm run test:package`, and the shared CLI child helper.
