@@ -120,7 +120,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'server_info', 'show', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'server_info', 'show', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -128,6 +128,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['actor', true, false, true, false],
       ['changes', true, false, true, false],
       ['claim_acquire', false, false, true, false],
+      ['claim_handoff', false, true, true, false],
       ['claim_list', true, false, true, false],
       ['claim_release', false, true, true, false],
       ['claim_renew', false, false, true, false],
@@ -420,6 +421,9 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     const claim_proof = { issue_id: issue.id, incarnation: lease.incarnation, session_id: lease.session_id, generation: lease.generation };
     await repeat('claim_renew', { claim_proof, expected_revision: 1, request_id: crypto.randomUUID() });
     await repeat('claim_release', { claim_proof, expected_revision: 2, request_id: crypto.randomUUID() });
+    const reclaimed = (await call('claim_acquire', { issue_id: issue.id, incarnation: observed.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() })).claim_receipt;
+    await repeat('claim_handoff', { claim_proof: { issue_id: issue.id, incarnation: reclaimed.incarnation, session_id: reclaimed.session_id, generation: reclaimed.generation },
+      expected_revision: reclaimed.revision, request_id: crypto.randomUUID(), tip: 'abcdef0', summary: 'Enqueued.' });
     await read('changes', { since: 0 });
     await read('server_info', {});
     await read('wait', { since: 0, timeout: 0 });

@@ -44,7 +44,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ca
 
 async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, store?: MemoryStore): Promise<OperationResult> {
   switch (operation.op) {
-    case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_release':
+    case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_release': case 'claim_handoff':
       return executeClaimOperation(db, operation, actor);
     case 'changes':
       return executeChangesOperation(db, operation);

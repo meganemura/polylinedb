@@ -40,6 +40,7 @@ const operationPolicy = {
   claim_acquire: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   claim_renew: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   claim_release: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  claim_handoff: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   changes: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   wait: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
 } satisfies Record<Operation['op'], OperationPolicy>;

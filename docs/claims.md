@@ -126,6 +126,18 @@ Closed issues remain claimable for reopening.
 Release followed by acquisition provides explicit handoff.
 
 The [change feed](operations.md#change-feed) records `claim_acquired` and `claim_released` for committed receipts.
+
+## Hand off to the landing queue
+
+`claim_handoff` ends a lane's work on an issue in one write.
+Under the caller's proof and the current claim revision, it adds a `tip: <sha>` comment and an optional summary comment, sets status `open`, removes `ready`, adds `main-wait`, keeps the other labels, and releases the claim.
+It reads the issue first and commits only while the status and label versions it read still hold; when only those moved, it reads again and retries twice at most.
+It refuses a closed issue with `conflict`, and a proof that no longer holds with `claim_conflict`, and writes nothing in either case.
+The release receipt is the idempotency record: it stores the handoff request as its payload, and the comment IDs come from the request UUID.
+A retry with the same request UUID and arguments returns the same receipt and comments and writes nothing. Different arguments, or a `claim_release` with that UUID, return `claim_request_conflict`.
+The last statement of the batch checks that both comments and the queue labels are present, so a write that a trigger or constraint drops aborts the whole batch.
+The change feed records `claim_released`, one `commented` per comment, and `status_changed` or `updated` when the issue moved.
+`pd claim handoff --claim-proof JSON --expected-revision N --tip SHA [--summary TEXT | --summary-file PATH]` sends it. No schema change was needed.
 Renewal, a replayed request, and a lease that passes its deadline record no event, so read `claim_show` for the current deadline.
 
 After an uncertain result, retry only with the original request UUID and identical actor, session, incarnation, and payload.

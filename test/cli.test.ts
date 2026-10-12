@@ -281,6 +281,22 @@ test('CLI claim renew and release accept the acquire receipt as --claim-proof', 
   assert.equal(released.claim_receipt.generation, receipt.generation);
   assert.equal(released.claim_receipt.session_id, session);
 });
+test('CLI claim handoff comments the tip and summary, queues the issue, and releases in one call', t => {
+  const { run } = fixture(t);
+  run(['init']);
+  run(['create', '--tool', 'test', '--project', 'test', '--body', 'Handoff', '--label', 'ready']);
+  const inspected = run(['claim', 'show', '1']).claim;
+  const receipt = run(['claim', 'acquire', '1', '--incarnation', inspected.store_incarnation, '--session-id', crypto.randomUUID()]).claim_receipt;
+  const request = crypto.randomUUID();
+  const args = ['claim', 'handoff', '--claim-proof', JSON.stringify(receipt), '--expected-revision', String(receipt.revision), '--tip', 'abcdef0', '--summary', 'Enqueued.', '--request-id', request];
+  const handed = run(args);
+  assert.equal(handed.claim_receipt.outcome, 'released');
+  assert.deepEqual(handed.handoff.issue.labels, ['main-wait']);
+  assert.deepEqual(handed.handoff.comments.map((comment: { body: string }) => comment.body), ['tip: abcdef0', 'Enqueued.']);
+  assert.deepEqual(run(args), handed);
+  assert.equal(run(['claim', 'show', '1']).claim.state, 'released');
+  assert.equal(run(['claim', 'handoff', '--claim-proof', JSON.stringify(receipt), '--expected-revision', '2', '--tip', 'abcdef0', '--summary', 'a', '--summary-file', 'x'], { status: 2 }).error.message, 'Use either --summary or --summary-file');
+});
 test('CLI rejects claim flags and malformed proof before opening storage', t => {
   const { run, directory } = fixture(t);
   for (const args of [

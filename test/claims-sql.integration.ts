@@ -211,6 +211,29 @@ try {
     const cleanup = asBody(await product({ op: 'claim_release', claim_proof: proof(foreign.claim_receipt), expected_revision: 1, request_id: crypto.randomUUID(), expired_noop: true }));
     assert.equal(cleanup.released, false);
     assert.equal(cleanup.current?.lease?.revision, foreign.claim_receipt.revision);
+    await db.batch([sql("INSERT INTO counters(scope,last_number) VALUES ('pd',10) ON CONFLICT(scope) DO UPDATE SET last_number = MAX(last_number, 10)")]);
+    const handoffTarget = async (body: string) => {
+      const created = await product({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'handoff', body, labels: ['ready', 'ui'] }); assert.ok('issue' in created);
+      const shown = await product({ op: 'claim_show', issue_id: created.issue.id }); assert.ok('claim' in shown);
+      const held = await product({ op: 'claim_acquire', issue_id: created.issue.id, incarnation: shown.claim.store_incarnation, session_id: session(), request_id: crypto.randomUUID() }); assert.ok('claim_receipt' in held);
+      return { id: created.issue.id, receipt: held.claim_receipt };
+    };
+    const handedTarget = await handoffTarget('Handoff');
+    const handoffCommand = { op: 'claim_handoff', claim_proof: proof(handedTarget.receipt), expected_revision: handedTarget.receipt.revision, request_id: crypto.randomUUID(), tip: 'abcdef0', summary: 'Enqueued.' };
+    const handed = await product(handoffCommand); assert.ok('handoff' in handed);
+    assert.deepEqual({ status: handed.handoff.issue.status, labels: handed.handoff.issue.labels, outcome: handed.claim_receipt.outcome }, { status: 'open', labels: ['main-wait', 'ui'], outcome: 'released' });
+    assert.deepEqual(handed.handoff.comments.map(comment => comment.body), ['tip: abcdef0', 'Enqueued.']);
+    assert.deepEqual(await product(handoffCommand), handed);
+    await assert.rejects(product({ ...handoffCommand, summary: 'Other' }), { code: 'claim_request_conflict' });
+    const failedTarget = await handoffTarget('Handoff rollback');
+    const snapshot = async () => [await read(db, 'SELECT * FROM issues WHERE id = ?', [failedTarget.id]), await read(db, 'SELECT * FROM comments WHERE issue_id = ?', [failedTarget.id]),
+      await read(db, 'SELECT * FROM issue_claims WHERE issue_id = ?', [failedTarget.id]), await read(db, 'SELECT * FROM claim_requests WHERE issue_id = ?', [failedTarget.id]), await read(db, 'SELECT COUNT(*) AS events FROM change_events')];
+    const beforeFailure = await snapshot();
+    await db.batch([sql("CREATE TRIGGER reject_handoff_comment BEFORE INSERT ON comments BEGIN SELECT RAISE(ABORT,'comment_rejected'); END")]);
+    await assert.rejects(product({ op: 'claim_handoff', claim_proof: proof(failedTarget.receipt), expected_revision: failedTarget.receipt.revision, request_id: crypto.randomUUID(), tip: 'abcdef0' }), /comment_rejected/);
+    await db.batch([sql('DROP TRIGGER reject_handoff_comment')]);
+    assert.deepEqual(await snapshot(), beforeFailure);
+    process.stdout.write(`PASS ${name} product: claim_handoff writes tip and summary comments, queue labels, and the release atomically, replays by request ID, and a failed comment write leaves nothing\n`);
     process.stdout.write(`PASS ${name} product: default expired own lease release conflict, opted-in expired own lease release no-op, other session, generation, and newer lease release conflict\n`);
     process.stdout.write(`PASS ${name} product: strict claim parser, generated inspection, immutable replay classification, closed acquisition, close/reopen fencing, force denial\n`);
     process.stdout.write(`PASS ${name}: concurrent acquisition and UUID admission, original receipt history, actor/session/payload conflicts, CAS, equality expiry, caller incarnation fencing, missing old receipt rejection, rollback sentinel, MAX counters, old proof with no claim row\n`);

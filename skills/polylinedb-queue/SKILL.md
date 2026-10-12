@@ -79,6 +79,13 @@ If this session's lease expired after the push, acquire the issue again and then
 Do not acquire an issue this session did not push, only to write these records.
 A cloud connector reports a human actor until per-agent tokens exist and does not enforce the agent gate. Hold the claim there too.
 
+Hand the issue off with one `claim_handoff` call.
+Pass the issue proof, the current claim revision as `expected_revision`, a new request UUID, `tip` set to the 40-character SHA of the queue tip, and `summary` set to the changed paths, commit SHAs, and verification result.
+In one atomic write it adds the `tip: <sha>` comment and the summary comment, sets status `open`, removes `ready`, adds `main-wait`, keeps the other labels, and releases the claim.
+If any part fails, nothing is written. After an uncertain response, call it again with the same request UUID and the same arguments; it returns the first result.
+
+When the connection has no `claim_handoff`, write the same records in four steps:
+
 1. Write a `comment` whose whole body is `tip: ` followed by the 40-character SHA of the queue tip. It holds only that line, with no reasoning and no tool output.
 2. Write a second `comment` with the changed paths, commit SHAs, and verification result.
 3. Read field versions with `show`. Then `update` the issue with the issue proof: status `open`, labels without `ready` and with `main-wait`. Keep the other labels.

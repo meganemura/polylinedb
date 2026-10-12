@@ -105,7 +105,7 @@ After the enqueue, remove the worktree with `git worktree remove` and delete its
 
 ## Publish and record the tip
 
-Follow the polylinedb-queue skill to push `queue`, write the tip comment, and hand the issue off as `open` with the `main-wait` label.
+Follow the polylinedb-queue skill to push `queue`, then hand the issue off with `claim_handoff`: one call writes the tip comment and the summary, leaves the issue `open` with the `main-wait` label, and releases the claim.
 The tip pointer is a comment on the claimed issue whose whole body is `tip: ` followed by the 40-character commit SHA.
 The newest `tip:` comment from the claim holder is the current pointer.
 The comment holds only that line, with no reasoning and no tool output.

@@ -39,6 +39,7 @@ const commandFlags: Record<string, readonly string[]> = {
   claim_acquire: ['incarnation', 'session-id', 'ttl', 'agent-label', 'request-id'],
   claim_keepalive: ['claim-proof', 'ttl', 'max-duration', 'pid', 'kill-on-loss'],
   claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
+  claim_handoff: ['claim-proof', 'expected-revision', 'tip', 'summary', 'summary-file', 'request-id'],
   changes: ['since', 'incarnation', 'project', 'issue', 'kind', 'limit'],
   'owner-waits': ['tool', 'project', 'after', 'limit'],
   wait: ['since', 'incarnation', 'project', 'issue', 'kind', 'timeout'],
@@ -419,7 +420,14 @@ async function main(argv: readonly string[]): Promise<void> {
     raw.request_id = one('request-id') ?? randomUUID();
   }
   if (command === 'claim_release') raw.expired_noop = true;
-  if (command === 'claim_renew' || command === 'claim_release') {
+  if (command === 'claim_handoff') {
+    if (one('tip') !== undefined) raw.tip = one('tip');
+    if (one('summary') !== undefined && one('summary-file') !== undefined) invalid('Use either --summary or --summary-file');
+    const summaryFile = one('summary-file');
+    const summary = summaryFile === undefined ? one('summary') : await readInput(summaryFile, 65536);
+    if (summary !== undefined) raw.summary = summary;
+  }
+  if (command === 'claim_renew' || command === 'claim_release' || command === 'claim_handoff') {
     raw.request_id = one('request-id') ?? randomUUID(); const expected = one('expected-revision');
     if (expected !== undefined) raw.expected_revision = integer(expected);
   }

@@ -290,6 +290,19 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { issues, next_cursor };
     }
     case 'comment': return { comment: commentRow(known(known(value, ['comment']).comment, ['id', 'issue_id', 'body', 'created_at', 'created_by'])) };
+    case 'claim_handoff': {
+      const response = known(value, ['claim_receipt', 'handoff']);
+      const { outcome, ...owner } = known(response.claim_receipt, [...claimKeys, 'outcome']); const parsed = claim(owner);
+      const proof = operation.claim_proof;
+      if (outcome !== 'released' || parsed.released_at === null || parsed.issue_id !== proof.issue_id || parsed.incarnation !== proof.incarnation
+        || parsed.session_id !== proof.session_id || parsed.generation !== proof.generation || parsed.revision !== operation.expected_revision + 1) return invalid();
+      const parts = known(response.handoff, ['issue', 'comments']);
+      const handed = issue(parts.issue);
+      if (handed.id !== proof.issue_id || !Array.isArray(parts.comments) || parts.comments.length !== (operation.summary === undefined ? 1 : 2)) return invalid();
+      const comments = parts.comments.map(item => commentRow(known(item, ['id', 'issue_id', 'body', 'created_at', 'created_by'])));
+      if (comments.some(comment => comment.issue_id !== proof.issue_id)) return invalid();
+      return { claim_receipt: { ...parsed, outcome, released_at: parsed.released_at }, handoff: { issue: handed, comments } };
+    }
     case 'create': case 'update': case 'close': case 'reopen': return { issue: issue(known(value, ['issue']).issue) };
     default: { const exhaustive: never = operation; return exhaustive; }
   }

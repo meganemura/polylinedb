@@ -78,6 +78,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
 | `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ..., "open_blockers": [...] }` |
 | `claim_renew` | `claim_proof`, `expected_revision`, `request_id`; optional `ttl` | `{ "claim_receipt": ... }` |
+| `claim_handoff` | `claim_proof`, `expected_revision`, `request_id`, `tip` (7 to 40 lowercase hex digits); optional `summary` (at most 65536 UTF-8 bytes) | `{ "claim_receipt": ..., "handoff": { "issue": ..., "comments": [...] } }` |
 | `claim_release` | `claim_proof`, `expected_revision`, `request_id`; optional `expired_noop: true` | `{ "claim_receipt": ... }`; with `expired_noop` and the caller's expired lease, `{ "released": false, "current": ... }` |
 | `changes` | `since`; `incarnation` when `since` is greater than 0; optional `project`, `issue_ids`, `kinds`, `limit` | `{ "incarnation": ..., "changes": [...], "next_since": ... }` |
 
@@ -179,7 +180,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `status_changed` | `update`, `close`, or `reopen` writes `status`; `fields` includes `status` |
 | `commented` | `comment` appends a comment, or a forced status change appends its reason |
 | `claim_acquired` | `claim_acquire` commits a receipt |
-| `claim_released` | `claim_release` commits a receipt |
+| `claim_released` | `claim_release` or `claim_handoff` commits a release receipt |
 | `dependency_added` | `dependency_add` inserts an edge |
 | `dependency_removed` | `dependency_remove` deletes an edge |
 | `became_ready` | A blocker closes, or an active blocker is removed, and the dependent is `open` with no active blocker left |

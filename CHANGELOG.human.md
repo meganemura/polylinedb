@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+An agent now hands finished work to the landing queue in one step instead of five. One call records the commit and a summary, marks the issue as waiting for main, and gives up the claim. Either everything is recorded or nothing is, so a crash no longer leaves an issue half handed over.
+
 The packaged-server check now expects the in-place Dispatch script, so release checks pass again.
 
 Pressing Dispatch no longer leaves the issue page. The button shows that it is sending, then a line under it says whether it was sent and when, and the notes box empties. If something goes wrong, the line says what happened and your notes stay.

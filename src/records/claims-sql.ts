@@ -56,9 +56,9 @@ export function issueClaimGuard(issue_id: string, proof: ClaimProof | undefined,
     ? { sql: 'NOT EXISTS(SELECT 1 FROM issue_claims WHERE issue_id = ?)', params: [issue_id] }
     : { sql: '1', params: [] };
 }
-export function claimMutationStatements(command: ClaimMutation, actor: string, acquisitionGate: SqlStatement = { sql: '1', params: [] }): readonly SqlStatement[] {
+// The gate is an extra admission condition. A handoff stores its own payload on the release receipt it creates.
+export function claimMutationStatements(command: ClaimMutation, actor: string, gate: SqlStatement = { sql: '1', params: [] }, payload = JSON.stringify(command)): readonly SqlStatement[] {
   const issue = command.op === 'claim_acquire' ? command.issue_id : command.claim_proof.issue_id;
-  const payload = JSON.stringify(command);
   const replay: SqlStatement = { sql: `INSERT INTO claim_requests(${columns}) SELECT ${columns} FROM claim_requests WHERE request_id = ?`, params: [command.request_id] };
   let admission: SqlStatement;
   if (command.op === 'claim_acquire') {
@@ -67,14 +67,14 @@ export function claimMutationStatements(command: ClaimMutation, actor: string, a
       FROM issues CROSS JOIN memory_store_identity AS identity LEFT JOIN issue_claims AS claim ON claim.issue_id = issues.id
       WHERE issues.id = ? AND identity.singleton = 1 AND identity.incarnation = ?
       AND (claim.issue_id IS NULL OR claim.incarnation <> identity.incarnation OR claim.released_at IS NOT NULL OR claim.expires_at <= unixepoch())
-      AND COALESCE(claim.generation,0) < 9007199254740991 AND COALESCE(claim.revision,0) < 9007199254740991 AND ${acquisitionGate.sql}`,
-    params: [command.request_id, actor, payload, command.session_id, command.agent_label, command.ttl, issue, command.incarnation, ...acquisitionGate.params] };
+      AND COALESCE(claim.generation,0) < 9007199254740991 AND COALESCE(claim.revision,0) < 9007199254740991 AND ${gate.sql}`,
+    params: [command.request_id, actor, payload, command.session_id, command.agent_label, command.ttl, issue, command.incarnation, ...gate.params] };
   } else {
     const proof = claimProofPredicate(command.claim_proof, actor);
     admission = { sql: `INSERT INTO claim_requests(${columns})
       SELECT ?,?,?,issue_id,incarnation,session_id,agent_label,generation,revision+1,acquired_at,unixepoch(),${command.op === 'claim_renew' ? 'unixepoch()+?' : 'expires_at'},${command.op === 'claim_release' ? 'unixepoch()' : 'NULL'},unixepoch(),?
-      FROM issue_claims WHERE issue_id = ? AND revision = ? AND revision < 9007199254740991 AND ${proof.sql}`,
-    params: [command.request_id, actor, payload, ...(command.op === 'claim_renew' ? [command.ttl] : []), command.op === 'claim_renew' ? 'renewed' : 'released', issue, command.expected_revision, ...proof.params] };
+      FROM issue_claims WHERE issue_id = ? AND revision = ? AND revision < 9007199254740991 AND ${proof.sql} AND ${gate.sql}`,
+    params: [command.request_id, actor, payload, ...(command.op === 'claim_renew' ? [command.ttl] : []), command.op === 'claim_renew' ? 'renewed' : 'released', issue, command.expected_revision, ...proof.params, ...gate.params] };
   }
   return [replay, admission,
     { sql: `INSERT INTO issue_claims(issue_id,incarnation,actor,session_id,agent_label,generation,revision,acquired_at,changed_at,expires_at,released_at)

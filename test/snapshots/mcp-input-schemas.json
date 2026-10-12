@@ -109,6 +109,67 @@
       "request_id"
     ]
   },
+  "claim_handoff": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ]
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "tip": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{7,40}$",
+        "description": "The queue commit SHA, written as a \"tip: <sha>\" comment."
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "Optional result comment, at most 65536 UTF-8 bytes."
+      }
+    },
+    "required": [
+      "claim_proof",
+      "expected_revision",
+      "request_id",
+      "tip"
+    ]
+  },
   "claim_list": {
     "type": "object",
     "additionalProperties": false,

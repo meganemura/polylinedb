@@ -8,7 +8,7 @@ const skill = readFileSync(new URL('../skills/polylinedb/SKILL.md', import.meta.
 const uses = {
   actor: [], memory_context: ['project'], memory_show: [], dependency_worklist: ['state', 'project'], show: ['id'], list: ['label'],
   claim_show: ['issue_id'], claim_acquire: ['issue_id', 'incarnation', 'session_id', 'request_id', 'ttl'],
-  claim_renew: ['claim_proof', 'expected_revision'], claim_release: ['claim_proof', 'expected_revision'],
+  claim_renew: ['claim_proof', 'expected_revision'], claim_release: ['claim_proof', 'expected_revision'], claim_handoff: ['claim_proof', 'expected_revision', 'request_id', 'tip', 'summary'],
   update: ['claim_proof'], close: ['claim_proof'], comment: ['id', 'body'], dependency_add: [], dependency_remove: [],
 } as const;
 

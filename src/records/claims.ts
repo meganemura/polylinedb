@@ -5,6 +5,8 @@ import { issueQueries } from './issue-queries.ts';
 import { statements } from './solarsql.generated.ts';
 import { claimMutationStatements } from './claims-sql.ts';
 import { recordingChanges } from './changes-sql.ts';
+import { attemptHandoff, parseHandoff } from './claim-handoff.ts';
+import type { ClaimHandoff, HandoffParts } from './claim-handoff.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor, SqlStatement } from './issues.ts';
 import { claimState, decideReplay, ownsExpiredLease } from '../transition/index.ts';
@@ -22,9 +24,10 @@ export function claimDisplay(inspection: ClaimInspection): ClaimDisplay {
   if (inspection.lease === null || inspection.state === 'never_claimed') return { state: 'never_claimed' };
   return { state: inspection.state, actor: inspection.lease.actor, agentLabel: inspection.lease.agent_label, expiresAt: inspection.lease.expires_at, releasedAt: inspection.lease.released_at };
 }
-export type ClaimOperation = ClaimMutation | { op: 'claim_show'; issue_id: string }
+export type { ClaimHandoff };
+export type ClaimOperation = ClaimMutation | ClaimHandoff | { op: 'claim_show'; issue_id: string }
   | { op: 'claim_list'; tool?: string; project?: string; after?: string; limit: number };
-export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claim_receipt: ClaimReceipt; open_blockers: string[]; previous_lease?: Claim | null } | { claim_receipt: ClaimReceipt; previous_lease: Claim | null } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection };
+export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claim_receipt: ClaimReceipt; open_blockers: string[]; previous_lease?: Claim | null } | { claim_receipt: ClaimReceipt; previous_lease: Claim | null } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection } | { claim_receipt: ClaimReceipt; handoff: HandoffParts };
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const uuidSchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' };
 const incarnationSchema = { type: 'string', pattern: '^[a-f0-9]{32}$' };
@@ -38,6 +41,9 @@ export const claimSchemas = {
   claim_list: objectSchema({ tool: { type: 'string', minLength: 1, maxLength: 256 }, project: { type: 'string', minLength: 1, maxLength: 256 }, after: idSchema, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } }, []),
   claim_acquire: objectSchema({ issue_id: idSchema, incarnation: incarnationSchema, session_id: uuidSchema, request_id: uuidSchema, ttl: ttlSchema, agent_label: { type: ['string', 'null'], minLength: 1, maxLength: 64, description: 'Caller metadata, at most 64 UTF-8 bytes. Omitted labels become null.' } }, ['issue_id', 'incarnation', 'session_id', 'request_id']),
   claim_renew: objectSchema({ ...mutationProperties, ttl: ttlSchema }, ['claim_proof', 'expected_revision', 'request_id']),
+  claim_handoff: objectSchema({ ...mutationProperties,
+    tip: { type: 'string', pattern: '^[0-9a-f]{7,40}$', description: 'The queue commit SHA, written as a "tip: <sha>" comment.' },
+    summary: { type: 'string', minLength: 1, maxLength: 65536, description: 'Optional result comment, at most 65536 UTF-8 bytes.' } }, ['claim_proof', 'expected_revision', 'request_id', 'tip']),
   claim_release: objectSchema({ ...mutationProperties, expired_noop: { const: true, description: 'When the proof names an expired lease, answer released: false and the current claim instead of claim_conflict.' } }, ['claim_proof', 'expected_revision', 'request_id']),
 };
 const invalid = (message: string): never => { throw new PolylinedbError('invalid_input', message); };
@@ -70,13 +76,14 @@ export function parseClaimProof(value: unknown, target?: string): ClaimProof {
 export function parseClaimOperation(value: unknown): ClaimOperation {
   const input = object(value);
   const op = input.op;
-  if (op !== 'claim_show' && op !== 'claim_list' && op !== 'claim_acquire' && op !== 'claim_renew' && op !== 'claim_release') return invalid('Unknown claim operation');
+  if (op !== 'claim_show' && op !== 'claim_list' && op !== 'claim_acquire' && op !== 'claim_renew' && op !== 'claim_release' && op !== 'claim_handoff') return invalid('Unknown claim operation');
   const schema = claimSchemas[op]; requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   if (op === 'claim_list') return { op, limit: input.limit === undefined ? 50 : integer(input.limit, 'limit', 1, 100), ...(input.tool === undefined ? {} : { tool: name(input.tool, 'tool') }), ...(input.project === undefined ? {} : { project: name(input.project, 'project') }), ...(input.after === undefined ? {} : { after: identifier(parseIssueId, input.after) }) };
   if (op === 'claim_show') return { op, issue_id: identifier(parseIssueId, input.issue_id) };
   const request_id = identifier(parseRequestId, input.request_id);
   if (op === 'claim_acquire') return { op, issue_id: identifier(parseIssueId, input.issue_id), incarnation: parseIncarnation(input.incarnation), session_id: identifier(value => parseRequestId(value, 'session_id'), input.session_id), request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600), agent_label: input.agent_label === undefined || input.agent_label === null ? null : name(input.agent_label, 'agent_label', 64) };
   const claim_proof = parseClaimProof(input.claim_proof); const expected_revision = integer(input.expected_revision, 'expected_revision', 1);
+  if (op === 'claim_handoff') return parseHandoff(input, { claim_proof, expected_revision, request_id }, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   if (op === 'claim_release') {
     if (input.expired_noop !== undefined && input.expired_noop !== true) return invalid('expired_noop must be true when present');
     return { op, claim_proof, expected_revision, request_id, ...(input.expired_noop === true ? { expired_noop: true } : {}) };
@@ -139,6 +146,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   }
   if (operation.op === 'claim_show') return { claim: await inspectClaim(db, operation.issue_id) };
   name(actor, 'actor');
+  if (operation.op === 'claim_handoff') return handoff(db, operation, actor);
   const payload = JSON.stringify(operation);
   let results;
   const issue_id = operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id;
@@ -168,6 +176,23 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     if (ownsExpiredLease(current.lease, current.store_incarnation, operation.claim_proof, current.issue_id, actor, current.observed_at)) return { released: false, current };
   }
   throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current: inspection(observed) });
+}
+// A rejected handoff names the closed issue or the current claim. When only the issue's status or labels moved between
+// the read and the write, it tries again, a bounded number of times.
+async function handoff(db: SqlExecutor, operation: ClaimHandoff, actor: string): Promise<ClaimResult> {
+  const issue_id = operation.claim_proof.issue_id;
+  for (let attempt = 0; ; attempt++) {
+    const result = await attemptHandoff(db, operation, actor, claimObservation(issue_id), duplicateReceipt);
+    if (result.kind !== 'rejected') return { claim_receipt: receipt(result.receipt), handoff: result.parts };
+    if (!result.observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
+    const current = inspection(result.observed);
+    const lease = current.lease; const proof = operation.claim_proof;
+    const owned = current.state === 'active' && lease !== null && lease.actor === actor && lease.incarnation === proof.incarnation
+      && lease.session_id === proof.session_id && lease.generation === proof.generation && lease.revision === operation.expected_revision;
+    if (!owned) throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current });
+    if (result.issue.status === 'closed') throw new PolylinedbError('conflict', 'A closed issue cannot be handed off to the landing queue', 409, { issue: result.issue });
+    if (attempt >= 2) throw new PolylinedbError('conflict', 'The issue kept changing during the handoff; read it and try again', 409, { issue: result.issue });
+  }
 }
 // Receipts are immutable, so the receipt just before an acquisition tells whether that acquisition took over a lease
 // that expired without a release. A fresh acquisition and its replay read the same answer.
