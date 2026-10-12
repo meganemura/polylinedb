@@ -114,3 +114,19 @@ test('Check runs on every push except to main, where only checked queue tips arr
   assert.match(check, /^on:\n  push:\n    branches-ignore: \[main\]\n  pull_request:\n/m);
   assert.match(publish, /^on:\n  push:\n    branches: \[main\]\n/m);
 });
+
+test('Check runs every check once per OS and Node pair, split into parallel suites', () => {
+  const check = readFileSync(new URL('.github/workflows/check.yml', root), 'utf8');
+  assert.match(check, /^        os: \[ubuntu-24\.04, ubuntu-26\.04\]\n        node: \['24\.20\.0', '26\.7\.0'\]\n        suite: \[static, unit, d1, package\]$/m);
+  const steps = [...check.matchAll(/^      - if: matrix\.suite == '([a-z0-9]+)'\n        run: (.+)$/gm)].map(match => `${match[1]}: ${match[2]}`);
+  assert.deepEqual(steps, [
+    'static: npm run typecheck',
+    'static: npm run check:architecture',
+    'static: npm run check:ui-latency',
+    'unit: npm test',
+    'd1: npm run test:d1',
+    'package: npm exec -- vite build',
+    'package: node test/worker.integration.ts',
+    'package: npm run test:package',
+  ]);
+});

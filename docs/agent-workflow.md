@@ -36,12 +36,13 @@ A landing adds no changelog commit, so it starts no extra Check run. Check does 
 Neither changelog names pd issue ids, because readers cannot open pd. Each entry describes the change in words.
 Commit messages follow the same rule: they describe the change in words and never name a pd issue id. The `tip:` comment on the issue links pd to git.
 The `commit-messages` job in `.github/workflows/check.yml` runs `scripts/commit-messages.ts` on the pushed range only, so earlier history is not checked again.
+The Check workflow runs each OS and Node pair as four parallel jobs: `static` (typecheck, architecture, `/ui` latency), `unit` (`npm test`), `d1` (`npm run test:d1`), and `package` (Worker build, Worker integration, package test). A landing waits for the whole run to succeed, not for a job name.
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
 
 ## `/ui` latency budget
 
 [Measure `/ui` latency](ui-latency.md) sets the budget for the Worker `/ui` pages.
 `npm run check:ui-latency` is a required check for a change that touches those pages.
-The Check workflow runs it on every push and pull request.
+The Check workflow runs it on every push except to main, and on every pull request.
 A budget miss fails the change.
 A feature that cannot meet the budget needs an owner decision before it lands.

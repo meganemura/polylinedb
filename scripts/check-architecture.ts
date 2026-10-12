@@ -1,6 +1,7 @@
 // Proves declared boundaries with in-memory imports; user stores and source files stay untouched.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { availableParallelism } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, relative } from 'node:path';
@@ -12,16 +13,41 @@ function reportFields(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected an architecture report object');
   return Object.fromEntries(Object.entries(value));
 }
-function run(args: string[], expectedStatus: number, input?: string): Record<string, unknown> {
-  const result = spawnSync(process.execPath, [cli, ...args], { cwd: root, input, encoding: 'utf8' });
-  assert.ifError(result.error);
-  assert.equal(result.status, expectedStatus, `${result.stderr}\n${result.stdout}`);
-  const report = reportFields(JSON.parse(result.stdout));
-  assert.equal(report.error, undefined, JSON.stringify(report));
-  return report;
+function run(args: string[], expectedStatus: number, input?: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, ...args], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', status => {
+      try {
+        assert.equal(status, expectedStatus, `${stderr}\n${stdout}`);
+        const report = reportFields(JSON.parse(stdout));
+        assert.equal(report.error, undefined, JSON.stringify(report));
+        resolve(report);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin.end(input ?? '');
+  });
 }
-const baseline = run(['check', '--json'], 0);
-assert.deepEqual(baseline.violations, [], JSON.stringify(baseline.violations));
+// Each archstrict run is independent, so a pool sized to the CPUs runs them concurrently.
+async function pooled<T>(tasks: (() => Promise<T>)[]): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const index = next++;
+      results[index] = await tasks[index]!();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(availableParallelism(), tasks.length) }, worker));
+  return results;
+}
+const baselineRun = run(['check', '--json'], 0);
 const worker = 'src/service/index.ts';
 const records = 'src/records/issues.ts';
 const transition = 'src/transition/index.ts';
@@ -73,9 +99,14 @@ const controls: Control[] = [
   { name: 'private transition decision', path: 'src/cli.ts', statement: "import { decideIssueUpdate as proof } from './transition/issue-update.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('transition') },
   { name: 'records public transition', path: records, statement: "import { decideIssueUpdate as proof } from '../transition/index.ts'; void proof;" },
 ];
-for (const control of controls) {
+const reports = await pooled(controls.map(control => () => {
   const content = readFileSync(new URL(`../${control.path}`, import.meta.url), 'utf8') + '\n' + control.statement + '\n';
-  const report = run(['simulate', '--whole-project', '--json'], control.rule ? 1 : 0, JSON.stringify({ changes: [{ path: control.path, content }] }));
+  return run(['simulate', '--whole-project', '--json'], control.rule ? 1 : 0, JSON.stringify({ changes: [{ path: control.path, content }] }));
+}));
+const baseline = await baselineRun;
+assert.deepEqual(baseline.violations, [], JSON.stringify(baseline.violations));
+for (const [index, control] of controls.entries()) {
+  const report = reports[index]!;
   assert.ok(Array.isArray(report.added), JSON.stringify(report));
   if (!control.rule) assert.deepEqual(report.added, [], control.name);
   else assert.ok(report.added.some((value: unknown) => {

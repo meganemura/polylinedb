@@ -28,7 +28,7 @@ It does not start Chrome, and it does not seed the 1,000-issue store that `scrip
 npm run check:ui-latency
 ```
 
-The Check workflow runs that command on every push and pull request.
+The Check workflow runs that command in its `static` suite on every push except to main, and on every pull request.
 A change that touches the Worker `/ui` code fails the workflow when a budgeted step misses.
 `npm test` runs the same gate, including the cases that remove prefetch, add a server delay, or drop the back-forward cache.
 

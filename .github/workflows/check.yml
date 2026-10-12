@@ -10,13 +10,16 @@ permissions:
   contents: read
 
 jobs:
+  # Each OS and Node pair runs four suites as separate jobs, so the slowest suite sets the wall time.
   check:
+    name: ${{ matrix.suite }} (${{ matrix.os }}, ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-26.04]
         node: ['24.20.0', '26.7.0']
+        suite: [static, unit, d1, package]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -26,17 +29,25 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run typecheck
-      - run: npm run check:architecture
-      - run: npm test
-      - run: npm run check:ui-latency
-      - run: npm run test:d1
-      - run: npm exec -- vite build
+      - if: matrix.suite == 'static'
+        run: npm run typecheck
+      - if: matrix.suite == 'static'
+        run: npm run check:architecture
+      - if: matrix.suite == 'static'
+        run: npm run check:ui-latency
+      - if: matrix.suite == 'unit'
+        run: npm test
+      - if: matrix.suite == 'd1'
+        run: npm run test:d1
+      - if: matrix.suite == 'package'
+        run: npm exec -- vite build
         env:
           POLYLINEDB_BUILD_WITHOUT_ACCESS: '1'
           CLOUDFLARE_VITE_FORCE_BUILD_OUTPUT: 'true'
-      - run: node test/worker.integration.ts
-      - run: npm run test:package
+      - if: matrix.suite == 'package'
+        run: node test/worker.integration.ts
+      - if: matrix.suite == 'package'
+        run: npm run test:package
 
   commit-messages:
     runs-on: ubuntu-24.04
