@@ -1706,6 +1706,48 @@ test('ui: working now lists active claims and hides released ones', async () => 
   } finally { sqlite.close(); }
 });
 
+test('ui: working now lists started non-epic issues without an active claim in their own section', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const post = async (body: unknown) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
+    }), env, authenticate);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const working = async () => (await handleRequest(new Request('https://issues.example/ui/working', { headers: auth }), env, authenticate)).text();
+  try {
+    assert.ok(uiSection(await working(), 'Started without an active claim').includes('<p class="quiet-note">Every started issue has an active claim.</p>'));
+    const start = async (body: string) => {
+      const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body });
+      const shown = await post({ op: 'claim_show', issue_id: id });
+      const session_id = crypto.randomUUID();
+      const receipt = (await post({ op: 'claim_acquire', issue_id: id, incarnation: shown.claim.store_incarnation, session_id, request_id: crypto.randomUUID() })).claim_receipt;
+      const claim_proof = { issue_id: id, incarnation: receipt.incarnation, session_id, generation: receipt.generation };
+      await post({ op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof });
+      return { id, claim_proof };
+    };
+    const held = await start('Still held');
+    const released = await start('Released lane');
+    await post({ op: 'claim_release', claim_proof: released.claim_proof, expected_revision: 1, request_id: crypto.randomUUID() });
+    const expired = await start('Expired lane');
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = acquired_at - 1000, changed_at = changed_at - 1000, expires_at = acquired_at - 999 WHERE issue_id = ?').run(expired.id);
+    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Epic in progress', type: 'epic', status: 'in_progress' });
+    const open = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Never started' });
+
+    const html = await working();
+    const stale = uiSection(html, 'Started without an active claim');
+    assert.ok(stale.startsWith('Started without an active claim</h2>\n<p class="section-note">Issues in progress, other than epics, whose claim was released, expired, or never acquired.</p>'));
+    assert.deepEqual([...stale.matchAll(/href="\/ui\/i\/([^"]+)"/g)].map(match => match[1]), [released.id, expired.id]);
+    assert.ok(stale.includes(`<span class="primary">Released lane</span>\n<span class="secondary">${released.id}</span>\n<span class="secondary">in_progress</span>\n<span class="secondary">meganemura/polylinedb</span>`));
+    for (const absent of [held.id, epic, open]) assert.ok(!stale.includes(`href="/ui/i/${absent}"`), absent);
+    assert.ok(html.split('<h2>')[0]?.includes(`href="/ui/i/${held.id}"`));
+    assertNoApplicationControls(html);
+  } finally { sqlite.close(); }
+});
+
 test('ui: blocked lists unfinished issues that still have an open blocker', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();

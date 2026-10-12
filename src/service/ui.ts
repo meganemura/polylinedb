@@ -1,5 +1,5 @@
 /** Renders the /ui pages for phones. GET stays free of side effects. The issue page posts Dispatch; other writes go through the operation endpoints. */
-import { activeClaimIssues, activityAfter, activityNewest, attentionIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, ownerWaitLabels, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, readyLabel, recentUpdates, PolylinedbError, type ActiveClaimIssue, type ActivityEvent, type ActivityPage, type Actor, type Attention, type AttentionIssue, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type OpenIssue, type OwnerGroup, type OwnerLabel, type OwnerQueue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { activeClaimIssues, startedWithoutClaim, activityAfter, activityNewest, attentionIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, ownerWaitLabels, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, readyLabel, recentUpdates, PolylinedbError, type ActiveClaimIssue, type ActivityEvent, type ActivityPage, type Actor, type Attention, type AttentionIssue, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type OpenIssue, type OwnerGroup, type OwnerLabel, type OwnerQueue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
 
@@ -548,11 +548,17 @@ function blockedPage(rows: readonly BlockedIssue[]): string {
 ${body}`);
 }
 
-function workingPage(rows: readonly ActiveClaimIssue[], labels: ReadonlyMap<string, string>): string {
+function workingPage(rows: readonly ActiveClaimIssue[], unclaimed: readonly Issue[], labels: ReadonlyMap<string, string>): string {
   const body = rows.length === 0 ? '<p class="quiet-note">Nobody has an active claim.</p>' : `<ul class="quiet-list">${rows.map(row => workingItem(row, labels)).join('')}</ul>`;
+  const stale = unclaimed.length === 0 ? '<p class="quiet-note">Every started issue has an active claim.</p>' : `<ul class="quiet-list">${unclaimed.slice(0, listLimit).map(searchItem).join('')}</ul>`;
+  const more = unclaimed.length > listLimit ? '<p class="section-note">More issues are not shown.</p>' : '';
   return document('Working now', `<h1>Working now</h1>
 <p class="section-note">Active claims only. The time is when the claim expires.</p>
-${body}`);
+${body}
+<h2>Started without an active claim</h2>
+<p class="section-note">Issues in progress, other than epics, whose claim was released, expired, or never acquired.</p>
+${stale}
+${more}`);
 }
 
 function inboxPage(rows: readonly AttentionIssue[], more: boolean): string {
@@ -691,8 +697,8 @@ async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, ro
     return blockedPage(rows);
   }
   if (route.page === 'working') {
-    const rows = await activeClaimIssues(db, listLimit);
-    return workingPage(rows, labels);
+    const [rows, unclaimed] = await Promise.all([activeClaimIssues(db, listLimit), startedWithoutClaim(db, listLimit + 1)]);
+    return workingPage(rows, unclaimed, labels);
   }
   if (route.page === 'search') {
     const found = await searchHits(db, route.query, actor);

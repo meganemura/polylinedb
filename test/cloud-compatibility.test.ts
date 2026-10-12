@@ -516,3 +516,18 @@ test('a released cloud client decodes claim_required when a start has no held cl
     assert.equal(((await wire({ op: 'show', id })).body.issue as { status: string }).status, 'open');
   } finally { sqlite.close(); }
 });
+
+test('an older Worker that rejects claimed fails the list instead of answering without the filter', async () => {
+  const { sqlite, transport } = await worker();
+  try {
+    const sent: unknown[] = [];
+    const older: typeof fetch = async (_url, options) => {
+      const operation = JSON.parse(String(options?.body)); sent.push(operation);
+      return 'claimed' in operation ? Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: claimed' } }, { status: 400 }) : transport(_url, options);
+    };
+    assert.deepEqual(await outcome(decode({ op: 'list', claimed: false }, older)), { error: { code: 'invalid_input', status: 400, details: undefined } });
+    await assert.rejects(decode({ op: 'list', claimed: true }, older), { message: 'The cloud Worker does not support the claimed filter. Deploy a newer Worker to use it.' });
+    assert.deepEqual(sent, [{ op: 'list', limit: 50, claimed: false }, { op: 'list', limit: 50, claimed: true }]);
+    assert.deepEqual(await decode({ op: 'list', claimed: false }, transport), { issues: [], next_cursor: null });
+  } finally { sqlite.close(); }
+});

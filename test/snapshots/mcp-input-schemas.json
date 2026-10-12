@@ -709,6 +709,10 @@
         "maximum": 100,
         "default": 50
       },
+      "claimed": {
+        "type": "boolean",
+        "description": "true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated."
+      },
       "observed_memory_revision": {
         "type": "string",
         "maxLength": 4100,

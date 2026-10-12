@@ -25,7 +25,7 @@ const requestLimit = 128 * 1024;
 const descriptions: Record<string, string> = {
   create: 'Create an issue. Supply tool, project, and body. An optional parent must be an epic. Retain the request UUID and payload for retries.',
   show: 'Read an issue, its field versions, its comments, and its claim before editing. claim.store_incarnation is the incarnation for claim_acquire.',
-  list: 'List issues with optional filters and ID pagination.',
+  list: 'List issues with optional filters and ID pagination. claimed: false keeps issues without an active claim, such as an in_progress issue whose claim was released or expired; claimed: true keeps issues with one.',
   search: 'Find literal, case-sensitive text in issue bodies and comments. matches names the body or comment IDs of each hit, with a short excerpt.',
   comment: 'Append a comment. Does not change issue field versions. Do not blindly retry after a network failure.',
   update: 'Change fields using their observed versions. On conflict, read again and reconsider the edit. Never silently retry with new versions.',

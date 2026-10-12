@@ -137,7 +137,8 @@ function renderIssueDetails(result: IssueDetails, color: boolean): string {
     heading('Issue details', color),
     ...memoryFreshnessLines(issueMemoryFreshness(result)),
     'ID ' + visibleText(issue.id, false),
-    'Status ' + visibleText(issue.status, false),
+    'Status ' + visibleText(issue.status, false)
+      + (issue.status === 'in_progress' && issue.type !== 'epic' && result.claim.state !== 'active' ? ' (no active claim)' : ''),
     'Priority P' + issue.priority,
     'Type ' + visibleText(issue.type, false),
     'Tool ' + visibleText(issue.tool, false),

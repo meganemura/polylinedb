@@ -29,7 +29,7 @@ type StatusOverride = { force?: never; reason?: never } | { force: true; reason:
 export type Operation =
   | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
   | { op: 'show'; id: string }
-  | ({ op: 'list' } & Filters)
+  | ({ op: 'list'; claimed?: boolean } & Filters)
   | ({ op: 'search'; query: string; with_matches?: true } & Filters)
   | { op: 'comment'; id: string; body: string }
   | ({ op: 'update'; id: string; changes: [Change, ...Change[]]; claim_proof?: ClaimProof } & StatusOverride)
@@ -113,7 +113,7 @@ const filterSchemas = { tool: nameSchema, project: nameSchema, status: fieldRegi
 export const operationSchemas = {
   create: objectSchema({ ...valueSchemas, parent: idSchema, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid', description: 'Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry.' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
   show: objectSchema({ id: idSchema }, ['id']),
-  list: objectSchema(filterSchemas),
+  list: objectSchema({ ...filterSchemas, claimed: { type: 'boolean', description: 'true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated.' } }),
   search: objectSchema({ ...filterSchemas, query: bodySchema, with_matches: { const: true, description: 'Also return where each issue matched, with a short excerpt.' } }, ['query']),
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
@@ -168,7 +168,10 @@ export function parseOperation(value: unknown): Operation {
   switch (op) {
     case 'actor': return { op };
     case 'show': return { op, id: id(input.id) };
-    case 'list': return { op, ...parseFilters(input) };
+    case 'list': {
+      if (input.claimed !== undefined && typeof input.claimed !== 'boolean') return invalid('claimed must be true or false when present');
+      return { op, ...parseFilters(input), ...(input.claimed === undefined ? {} : { claimed: input.claimed }) };
+    }
     case 'search': {
       if (input.with_matches !== undefined && input.with_matches !== true) return invalid('with_matches must be true when present');
       return { op, ...parseFilters(input), query: text(input.query, 'query'), ...(input.with_matches === true ? { with_matches: true } : {}) };
@@ -385,6 +388,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
         priority: operation.priority ?? null, label: operation.label ?? null,
         after: operation.after === undefined ? '' : issueSortKey(operation.after),
         query: operation.op === 'search' ? operation.query : null, limit: operation.limit + 1,
+        claimed: operation.op === 'list' && operation.claimed !== undefined ? Number(operation.claimed) : null,
       });
       const all = rows.map(issueRow);
       const issues = all.slice(0, operation.limit);
@@ -440,6 +444,10 @@ export async function issueDispatchScope(db: SqlExecutor, issueId: string): Prom
 export type BlockedIssue = { issue: Issue; openBlockers: number };
 export async function blockedIssues(db: SqlExecutor, limit: number): Promise<BlockedIssue[]> {
   return (await db.reads.all(issueQueries.blockedIssues, { limit })).map(row => ({ issue: issueRow(row), openBlockers: storedCount(row.open_blockers) }));
+}
+
+export async function startedWithoutClaim(db: SqlExecutor, limit: number): Promise<Issue[]> {
+  return (await db.reads.all(issueQueries.startedWithoutClaim, { limit })).map(issueRow);
 }
 
 export type ActiveClaimIssue = { issue: Issue; actor: string; agentLabel: string | null; expiresAt: number };

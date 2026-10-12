@@ -16,7 +16,7 @@ import { initializeStore, openStore } from '../src/local-store/index.ts';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import type { OperationResult } from '../src/records/index.ts';
-import { runShowClaimFlow } from './fixtures/show-claim-flow.ts';
+import { runClaimedListFlow, runShowClaimFlow } from './fixtures/show-claim-flow.ts';
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
   publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -71,6 +71,14 @@ test('local show returns the claim inspection that claim_acquire needs', async (
   await runShowClaimFlow(value => executeOperation(store.db, parseOperation(value), 'test:owner'));
 });
 
+test('local list filters by claim state', async (t: TestContext) => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-claimed-list-'));
+  const location = { directory: join(root, 'store'), cwd: join(root, 'work') };
+  initializeStore(location); const store = openStore(location);
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  await runClaimedListFlow(value => executeOperation(store.db, parseOperation(value), 'test:owner'), (statement, ...params) => store.db.batch([{ sql: statement, params }]));
+});
+
 test('Worker HTTP show returns the claim inspection that claim_acquire needs', async () => {
   const { sqlite, post } = await worker();
   try {
@@ -99,6 +107,7 @@ test('cloud client accepts the claim in show and rejects a foreign or inconsiste
   const cloud = (value: unknown, fetch = transport) => executeCloudOperation({ origin: 'https://issues.example', operation: parseOperation(value), authorize: async () => 'synthetic-secret', fetch });
   try {
     await runShowClaimFlow(value => cloud(value));
+    await runClaimedListFlow(value => cloud(value), async (statement, ...params) => sqlite.prepare(statement).run(...params));
     const shown = await (await post('/v1/operations', { op: 'show', id: 'pd-1' })).json();
     for (const damaged of [{ ...shown, claim: { ...shown.claim, issue_id: 'pd-2' } }, { ...shown, claim: { ...shown.claim, state: 'released' } }]) {
       await assert.rejects(cloud({ op: 'show', id: 'pd-1' }, async () => Response.json(damaged)), { code: 'cloud_invalid_response' });
@@ -125,4 +134,15 @@ test('CLI show supplies the incarnation for claim acquire and prints the claim l
   const after = JSON.parse(pd(['show', '1'])).claim;
   assert.equal(after.state, 'active'); assert.equal(after.lease.session_id, receipt.session_id);
   assert.ok(pd(['show', '1', '--human']).split('\n').includes(`Claim active · store incarnation ${shown.claim.store_incarnation}`));
+  const proof = JSON.stringify(receipt);
+  pd(['update', '1', '--status', 'in_progress', '--expect', 'status=1', '--claim-proof', proof]);
+  assert.ok(pd(['show', '1', '--human']).split('\n').includes('Status in_progress'));
+  assert.deepEqual(JSON.parse(pd(['list', '--claimed', 'true'])).issues.map((issue: { id: string }) => issue.id), ['pd-1']);
+  pd(['claim', 'release', '--claim-proof', proof, '--expected-revision', '1']);
+  assert.ok(pd(['show', '1', '--human']).split('\n').includes('Status in_progress (no active claim)'));
+  assert.deepEqual(JSON.parse(pd(['list', '--claimed', 'false', '--status', 'in_progress'])).issues.map((issue: { id: string }) => issue.id), ['pd-1']);
+  assert.deepEqual(JSON.parse(pd(['list', '--claimed', 'true'])).issues, []);
+  const refused = spawnSync(process.execPath, [fileURLToPath(new URL('../src/cli.ts', import.meta.url)), '--data-dir', join(root, 'store'), '--actor', 'local:test', 'list', '--claimed', 'yes'], { cwd, encoding: 'utf8', env });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /--claimed requires true or false/);
 });

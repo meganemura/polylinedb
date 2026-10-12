@@ -809,6 +809,11 @@ The page shows at most 50 claims.
 Each row links to the issue.
 It shows the title, the issue ID and project, the agent label when the claim has one, the actor, and the expiry time.
 
+The section **Started without an active claim** lists `in_progress` issues, other than epics, whose claim was released, expired, invalidated, or never acquired.
+Release and expiry do not reset the status, so these issues stay `in_progress` until someone sets them back.
+The section uses issue order and shows at most 50 issues.
+Each row links to the issue and shows the title, ID, status, and project.
+
 ### Blocked
 
 `/ui/blocked` lists issues that are not closed and that have at least one active blocker.

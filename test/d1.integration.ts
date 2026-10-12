@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { d1Executor } from "../src/service/d1.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
-import { runShowClaimFlow } from "./fixtures/show-claim-flow.ts";
+import { runClaimedListFlow, runShowClaimFlow } from "./fixtures/show-claim-flow.ts";
 import { runClosureFlow } from "./fixtures/closure-flow.ts";
 
 const modulePath = process.argv[2];
@@ -112,5 +112,6 @@ try {
   await assert.rejects(run({ ...request, prefix: 'full', request_id: crypto.randomUUID() }), { code: 'counter_exhausted', status: 409 });
   await runShowClaimFlow(run);
   await runClosureFlow(run, 'test:d1');
-  process.stdout.write('PASS: local workerd D1 persistence, CAS, rollback, comments, show claim inspection, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
+  await runClaimedListFlow(run, (statement, ...params) => db.batch([{ sql: statement, params }]));
+  process.stdout.write('PASS: local workerd D1 persistence, CAS, rollback, comments, show claim inspection, the list claimed filter over every claim state, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
 } finally { await runtime.dispose(); }

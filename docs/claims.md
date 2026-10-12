@@ -96,6 +96,8 @@ An epic can be `in_progress` without a claim.
 `create` refuses `status: in_progress` for a type other than `epic` with `invalid_input`, because no claim exists yet.
 Create the issue `open`, acquire a claim, and then set `in_progress` with the proof.
 Release and expiry leave the status unchanged, and reads never fail because of it.
+To find such issues, run `pd list --status in_progress --claimed false`, or call `list` with `claimed: false`.
+`pd show --human` prints `in_progress (no active claim)` for an issue other than an epic in that state, and `/ui/working` lists them under **Started without an active claim**.
 Before a release without `claim_handoff`, set status `open` with the proof.
 
 An explicitly supplied proof also guards body-only updates.

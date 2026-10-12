@@ -166,3 +166,18 @@ test('show prints the closure line only for a recorded closure', () => {
     assert.equal(renderShow(record, []), renderShow({ ...issue, status: record.status }, []));
   }
 });
+
+test('show marks a started non-epic issue whose claim is not active', () => {
+  const started: Issue = { ...issue, status: 'in_progress' };
+  const status = (output: string) => output.split('\n').find(line => line.startsWith('Status '));
+  assert.equal(status(renderShow(started, [])), 'Status in_progress (no active claim)');
+  assert.equal(status(renderShow({ ...started, type: 'epic' }, [])), 'Status in_progress');
+  assert.equal(status(renderShow(issue, [])), 'Status open');
+  const store_incarnation = '0123456789abcdef0123456789abcdef';
+  const lease = { issue_id: started.id, incarnation: store_incarnation, session_id: '00000000-0000-4000-8000-000000000001', generation: 1, actor: 'codex',
+    agent_label: null, revision: 1, acquired_at: 10, changed_at: 10, expires_at: 1000, released_at: null };
+  for (const [state, expected] of [['active', 'Status in_progress'], ['expired', 'Status in_progress (no active claim)'], ['released', 'Status in_progress (no active claim)'], ['invalidated', 'Status in_progress (no active claim)']] as const) {
+    const output = renderHumanIssueRead({ command: 'show', result: { issue: started, comments: [], claim: { issue_id: started.id, store_incarnation, observed_at: 20, state, lease } } }, plainTerminal);
+    assert.equal(status(output), expected, state);
+  }
+});

@@ -55,7 +55,7 @@ const commandFlags: Record<string, readonly string[]> = {
   comment: ['body', 'body-file'],
   update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'claim-proof'],
   close: ['expected', 'force', 'reason', 'claim-proof'], reopen: ['expected', 'claim-proof'],
-  list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
+  list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit', 'claimed'],
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
 for (const command of ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen']) commandFlags[command] = [...(commandFlags[command] ?? []), 'observed-memory-revision'];
@@ -462,6 +462,11 @@ async function main(argv: readonly string[]): Promise<void> {
     body = await readInput(bodyFile, 65536);
   }
   for (const name of ['tool', 'project', 'status', 'type']) if (one(name) !== undefined) raw[name] = one(name);
+  const claimed = one('claimed');
+  if (claimed !== undefined) {
+    if (claimed !== 'true' && claimed !== 'false') invalid('--claimed requires true or false');
+    raw.claimed = claimed === 'true';
+  }
   for (const name of ['parent', 'after']) {
     const value = one(name);
     if (value !== undefined) raw[name] = expandedId(value, name === 'parent');

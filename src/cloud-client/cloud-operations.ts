@@ -1,6 +1,7 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
 // Three older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
 // and a search rejected for `with_matches` or a release rejected for `expired_noop` runs once more without that field.
+// A list rejected for `claimed` is not retried, because a page without that filter would answer a different question.
 import { PolylinedbError, type Issue, type SearchMatch } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
@@ -483,6 +484,9 @@ export async function executeCloudOperation(input: {
         const { expired_noop: _, ...plain } = input.operation;
         retried = true;
         return await executeCloudOperation({ ...input, operation: plain });
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'list' && input.operation.claimed !== undefined && /\bclaimed\b/.test(error.message)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support the claimed filter. Deploy a newer Worker to use it.', 400);
       }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);
     }

@@ -39,7 +39,8 @@ Commands:
          [--type bug|task|epic|feature|chore] [--status STATUS]
          [--priority 0..4] [--label NAME ...] [--request-id UUID]
   show ID
-  list [FILTERS]
+  list [FILTERS] [--claimed true|false]
+                                --claimed false keeps issues without an active claim.
   search QUERY [FILTERS]
   comment ID --body TEXT
   update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]

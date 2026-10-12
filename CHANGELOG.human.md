@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+You can now find work that was started but that nobody holds anymore. `pd list --status in_progress --claimed false` lists those issues, and `pd show --human` adds "(no active claim)" next to the status. The Working page in `/ui` has a new section, "Started without an active claim", with the same issues. Nothing changes the status by itself when a claim ends; these views only show where to look.
+
 An issue can be marked in progress only by whoever holds its claim. This now applies to everyone, including the owner, and to issues that were never claimed. Without the claim, the change is refused and nothing is written. Epics are the exception and can be in progress without a claim. A new issue can no longer start in progress, unless it is an epic: create it open, claim it, then start it. Giving up a claim does not change the status, so set the issue back to open before you release it, or use the queue handoff, which does that for you.
 
 If pd tools are missing on the first reply of a session, the guide now explains why and what to do: retry once, or give a local Claude Code more time to connect. The server also reports how long it spent on each MCP request, so a slow start can be traced.

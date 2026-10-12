@@ -17,3 +17,48 @@ export async function runShowClaimFlow(run: (value: Record<string, unknown>) => 
   assert.deepEqual(after.issue, before.issue);
   await assert.rejects(run({ op: 'show', id: 'pd-999' }), { code: 'not_found' });
 }
+
+// Shared by SQLite and D1, so both prove that list's claimed filter reads the same claim states as show.
+export async function runClaimedListFlow(run: (value: Record<string, unknown>) => Promise<OperationResult>, sql: (statement: string, ...params: string[]) => Promise<unknown>): Promise<void> {
+  const tool = 'claimed'; const project = 'claimed-list';
+  const create = async (body: string) => {
+    const created = await run({ op: 'create', prefix: 'cl', request_id: crypto.randomUUID(), tool, project, body });
+    assert.ok('issue' in created); return created.issue.id;
+  };
+  const start = async (id: string) => {
+    const shown = await run({ op: 'show', id }); assert.ok('claim' in shown);
+    const session_id = crypto.randomUUID();
+    const acquired = await run({ op: 'claim_acquire', issue_id: id, incarnation: shown.claim.store_incarnation, session_id, request_id: crypto.randomUUID() });
+    assert.ok('claim_receipt' in acquired);
+    const claim_proof = { issue_id: id, incarnation: acquired.claim_receipt.incarnation, session_id, generation: acquired.claim_receipt.generation };
+    await run({ op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof });
+    return claim_proof;
+  };
+  const never = await create('Never claimed');
+  const active = await create('Active'); await start(active);
+  const released = await create('Released');
+  await run({ op: 'claim_release', claim_proof: await start(released), expected_revision: 1, request_id: crypto.randomUUID() });
+  const expired = await create('Expired'); await start(expired);
+  await sql('UPDATE issue_claims SET acquired_at = acquired_at - 1000, changed_at = changed_at - 1000, expires_at = acquired_at - 999 WHERE issue_id = ?', expired);
+  const invalidated = await create('Invalidated'); await start(invalidated);
+  await sql('UPDATE issue_claims SET incarnation = ? WHERE issue_id = ?', 'f'.repeat(32), invalidated);
+  const states = await Promise.all([never, active, released, expired, invalidated].map(async id => {
+    const shown = await run({ op: 'show', id }); assert.ok('claim' in shown); return shown.claim.state;
+  }));
+  assert.deepEqual(states, ['never_claimed', 'active', 'released', 'expired', 'invalidated']);
+
+  const ids = async (filters: Record<string, unknown>) => {
+    const page = await run({ op: 'list', ...filters }); assert.ok('issues' in page); return page.issues.map(issue => issue.id);
+  };
+  for (const scope of [{ project }, { tool }, { tool, project }]) {
+    assert.deepEqual(await ids({ ...scope, claimed: true }), [active], JSON.stringify(scope));
+    assert.deepEqual(await ids({ ...scope, claimed: false }), [never, released, expired, invalidated], JSON.stringify(scope));
+    assert.deepEqual(await ids(scope), [never, active, released, expired, invalidated], JSON.stringify(scope));
+  }
+  assert.deepEqual(await ids({ tool, project, status: 'in_progress', claimed: false }), [released, expired, invalidated]);
+  assert.deepEqual(await ids({ project, status: 'in_progress', claimed: true }), [active]);
+  const first = await run({ op: 'list', project, claimed: false, limit: 1 });
+  assert.ok('issues' in first);
+  assert.deepEqual([first.issues.map(issue => issue.id), first.next_cursor], [[never], never]);
+  assert.deepEqual(await ids({ project, claimed: false, after: never }), [released, expired, invalidated]);
+}

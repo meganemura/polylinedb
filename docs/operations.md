@@ -122,6 +122,11 @@ Replay does not increment counters, update the issue, or reset later edits.
 Request IDs are scoped to the store and retained with its data.
 
 Filters are `tool`, `project`, `status`, `type`, `priority`, and one `label`.
+`list` also accepts `claimed: true` or `claimed: false`; the CLI flag is `--claimed true|false`.
+`claimed: true` keeps issues with an active claim. `claimed: false` keeps issues whose claim state is `never_claimed`, `released`, `expired`, or `invalidated`.
+The database clock decides expiry at the read, as in `claim_show`.
+Combine `status: "in_progress"` with `claimed: false` to find started work that nobody holds.
+A Worker released before this filter rejects the field with `invalid_input`; the cloud client does not retry without it, because that page would answer a different question.
 All supplied filters must match.
 `limit` defaults to 50 and accepts 1 through 100.
 Pass `next_cursor` as `after` to read another page; `null` means the page ends the current results.
