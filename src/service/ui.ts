@@ -212,16 +212,18 @@ function startSummary(issue: Issue, activeBlockers: number, claim: ClaimDisplay,
   return [...parts, startable ? 'can start now' : 'will not start now'].join(' · ');
 }
 
+const dispatchPlaceholder = 'What should the agent do or watch for?';
+
 function dispatchForm(issue: Issue, activeBlockers: number, claim: ClaimDisplay, labels: ReadonlyMap<string, string>, control: DispatchControl): string {
   if (control === 'hidden') return '';
   const action = `/ui/i/${escape(issue.id)}/dispatch`;
   const button = control === 'unavailable'
     ? '<button type="submit" disabled>Dispatch</button><p class="quiet-note">Dispatch is not set up.</p>'
     : '<button type="submit">Dispatch</button>';
-  return `<form method="post" action="${action}"><p class="secondary">${escape(startSummary(issue, activeBlockers, claim, labels))}</p>
+  return `<form method="post" action="${action}" class="dispatch">
 <label for="dispatch-notes">Notes for the agent (optional)</label>
-<textarea id="dispatch-notes" name="notes" maxlength="4096" rows="3"></textarea>
-${button}</form>`;
+<textarea id="dispatch-notes" name="notes" maxlength="4096" rows="4" placeholder="${dispatchPlaceholder}"></textarea>
+<div class="dispatch-action">${button}<p class="secondary">${escape(startSummary(issue, activeBlockers, claim, labels))}</p></div></form>`;
 }
 
 function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>, dispatch: DispatchControl): string {
@@ -771,9 +773,23 @@ h1 {
 .quiet-row > a { display: block; padding: 18px 0 20px; color: inherit; text-decoration: none; }
 .quiet-row a .primary { text-decoration: underline; text-underline-offset: 0.18em; }
 a { color: inherit; }
+.dispatch { display: grid; gap: 10px; margin: 28px 0; padding: 18px 0 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.dispatch label { font-size: 12px; font-weight: 700; line-height: 1.3; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.dispatch textarea { display: block; width: 100%; min-height: 7.5em; margin: 0; padding: 12px 14px; border: 1px solid var(--chip); border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; font-size: 16px; line-height: 1.5; resize: vertical; -webkit-appearance: none; appearance: none; }
+.dispatch textarea::placeholder { color: var(--muted); opacity: .8; }
+.dispatch textarea:focus { border-color: var(--ink); outline: none; }
+.dispatch-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.dispatch button { flex: 0 0 auto; min-width: 132px; min-height: 48px; margin: 0; padding: 12px 24px; border: 0; border-radius: 10px; background: var(--mark); color: var(--paper); font: inherit; font-size: 17px; font-weight: 600; line-height: 1.2; letter-spacing: .01em; cursor: pointer; -webkit-appearance: none; appearance: none; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.dispatch button:hover { filter: brightness(1.1); }
+.dispatch button:active { filter: brightness(.92); }
+.dispatch button:focus-visible, .dispatch textarea:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+.dispatch button:disabled { background: var(--chip); color: var(--muted); cursor: not-allowed; filter: none; }
+.dispatch-action .secondary { flex: 1 1 14em; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.dispatch-action .quiet-note { flex-basis: 100%; order: 3; margin: 0; font-size: 14px; }
 .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 18px 0 0; font-size: 18px; line-height: 1.5; }
 @media (max-width: 420px) {
   .paper { padding-top: 32px; }
+  .dispatch button { flex-basis: 100%; }
   .views { gap: 6px 12px; margin-bottom: 20px; }
   h1 { margin-bottom: 16px; }
 }

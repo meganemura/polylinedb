@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+The Dispatch box on an issue page looks tidier, especially on an iPhone: a roomy notes box that does not zoom the page when you tap it, a large Dispatch button, and the start-now line right next to it.
+
 The CLI now shows who closed an issue and when for a cloud connection too, once the cloud server is updated. Older CLIs keep working unchanged.
 
 `/ui` has a new Activity page. It shows what happened most recently, including comments and claims that do not move an issue on Recent. Keep the link at the bottom to come back later and see only what happened since.

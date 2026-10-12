@@ -744,7 +744,9 @@ The button posts to `/ui/i/<id>/dispatch`.
 The form has one optional field, `Notes for the agent`, sent as `notes` in the dispatch envelope.
 The field hints at 4096 characters; the server refuses notes above 4096 UTF-8 bytes.
 A reader, an agent, or a service actor sees no notes field.
-Above the field, one line sums up whether the ready worklist would offer the issue to an agent now.
+The form reads as one block between rules: a small label, a full-width notes box with a placeholder, then the button with one line beside it.
+The notes box uses 16px text so iOS Safari does not zoom in on focus, and the button is at least 48px tall; on a phone-width screen it spans the full width and the line sits below it.
+That line sums up whether the ready worklist would offer the issue to an agent now.
 It names an owner wait (`owner-decision` or `owner-action`) first, as not agent work.
 It then shows the status when it is not `open`, `ready` or `not ready`, `main-lock` when present, the active-blocker count or `no blockers`, and the active claim's holder and expiry or `not claimed`.
 It ends with `can start now` only when the issue is open, has `ready`, has no `main-lock` or owner-wait label, has no active blocker, and has no active claim; otherwise it ends with `will not start now`.
