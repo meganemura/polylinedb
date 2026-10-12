@@ -20,6 +20,8 @@ export { ownerWaitLabels, readyLabel } from '../transition/index.ts';
 export type { OwnerWait } from './dependencies.ts';
 export type { DependencyOperation, DependencyMutation, DependencyResult, DependencyReceipt, DependencyOutcome, DependencyRequest, DependencyRevision, Dependency } from './dependencies.ts';
 export type { LandOrder, LandOrderNeighbor, LandOrderOperation, LandOrderMutation, LandOrderReceipt, LandOrderResult, LandOrderWarning, LandOrderOutcome, LandOrderEdge, LandOrderRevision, LandOrderRequest } from './land-order.ts';
+export type { Resource, ResourceEntry, ResourceOperation, ResourceAdd, ResourceUpdate, ResourceReceipt, ResourceOutcome, ResourceList, LiveResources, ResourceResult, ResourceRevision, ResourceRequest } from './resources.ts';
+export type { ResourceMark, ResourceState } from '../transition/index.ts';
 export { parseClaimProof, parseIncarnation } from './claims.ts';
 export { blockerIsActive } from './active-blocker.ts';
 export type { Claim, ClaimOperation, ClaimReceipt, ClaimRequest, ClaimInspection, ClaimState, ClaimResult } from './claims.ts';

@@ -478,7 +478,8 @@ test('a destination change racing the commit rolls back the whole batch for ever
       const racing: Batch = async statements => {
         if (isAddition(statements)) {
           for (const sql of race.changes(f.destination)) {
-            try { f.destination.exec(sql); changed = true; break; } catch { /* a trigger or constraint forbids this form; try the next one */ }
+            try { f.destination.exec(sql); } catch { continue; /* a trigger or constraint forbids this form; try the next one */ }
+            if (Number(f.destination.prepare('SELECT changes() AS n').get()?.n) > 0) { changed = true; break; }
           }
           assert.ok(changed, `no change applies to ${race.name}`);
         }

@@ -56,7 +56,7 @@ try {
   const reset = async (statements: readonly string[] = SCHEMA_STATEMENTS) => {
     const existing = await query({ sql: objects, params: [] });
     for (const { type, name } of existing.filter(object => object.type === 'view')) await query({ sql: `DROP VIEW "${String(name)}"`, params: [] });
-    for (const table of ['polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive', 'polylinedb_snapshot_claim', 'extra', 'change_events', 'change_writer', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'land_order_requests', 'land_order', 'land_order_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version']) {
+    for (const table of ['polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive', 'polylinedb_snapshot_claim', 'extra', 'change_events', 'change_writer', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'land_order_requests', 'land_order', 'land_order_revisions', 'resource_requests', 'issue_resources', 'resource_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version']) {
       if (existing.some(object => object.type === 'table' && object.name === table)) await query({ sql: `DROP TABLE ${table}`, params: [] });
     }
     await database.batch(statements.map(sql => database.prepare(sql)));

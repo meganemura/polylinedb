@@ -46,7 +46,10 @@ Commands:
   update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]
          [--type TYPE] [--priority 0..4] [--label NAME ... | --clear-labels]
          --expect FIELD=VERSION [--expect FIELD=VERSION ...] [--claim-proof JSON]
-  close ID --expected VERSION [--force --reason TEXT] [--claim-proof JSON]
+         [--resources-reason TEXT]
+  close ID --expected VERSION [--force --reason TEXT] [--resources-reason TEXT]
+        [--claim-proof JSON]
+                                Live external resources refuse the close; the error lists them.
   reopen ID --expected VERSION [--claim-proof JSON]
   claim show ID                 Inspect ownership and the current store incarnation.
   claim list [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
@@ -68,6 +71,15 @@ Commands:
   land-order list ID            Issues this one lands after and before; never blocks work.
   land-order add --later ID --earlier ID --expected-revision N [--request-id UUID]
   land-order remove --later ID --earlier ID --expected-revision N [--request-id UUID]
+  resource list ID              External resources recorded on an issue, with their state.
+  resource live [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
+                                Issues with resources that are not verified deleted.
+  resource add ID --kind KIND --name NAME --expected-revision N [--request-id UUID]
+                                Record a resource before creating it. Identifiers only, no secrets.
+  resource update ID --seq N --expected-revision N [--external-id ID]
+        [--mark created|deleted|verified_deleted] [--evidence TEXT]
+        [--claim-proof JSON] [--request-id UUID]
+                                verified_deleted needs --evidence and --claim-proof.
   changes --since SEQ [--incarnation HEX] [--project NAME] [--issue ID ...]
           [--kind KIND ...] [--limit 1..100]
                                 Issue change events after SEQ; continue from next_since.

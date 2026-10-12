@@ -2,6 +2,7 @@
 // Four older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
 // and a search rejected for `with_matches`, a show or list rejected for `with_land_order`, or a release rejected for `expired_noop` runs once more without that field.
 // A list rejected for `claimed` is not retried, because a page without that filter would answer a different question.
+// A close or update rejected for `resources_reason` is not retried either, because without it an older Worker would close with no recorded reason.
 import { PolylinedbError, type Issue, type SearchMatch } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
@@ -11,9 +12,9 @@ import type { Memory, MemoryContext } from '../records/index.ts';
 import { fields } from '../records/persistence.ts';
 import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence.ts';
-import { claimRow } from '../records/persistence.ts';
+import { claimRow, resourceRow } from '../records/persistence.ts';
 import { parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels, waitPageLimit } from '../records/index.ts';
-import type { Claim, ClaimInspection, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning } from '../records/index.ts';
+import type { Claim, ClaimInspection, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning, Resource, ResourceList } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;
@@ -87,6 +88,24 @@ function landOrder(value: unknown, issueId: string): LandOrder {
     for (const entry of side) { const sort = issueSortKey(entry.id); if (entry.id === issueId || sort <= previous) return invalid(); previous = sort; }
   }
   return { issue_id: issueId, revision: count(row.revision, 1), after, before };
+}
+const resourceKeys = ['issue_id', 'seq', 'kind', 'name', 'external_id', 'created_at', 'deleted_at', 'verified_deleted_at', 'verified_by', 'evidence', 'added_at', 'added_by', 'state'];
+function resourceEntries(value: unknown, issueId: string): Resource[] {
+  if (!Array.isArray(value)) return invalid();
+  let previous = 0;
+  return value.map(entry => {
+    const row = known(entry, resourceKeys);
+    let parsed: Resource;
+    try { parsed = resourceRow(row); } catch { return invalid(); }
+    if (parsed.issue_id !== issueId || parsed.state !== row.state || parsed.seq <= previous) return invalid();
+    previous = parsed.seq;
+    return parsed;
+  });
+}
+function resourceList(value: unknown, issueId: string): ResourceList {
+  const row = known(value, ['issue_id', 'revision', 'resources']);
+  if (row.issue_id !== issueId) return invalid();
+  return { issue_id: issueId, revision: count(row.revision, 1), resources: resourceEntries(row.resources, issueId) };
 }
 // An older Worker omits the warnings; a newer one sends each unlanded predecessor once, in issue order.
 function landOrderWarnings(value: unknown, issueId: string): LandOrderWarning[] | undefined {
@@ -354,6 +373,31 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { land_order_receipt: { later_id: operation.later_id, earlier_id: operation.earlier_id, revision: operation.expected_revision + 1, outcome } };
     }
     case 'land_order_list': return landOrder(value, operation.issue_id);
+    case 'resource_add': case 'resource_update': {
+      const row = known(known(value, ['resource_receipt']).resource_receipt, ['issue_id', 'seq', 'revision', 'outcome']);
+      const seq = count(row.seq, 1);
+      if (row.issue_id !== operation.issue_id || row.revision !== operation.expected_revision + 1 || (operation.op === 'resource_update' && seq !== operation.seq)
+        || row.outcome !== (operation.op === 'resource_add' ? 'added' : 'updated')) return invalid();
+      return { resource_receipt: { issue_id: operation.issue_id, seq, revision: operation.expected_revision + 1, outcome: operation.op === 'resource_add' ? 'added' : 'updated' } };
+    }
+    case 'resource_list': return resourceList(value, operation.issue_id);
+    case 'resource_live': {
+      const row = known(value, ['entries', 'next_cursor']);
+      if (!Array.isArray(row.entries) || row.entries.length > operation.limit) return invalid();
+      let previous = operation.after === undefined ? '' : issueSortKey(operation.after);
+      const entries = row.entries.map(value => {
+        const entry = known(value, ['issue', 'resources']);
+        const current = neighbor(entry.issue); const sort = issueSortKey(current.id);
+        if (sort <= previous || (operation.project !== undefined && current.project !== operation.project)) return invalid();
+        previous = sort;
+        const resources = resourceEntries(entry.resources, current.id);
+        if (resources.length === 0 || resources.some(resource => resource.state === 'verified_deleted')) return invalid();
+        return { issue: current, resources };
+      });
+      const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
+      if (next_cursor !== null && (entries.length !== operation.limit || next_cursor !== entries.at(-1)?.issue.id)) return invalid();
+      return { entries, next_cursor };
+    }
     case 'create': case 'update': case 'close': case 'reopen': return { issue: issue(known(value, ['issue']).issue) };
     default: { const exhaustive: never = operation; return exhaustive; }
   }
@@ -372,6 +416,7 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       if (object(value).id !== undefined) {
         const target = operation.op === 'dependency_add' || operation.op === 'dependency_remove' ? operation.dependent_id
           : operation.op === 'land_order_add' || operation.op === 'land_order_remove' ? operation.later_id
+          : operation.op === 'resource_add' || operation.op === 'resource_update' ? operation.issue_id
           : operation.op === 'update' || operation.op === 'close' || operation.op === 'reopen' || operation.op === 'comment' ? operation.id : invalid();
         if (known(value, ['id']).id !== target) return invalid();
         return { id: target };
@@ -416,6 +461,24 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       const row = known(value, ['later_id']);
       if ((operation.op !== 'land_order_add' && operation.op !== 'land_order_remove') || row.later_id !== operation.later_id || operation.expected_revision !== Number.MAX_SAFE_INTEGER) return invalid();
       return { later_id: operation.later_id };
+    }
+    case 'resource_conflict': {
+      if (operation.op !== 'resource_add' && operation.op !== 'resource_update') return invalid();
+      const row = known(value, ['expected_revision', 'current']);
+      const current = resourceList(row.current, operation.issue_id);
+      if (row.expected_revision !== operation.expected_revision || current.revision === operation.expected_revision) return invalid();
+      return { expected_revision: operation.expected_revision, current };
+    }
+    case 'resource_version_exhausted': {
+      const row = known(value, ['issue_id']);
+      if ((operation.op !== 'resource_add' && operation.op !== 'resource_update') || row.issue_id !== operation.issue_id || operation.expected_revision !== Number.MAX_SAFE_INTEGER) return invalid();
+      return { issue_id: operation.issue_id };
+    }
+    case 'resource_mark_rejected': {
+      if (operation.op !== 'resource_update') return invalid();
+      const [resource] = resourceEntries([known(value, ['resource']).resource], operation.issue_id);
+      if (resource?.seq !== operation.seq) return invalid();
+      return { resource };
     }
     case 'dependency_blocked': return { issue: issue(known(value, ['issue']).issue) };
     case 'memory_not_found': case 'memory_deleted': {
@@ -557,6 +620,13 @@ export async function executeCloudOperation(input: {
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'list' && input.operation.claimed !== undefined && /\bclaimed\b/.test(error.message)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support the claimed filter. Deploy a newer Worker to use it.', 400);
       }
+      // Dropping resources_reason would let an older Worker close without recording why, so the client stops instead of retrying.
+      if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'close' || input.operation.op === 'update') && input.operation.resources_reason !== undefined && /\bresources_reason\b/.test(error.message)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support resources_reason. Deploy a newer Worker to use it.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op.startsWith('resource_') && /^op must be one of /.test(error.message) && !error.message.includes(input.operation.op)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support resource operations. Deploy a newer Worker to use them.', 400);
+      }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);
     }
     if (input.operation.op === 'show' && !Object.hasOwn(object(value), 'claim')) {
@@ -575,10 +645,10 @@ export async function executeCloudOperation(input: {
     // The retry is a whole request, so its errors reach the caller as a first request's would. An authorization failure keeps its code.
     if (retried) throw error;
     if (error instanceof PolylinedbError) {
-      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
+      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'resource_add' || input.operation.op === 'resource_update' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
       throw error;
     }
-    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release' ? { request_id: input.operation.request_id } : undefined;
+    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'resource_add' || input.operation.op === 'resource_update' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release' ? { request_id: input.operation.request_id } : undefined;
     throw new PolylinedbError('cloud_unavailable', 'The cloud operation did not return a valid result. Its outcome may be unknown.', 503, details);
   } finally {
     clearTimeout(timer);

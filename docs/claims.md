@@ -171,6 +171,12 @@ Observe the current incarnation and choose a new request UUID for a deliberate n
 An arbitrary raw copy with an unchanged incarnation requires explicit offline rotation before use.
 See [D1 restoration](d1-migration.md) and [ownership design](adr/0009-issue-ownership.md).
 
+## Verify a resource deletion
+
+`resource_update` with `mark: "verified_deleted"` requires a current claim proof on the issue from every actor, the owner and humans included, and fails with `claim_required` without one.
+Verification ends the cleanup obligation that a [resource entry](operations.md#external-resources) records, so it needs the same proof as the other writes that end work on an issue.
+The other resource writes follow the agent gate: an agent needs its own active claim, and a human does not.
+
 ## Keep a claim through long checks
 
 A required check can outlast the 3600 second maximum TTL, and a process that waits on a background command has no turn in which to renew.

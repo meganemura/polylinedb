@@ -593,3 +593,55 @@ test('claim_handoff decodes land_order_warnings from a newer Worker and decodes 
     assert.deepEqual('land_order_warnings' in replayed ? replayed.land_order_warnings : undefined, [{ id: earlier, status: 'open' }]);
   } finally { sqlite.close(); }
 });
+
+test('external resources: receipts, lists, and conflict details decode, and resources_remaining carries no details for released clients', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Preview' })).body.issue as { id: string }).id;
+    const add = { op: 'resource_add', issue_id: id, kind: 'worker', name: 'preview-api', expected_revision: 1, request_id: crypto.randomUUID() };
+    assert.deepEqual(await decode(add, transport), { resource_receipt: { issue_id: id, seq: 1, revision: 2, outcome: 'added' } });
+    const listed = await decode({ op: 'resource_list', issue_id: id }, transport);
+    assert.ok('resources' in listed && listed.resources[0]);
+    const entry = listed.resources[0];
+    assert.deepEqual(listed, { issue_id: id, revision: 2, resources: [{ issue_id: id, seq: 1, kind: 'worker', name: 'preview-api', external_id: null, created_at: null, deleted_at: null,
+      verified_deleted_at: null, verified_by: null, evidence: null, added_at: entry.added_at, added_by: 'access:owner', state: 'planned' }] });
+    assert.deepEqual(await decode({ op: 'resource_live', project: 'compat' }, transport), { entries: [{ issue: { id, project: 'compat', status: 'open' }, resources: listed.resources }], next_cursor: null });
+    assert.deepEqual(await outcome(decode({ ...add, request_id: crypto.randomUUID() }, transport)), { error: { code: 'resource_conflict', status: 409, details: { expected_revision: 1, current: listed } } });
+    const update = { op: 'resource_update', issue_id: id, seq: 1, mark: 'deleted', expected_revision: 2, request_id: crypto.randomUUID() };
+    assert.deepEqual(await outcome(decode(update, transport)), { error: { code: 'resource_mark_rejected', status: 409, details: { resource: entry } } });
+    const raw = await wire({ op: 'resource_list', issue_id: id });
+    await assert.rejects(decode({ op: 'resource_list', issue_id: id }, answer({ ...raw.body, resources: [{ ...(raw.body.resources as object[])[0], state: 'created' }] })), { code: 'cloud_invalid_response' });
+
+    const close = { op: 'close', id, expected: 1 };
+    const refused = await wire(close);
+    // Released clients accept an unknown code at 400, 404, or 409 only without details, and keep a message of at most 4096 characters.
+    assert.equal(refused.status, 409);
+    assert.deepEqual(Object.keys(refused.body.error as object).sort(), ['code', 'message']);
+    assert.match(String((refused.body.error as { code: string }).code), /^[a-z][a-z0-9_]{0,63}$/);
+    assert.ok(String((refused.body.error as { message: string }).message).length <= 4096);
+    assert.deepEqual(await outcome(decode(close, answer(refused.body, refused.status))), { error: { code: 'resources_remaining', status: 409, details: undefined } });
+    assert.deepEqual(await outcome(decode({ ...close, force: true, reason: 'ship' }, transport)), { error: { code: 'resources_remaining', status: 409, details: undefined } });
+    assert.deepEqual(Object.keys((await wire({ op: 'show', id })).body).sort(), ['claim', 'comments', 'issue']);
+    const closed = await wire({ ...close, resources_reason: 'kept for the demo' });
+    assert.deepEqual(Object.keys(closed.body), ['issue']);
+    assert.equal((closed.body.issue as { status: string }).status, 'closed');
+  } finally { sqlite.close(); }
+});
+
+test('an older Worker that rejects resources_reason or a resource operation fails with a clear message and no retry', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Old Worker' })).body.issue as { id: string }).id;
+    const sent: unknown[] = [];
+    const older: typeof fetch = async (_url, options) => {
+      const operation = JSON.parse(String(options?.body)); sent.push(operation);
+      if ('resources_reason' in operation) return Response.json({ error: { code: 'invalid_input', message: 'Unexpected resources_reason' } }, { status: 400 });
+      if (String(operation.op).startsWith('resource_')) return Response.json({ error: { code: 'invalid_input', message: 'op must be one of create, show, list, search, comment, update, close, reopen, actor' } }, { status: 400 });
+      return transport(_url, options);
+    };
+    await assert.rejects(decode({ op: 'close', id, expected: 1, resources_reason: 'kept' }, older), { code: 'invalid_input', message: 'The cloud Worker does not support resources_reason. Deploy a newer Worker to use it.' });
+    await assert.rejects(decode({ op: 'resource_list', issue_id: id }, older), { code: 'invalid_input', message: 'The cloud Worker does not support resource operations. Deploy a newer Worker to use them.' });
+    assert.deepEqual(sent, [{ op: 'close', id, expected: 1, resources_reason: 'kept' }, { op: 'resource_list', issue_id: id }]);
+    assert.equal(((await wire({ op: 'show', id })).body.issue as { status: string }).status, 'open');
+  } finally { sqlite.close(); }
+});

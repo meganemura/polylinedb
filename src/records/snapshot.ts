@@ -12,6 +12,8 @@ import { claimRow, claimRequestRow, parseClaimOperation } from './claims.ts';
 import type { Claim, ClaimRequest } from './claims.ts';
 import { parseLandOrderOperation } from './land-order.ts';
 import type { LandOrderEdge, LandOrderRequest, LandOrderRevision } from './land-order.ts';
+import { parseResourceOperation, resourceEntry } from './resources.ts';
+import type { ResourceEntry, ResourceRequest, ResourceRevision } from './resources.ts';
 
 export type Counter = { scope: string; last_number: number };
 export type CreateRequest = { request_id: string; actor: string; payload: string; issue_id: string };
@@ -21,9 +23,10 @@ type SnapshotV3 = Omit<SnapshotV2, 'version'> & { version: 3; memories: readonly
 type SnapshotV4 = Omit<SnapshotV3, 'version'> & { version: 4; dependencies: readonly Dependency[]; dependency_revisions: readonly DependencyRevision[]; dependency_requests: readonly DependencyRequest[] };
 type SnapshotV5 = Omit<SnapshotV4, 'version'> & { version: 5; issue_claims: readonly Claim[]; claim_requests: readonly ClaimRequest[] };
 type SnapshotV6 = Omit<SnapshotV5, 'version' | 'issues'> & { version: 6; issues: readonly StoredIssue[] };
-export type Snapshot = Omit<SnapshotV6, 'version'> & { version: 7; land_order: readonly LandOrderEdge[]; land_order_revisions: readonly LandOrderRevision[]; land_order_requests: readonly LandOrderRequest[] };
+export type Snapshot = Omit<SnapshotV6, 'version'> & { version: 7; land_order: readonly LandOrderEdge[]; land_order_revisions: readonly LandOrderRevision[]; land_order_requests: readonly LandOrderRequest[];
+  issue_resources: readonly ResourceEntry[]; resource_revisions: readonly ResourceRevision[]; resource_requests: readonly ResourceRequest[] };
 export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number;
-  land_order: number; land_order_requests: number; sha256: string };
+  land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Expected an object');
@@ -287,11 +290,11 @@ function parseSnapshotV6(input: unknown): SnapshotV6 {
     return fail(error instanceof Error ? error.message : 'Invalid issue closure');
   }
 }
-// Snapshot 6 predates land order, so conversion adds empty collections: every issue starts at land-order revision 1.
+// Snapshot 6 predates land order and external resources, so conversion adds empty collections: every issue starts at revision 1 of both.
 export function convertSnapshotV6(input: unknown): Snapshot {
-  return parseSnapshot({ ...parseSnapshotV6(input), version: 7, land_order: [], land_order_revisions: [], land_order_requests: [] });
+  return parseSnapshot({ ...parseSnapshotV6(input), version: 7, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [] });
 }
-const snapshotV7Keys = [...snapshotKeys, 'land_order', 'land_order_revisions', 'land_order_requests'];
+const snapshotV7Keys = [...snapshotKeys, 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests'];
 /** Rejects a cycle over the union of prerequisite and land-order edges, which the store triggers also refuse. */
 function acyclic(ids: ReadonlySet<string>, edges: readonly (readonly [later: string, earlier: string])[]): void {
   const outgoing = new Map<string, string[]>();
@@ -312,7 +315,7 @@ function acyclic(ids: ReadonlySet<string>, edges: readonly (readonly [later: str
 export function parseSnapshot(input: unknown): Snapshot {
   const source = record(input, snapshotV7Keys);
   if (source.version !== 7) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5 and 6 explicitly');
-  const { land_order: edges, land_order_revisions: revisions, land_order_requests: requests, ...legacy } = source;
+  const { land_order: edges, land_order_revisions: revisions, land_order_requests: requests, issue_resources: resources, resource_revisions: resourceRevisions, resource_requests: resourceRequests, ...legacy } = source;
   const old = parseSnapshotV6({ ...legacy, version: 6 });
   if (!Array.isArray(edges) || !Array.isArray(revisions) || !Array.isArray(requests)) return fail('Land-order collections must be arrays');
   try {
@@ -348,11 +351,53 @@ export function parseSnapshot(input: unknown): Snapshot {
     }).sort((a, b) => compareText(a.request_id, b.request_id));
     if (new Set(land_order_requests.map(row => row.request_id)).size !== land_order_requests.length) fail('Duplicate land-order request ID');
     if (new Set(land_order_requests.map(row => JSON.stringify([row.later_id, row.result_revision]))).size !== land_order_requests.length) fail('Duplicate land-order receipt revision');
-    return { ...old, version: 7, land_order, land_order_revisions, land_order_requests };
+    return { ...old, version: 7, land_order, land_order_revisions, land_order_requests, ...parseResources(ids, resources, resourceRevisions, resourceRequests) };
   } catch (error) {
     if (error instanceof PolylinedbError && error.code === 'invalid_snapshot') throw error;
     return fail(error instanceof Error ? error.message : 'Invalid land-order snapshot');
   }
+}
+function parseResources(ids: ReadonlySet<string>, entries: unknown, revisions: unknown, requests: unknown): Pick<Snapshot, 'issue_resources' | 'resource_revisions' | 'resource_requests'> {
+  if (!Array.isArray(entries) || !Array.isArray(revisions) || !Array.isArray(requests)) return fail('Resource collections must be arrays');
+  const owner = (value: unknown) => { const id = parseIssueId(value); if (!ids.has(id)) return fail('Resource issue does not exist'); return id; };
+  const counter = (value: unknown, minimum: number) => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) return fail('Invalid resource revision'); return value; };
+  const byIssue = (a: string, b: string) => compareText(issueSortKey(a), issueSortKey(b));
+  const resource_revisions = revisions.map(value => {
+    const row = record(value, ['issue_id', 'revision']);
+    return { issue_id: owner(row.issue_id), revision: counter(row.revision, 2) };
+  }).sort((a, b) => byIssue(a.issue_id, b.issue_id));
+  const byId = new Map(resource_revisions.map(row => [row.issue_id, row.revision]));
+  if (byId.size !== resource_revisions.length) fail('Duplicate resource revision');
+  const keys = ['issue_id', 'seq', 'kind', 'name', 'external_id', 'created_at', 'deleted_at', 'verified_deleted_at', 'verified_by', 'evidence', 'added_at', 'added_by'];
+  const issue_resources = entries.map(value => {
+    const row = record(value, keys);
+    owner(row.issue_id);
+    let entry: ResourceEntry;
+    try { entry = resourceEntry(row); } catch (error) { return fail(error instanceof Error ? error.message : 'Invalid resource entry'); }
+    for (const time of [entry.created_at, entry.deleted_at, entry.verified_deleted_at, entry.added_at]) if (time !== null) timestamp(time);
+    return entry;
+  }).sort((a, b) => byIssue(a.issue_id, b.issue_id) || a.seq - b.seq);
+  const entryKey = (issueId: string, seq: number) => JSON.stringify([issueId, seq]);
+  const stored = new Set(issue_resources.map(entry => entryKey(entry.issue_id, entry.seq)));
+  if (stored.size !== issue_resources.length) fail('Duplicate resource entry');
+  const resource_requests = requests.map((value): ResourceRequest => {
+    const row = record(value, ['request_id', 'actor', 'payload', 'issue_id', 'seq', 'result_revision', 'outcome', 'created_at']);
+    const request_id = parseRequestId(row.request_id); const issue_id = owner(row.issue_id);
+    const seq = counter(row.seq, 1); const result_revision = counter(row.result_revision, 2);
+    if (!stored.has(entryKey(issue_id, seq))) fail('Resource receipt names a missing entry');
+    if (result_revision > (byId.get(issue_id) ?? 1)) fail('Resource receipt exceeds the aggregate revision');
+    if (typeof row.actor !== 'string' || !row.actor.trim() || /\p{Cc}/u.test(row.actor) || new TextEncoder().encode(row.actor).length > 256 || typeof row.payload !== 'string') return fail('Invalid resource receipt actor or payload');
+    timestamp(row.created_at); if (typeof row.created_at !== 'string') return fail('Invalid resource timestamp');
+    const operation = parseResourceOperation(JSON.parse(row.payload));
+    if ((operation.op !== 'resource_add' && operation.op !== 'resource_update') || operation.request_id !== request_id || operation.issue_id !== issue_id
+      || (operation.op === 'resource_update' && operation.seq !== seq) || operation.expected_revision + 1 !== result_revision || JSON.stringify(operation) !== row.payload) return fail('Invalid canonical resource receipt');
+    const outcome = operation.op === 'resource_add' ? 'added' as const : 'updated' as const;
+    if (row.outcome !== outcome) return fail('Resource receipt outcome differs from the operation');
+    return { request_id, actor: row.actor, payload: row.payload, issue_id, seq, result_revision, outcome, created_at: row.created_at };
+  }).sort((a, b) => compareText(a.request_id, b.request_id));
+  if (new Set(resource_requests.map(row => row.request_id)).size !== resource_requests.length) fail('Duplicate resource request ID');
+  if (new Set(resource_requests.map(row => JSON.stringify([row.issue_id, row.result_revision]))).size !== resource_requests.length) fail('Duplicate resource receipt revision');
+  return { issue_resources, resource_revisions, resource_requests };
 }
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }
 export function canonicalSnapshotV5(input: unknown): string { return JSON.stringify(parseSnapshotV5(input)); }

@@ -30,10 +30,10 @@ function snapshot(issues: readonly Record<string, unknown>[]): Record<string, un
   return { format: 'polylinedb.snapshot', version: 7, issues, comments: [], counters: [{ scope: 'pd', last_number: 3 }], requests: [],
     memories: [], memory_counters: [], memory_requests: [], dependencies: [],
     dependency_revisions: issues.map(issue => ({ dependent_id: issue.id, revision: 1 })), dependency_requests: [], issue_claims: [], claim_requests: [],
-    land_order: [], land_order_revisions: [], land_order_requests: [] };
+    land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [] };
 }
 function snapshotV5(issues: readonly Record<string, unknown>[]): Record<string, unknown> {
-  const { land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, ...rest } = snapshot(issues);
+  const { land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, ...rest } = snapshot(issues);
   return { ...rest, version: 5 };
 }
 const closed = { ...base, id: 'pd-1', status: 'closed', closed_at: '2026-01-03T03:04:05.000Z', closed_by: 'closer' };

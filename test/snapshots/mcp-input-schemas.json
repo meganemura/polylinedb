@@ -339,6 +339,12 @@
         "maxLength": 65536,
         "description": "Accepted only with force: true. At most 65536 UTF-8 bytes."
       },
+      "resources_reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "Close although external resources on the issue are not verified deleted. Stored as a comment. force does not replace it. At most 65536 UTF-8 bytes."
+      },
       "claim_proof": {
         "type": "object",
         "additionalProperties": false,
@@ -1073,6 +1079,168 @@
     ],
     "additionalProperties": false
   },
+  "resource_add": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "issue_id",
+      "kind",
+      "name",
+      "expected_revision",
+      "request_id"
+    ],
+    "properties": {
+      "issue_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "kind": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9:._-]{0,63}$",
+        "description": "Free-form resource kind, such as d1:database or worker."
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "An identifier only, at most 256 UTF-8 bytes, without whitespace or control characters. Never a secret, token, connection string, or URL with credentials."
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991,
+        "description": "The resource revision of the issue from resource_list."
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Reuse one lowercase UUID for each logical mutation."
+      }
+    }
+  },
+  "resource_list": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "issue_id"
+    ],
+    "properties": {
+      "issue_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      }
+    }
+  },
+  "resource_live": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+      "tool": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "after": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      }
+    }
+  },
+  "resource_update": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "issue_id",
+      "seq",
+      "expected_revision",
+      "request_id"
+    ],
+    "properties": {
+      "issue_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "seq": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991,
+        "description": "The resource revision of the issue from resource_list."
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Reuse one lowercase UUID for each logical mutation."
+      },
+      "external_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "Set once. An identifier only, at most 256 UTF-8 bytes, without whitespace or control characters. Never a secret, token, connection string, or URL with credentials."
+      },
+      "mark": {
+        "type": "string",
+        "enum": [
+          "created",
+          "deleted",
+          "verified_deleted"
+        ],
+        "description": "Marks move forward only: planned, created, deleted, verified_deleted; or planned straight to verified_deleted."
+      },
+      "evidence": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "Required with mark verified_deleted: how the deletion was checked, at most 1024 UTF-8 bytes. No secrets."
+      },
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ],
+        "description": "Required with mark verified_deleted: a current claim proof on this issue."
+      }
+    }
+  },
   "search": {
     "type": "object",
     "properties": {
@@ -1381,6 +1549,12 @@
         "minLength": 1,
         "maxLength": 65536,
         "description": "Accepted only with force: true. At most 65536 UTF-8 bytes."
+      },
+      "resources_reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "Close although external resources on the issue are not verified deleted. Stored as a comment. force does not replace it. At most 65536 UTF-8 bytes."
       },
       "claim_proof": {
         "type": "object",

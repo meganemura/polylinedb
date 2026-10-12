@@ -11,3 +11,5 @@ export { decideCreation, decidePrerequisiteEdit } from './cross-issue.ts';
 export type { ObservedParent, CreationDecision, ObservedPrerequisites, PrerequisiteRejection, PrerequisiteDecision } from './cross-issue.ts';
 export { actorKinds, readyLabel, ownerWaitLabels, admitAgentWrite } from './agent-gate.ts';
 export type { ActorKind, Actor, GatedWrite, GateObservation, GateDecision } from './agent-gate.ts';
+export { resourceMarks, resourceState, resourceIsLive, nextResourceMarks, decideResourceAddition, decideResourceUpdate } from './resources.ts';
+export type { ResourceMark, ResourceState, ResourceTimes, ObservedResource, ResourceEdit, ResourceRejection, ResourceDecision } from './resources.ts';

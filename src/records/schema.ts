@@ -2,6 +2,7 @@
 import { CLAIM_STATEMENTS } from './claims-sql.ts';
 import { CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS } from './changes-sql.ts';
 import { LAND_ORDER_STATEMENTS } from './land-order-sql.ts';
+import { RESOURCE_STATEMENTS } from './resources-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
 export { SCHEMA_V6_SQL } from './schema-v6.ts';
 export { SCHEMA_V7_SQL } from './schema-v7.ts';
@@ -154,8 +155,8 @@ export const CLOSURE_STATEMENTS = [
   `ALTER TABLE issues ADD COLUMN closed_by TEXT CONSTRAINT issue_closure CHECK((closed_at IS NULL AND closed_by IS NULL)
     OR (status = 'closed' AND typeof(closed_at) = 'text' AND length(closed_at) > 0 AND typeof(closed_by) = 'text' AND length(closed_by) > 0))`,
 ];
-// Schema 9 adds the change relation and the land order after the closure columns, in the same order on a fresh store and an upgrade.
-export const SCHEMA_V9_ADDITIONS = [...CHANGE_RELATION_STATEMENTS, ...LAND_ORDER_STATEMENTS];
+// Schema 9 adds the change relation, the land order, and external resources after the closure columns, in the same order on a fresh store and an upgrade.
+export const SCHEMA_V9_ADDITIONS = [...CHANGE_RELATION_STATEMENTS, ...LAND_ORDER_STATEMENTS, ...RESOURCE_STATEMENTS];
 export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8): readonly string[] {
   return [
     `INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT count(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ${previous})`,

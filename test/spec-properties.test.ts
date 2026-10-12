@@ -105,8 +105,8 @@ const updateDomainSize = currents.length * leases.length * clocks.length * proof
 function decideUpdate(world: UpdateWorld) {
   const versions = { tool: 1, project: 1, body: 1, status: 1, type: 1, priority: 1, labels: 1 };
   return decideIssueUpdate(
-    { id: 'pd-1', status: world.current.status, type: world.current.type, versions, has_active_blockers: world.blockers, has_children: world.children, claim: observedClaim(world.lease), store_incarnation: store },
-    { changes: [world.change], force: world.force, ...(world.proof.supplied ? { claim_proof: concreteProof(world.lease, world.proof.differs) } : {}) },
+    { id: 'pd-1', status: world.current.status, type: world.current.type, versions, has_active_blockers: world.blockers, has_children: world.children, has_live_resources: false, claim: observedClaim(world.lease), store_incarnation: store },
+    { changes: [world.change], force: world.force, resources_acknowledged: false, ...(world.proof.supplied ? { claim_proof: concreteProof(world.lease, world.proof.differs) } : {}) },
     actorId(world.caller), clockValue[world.clock]);
 }
 

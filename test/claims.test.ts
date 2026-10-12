@@ -420,7 +420,7 @@ test('snapshot claim closure rejects dangling and future receipts across all inc
 });
 test('snapshot4 conversion is explicit and preserves original creation payload bytes', async t => {
   const source = fixture(t); await create(source.run);
-  const { issue_claims: _, claim_requests: __, land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, ...old } = source.store.exportSnapshot();
+  const { issue_claims: _, claim_requests: __, land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, ...old } = source.store.exportSnapshot();
   const legacy = { ...old, version: 4, issues: old.issues.map(({ closed_at: _at, closed_by: _by, ...issue }) => issue) };
   assert.throws(() => parseSnapshot(legacy), { code: 'invalid_snapshot' });
   const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 7); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);

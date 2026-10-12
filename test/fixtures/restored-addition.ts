@@ -28,6 +28,8 @@ export async function populate(store: Store, prefix: string): Promise<void> {
   await run({ op: 'create', prefix, parent: epic, request_id: randomUUID(), tool: 'fixture', project: 'synthetic', body: `${prefix} child` });
   await run({ op: 'dependency_add', dependent_id: `${epic}.1`, blocker_id: epic, expected_revision: 1, request_id: randomUUID() });
   await run({ op: 'land_order_add', later_id: `${epic}.1`, earlier_id: epic, expected_revision: 1, request_id: randomUUID() });
+  await run({ op: 'resource_add', issue_id: `${epic}.1`, kind: 'worker', name: `${prefix}-api`, expected_revision: 1, request_id: randomUUID() });
+  await run({ op: 'resource_update', issue_id: `${epic}.1`, seq: 1, external_id: `${prefix}-api-1`, mark: 'created', expected_revision: 2, request_id: randomUUID() });
   await run({ op: 'comment', id: epic, body: `${prefix} comment` }, `${prefix}-commenter`);
   const scope = await run({ op: 'claim_show', issue_id: epic });
   assert.ok('claim' in scope);
@@ -111,9 +113,11 @@ export function rowChange(table: string, columns: readonly { name: string; type:
   const names = columns.map(column => column.name);
   const copy = names.map(name => columns.find(column => column.name === name)?.pk === 1 ? `substr(${name}, 1, length(${name}) - 1) || 'z'` : name);
   return [
-    ...text.map(column => `UPDATE ${table} SET ${column} = ${column} || 'x' WHERE ${target}`),
+    ...text.map(column => `UPDATE ${table} SET ${column} = ${column} || 'x' WHERE ${target} AND ${column} IS NOT NULL`),
     `DELETE FROM ${table} WHERE ${target}`,
     `INSERT INTO ${table}(${names.join(', ')}) SELECT ${copy.join(', ')} FROM ${table} WHERE ${target}`,
+    // A table whose rows only gain values, such as resource marks, changes by filling an empty column.
+    ...text.map(column => `UPDATE ${table} SET ${column} = '2026-01-01T00:00:00.000Z' WHERE ${target} AND ${column} IS NULL`),
   ];
 }
 

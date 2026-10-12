@@ -44,6 +44,10 @@ const operationPolicy = {
   land_order_add: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   land_order_remove: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   land_order_list: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
+  resource_add: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  resource_update: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  resource_list: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
+  resource_live: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   changes: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   wait: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
 } satisfies Record<Operation['op'], OperationPolicy>;

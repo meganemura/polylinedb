@@ -79,7 +79,7 @@ test('D1 schema inspection tolerates reserved storage tables and rejects unrelat
   try {
     database.exec(SCHEMA_SQL);
     database.exec('CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID');
-    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 7, land_order: [], land_order_revisions: [], land_order_requests: [], issue_claims: [], claim_requests: [], issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 7, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [], issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
     const digest = createHash('sha256').update(canonicalSnapshot(snapshot)).digest('hex');
     const migration = snapshotMigration(async statement => database.prepare(statement.sql).all(...statement.params), snapshot, digest);
     assert.equal((await migration.inspect()).state, 'identical');
@@ -195,7 +195,7 @@ test('verify refuses overwrite, a relative output, and a differing remote withou
   try {
     const output = join(fixture.directory, 'verified.json');
     assert.deepEqual(await runSnapshotCommand(fixture.args(output), connect), { target: { ...target, snapshotSha256: fixture.sha256 }, result: 'verified', sha256: fixture.sha256,
-      counts: { issues: 1, comments: 0, counters: 1, requests: 1, memories: 0, memory_counters: 0, memory_requests: 0, dependencies: 0, dependency_revisions: 1, dependency_requests: 0, issue_claims: 0, claim_requests: 0, land_order: 0, land_order_revisions: 0, land_order_requests: 0 } });
+      counts: { issues: 1, comments: 0, counters: 1, requests: 1, memories: 0, memory_counters: 0, memory_requests: 0, dependencies: 0, dependency_revisions: 1, dependency_requests: 0, issue_claims: 0, claim_requests: 0, land_order: 0, land_order_revisions: 0, land_order_requests: 0, issue_resources: 0, resource_revisions: 0, resource_requests: 0 } });
     assert.equal(readFileSync(output, 'utf8'), fixture.canonical + '\n');
     const queriesAfterSuccess = queries;
     await assert.rejects(runSnapshotCommand(fixture.args(output), connect), { message: 'The output file already exists' });

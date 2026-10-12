@@ -105,6 +105,15 @@ Never edit, stage, or commit in a checkout that another session uses, including 
 The branch name carries the issue ID, so other agents and the dispatcher can tell which worktree belongs to which claim.
 After the enqueue, remove the worktree with `git worktree remove` and delete its branch.
 
+## Record external resources
+
+Before you create anything outside the repository for the issue, such as a database, a Worker, a bucket, or a DNS record, record it with `resource_add` on the issue you hold. Read the revision with `resource_list` first.
+Record identifiers only: a kind such as `d1:database`, a name, and later its `external_id`. Never record a secret, a token, a connection string, or a URL with credentials.
+After you create it, call `resource_update` with `external_id` and `mark: "created"`. After you delete it, mark it `deleted`.
+When you have checked that it is gone, mark it `verified_deleted` with `evidence` that says how you checked, and your claim proof.
+While an entry is not `verified_deleted`, `close` fails with `resources_remaining`. Clean up first. Pass `resources_reason` only when the user decided to keep the resource, and say so in the reason.
+`force` does not bypass this check.
+
 ## Publish and record the tip
 
 Follow the polylinedb-queue skill to push `queue`, then hand the issue off with `claim_handoff`: one call writes the tip comment and the summary, leaves the issue `open` with the `main-wait` label, and releases the claim.

@@ -25,6 +25,10 @@ Land order is a relation beside prerequisites that never takes part in readiness
 One trigger body walks both edge kinds, so a cycle through either kind, or through both, fails in the database on SQLite and D1 alike.
 The [land-order decision](adr/0020-land-order.md) records the relation, the handoff warning, and the rollout.
 
+External resources are entries on an issue whose marks only move forward.
+The close guard is one SQL condition in the issue write and one rule in the transition, so SQLite, D1, and the transition decide a close the same way.
+The [external resources decision](adr/0021-external-resources.md) records the marks, the close guard, and the rollout.
+
 ## Dependency direction
 
 The architecture check orders source modules as core, domain, adapter, then entrypoint.

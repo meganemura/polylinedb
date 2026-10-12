@@ -120,7 +120,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'server_info', 'show', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -153,6 +153,10 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['memory_show', true, false, true, false],
       ['memory_update', false, true, true, false],
       ['reopen', false, true, true, false],
+      ['resource_add', false, false, true, false],
+      ['resource_list', true, false, true, false],
+      ['resource_live', true, false, true, false],
+      ['resource_update', false, false, true, false],
       ['search', true, false, true, false],
       ['server_info', true, false, true, false],
       ['show', true, false, true, false],
@@ -421,6 +425,9 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     await repeat('land_order_add', { later_id: issue.id, earlier_id: blocker.id, expected_revision: 1, request_id: crypto.randomUUID() });
     await read('land_order_list', { issue_id: issue.id });
     await repeat('land_order_remove', { later_id: issue.id, earlier_id: blocker.id, expected_revision: 2, request_id: crypto.randomUUID() });
+    await repeat('resource_add', { issue_id: blocker.id, kind: 'worker', name: 'preview-api', expected_revision: 1, request_id: crypto.randomUUID() });
+    await read('resource_list', { issue_id: blocker.id }); await read('resource_live', {});
+    await repeat('resource_update', { issue_id: blocker.id, seq: 1, external_id: 'preview-api-1', mark: 'created', expected_revision: 2, request_id: crypto.randomUUID() });
     await repeat('close', { id: issue.id, expected: 1 });
     await repeat('reopen', { id: issue.id, expected: 2 });
     await append('comment', { id: issue.id, body: 'confirmed' });

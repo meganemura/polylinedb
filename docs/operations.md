@@ -67,7 +67,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `search` | `query`, optional filters, optional `with_matches: true` | Same as list; with `with_matches`, also `"matches": [...]` |
 | `comment` | `id`, `body` | `{ "comment": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
-| `close` | `id`, `expected` status version | `{ "issue": ... }` |
+| `close` | `id`, `expected` status version; optional `resources_reason` | `{ "issue": ... }` |
 | `reopen` | `id`, `expected` status version | `{ "issue": ... }` |
 | `actor` | None | `{ "actor": ... }` |
 | `dependency_list` | `dependent_id`; optional `after`, `limit` | `{ "dependent_id": ..., "revision": ..., "blockers": [...], "next_cursor": ... }` |
@@ -75,6 +75,10 @@ An agent's name is not the affected tool merely because that agent created the i
 | `dependency_worklist` | `state: "ready"` or `"blocked"`; optional issue filters except `status` | Same as list |
 | `land_order_list` | `issue_id` | `{ "issue_id": ..., "revision": ..., "after": [...], "before": [...] }` |
 | `land_order_add`, `land_order_remove` | `later_id`, `earlier_id`, `expected_revision`, `request_id` | `{ "land_order_receipt": { "later_id": ..., "earlier_id": ..., "revision": ..., "outcome": ... } }` |
+| `resource_list` | `issue_id` | `{ "issue_id": ..., "revision": ..., "resources": [...] }` |
+| `resource_live` | Optional `tool`, `project`, `after`, `limit` | `{ "entries": [{ "issue": { "id": ..., "project": ..., "status": ... }, "resources": [...] }], "next_cursor": ... }` |
+| `resource_add` | `issue_id`, `kind`, `name`, `expected_revision`, `request_id` | `{ "resource_receipt": { "issue_id": ..., "seq": ..., "revision": ..., "outcome": "added" } }` |
+| `resource_update` | `issue_id`, `seq`, `expected_revision`, `request_id`, and `external_id`, `mark`, or both; `evidence` and `claim_proof` with `mark: "verified_deleted"` | `{ "resource_receipt": { "issue_id": ..., "seq": ..., "revision": ..., "outcome": "updated" } }` |
 | `dependency_owner_waits` | Optional `tool`, `project`, `after`, `limit` | `{ "waits": [{ "issue": ..., "dependents": [...], "dependents_next": ... }], "next_cursor": ... }` |
 | `claim_show` | `issue_id` | `{ "claim": ... }` |
 | `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
@@ -90,12 +94,13 @@ The cloud actor comes from authentication, so requests cannot supply an actor.
 The parent relationship is immutable; an epic with children cannot change to another type.
 Prerequisites form a separate acyclic graph. They can cross projects within the selected store.
 See [issue prerequisites](prerequisites.md) for aggregate conflicts, immutable request receipts, and readiness semantics.
+[External resources](#external-resources) record what work on an issue created outside the store, and keep the issue from closing until each one is verified deleted.
 [Land order](prerequisites.md#land-order) says which issue should reach main first. It never blocks work, shares the cycle check with prerequisites, and has its own revision and receipts.
 Close and updates that request `in_progress` or `closed` accept `force: true` with a nonempty `reason` for an explicit exception.
 The reason becomes an attributed comment in the successful status transaction. Ordinary operation results retain their existing shapes.
 Schema 7 adds the [change feed](#change-feed) and keeps every operation result unchanged.
 Schema 8 adds `closed_at` and `closed_by` to issues in local results and MCP.
-Schema 9 adds land order and the optional change feed field `relation`; default results keep their shapes.
+Schema 9 adds land order, external resources, and the optional change feed field `relation`; default results keep their shapes.
 Version 0.3.0 uses schema 6 and adds issue ownership while retaining all seven ordinary issue fields.
 Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
@@ -139,7 +144,43 @@ Pagination does not preserve a snapshot across requests.
 Search matches literal, case-sensitive substrings in bodies or comments.
 `show` returns all comments, ordered by timestamp and ID.
 
-## Search matches
+## External resources
+
+An entry records one thing that work on an issue creates outside the store, such as a preview database or a Worker.
+Record it with `resource_add` before creating the resource, then move it forward with `resource_update`.
+
+```sh
+pd resource add demo-1 --kind d1:database --name preview-db --expected-revision 1
+pd resource update demo-1 --seq 1 --external-id 0f3c2a --mark created --expected-revision 2
+pd resource update demo-1 --seq 1 --mark deleted --expected-revision 3
+pd resource update demo-1 --seq 1 --mark verified_deleted --evidence "d1 list no longer shows 0f3c2a" --claim-proof "$PROOF" --expected-revision 4
+pd resource live --project demo
+```
+
+`kind` is free-form and matches `^[a-z0-9][a-z0-9:._-]{0,63}$`.
+`name` and `external_id` are identifiers only: 1 to 256 UTF-8 bytes with no whitespace or control characters.
+Never record a secret, a token, a connection string, or a URL with credentials in any resource field.
+`evidence` is at most 1024 UTF-8 bytes. A value outside these rules fails with `invalid_input`.
+
+Each entry has a `seq` from 1 within its issue and a `state` derived from its marks: `planned`, `created`, `deleted`, or `verified_deleted`.
+Marks move forward only, from `planned` to `created` to `deleted` to `verified_deleted`, or from `planned` straight to `verified_deleted` for a resource that was never created.
+Each mark is set once, with the store clock. `external_id` is set once.
+A mark that does not move forward, a second `external_id`, or any change to a verified entry fails with `resource_mark_rejected`, with the entry in `details.resource`.
+`verified_deleted` needs `evidence` and a current `claim_proof` on the issue from every actor; without a held proof it fails with `claim_required`.
+
+The resource revision belongs to the issue and starts at 1, as for prerequisites.
+A stale request fails with `resource_conflict`, with `expected_revision` and the current `resource_list` result in `details.current`.
+A reused request UUID with another actor or payload fails with `resource_request_conflict`, and a retry returns the original receipt.
+An agent writes resources only on an issue it holds a claim on.
+
+An entry is live until `verified_deleted`.
+While an issue has a live entry, `close` and an `update` that sets status `closed` fail with `resources_remaining` and no details.
+The message names up to five live entries as `kind:name`. The CLI then reads `resource_list` and reports the live entries in `details.resources`.
+A nonempty `resources_reason` closes anyway and is stored as a comment by the closing actor in the same write; `pd close --resources-reason TEXT` sends it.
+`force` does not bypass this check. An epic answers only for its own entries.
+`resource_live` lists the issues that still have live entries, in issue order, with those entries.
+
+
 
 `search` finds literal, case-sensitive text in issue bodies and comments.
 A request with `with_matches: true` also returns `matches`, which tells where each issue on the page matched.
@@ -180,7 +221,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `incarnation` | The store incarnation, the same value as `claim.store_incarnation` |
 | `issue_id` | The changed issue; for a prerequisite edit, the dependent; for a land-order edit, the later issue |
 | `kind` | One of the kinds in the next table |
-| `fields` | For `updated` and `status_changed`, the written field names in field order; otherwise `[]` |
+| `fields` | For `updated` and `status_changed`, the written field names in field order; `["resources"]` for a resource entry change; otherwise `[]` |
 | `occurred_at` | Database time of the write, in integer Unix seconds |
 | `actor` | The actor of the write |
 | `relation` | Present only on `dependency_added` and `dependency_removed` for a land-order edit, with the value `lands_after`; a prerequisite edit has no `relation` |
@@ -188,7 +229,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | Kind | Recorded when |
 | --- | --- |
 | `created` | `create` inserts an issue |
-| `updated` | `update` writes fields other than `status` |
+| `updated` | `update` writes fields other than `status`, or `resource_add` or `resource_update` commits an entry change |
 | `status_changed` | `update`, `close`, or `reopen` writes `status`; `fields` includes `status` |
 | `commented` | `comment` appends a comment, or a forced status change appends its reason |
 | `claim_acquired` | `claim_acquire` commits a receipt |
@@ -404,6 +445,8 @@ Six fields are optional so that the client works with Workers on both sides of a
 - `land_order_warnings` in `claim_handoff`. When a Worker omits it, the result has no `land_order_warnings` key. When the Worker sends it, each entry must name another issue whose status is not `closed`, in issue order.
 - `expired_noop` in `claim_release`. `pd claim release` sends `expired_noop: true`. A Worker that knows the field answers `{ "released": false, "current": ... }` for the caller's expired lease, and answers `claim_conflict` when the request omits the field. The client accepts that shape when `current` is the expired lease that the proof names, including a response to a request that omitted the field. A Worker that does not know the field answers `invalid_input`, and only the error message names the field. Nothing is written, so the client sends the release once more with the same request UUID and without the field. An older Worker answers `claim_conflict` for an expired lease. A Worker that answers the no-op for that plain release is decoded as `released: false`.
 
+A Worker that predates `resources_reason` or the resource operations answers `invalid_input`. The client does not retry without `resources_reason`, because that Worker would close without recording the reason. It reports that the Worker needs an update instead.
+
 ## Local repository defaults
 
 Run `pd init --stealth --prefix NAME --tool NAME --project NAME --actor IDENTITY` inside a Git working tree.
@@ -447,7 +490,7 @@ The Worker API does not expose them, and the CLI does not synchronize SQLite wit
 
 Schema 7 adds the change feed and keeps portable snapshot 5. A snapshot carries no change events.
 Schema 8 records who closed an issue and when, and portable snapshot 6 carries `closed_at` and `closed_by` on every issue.
-Schema 9 adds land order, and portable snapshot 7 carries `land_order`, `land_order_revisions`, and `land_order_requests`.
+Schema 9 adds land order, and portable snapshot 7 carries `land_order`, `land_order_revisions`, `land_order_requests`, `issue_resources`, `resource_revisions`, and `resource_requests`.
 Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
@@ -455,7 +498,7 @@ Repository configuration retains its existing version rules.
 Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, or 8 store after making a private backup.
 An upgrade from schema 2 through 6 starts with an empty change feed.
 Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
-An upgrade adds no land-order edges.
+An upgrade adds no land-order edges and no resource entries.
 After the upgrade, an installed CLI that predates schema 9 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
 For a v3, v4, v5, or v6 snapshot, use `--from 3`, `--from 4`, `--from 5`, or `--from 6` instead.

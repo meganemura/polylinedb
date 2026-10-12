@@ -1,7 +1,7 @@
 // Checks the pure transition decisions with literal states; store tests prove that SQL agrees with them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { claimState, decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, decideReplay } from '../src/transition/index.ts';
+import { claimState, decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, decideReplay, decideResourceAddition, decideResourceUpdate, nextResourceMarks, resourceIsLive, resourceState } from '../src/transition/index.ts';
 import type { FieldChange, ObservedClaim, ObservedIssue } from '../src/transition/index.ts';
 
 const store = 'a'.repeat(32);
@@ -12,7 +12,7 @@ const lease = (overrides: Partial<ObservedClaim> = {}): ObservedClaim => ({
 });
 const versions = { tool: 1, project: 1, body: 3, status: 4, type: 1, priority: 1, labels: 1 };
 const issue = (overrides: Partial<ObservedIssue> = {}): ObservedIssue => ({
-  id: 'pd-1', status: 'open', type: 'task', versions, has_active_blockers: false, has_children: false, claim: null, store_incarnation: store, ...overrides,
+  id: 'pd-1', status: 'open', type: 'task', versions, has_active_blockers: false, has_children: false, has_live_resources: false, claim: null, store_incarnation: store, ...overrides,
 });
 const close = { field: 'status', expected: 4, value: 'closed' } as const;
 
@@ -25,27 +25,27 @@ test('claim state follows incarnation, release, and the deadline', () => {
 });
 
 test('an update with matching versions and no guards commits', () => {
-  assert.deepEqual(decideIssueUpdate(issue(), { changes: [{ field: 'body', expected: 3, value: 'new' }], force: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(issue(), { changes: [{ field: 'body', expected: 3, value: 'new' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
 });
 
 test('stale versions report every conflicting field before other rules', () => {
   const decision = decideIssueUpdate(issue({ claim: lease(), has_active_blockers: true }),
-    { changes: [close, { field: 'body', expected: 2, value: 'x' }, { field: 'priority', expected: 1, value: 0 }], force: false }, 'alice', 999);
+    { changes: [close, { field: 'body', expected: 2, value: 'x' }, { field: 'priority', expected: 1, value: 0 }], force: false, resources_acknowledged: false }, 'alice', 999);
   assert.deepEqual(decision, { accepted: false, rejection: { code: 'conflict', fields: [{ field: 'body', expected: 2, actual: 3 }] } });
 });
 
 test('a status write needs a proof once the claim lifecycle starts', () => {
-  assert.deepEqual(decideIssueUpdate(issue(), { changes: [close], force: false }, 'alice', 999), { accepted: true });
-  assert.deepEqual(decideIssueUpdate(issue({ claim: lease({ released_at: 10 }) }), { changes: [close], force: false }, 'alice', 999),
+  assert.deepEqual(decideIssueUpdate(issue(), { changes: [close], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(issue({ claim: lease({ released_at: 10 }) }), { changes: [close], force: false, resources_acknowledged: false }, 'alice', 999),
     { accepted: false, rejection: { code: 'claim_required' } });
-  assert.deepEqual(decideIssueUpdate(issue({ claim: lease() }), { changes: [{ field: 'body', expected: 3, value: 'x' }], force: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(issue({ claim: lease() }), { changes: [{ field: 'body', expected: 3, value: 'x' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
 });
 
 test('a status or type write that leaves a non-epic issue in progress needs a held proof', () => {
   const start = { field: 'status', expected: 4, value: 'in_progress' } as const;
   const required = { accepted: false, rejection: { code: 'claim_required' } };
   const decide = (observed: ObservedIssue, changes: FieldChange[], extra: { force?: boolean; claim_proof?: typeof proof } = {}, now = 999) =>
-    decideIssueUpdate(observed, { changes, force: extra.force ?? false, ...(extra.claim_proof ? { claim_proof: extra.claim_proof } : {}) }, 'alice', now);
+    decideIssueUpdate(observed, { changes, force: extra.force ?? false, resources_acknowledged: false, ...(extra.claim_proof ? { claim_proof: extra.claim_proof } : {}) }, 'alice', now);
   assert.deepEqual(decide(issue(), [start]), required);
   assert.deepEqual(decide(issue({ claim: lease({ released_at: 900 }) }), [start]), required);
   assert.deepEqual(decide(issue({ claim: lease() }), [start], { claim_proof: proof }, 1000), required);
@@ -62,7 +62,7 @@ test('a status or type write that leaves a non-epic issue in progress needs a he
 });
 
 test('a proof must match the actor, session, generation, incarnation, and deadline', () => {
-  const update = { changes: [close], force: false, claim_proof: proof };
+  const update = { changes: [close], force: false, resources_acknowledged: false, claim_proof: proof };
   assert.deepEqual(decideIssueUpdate(issue({ claim: lease() }), update, 'alice', 999), { accepted: true });
   const required = { accepted: false, rejection: { code: 'claim_required' } };
   assert.deepEqual(decideIssueUpdate(issue({ claim: lease() }), update, 'bob', 999), required);
@@ -70,34 +70,78 @@ test('a proof must match the actor, session, generation, incarnation, and deadli
   assert.deepEqual(decideIssueUpdate(issue({ claim: lease({ generation: 3 }) }), update, 'alice', 999), required);
   assert.deepEqual(decideIssueUpdate(issue({ claim: lease(), store_incarnation: 'b'.repeat(32) }), update, 'alice', 999), required);
   assert.deepEqual(decideIssueUpdate(issue({ claim: lease(), id: 'pd-2' }), update, 'alice', 999), required);
-  assert.deepEqual(decideIssueUpdate(issue(), { changes: [{ field: 'body', expected: 3, value: 'x' }], force: false, claim_proof: proof }, 'alice', 999), required);
+  assert.deepEqual(decideIssueUpdate(issue(), { changes: [{ field: 'body', expected: 3, value: 'x' }], force: false, resources_acknowledged: false, claim_proof: proof }, 'alice', 999), required);
 });
 
 test('start and close need resolved blockers unless forced', () => {
   const blocked = issue({ has_active_blockers: true });
-  assert.deepEqual(decideIssueUpdate(blocked, { changes: [close], force: false }, 'alice', 999), { accepted: false, rejection: { code: 'dependency_blocked' } });
-  assert.deepEqual(decideIssueUpdate(issue({ has_active_blockers: true, claim: lease() }), { changes: [{ field: 'status', expected: 4, value: 'in_progress' }], force: false, claim_proof: proof }, 'alice', 999),
+  assert.deepEqual(decideIssueUpdate(blocked, { changes: [close], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: false, rejection: { code: 'dependency_blocked' } });
+  assert.deepEqual(decideIssueUpdate(issue({ has_active_blockers: true, claim: lease() }), { changes: [{ field: 'status', expected: 4, value: 'in_progress' }], force: false, resources_acknowledged: false, claim_proof: proof }, 'alice', 999),
     { accepted: false, rejection: { code: 'dependency_blocked' } });
-  assert.deepEqual(decideIssueUpdate(blocked, { changes: [{ field: 'status', expected: 4, value: 'open' }], force: false }, 'alice', 999), { accepted: true });
-  assert.deepEqual(decideIssueUpdate(blocked, { changes: [close], force: true }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(blocked, { changes: [{ field: 'status', expected: 4, value: 'open' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(blocked, { changes: [close], force: true, resources_acknowledged: false }, 'alice', 999), { accepted: true });
 });
 
 test('only a status change to start or close checks prerequisites', () => {
   const blocked = issue({ has_active_blockers: true });
-  assert.deepEqual(decideIssueUpdate(blocked, { changes: [{ field: 'body', expected: 3, value: 'closed' }], force: false }, 'alice', 999), { accepted: true });
-  assert.deepEqual(decideIssueUpdate(blocked, { changes: [close, { field: 'body', expected: 3, value: 'x' }], force: false }, 'alice', 999),
+  assert.deepEqual(decideIssueUpdate(blocked, { changes: [{ field: 'body', expected: 3, value: 'closed' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(blocked, { changes: [close, { field: 'body', expected: 3, value: 'x' }], force: false, resources_acknowledged: false }, 'alice', 999),
     { accepted: false, rejection: { code: 'dependency_blocked' } });
 });
 
 test('an exhausted version and an epic with children reject the update', () => {
   const full = issue({ versions: { ...versions, priority: Number.MAX_SAFE_INTEGER } });
-  assert.deepEqual(decideIssueUpdate(full, { changes: [{ field: 'priority', expected: Number.MAX_SAFE_INTEGER, value: 0 }], force: false }, 'alice', 999),
+  assert.deepEqual(decideIssueUpdate(full, { changes: [{ field: 'priority', expected: Number.MAX_SAFE_INTEGER, value: 0 }], force: false, resources_acknowledged: false }, 'alice', 999),
     { accepted: false, rejection: { code: 'version_exhausted', field: 'priority' } });
   const parent = issue({ has_children: true });
-  assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'type', expected: 1, value: 'task' }], force: false }, 'alice', 999),
+  assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'type', expected: 1, value: 'task' }], force: false, resources_acknowledged: false }, 'alice', 999),
     { accepted: false, rejection: { code: 'epic_has_children' } });
-  assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'type', expected: 1, value: 'epic' }], force: false }, 'alice', 999), { accepted: true });
-  assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'body', expected: 3, value: 'task' }], force: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'type', expected: 1, value: 'epic' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(parent, { changes: [{ field: 'body', expected: 3, value: 'task' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
+});
+
+test('closing with live external resources needs a resources reason, and force does not stand in for it', () => {
+  const holding = issue({ has_live_resources: true });
+  const remaining = { accepted: false, rejection: { code: 'resources_remaining' } };
+  assert.deepEqual(decideIssueUpdate(holding, { changes: [close], force: false, resources_acknowledged: false }, 'alice', 999), remaining);
+  assert.deepEqual(decideIssueUpdate(holding, { changes: [close], force: true, resources_acknowledged: false }, 'alice', 999), remaining);
+  assert.deepEqual(decideIssueUpdate(holding, { changes: [close], force: false, resources_acknowledged: true }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(holding, { changes: [{ field: 'status', expected: 4, value: 'deferred' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(holding, { changes: [{ field: 'body', expected: 3, value: 'x' }], force: false, resources_acknowledged: false }, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideIssueUpdate(issue({ has_live_resources: true, has_active_blockers: true }), { changes: [close], force: false, resources_acknowledged: false }, 'alice', 999),
+    { accepted: false, rejection: { code: 'dependency_blocked' } });
+  assert.deepEqual(decideIssueUpdate(issue({ has_live_resources: true, versions: { ...versions, status: 5 } }), { changes: [close], force: false, resources_acknowledged: false }, 'alice', 999),
+    { accepted: false, rejection: { code: 'conflict', fields: [{ field: 'status', expected: 4, actual: 5 }] } });
+});
+
+test('resource marks move forward once and a verified deletion settles the entry', () => {
+  const times = { created_at: null, deleted_at: null, verified_deleted_at: null };
+  assert.equal(resourceState(times), 'planned');
+  assert.equal(resourceState({ ...times, created_at: 't1' }), 'created');
+  assert.equal(resourceState({ ...times, created_at: 't1', deleted_at: 't2' }), 'deleted');
+  assert.equal(resourceState({ ...times, verified_deleted_at: 't3' }), 'verified_deleted');
+  assert.deepEqual(['planned', 'created', 'deleted', 'verified_deleted'].map(state => resourceIsLive(state as 'planned')), [true, true, true, false]);
+  assert.deepEqual(nextResourceMarks('planned'), ['created', 'verified_deleted']);
+  assert.deepEqual(nextResourceMarks('created'), ['deleted']);
+  assert.deepEqual(nextResourceMarks('deleted'), ['verified_deleted']);
+  assert.deepEqual(nextResourceMarks('verified_deleted'), []);
+
+  assert.deepEqual(decideResourceAddition(null, 1), { accepted: false, reason: 'issue_not_found' });
+  assert.deepEqual(decideResourceAddition(2, 1), { accepted: false, reason: 'revision_conflict' });
+  assert.deepEqual(decideResourceAddition(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER), { accepted: false, reason: 'revision_exhausted' });
+  assert.deepEqual(decideResourceAddition(1, 1), { accepted: true });
+
+  const planned = { state: 'planned', external_id: null } as const;
+  assert.deepEqual(decideResourceUpdate(1, planned, { mark: 'created', external_id: 'db-1' }, 1), { accepted: true });
+  assert.deepEqual(decideResourceUpdate(1, planned, { mark: 'verified_deleted' }, 1), { accepted: true });
+  assert.deepEqual(decideResourceUpdate(1, planned, { mark: 'deleted' }, 1), { accepted: false, reason: 'mark_not_forward' });
+  assert.deepEqual(decideResourceUpdate(1, null, { mark: 'created' }, 1), { accepted: false, reason: 'entry_not_found' });
+  assert.deepEqual(decideResourceUpdate(3, planned, { mark: 'created' }, 2), { accepted: false, reason: 'revision_conflict' });
+  assert.deepEqual(decideResourceUpdate(1, { state: 'created', external_id: 'db-1' }, { mark: 'created' }, 1), { accepted: false, reason: 'mark_not_forward' });
+  assert.deepEqual(decideResourceUpdate(1, { state: 'created', external_id: 'db-1' }, { external_id: 'db-2' }, 1), { accepted: false, reason: 'external_id_set' });
+  assert.deepEqual(decideResourceUpdate(1, { state: 'created', external_id: 'db-1' }, { external_id: 'db-1', mark: 'deleted' }, 1), { accepted: true });
+  assert.deepEqual(decideResourceUpdate(1, { state: 'deleted', external_id: null }, { mark: 'verified_deleted' }, 1), { accepted: true });
+  assert.deepEqual(decideResourceUpdate(1, { state: 'verified_deleted', external_id: null }, { external_id: 'db-1' }, 1), { accepted: false, reason: 'entry_settled' });
 });
 
 test('claim acquisition needs the current incarnation and no active lease', () => {

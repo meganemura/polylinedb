@@ -13,6 +13,7 @@ import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from
 import { issueClaimGuard } from './claims-sql.ts';
 import { recordingChanges } from './changes-sql.ts';
 import { activeBlockerExists } from './active-blocker.ts';
+import { liveResourceSummary, shownLiveResources } from './resources-sql.ts';
 import type { ClaimProof } from './claims-sql.ts';
 
 export type Status = typeof statuses[number];
@@ -25,7 +26,7 @@ export type Values = {
 export type Change = { [K in Field]: { field: K; value: Values[K]; expected: number } }[Field];
 type Filters = { tool?: string; project?: string; status?: Status; type?: IssueType;
   priority?: number; label?: string; after?: string; limit: number };
-type StatusOverride = { force?: never; reason?: never } | { force: true; reason: string };
+type StatusOverride = ({ force?: never; reason?: never } | { force: true; reason: string }) & { resources_reason?: string };
 export type Operation =
   | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
   | { op: 'show'; id: string; with_land_order?: true }
@@ -94,6 +95,7 @@ function labels(value: unknown): string[] {
 const nameSchema = { type: 'string', minLength: 1, maxLength: 256, description: 'At most 256 UTF-8 bytes, without control characters.' };
 const bodySchema = { type: 'string', minLength: 1, maxLength: 65536, description: 'At most 65536 UTF-8 bytes.' };
 const reasonSchema = { ...bodySchema, description: 'Accepted only with force: true. At most 65536 UTF-8 bytes.' };
+const resourcesReasonSchema = { ...bodySchema, description: 'Close although external resources on the issue are not verified deleted. Stored as a comment. force does not replace it. At most 65536 UTF-8 bytes.' };
 const versionSchema = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const fieldRegistry = {
@@ -119,8 +121,8 @@ export const operationSchemas = {
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
     oneOf: fields.map((field) => objectSchema({ field: { const: field }, value: fieldRegistry[field].schema, expected: versionSchema }, ['field', 'value', 'expected']))
-  } }, force: { const: true }, reason: reasonSchema, claim_proof: claimProofSchema }, ['id', 'changes']),
-  close: objectSchema({ id: idSchema, expected: versionSchema, force: { const: true }, reason: reasonSchema, claim_proof: claimProofSchema }, ['id', 'expected']),
+  } }, force: { const: true }, reason: reasonSchema, resources_reason: resourcesReasonSchema, claim_proof: claimProofSchema }, ['id', 'changes']),
+  close: objectSchema({ id: idSchema, expected: versionSchema, force: { const: true }, reason: reasonSchema, resources_reason: resourcesReasonSchema, claim_proof: claimProofSchema }, ['id', 'expected']),
   reopen: objectSchema({ id: idSchema, expected: versionSchema, claim_proof: claimProofSchema }, ['id', 'expected']),
   actor: objectSchema({}),
 };
@@ -156,10 +158,11 @@ function parseFilters(input: Record<string, unknown>): Filters {
   };
 }
 function parseOverride(input: Record<string, unknown>): StatusOverride {
-  if (input.force === undefined && input.reason === undefined) return {};
+  const resources = input.resources_reason === undefined ? {} : { resources_reason: text(input.resources_reason, 'resources_reason') };
+  if (input.force === undefined && input.reason === undefined) return resources;
   if (input.force === undefined) return invalid('reason is accepted only with force: true');
   if (input.force !== true || input.reason === undefined) return invalid('force requires true and a nonempty reason');
-  return { force: true, reason: text(input.reason, 'reason') };
+  return { force: true, reason: text(input.reason, 'reason'), ...resources };
 }
 function withLandOrder(input: Record<string, unknown>): { with_land_order?: true } {
   if (input.with_land_order === undefined) return {};
@@ -206,6 +209,7 @@ export function parseOperation(value: unknown): Operation {
       if (new Set(changes.map((change) => change.field)).size !== changes.length) invalid('changes must not repeat a field');
       const override = parseOverride(input);
       if (override.force && !changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'))) return invalid('force applies only to start or close');
+      if (override.resources_reason !== undefined && !changes.some(change => change.field === 'status' && change.value === 'closed')) return invalid('resources_reason applies only to close');
       return { op, id: id(input.id), changes: [first, ...rest], ...override, ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
     }
   }
@@ -246,8 +250,13 @@ function notFound(issueId: string): never {
 }
 const observation = (issueId: string): SqlStatement => ({ sql: `SELECT issues.*,
   ${activeBlockerExists('issues.id')} AS has_active_blockers,
-  EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children
+  EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children,
+  ${liveResourceExists('issues.id')} AS has_live_resources
   FROM issues WHERE id = ?`, params: [issueId] });
+// An epic answers only for its own entries; a child keeps its own close guard.
+const liveResourceExists = (issue: string) => `EXISTS(SELECT 1 FROM issue_resources WHERE issue_resources.issue_id = ${issue} AND issue_resources.verified_deleted_at IS NULL)`;
+const liveResourceNames = (issueId: string): SqlStatement => ({ sql: `SELECT kind, name, (SELECT COUNT(*) FROM issue_resources WHERE issue_id = ? AND verified_deleted_at IS NULL) AS total
+  FROM issue_resources WHERE issue_id = ? AND verified_deleted_at IS NULL ORDER BY seq LIMIT ${shownLiveResources}`, params: [issueId, issueId] });
 
 // SET reads the row before the write, so status still holds the previous status and a closed issue keeps its first closure.
 function closureAssignments(next: Status | undefined, at: string, by: string): { assignments: string[]; params: string[] } {
@@ -269,6 +278,8 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   conditions.push(ownership.sql); guards.push(...ownership.params);
   const guardedStatus = statusChange?.value === 'in_progress' || statusChange?.value === 'closed';
   if (guardedStatus && !override.force) conditions.push(`NOT ${activeBlockerExists('issues.id')}`);
+  const closing = statusChange?.value === 'closed';
+  if (closing && override.resources_reason === undefined) conditions.push(`NOT ${liveResourceExists('issues.id')}`);
   for (const change of changes) {
     assignments.push(`${fieldRegistry[change.field].column} = ?`, `${change.field}_v = ${change.field}_v + 1`);
     params.push(change.field === 'labels' ? JSON.stringify(change.value) : change.value);
@@ -280,20 +291,22 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   const closure = closureAssignments(statusChange?.value, now, actor);
   assignments.push('updated_by = ?', 'updated_at = ?', ...closure.assignments);
   params.push(actor, now, ...closure.params, ...guards);
+  // Each reason comment lands only when the update changed the row; the earlier comment insert also leaves changes() at 1.
+  const reasons = [override.force ? override.reason : undefined, override.resources_reason].filter((reason): reason is string => reason !== undefined);
   const result = await recordingChanges(db, actor).batch([{ sql: `UPDATE issues SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')} RETURNING *`, params },
-    ...(override.force ? [{ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, override.reason, new Date().toISOString(), actor] }] : []), observation(issueId),
-    heldClaimObservation(issueId)]);
+    ...reasons.map(reason => ({ sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) SELECT ?,?,?,?,? WHERE changes() = 1', params: [crypto.randomUUID(), issueId, reason, new Date().toISOString(), actor] })),
+    observation(issueId), heldClaimObservation(issueId), ...(closing ? [liveResourceNames(issueId)] : [])]);
   const changed = rowsAt(result, 0)[0];
   if (changed) return { issue: issueRow(changed) };
-  const observed = rowsAt(result, override.force ? 2 : 1)[0];
+  const observed = rowsAt(result, 1 + reasons.length)[0];
   if (!observed) return notFound(issueId);
   const issue = issueRow(observed);
-  const ownershipRow = rowsAt(result, override.force ? 3 : 2)[0];
+  const ownershipRow = rowsAt(result, 2 + reasons.length)[0];
   if (!ownershipRow || typeof ownershipRow.store_incarnation !== 'string' || typeof ownershipRow.observed_at !== 'number') throw new PolylinedbError('storage_error', 'Database omitted the claim observation', 503);
   rejectAgentWrite(caller, 'issue_write', issueId, issue.labels, ownershipRow);
-  const decision = decideIssueUpdate({ id: issueId, status: issue.status, type: issue.type, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1,
+  const decision = decideIssueUpdate({ id: issueId, status: issue.status, type: issue.type, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1, has_live_resources: observed.has_live_resources === 1,
     claim: ownershipRow.generation === null ? null : claimRow(ownershipRow), store_incarnation: ownershipRow.store_incarnation },
-    { changes, force: override.force === true, ...(proof === undefined ? {} : { claim_proof: proof }) }, actor, ownershipRow.observed_at);
+    { changes, force: override.force === true, resources_acknowledged: override.resources_reason !== undefined, ...(proof === undefined ? {} : { claim_proof: proof }) }, actor, ownershipRow.observed_at);
   if (decision.accepted) throw new PolylinedbError('storage_error', 'The database rejected an update without a matching condition', 503);
   const rejection = decision.rejection;
   switch (rejection.code) {
@@ -307,6 +320,12 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
       throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue, claim });
     }
     case 'dependency_blocked': throw new PolylinedbError('dependency_blocked', 'The issue has active prerequisites', 409, { issue });
+    case 'resources_remaining': {
+      // No details: released clients decode an error code they do not know only when it carries none.
+      const live = rowsAt(result, 3 + reasons.length);
+      const names = live.map(row => `${String(row.kind)}:${String(row.name)}`);
+      throw new PolylinedbError('resources_remaining', `The issue still has external resources that are not verified deleted: ${liveResourceSummary(names, Number(live[0]?.total ?? names.length))}. Mark each one verified_deleted with resource_update, or close with resources_reason.`, 409);
+    }
     case 'version_exhausted': throw new PolylinedbError('version_exhausted', 'The field version cannot increase', 409, { field: rejection.field, issue });
     case 'epic_has_children': throw new PolylinedbError('epic_has_children', 'An epic with children must remain an epic', 409, { issue });
     default: { const unreachable: never = rejection; return unreachable; }

@@ -3,6 +3,7 @@ export type { SqlExecutor, SqlStatement } from './issues.ts';
 export { issueRow, commentRow } from './issues.ts';
 export { memoryRow, memorySortKey } from './memories.ts';
 export { claimRow, claimRequestRow } from './claims.ts';
+export { resourceRow } from './resources.ts';
 export type { MemoryCounter, MemoryRequest } from './memories.ts';
 export { issueSortKey } from './issue-id.ts';
 export { statuses } from './schema.ts';

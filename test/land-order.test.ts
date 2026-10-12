@@ -104,13 +104,13 @@ test('a land-order snapshot round-trips, a snapshot 6 converts with empty land o
   const restored = localStore(t); const target = openStore(restored.location);
   try {
     assert.deepEqual(target.importSnapshot(snapshot), { result: 'imported', issues: 2, comments: 0, memories: 0, dependencies: 0, dependency_revisions: 2, dependency_requests: 0, issue_claims: 0, claim_requests: 0,
-      land_order: 1, land_order_requests: 1, sha256: target.importSnapshot(snapshot).sha256 });
+      land_order: 1, land_order_requests: 1, issue_resources: 0, resource_requests: 0, sha256: target.importSnapshot(snapshot).sha256 });
     assert.equal(canonicalSnapshot(target.exportSnapshot()), canonicalSnapshot(snapshot));
     assert.deepEqual(await executeOperation(target.db, parseOperation({ op: 'land_order_list', issue_id: 'pd-2' }), 'test:owner'),
       { issue_id: 'pd-2', revision: 1, after: [], before: [{ id: 'pd-1', project: 'snapshot', status: 'open' }] });
   } finally { target.close(); }
 
-  const { land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, ...rest } = snapshot;
+  const { land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, ...rest } = snapshot;
   const converted = convertSnapshotV6({ ...rest, version: 6 });
   assert.deepEqual([converted.version, converted.land_order, converted.land_order_revisions, converted.land_order_requests], [7, [], [], []]);
   assert.throws(() => parseSnapshot({ ...rest, version: 6 }), { code: 'invalid_snapshot' });

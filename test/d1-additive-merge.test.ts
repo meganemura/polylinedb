@@ -57,6 +57,8 @@ async function makeSource(directory: string, prefix = 'src', includeLiveMemory =
     await addIssue(fixture.store, { prefix, parent: epic.id, body: `${prefix} child` }, `${prefix}-child-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'dependency_add', dependent_id: `${epic.id}.1`, blocker_id: epic.id, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'land_order_add', later_id: `${epic.id}.1`, earlier_id: epic.id, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'resource_add', issue_id: `${epic.id}.1`, kind: 'worker', name: `${prefix}-api`, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'resource_update', issue_id: `${epic.id}.1`, seq: 1, external_id: `${prefix}-api-1`, mark: 'created', expected_revision: 2, request_id: randomUUID() }), `${prefix}-author`);
     await addComment(fixture.store, epic.id, `${prefix} comment`, `${prefix}-commenter`);
     const claim = await executeOperation(fixture.store.db, parseOperation({ op: 'claim_show', issue_id: epic.id }), `${prefix}-author`);
     assert.ok('claim' in claim);
@@ -289,7 +291,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
     for (const table of tables) {
       const key = table === 'issues' || table === 'comments' || table === 'memories' ? 'id'
         : table === 'counters' ? 'scope'
-          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : table === 'land_order' || table === 'land_order_revisions' ? 'later_id' : table === 'issue_claims' ? 'issue_id' : table === 'memory_store_identity' ? 'singleton' : table === 'project_memory_revisions' ? 'project' : 'request_id';
+          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : table === 'land_order' || table === 'land_order_revisions' ? 'later_id' : table === 'issue_claims' || table === 'issue_resources' || table === 'resource_revisions' ? 'issue_id' : table === 'memory_store_identity' ? 'singleton' : table === 'project_memory_revisions' ? 'project' : 'request_id';
       const quotedTable = `"${table}"`;
       const quotedKey = `"${key}"`;
       assert.throws(() => database.prepare(`INSERT INTO ${quotedTable} SELECT * FROM ${quotedTable} LIMIT 1`).all(), /Use cloud connection archive/, `${table} insert`);

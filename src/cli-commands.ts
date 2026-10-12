@@ -34,6 +34,8 @@ const globals = ['connection', 'data-dir', 'actor', 'actor-kind', 'prefix'];
 const commandFlags: Record<string, readonly string[]> = {
   auth: [],
   upgrade: [], snapshot_convert: ['file', 'output', 'from'],
+  resource_list: [], resource_live: ['tool', 'project', 'after', 'limit'], resource_add: ['kind', 'name', 'expected-revision', 'request-id'],
+  resource_update: ['seq', 'expected-revision', 'external-id', 'mark', 'evidence', 'claim-proof', 'request-id'],
   land_order_list: [], land_order_add: ['later', 'earlier', 'expected-revision', 'request-id'], land_order_remove: ['later', 'earlier', 'expected-revision', 'request-id'],
   dependency_list: ['after', 'limit'], dependency_add: ['dependent', 'blocker', 'expected-revision', 'request-id'], dependency_remove: ['dependent', 'blocker', 'expected-revision', 'request-id'],
   claim_show: [], claim_list: ['tool', 'project', 'after', 'limit'],
@@ -54,8 +56,8 @@ const commandFlags: Record<string, readonly string[]> = {
   init: ['stealth', 'tool', 'project'], context: [], export: ['file', 'historical'], import: ['file'], actor: [], show: ['with-land-order'],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
   comment: ['body', 'body-file'],
-  update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'claim-proof'],
-  close: ['expected', 'force', 'reason', 'claim-proof'], reopen: ['expected', 'claim-proof'],
+  update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'resources-reason', 'claim-proof'],
+  close: ['expected', 'force', 'reason', 'resources-reason', 'claim-proof'], reopen: ['expected', 'claim-proof'],
   list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit', 'claimed', 'with-land-order'],
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
@@ -86,6 +88,17 @@ async function executeWithPrefixOrigin<T>(origins: ReadonlyMap<string, PrefixOri
     const details = plainRecord(error.details);
     if (details === undefined) throw error;
     throw new PolylinedbError(error.code, error.message, error.status, { ...details, ...origin });
+  }
+}
+// The refusal carries no details so that released clients still decode it; the CLI reads the entries itself and reports them beside it.
+async function withRemainingResources(operation: Operation, execute: (operation: Operation) => Promise<OperationResult>): Promise<OperationResult> {
+  try { return await execute(operation); }
+  catch (error: unknown) {
+    if (!(error instanceof PolylinedbError) || error.code !== 'resources_remaining' || (operation.op !== 'close' && operation.op !== 'update')) throw error;
+    let listed: OperationResult;
+    try { listed = await execute({ op: 'resource_list', issue_id: operation.id }); } catch { throw error; }
+    if (!('resources' in listed)) throw error;
+    throw new PolylinedbError(error.code, error.message, error.status, { resources: listed.resources.filter(resource => resource.state !== 'verified_deleted') });
   }
 }
 function invalid(message: string): never { throw new PolylinedbError('invalid_input', message, 400); }
@@ -161,7 +174,7 @@ async function main(argv: readonly string[]): Promise<void> {
     flags.set(name, [...previous, value]);
   }
   const [first, ...rest] = positionals;
-  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency' || first === 'claim' || first === 'land-order';
+  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency' || first === 'claim' || first === 'land-order' || first === 'resource';
   const command = nested ? `${first === 'land-order' ? 'land_order' : first}_${rest[0] ?? ''}` : first;
   const operands = nested ? rest.slice(1) : rest;
   if (!command || !Object.hasOwn(commandFlags, command)) invalid('Unknown command');
@@ -170,7 +183,7 @@ async function main(argv: readonly string[]): Promise<void> {
   for (const name of flags.keys()) {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
-  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list', 'land_order_list', 'claim_show', 'claim_acquire'].includes(command);
+  const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list', 'land_order_list', 'resource_list', 'resource_add', 'resource_update', 'claim_show', 'claim_acquire'].includes(command);
   if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
@@ -382,7 +395,7 @@ async function main(argv: readonly string[]): Promise<void> {
   };
   if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
   if (command === 'search') raw.with_matches = true;
-  if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : command === 'claim_show' || command === 'claim_acquire' || command === 'land_order_list' ? 'issue_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
+  if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : command === 'claim_show' || command === 'claim_acquire' || command === 'land_order_list' || command.startsWith('resource_') ? 'issue_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   const proof = one('claim-proof');
   if (proof !== undefined) {
     if (new TextEncoder().encode(proof).length > 1024) invalid('Claim proof exceeds 1024 UTF-8 bytes');
@@ -460,6 +473,20 @@ async function main(argv: readonly string[]): Promise<void> {
     raw.later_id = expandedId(later); raw.earlier_id = expandedId(earlier); raw.expected_revision = integer(expected);
     raw.request_id = one('request-id') ?? randomUUID();
   }
+  if (command === 'resource_add') {
+    const kind = one('kind'); const name = one('name'); const expected = one('expected-revision');
+    if (kind === undefined || name === undefined || expected === undefined) invalid('Resource addition requires --kind, --name and --expected-revision');
+    raw.kind = kind; raw.name = name; raw.expected_revision = integer(expected);
+    raw.request_id = one('request-id') ?? randomUUID();
+  }
+  if (command === 'resource_update') {
+    const seq = one('seq'); const expected = one('expected-revision');
+    if (seq === undefined || expected === undefined) invalid('Resource update requires --seq and --expected-revision');
+    raw.seq = integer(seq); raw.expected_revision = integer(expected);
+    for (const [flag, key] of [['external-id', 'external_id'], ['mark', 'mark'], ['evidence', 'evidence']] as const) if (one(flag) !== undefined) raw[key] = one(flag);
+    raw.request_id = one('request-id') ?? randomUUID();
+  }
+  if (one('resources-reason') !== undefined) raw.resources_reason = one('resources-reason');
   if (flags.has('with-land-order')) raw.with_land_order = true;
   if (flags.has('force')) raw.force = true;
   if (one('reason') !== undefined) raw.reason = one('reason');
@@ -515,14 +542,15 @@ async function main(argv: readonly string[]): Promise<void> {
   const operation = parseOperation(raw);
   if (selected.kind === 'cloud') {
     const cloud = await loadCloudClient();
+    const client = cloud.createCloudClient(selected);
     writeOperationResult(operation,
-      await executeWithPrefixOrigin(shorthandOrigins, () => cloud.createCloudClient(selected).execute(operation)), human);
+      await executeWithPrefixOrigin(shorthandOrigins, () => withRemainingResources(operation, next => client.execute(next))), human);
     return;
   }
   if (actor === undefined) invalid('Local connection requires an actor');
   const store = openStore({ directory: selected.directory });
   try { writeOperationResult(operation,
-    await executeWithPrefixOrigin(shorthandOrigins, () => executeOperation(store.db, operation, { id: actor, kind: actorKind }, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') })), human); }
+    await executeWithPrefixOrigin(shorthandOrigins, () => withRemainingResources(operation, next => executeOperation(store.db, next, { id: actor, kind: actorKind }, { kind: 'local', database_path: join(selected.directory, 'polylinedb.sqlite') }))), human); }
   finally { store.close(); }
 }
 export async function runCli(argv: readonly string[]): Promise<void> {

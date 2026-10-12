@@ -79,7 +79,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   if (rows.length !== 1 || rows[0]?.version !== SCHEMA_VERSION) {
     throw new PolylinedbError('unsupported_schema', 'Database schema version is unsupported', 409, { supported: SCHEMA_VERSION, actual: rows.map((row) => row.version) });
   }
-  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'change_events', 'change_writer', 'land_order', 'land_order_revisions', 'land_order_requests'].some(name => !tables.some(table => table.name === name))) {
+  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'change_events', 'change_writer', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests'].some(name => !tables.some(table => table.name === name))) {
     throw new PolylinedbError('invalid_store', 'Database schema is incomplete', 500);
   }
   return 'current';
@@ -100,7 +100,7 @@ function connect(path: string): DatabaseSync {
 
 const retiredTables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests',
   'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests',
-  'land_order', 'land_order_revisions', 'land_order_requests'] as const;
+  'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests'] as const;
 const retiredOperations = ['INSERT', 'UPDATE', 'DELETE'] as const;
 function retiredConnection(database: DatabaseSync, error: unknown): string | undefined {
   if (!database.isTransaction || !(error instanceof Error) || !('code' in error) || error.code !== 'ERR_SQLITE_ERROR' ||
@@ -252,6 +252,9 @@ function openApproved(location: StoreLocation): LocalStore {
     land_order: database.prepare('SELECT later_id,earlier_id FROM land_order').all(),
     land_order_revisions: database.prepare('SELECT later_id,revision FROM land_order_revisions').all(),
     land_order_requests: database.prepare('SELECT * FROM land_order_requests').all(),
+    issue_resources: database.prepare('SELECT * FROM issue_resources').all(),
+    resource_revisions: database.prepare('SELECT issue_id,revision FROM resource_revisions').all(),
+    resource_requests: database.prepare('SELECT * FROM resource_requests').all(),
   });
   return {
     db,
@@ -269,7 +272,8 @@ function openApproved(location: StoreLocation): LocalStore {
       const snapshot = parseSnapshot(input);
       const canonical = canonicalSnapshot(snapshot);
       const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, memories: snapshot.memories.length, dependencies: snapshot.dependencies.length, dependency_revisions: snapshot.dependency_revisions.length, dependency_requests: snapshot.dependency_requests.length, issue_claims: snapshot.issue_claims.length, claim_requests: snapshot.claim_requests.length,
-        land_order: snapshot.land_order.length, land_order_requests: snapshot.land_order_requests.length, sha256: createHash('sha256').update(canonical).digest('hex') };
+        land_order: snapshot.land_order.length, land_order_requests: snapshot.land_order_requests.length,
+        issue_resources: snapshot.issue_resources.length, resource_requests: snapshot.resource_requests.length, sha256: createHash('sha256').update(canonical).digest('hex') };
       database.exec('BEGIN IMMEDIATE');
       try {
         const existing = readSnapshot();
@@ -277,7 +281,7 @@ function openApproved(location: StoreLocation): LocalStore {
           database.exec('COMMIT');
           return { result: 'already_present', ...summary };
         }
-        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length || existing.dependencies.length || existing.dependency_revisions.length || existing.dependency_requests.length || existing.issue_claims.length || existing.claim_requests.length || existing.land_order.length || existing.land_order_revisions.length || existing.land_order_requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
+        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length || existing.dependencies.length || existing.dependency_revisions.length || existing.dependency_requests.length || existing.issue_claims.length || existing.claim_requests.length || existing.land_order.length || existing.land_order_revisions.length || existing.land_order_requests.length || existing.issue_resources.length || existing.resource_revisions.length || existing.resource_requests.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
         database.exec(ROTATE_MEMORY_IDENTITY_SQL);
         const columns = ['id', 'parent_id', 'sort_key', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by', 'closed_at', 'closed_by'];
         const insertIssue = database.prepare(`INSERT INTO issues (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
@@ -304,7 +308,7 @@ function openApproved(location: StoreLocation): LocalStore {
         for (const row of snapshot.dependency_revisions) updateRevision.run(row.revision, row.dependent_id);
         const insertDependencyRequest = database.prepare('INSERT INTO dependency_requests(request_id,actor,payload,dependent_id,blocker_id,result_revision,outcome,created_at) VALUES (?,?,?,?,?,?,?,?)');
         for (const row of snapshot.dependency_requests) insertDependencyRequest.run(row.request_id, row.actor, row.payload, row.dependent_id, row.blocker_id, row.result_revision, row.outcome, row.created_at);
-        for (const table of ['issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests'] as const) for (const row of snapshot[table]) {
+        for (const table of ['issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests'] as const) for (const row of snapshot[table]) {
           const columns = Object.keys(row); const values = Object.values(row);
           database.prepare(`INSERT INTO ${table}(${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...values);
         }

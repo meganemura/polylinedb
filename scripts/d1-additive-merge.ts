@@ -8,7 +8,7 @@ import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
 import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence.ts';
 import type { Snapshot } from '../src/records/persistence.ts';
 
-export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'memory_store_identity', 'project_memory_revisions'] as const;
+export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'memory_store_identity', 'project_memory_revisions'] as const;
 export type Table = typeof tables[number];
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;
@@ -23,9 +23,17 @@ const primaryKey: Record<Table, string> = {
   dependencies: 'dependent_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id',
   issue_claims: 'issue_id', claim_requests: 'request_id', memory_store_identity: 'singleton', project_memory_revisions: 'project',
   land_order: 'later_id', land_order_revisions: 'later_id', land_order_requests: 'request_id',
+  issue_resources: 'issue_id', resource_revisions: 'issue_id', resource_requests: 'request_id',
 };
 // An edge table has no single-column key, so its rows are keyed and ordered by both endpoints.
 const edgeColumns: Partial<Record<Table, readonly [string, string]>> = { dependencies: ['dependent_id', 'blocker_id'], land_order: ['later_id', 'earlier_id'] };
+// A resource entry is keyed by its issue and a number, so it is ordered by the issue, then the number.
+const entryTable = 'issue_resources';
+function entryKey(row: Row): [string, number] {
+  const seq = row.seq;
+  if (typeof seq !== 'number' || !Number.isSafeInteger(seq)) return fail('Resource entry seq must be an integer');
+  return [textField(row, 'issue_id'), seq];
+}
 const maximumJsonBytes = 400_000;
 const maximumSqlBytes = 100_000;
 const maximumParameters = 100;
@@ -56,6 +64,7 @@ function canonicalColumns(): Record<Table, string[]> {
       dependencies: columnsFor(database, 'dependencies'), dependency_revisions: columnsFor(database, 'dependency_revisions'), dependency_requests: columnsFor(database, 'dependency_requests'),
       issue_claims: columnsFor(database, 'issue_claims'), claim_requests: columnsFor(database, 'claim_requests'),
       land_order: columnsFor(database, 'land_order'), land_order_revisions: columnsFor(database, 'land_order_revisions'), land_order_requests: columnsFor(database, 'land_order_requests'),
+      issue_resources: columnsFor(database, 'issue_resources'), resource_revisions: columnsFor(database, 'resource_revisions'), resource_requests: columnsFor(database, 'resource_requests'),
       memory_store_identity: columnsFor(database, 'memory_store_identity'), project_memory_revisions: columnsFor(database, 'project_memory_revisions'),
     };
   } finally { database.close(); }
@@ -107,6 +116,7 @@ function parseRows(value: unknown): Rows {
     dependencies: parseCollection(input.dependencies, 'dependencies'), dependency_revisions: parseCollection(input.dependency_revisions, 'dependency_revisions'), dependency_requests: parseCollection(input.dependency_requests, 'dependency_requests'),
     issue_claims: parseCollection(input.issue_claims, 'issue_claims'), claim_requests: parseCollection(input.claim_requests, 'claim_requests'),
     land_order: parseCollection(input.land_order, 'land_order'), land_order_revisions: parseCollection(input.land_order_revisions, 'land_order_revisions'), land_order_requests: parseCollection(input.land_order_requests, 'land_order_requests'),
+    issue_resources: parseCollection(input.issue_resources, 'issue_resources'), resource_revisions: parseCollection(input.resource_revisions, 'resource_revisions'), resource_requests: parseCollection(input.resource_requests, 'resource_requests'),
     memory_store_identity: parseCollection(input.memory_store_identity, 'memory_store_identity'), project_memory_revisions: parseCollection(input.project_memory_revisions, 'project_memory_revisions'),
   };
 }
@@ -155,12 +165,14 @@ function rowsFromSnapshot(snapshot: Snapshot, metadata: Pick<Rows, 'memory_store
     memory_requests: snapshot.memory_requests.map(row => ({ ...row })),
     dependencies: snapshot.dependencies.map(row => ({ ...row })), dependency_revisions: snapshot.dependency_revisions.map(row => ({ ...row })), dependency_requests: snapshot.dependency_requests.map(row => ({ ...row })),
     issue_claims: snapshot.issue_claims.map(row => ({ ...row })), claim_requests: snapshot.claim_requests.map(row => ({ ...row })),
-    land_order: snapshot.land_order.map(row => ({ ...row })), land_order_revisions: snapshot.land_order_revisions.map(row => ({ ...row })), land_order_requests: snapshot.land_order_requests.map(row => ({ ...row })), ...metadata,
+    land_order: snapshot.land_order.map(row => ({ ...row })), land_order_revisions: snapshot.land_order_revisions.map(row => ({ ...row })), land_order_requests: snapshot.land_order_requests.map(row => ({ ...row })),
+    issue_resources: snapshot.issue_resources.map(row => ({ ...row })), resource_revisions: snapshot.resource_revisions.map(row => ({ ...row })), resource_requests: snapshot.resource_requests.map(row => ({ ...row })), ...metadata,
   };
 }
 
 function rowKey(row: Row, table: Table): string {
   if (table === 'memory_store_identity') { if (row.singleton !== 1) return fail('Invalid store identity singleton'); return '1'; }
+  if (table === entryTable) return JSON.stringify(entryKey(row));
   const edge = edgeColumns[table];
   if (edge) return JSON.stringify([textField(row, edge[0]), textField(row, edge[1])]);
   const value = row[primaryKey[table]];
@@ -209,6 +221,7 @@ function snapshotFromRows(rows: Rows): Snapshot {
     dependencies: rows.dependencies, dependency_revisions: rows.dependency_revisions, dependency_requests: rows.dependency_requests,
     issue_claims: rows.issue_claims, claim_requests: rows.claim_requests,
     land_order: rows.land_order, land_order_revisions: rows.land_order_revisions, land_order_requests: rows.land_order_requests,
+    issue_resources: rows.issue_resources, resource_revisions: rows.resource_revisions, resource_requests: rows.resource_requests,
   });
   assertCanonicalRows(rows, rowsFromSnapshot(snapshot, { memory_store_identity: rows.memory_store_identity, project_memory_revisions: rows.project_memory_revisions }));
   return snapshot;
@@ -240,6 +253,10 @@ function assertDisjoint(source: Rows, destination: Rows): void {
 function compareBinaryText(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
 
 function orderedRows(rows: readonly Row[], table: Table): Row[] {
+  if (table === entryTable) return [...rows].sort((left, right) => {
+    const [leftIssue, leftSeq] = entryKey(left); const [rightIssue, rightSeq] = entryKey(right);
+    return compareBinaryText(issueSortKey(leftIssue), issueSortKey(rightIssue)) || leftSeq - rightSeq;
+  });
   const edge = edgeColumns[table];
   if (edge) return [...rows].sort((left, right) => compareBinaryText(issueSortKey(textField(left, edge[0])), issueSortKey(textField(right, edge[0]))) || compareBinaryText(issueSortKey(textField(left, edge[1])), issueSortKey(textField(right, edge[1]))));
   return [...rows].sort((left, right) => compareBinaryText(rowKey(left, table), rowKey(right, table)));
@@ -293,10 +310,17 @@ function destinationGuard(table: Table, chunk: { rows: Row[]; json: string }, lo
   const fieldList = columns[table].map(quoteIdentifier).join(', ');
   const jsonFields = columns[table].map(column => `json_extract(entry.value, '$.${column}') AS ${quoteIdentifier(column)}`).join(', ');
   const edge = edgeColumns[table];
-  const key = edge ? `((SELECT sort_key FROM issues WHERE id = ${edge[0]}),(SELECT sort_key FROM issues WHERE id = ${edge[1]}))` : quoteIdentifier(primaryKey[table]);
-  const placeholder = edge ? '(?,?)' : '?';
+  const entry = table === entryTable;
+  const key = edge ? `((SELECT sort_key FROM issues WHERE id = ${edge[0]}),(SELECT sort_key FROM issues WHERE id = ${edge[1]}))`
+    : entry ? '((SELECT sort_key FROM issues WHERE id = issue_id),seq)' : quoteIdentifier(primaryKey[table]);
+  const placeholder = edge || entry ? '(?,?)' : '?';
   const conditions = [lower === undefined ? '' : ` AND ${key} > ${placeholder}`, upper === undefined ? '' : ` AND ${key} <= ${placeholder}`].join('');
-  const predicates = [lower, upper].filter((value): value is string => value !== undefined).flatMap(value => {
+  const predicates = [lower, upper].filter((value): value is string => value !== undefined).flatMap((value): SqlValue[] => {
+    if (entry) {
+      const tuple: unknown = JSON.parse(value);
+      if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[0] !== 'string' || typeof tuple[1] !== 'number') return fail('Invalid captured resource entry key');
+      return [issueSortKey(tuple[0]), tuple[1]];
+    }
     if (!edge) return [value];
     const tuple: unknown = JSON.parse(value);
     if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[0] !== 'string' || typeof tuple[1] !== 'string') return fail('Invalid captured edge tuple');
@@ -361,6 +385,7 @@ function counts(rows: Rows): Record<Table, number> {
     dependencies: rows.dependencies.length, dependency_revisions: rows.dependency_revisions.length, dependency_requests: rows.dependency_requests.length,
     issue_claims: rows.issue_claims.length, claim_requests: rows.claim_requests.length,
     land_order: rows.land_order.length, land_order_revisions: rows.land_order_revisions.length, land_order_requests: rows.land_order_requests.length,
+    issue_resources: rows.issue_resources.length, resource_revisions: rows.resource_revisions.length, resource_requests: rows.resource_requests.length,
     memory_store_identity: rows.memory_store_identity.length, project_memory_revisions: rows.project_memory_revisions.length,
   };
 }
@@ -388,6 +413,7 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
     dependencies: [...source.dependencies, ...destination.dependencies], dependency_revisions: [...source.dependency_revisions, ...destination.dependency_revisions], dependency_requests: [...source.dependency_requests, ...destination.dependency_requests],
     issue_claims: [...source.issue_claims, ...destination.issue_claims], claim_requests: [...source.claim_requests, ...destination.claim_requests],
     land_order: [...source.land_order, ...destination.land_order], land_order_revisions: [...source.land_order_revisions, ...destination.land_order_revisions], land_order_requests: [...source.land_order_requests, ...destination.land_order_requests],
+    issue_resources: [...source.issue_resources, ...destination.issue_resources], resource_revisions: [...source.resource_revisions, ...destination.resource_revisions], resource_requests: [...source.resource_requests, ...destination.resource_requests],
     memory_store_identity: destination.memory_store_identity,
     project_memory_revisions: [...memoryRevisions].map(([project, revision]) => ({ project, revision })),
   };

@@ -57,7 +57,7 @@ test('graph roundtrip preserves removed-edge receipts, validates graph rows and 
   try { assert.equal(restored.importSnapshot(snapshot).dependency_requests, 4); assert.equal(restored.importSnapshot(snapshot).result, 'already_present'); assert.equal(canonicalSnapshot(restored.exportSnapshot()), canonical); assert.deepEqual(await executeOperation(restored.db, parseOperation(add), 'test'), original); } finally { restored.close(); }
   assert.throws(() => parseSnapshot({ ...snapshot, dependencies: [...snapshot.dependencies, { dependent_id: 'pd-2', blocker_id: 'pd-1' }] }), { code: 'invalid_snapshot' });
   assert.throws(() => parseSnapshot({ ...snapshot, dependency_requests: [...snapshot.dependency_requests, snapshot.dependency_requests[0]] }), { code: 'invalid_snapshot' });
-  const { dependencies: _, dependency_revisions: __, dependency_requests: ___, issue_claims: _claims, claim_requests: _claimRequests, land_order: _edges, land_order_revisions: _landRevisions, land_order_requests: _landRequests, ...old3 } = snapshot;
+  const { dependencies: _, dependency_revisions: __, dependency_requests: ___, issue_claims: _claims, claim_requests: _claimRequests, land_order: _edges, land_order_revisions: _landRevisions, land_order_requests: _landRequests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, ...old3 } = snapshot;
   const issues = old3.issues.map(({ closed_at: _at, closed_by: _by, ...issue }) => issue);
   const converted3 = convertSnapshotV3({ ...old3, version: 3, issues }); assert.deepEqual(converted3.dependency_revisions.map(row => row.revision), Array(12).fill(1));
   const { memories: ____, memory_counters: _____, memory_requests: ______, ...old2 } = old3;

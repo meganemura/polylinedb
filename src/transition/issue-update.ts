@@ -8,10 +8,11 @@ export type FieldChange =
   | { field: 'status'; expected: number; value: Status }
   | { field: 'type'; expected: number; value: IssueType }
   | { field: Exclude<Field, 'status' | 'type'>; expected: number; value: unknown };
-export type IssueUpdate = { changes: readonly FieldChange[]; force: boolean; claim_proof?: ClaimProof };
+// resources_acknowledged is true when the caller gave a reason to close while external resources are still live.
+export type IssueUpdate = { changes: readonly FieldChange[]; force: boolean; resources_acknowledged: boolean; claim_proof?: ClaimProof };
 export type ObservedIssue = {
   id: string; status: Status; type: IssueType; versions: Record<Field, number>;
-  has_active_blockers: boolean; has_children: boolean;
+  has_active_blockers: boolean; has_children: boolean; has_live_resources: boolean;
   claim: ObservedClaim | null; store_incarnation: string;
 };
 export type FieldConflict = { field: Field; expected: number; actual: number };
@@ -19,6 +20,7 @@ export type UpdateRejection =
   | { code: 'conflict'; fields: FieldConflict[] }
   | { code: 'claim_required' }
   | { code: 'dependency_blocked' }
+  | { code: 'resources_remaining' }
   | { code: 'version_exhausted'; field: Field }
   | { code: 'epic_has_children' };
 export type UpdateDecision = { accepted: true } | { accepted: false; rejection: UpdateRejection };
@@ -33,6 +35,9 @@ export function decideIssueUpdate(issue: ObservedIssue, update: IssueUpdate, act
   if (!ownershipAllowed(issue, update, actor, now)) return { accepted: false, rejection: { code: 'claim_required' } };
   const guarded = update.changes.some(change => change.field === 'status' && guardedStatuses.includes(change.value));
   if (guarded && !update.force && issue.has_active_blockers) return { accepted: false, rejection: { code: 'dependency_blocked' } };
+  // force answers for prerequisites only; live resources need their own reason.
+  const closing = update.changes.some(change => change.field === 'status' && change.value === 'closed');
+  if (closing && !update.resources_acknowledged && issue.has_live_resources) return { accepted: false, rejection: { code: 'resources_remaining' } };
   const exhausted = update.changes.find(change => issue.versions[change.field] >= MAX_COUNTER);
   if (exhausted) return { accepted: false, rejection: { code: 'version_exhausted', field: exhausted.field } };
   if (issue.has_children && update.changes.some(change => change.field === 'type' && change.value !== 'epic')) {
