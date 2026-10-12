@@ -6,6 +6,24 @@ The operation name is the `op` property.
 MCP uses that name as the tool name and omits `op` from its arguments.
 The local `init` command creates storage; cloud schema installation is an operator action.
 
+## Server version
+
+The authenticated Worker exposes `GET /v1/version` and the MCP tool `server_info`.
+The tool accepts no arguments. Both return the same fields.
+
+| Field | Meaning |
+| --- | --- |
+| `package_version` | Version from the package manifest used to build the Worker |
+| `git_commit` | Full commit SHA from a clean source checkout at build time, or `null` when unknown |
+| `schema_version` | Version read from the connected database's `schema_version` table |
+
+Readers, human actors, and agent actors can read this information without a claim.
+The read changes no records. Responses use `Cache-Control: no-store`.
+MCP rejects extra arguments with `invalid_input`. HTTP accepts only `GET`.
+The local CLI has no `server_info` operation because its storage has no Worker build identity.
+Read `server_info` before you assume that a deployed server supports an operation or schema.
+Unknown build provenance does not mean that the Worker matches the current checkout.
+
 ## Fields
 
 | Field | Meaning and constraints | Create default |

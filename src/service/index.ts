@@ -8,6 +8,7 @@ import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseIssueId, parseOperation, parseRequestId } from "../records/index.ts";
 import type { Status } from "../records/index.ts";
 import type { Operation } from "../records/index.ts";
+import { packageVersion, readServerInfo, serverInfoTool } from "./server-info.ts";
 
 export type Environment = AccessSettings & {
   DB: D1DatabaseLike;
@@ -196,20 +197,25 @@ async function mcp(request: Request, env: Environment, caller: Caller): Promise<
         || typeof params.clientInfo.name !== 'string' || typeof params.clientInfo.version !== 'string') {
         return rpcError(id, -32602, 'Initialize requires protocolVersion, capabilities, and clientInfo.');
       }
-      return result({ protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'polylinedb', version: '0.5.2' },
+      return result({ protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'polylinedb', version: packageVersion },
         instructions: 'Read field versions before updates. Read ownership before claimed status work and retain the session UUID. Conflicts require a deliberate new decision. Never put credentials in tool arguments.' });
     case 'ping': return result({});
     case 'tools/list':
       if (params.cursor !== undefined) return rpcError(id, -32602, 'Tool-list cursors are not supported.');
-      return result({ tools: Object.entries(mcpSchemas).map(([name, inputSchema]) => ({
+      return result({ tools: [serverInfoTool, ...Object.entries(mcpSchemas).map(([name, inputSchema]) => ({
         name, description: descriptions[name], inputSchema,
           annotations: mcpAnnotationsFor(name),
-      })) });
+      }))] });
     case 'tools/call': {
-      if (typeof params.name !== 'string' || !Object.hasOwn(operationSchemas, params.name)) return rpcError(id, -32602, 'Unknown tool.');
+      if (typeof params.name !== 'string' || (params.name !== 'server_info' && !Object.hasOwn(operationSchemas, params.name))) return rpcError(id, -32602, 'Unknown tool.');
       if (params.arguments !== undefined && !object(params.arguments)) return rpcError(id, -32602, 'Tool arguments must be an object.');
       const args = params.arguments ?? {};
       try {
+        if (params.name === 'server_info') {
+          if (Object.keys(args).length !== 0) throw new PolylinedbError('invalid_input', 'server_info accepts no arguments.', 400);
+          const output = await readServerInfo(env.DB);
+          return result({ content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output, isError: false });
+        }
         if ('op' in args) throw new PolylinedbError('invalid_input', 'Tool arguments cannot override the operation.', 400);
         const operation = parseRequested('/mcp', { ...args, op: params.name, ...(params.name === 'search' ? { with_matches: true } : {}) }, caller);
         const output = await execute(request, env, operation, caller);
@@ -274,9 +280,10 @@ function issueTarget(pathname: string): { kind: 'ui'; route: UiRoute } | { kind:
   } catch { return { kind: 'missing' }; }
 }
 
-function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'ui'; route: UiRoute } | { kind: 'dispatch'; issueId: string } | { kind: 'missing' } {
+function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'version' } | { kind: 'ui'; route: UiRoute } | { kind: 'dispatch'; issueId: string } | { kind: 'missing' } {
   if (pathname === '/mcp') return { kind: 'mcp' };
   if (pathname === '/v1/operations') return { kind: 'operations' };
+  if (pathname === '/v1/version') return { kind: 'version' };
   if (pathname === '/ui') return { kind: 'ui', route: { page: 'home' } };
   if (pathname === '/ui/inbox') return { kind: 'ui', route: { page: 'inbox' } };
   if (pathname === '/ui/search') return { kind: 'ui', route: { page: 'search', query: '' } };
@@ -303,6 +310,10 @@ export async function handleRequest(
     if (target.kind === 'missing') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
     checkOrigin(request, env, target);
     const caller = await authenticate(request, env);
+    if (target.kind === 'version') {
+      if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
+      return json(await readServerInfo(env.DB));
+    }
     if (target.kind === 'dispatch') {
       if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
       return dispatchResponse(await dispatcher.press(request, env, caller, target.issueId), target.issueId);

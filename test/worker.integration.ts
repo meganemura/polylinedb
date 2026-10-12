@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare';
 import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
 
@@ -107,6 +109,18 @@ try {
   assert.equal(initialized.protocolVersion, '2025-11-25');
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(record(initialized.serverInfo).version, manifest.version);
+  const cwd = fileURLToPath(new URL('../', import.meta.url));
+  const expectedCommit = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd, encoding: 'utf8' }).trim() === ''
+    ? execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim() : null;
+  const serverInfo = await rpc('tools/call', { name: 'server_info', arguments: {} });
+  assert.equal(serverInfo.isError, false);
+  const expectedInfo = { package_version: manifest.version, git_commit: expectedCommit, schema_version: 8 };
+  assert.deepEqual(serverInfo.structuredContent, expectedInfo);
+  const version = await runtime.dispatchFetch('http://polylinedb.test/v1/version', {
+    headers: { 'cf-access-jwt-assertion': owner },
+  });
+  assert.equal(version.status, 200);
+  assert.deepEqual(await version.json(), expectedInfo);
   const notified = await post('/mcp', { jsonrpc: '2.0', method: 'notifications/initialized' });
   assert.equal(notified.status, 202);
   assert.equal(await notified.text(), '');

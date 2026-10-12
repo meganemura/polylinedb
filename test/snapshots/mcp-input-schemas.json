@@ -997,6 +997,11 @@
     ],
     "additionalProperties": false
   },
+  "server_info": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
   "show": {
     "type": "object",
     "properties": {

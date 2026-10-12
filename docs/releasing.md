@@ -6,6 +6,11 @@ The Worker requires a source checkout and a separate deployment, described in [t
 
 ## Release stages
 
+Build the Worker from the committed, clean checkout so `server_info.git_commit` identifies the artifact.
+After an authorized deployment, record the build commit and the returned server information in the deployment record.
+Compare the server commit with the build commit and the database version with the required migration version.
+An uncommitted or unavailable checkout reports `git_commit: null` and cannot confirm deployment identity.
+
 Version `0.0.1` is the initial version. Version `0.1.0` adds the verified local and cloud workflows.
 Version `0.2.0` adds prerequisites, memory freshness, and automatic host hooks.
 Version `0.3.1` adds session-owned issue claims and explicit human CLI output.
@@ -18,8 +23,8 @@ Version `0.5.1` reached npm, but its `release` job failed, so it has no tag and 
 ## Cut a release
 
 1. Choose a version that has never been tagged or published. A version that npm or a tag already holds cannot be reused.
-2. In one commit, set the version in `package.json`, in both `version` and `packages[""].version` of `package-lock.json`, and in the MCP `serverInfo.version` in `src/service/index.ts`.
-   `npm version X.Y.Z --no-git-tag-version` updates the manifest and the lockfile; edit `src/service/index.ts` by hand. The Worker integration test compares `serverInfo.version` with `package.json`.
+2. In one commit, set the version in `package.json` and in both `version` and `packages[""].version` of `package-lock.json`.
+   `npm version X.Y.Z --no-git-tag-version` updates the manifest and the lockfile. MCP initialization and `server_info` read the same package version.
 3. In the same commit, turn `## Unreleased` in `CHANGELOG.md` into `## X.Y.Z (YYYY-MM-DD)` and add an empty `## Unreleased` above it. End the section with an `### Upgrade from` subsection when users must act. Mention the release in `CHANGELOG.human.md`.
 4. Check the notes from a source checkout. The command fails when the section is missing or empty:
 

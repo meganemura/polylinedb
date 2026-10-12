@@ -9,6 +9,10 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+You can check which server version is running before you use it.
+The server reports its package version, build commit, and database version through MCP or an authenticated HTTP read.
+A build without a known clean source commit reports an unknown commit.
+
 Changes on `queue` or main that are not in a release yet.
 
 The CLI module-loading test now runs without opening your computer's credential store.

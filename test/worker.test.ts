@@ -13,6 +13,7 @@ import { SCHEMA_SQL } from "../src/records/schema.ts";
 import { statements } from "../src/records/solarsql.generated.ts";
 import { issueSortKey } from "../src/records/issue-id.ts";
 import { assertSnapshot } from "./fixtures/snapshot.ts";
+import manifest from '../package.json' with { type: 'json' };
 
 const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
   publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -56,6 +57,50 @@ function fixture(actors = '["access:owner"]') {
   return { sqlite, env };
 }
 
+test('server info reads the connected schema for reader and agent without writes', async () => {
+  for (const [actors, claims] of [
+    [JSON.stringify([{ actor: 'access:owner', role: 'reader' }]), {}],
+    [JSON.stringify([{ actor: 'service:robot', role: 'agent' }]), { common_name: 'robot', sub: undefined }],
+  ] as const) {
+    const { sqlite, env } = fixture(actors);
+    sqlite.exec('UPDATE schema_version SET version = 123');
+    const token = await assertion(claims);
+    const get = (credential?: string, method = 'GET') => handleRequest(new Request('https://issues.example/v1/version', {
+      method, headers: credential === undefined ? {} : { 'cf-access-jwt-assertion': credential },
+    }), env, authenticate);
+    const rpc = async (args: unknown) => (await (await handleRequest(new Request('https://issues.example/mcp', {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'cf-access-jwt-assertion': token },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'server_info', arguments: args } }),
+    }), env, authenticate)).json()).result;
+    try {
+      const before = sqlite.prepare('SELECT total_changes() AS changes').get();
+      const http = await get(token);
+      assert.equal(http.status, 200);
+      assert.equal(http.headers.get('cache-control'), 'no-store');
+      const expected = { package_version: manifest.version, git_commit: null, schema_version: 123 };
+      assert.deepEqual(await http.json(), expected);
+      const mcp = await rpc({});
+      assert.equal(mcp.isError, false);
+      assert.deepEqual(mcp.structuredContent, expected);
+      assert.deepEqual(JSON.parse(mcp.content[0].text), expected);
+      assert.equal((await rpc({ project: 'unneeded' })).isError, true);
+      assert.equal((await rpc({ op: 'create' })).isError, true);
+      assert.equal((await get()).status, 401);
+      assert.equal((await get('invalid')).status, 401);
+      assert.equal((await get(token, 'POST')).status, 405);
+      const deniedOrigin = await handleRequest(new Request('https://issues.example/v1/version', {
+        headers: { 'cf-access-jwt-assertion': token, origin: 'https://denied.example' },
+      }), env, authenticate);
+      assert.equal(deniedOrigin.status, 403);
+      assert.deepEqual(sqlite.prepare('SELECT total_changes() AS changes').get(), before);
+      sqlite.exec('DELETE FROM schema_version');
+      const invalidSchema = await get(token);
+      assert.equal(invalidSchema.status, 500);
+      assert.deepEqual(await invalidSchema.json(), { error: { code: 'internal_error', message: 'The operation could not complete.' } });
+    } finally { sqlite.close(); }
+  }
+});
+
 test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
@@ -75,7 +120,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'show', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'search', 'server_info', 'show', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -105,6 +150,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['memory_update', false, true, true, false],
       ['reopen', false, true, true, false],
       ['search', true, false, true, false],
+      ['server_info', true, false, true, false],
       ['show', true, false, true, false],
       ['update', false, true, true, false],
       ['wait', true, false, true, false],
@@ -375,6 +421,7 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     await repeat('claim_renew', { claim_proof, expected_revision: 1, request_id: crypto.randomUUID() });
     await repeat('claim_release', { claim_proof, expected_revision: 2, request_id: crypto.randomUUID() });
     await read('changes', { since: 0 });
+    await read('server_info', {});
     await read('wait', { since: 0, timeout: 0 });
 
     const advertised = (await rpc('tools/list')).tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; idempotentHint: boolean } }) =>

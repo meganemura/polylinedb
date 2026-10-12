@@ -320,6 +320,14 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+### Worker version information
+
+Authenticated `GET /v1/version` and the read-only MCP tool `server_info` return `package_version`, `git_commit`, and `schema_version`.
+The package manifest supplies both this version and MCP initialization's version. Builds from clean checkouts embed the full commit SHA. Dirty or unavailable provenance returns `null`.
+The schema version comes from the connected database. Readers and agents need no claim, and the read writes nothing.
+`server_info` rejects extra arguments with `invalid_input`. The local CLI operation set does not change.
+No new secrets, bindings, or migrations are required. Deploy a Worker built from a clean committed checkout to identify the running artifact.
+
 ### Isolate the CLI module-loading test from host credentials
 
 - surface: CLI test fixture
