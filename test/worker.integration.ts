@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare';
-import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
+import { SCHEMA_STATEMENTS, SCHEMA_VERSION } from "../src/records/schema.ts";
 import { dispatchScript } from "../src/service/ui.ts";
 
 const bundleUrl = new URL('../.cloudflare/output/v0/workers/default/bundle/index.js', import.meta.url);
@@ -115,7 +115,7 @@ try {
     ? execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim() : null;
   const serverInfo = await rpc('tools/call', { name: 'server_info', arguments: {} });
   assert.equal(serverInfo.isError, false);
-  const expectedInfo = { package_version: manifest.version, git_commit: expectedCommit, schema_version: 8 };
+  const expectedInfo = { package_version: manifest.version, git_commit: expectedCommit, schema_version: SCHEMA_VERSION };
   assert.deepEqual(serverInfo.structuredContent, expectedInfo);
   const version = await runtime.dispatchFetch('http://polylinedb.test/v1/version', {
     headers: { 'cf-access-jwt-assertion': owner },
