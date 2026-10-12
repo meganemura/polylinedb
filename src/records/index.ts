@@ -16,7 +16,7 @@ export { parseIssueId, parsePrefix, parseRequestId } from './issue-id.ts';
 export { parseMemoryId, parseMemoryRevision, observedMemoryProject } from './memories.ts';
 export type { Memory, MemoryStore, MemoryOperation, MemoryContext, MemoryRevision, MemoryFreshness, MemoryResult } from './memories.ts';
 export { ownerWaitDependentLimit } from './dependencies.ts';
-export { ownerWaitLabels } from '../transition/index.ts';
+export { ownerWaitLabels, readyLabel } from '../transition/index.ts';
 export type { OwnerWait } from './dependencies.ts';
 export type { DependencyOperation, DependencyMutation, DependencyResult, DependencyReceipt, DependencyOutcome, DependencyRequest, DependencyRevision, Dependency } from './dependencies.ts';
 export { parseClaimProof, parseIncarnation } from './claims.ts';

@@ -1,5 +1,5 @@
 /** Renders the /ui pages for phones. GET stays free of side effects. The issue page posts Dispatch; other writes go through the operation endpoints. */
-import { activeClaimIssues, attentionIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type Attention, type AttentionIssue, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type OpenIssue, type OwnerGroup, type OwnerLabel, type OwnerQueue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { activeClaimIssues, attentionIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, ownerWaitLabels, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, readyLabel, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type Attention, type AttentionIssue, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type OpenIssue, type OwnerGroup, type OwnerLabel, type OwnerQueue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
 
@@ -67,11 +67,11 @@ function shownTime(issue: Issue, when: 'update' | 'closure'): { label: 'Last upd
 
 function row(issue: Issue, labels: ReadonlyMap<string, string>, when: 'update' | 'closure' = 'update'): string {
   const stamp = shownTime(issue, when);
-  return `<li class="quiet-row">
+  return `<li class="quiet-row"><a href="${escape(issueHref(issue.id))}">
 <span class="primary">${escape(title(issue.body))}</span>
 <span class="secondary">${escape(issue.id)} · ${stamp.label} <time datetime="${escape(stamp.at)}">${escape(japanTime(stamp.at))}</time></span>
 <span class="secondary">${escape(person(stamp.by, labels))}</span>
-</li>`;
+</a></li>`;
 }
 
 function section(heading: string, issues: readonly Issue[], labels: ReadonlyMap<string, string>, empty: string, note?: string, when: 'update' | 'closure' = 'update'): string {
@@ -193,13 +193,34 @@ function childrenSection(children: readonly IssueLink[], more: boolean): string 
   return `<section class="quiet-section"><h2>Children</h2>${extra}${body}</section>`;
 }
 
-function dispatchForm(issueId: string, control: DispatchControl): string {
+// One line on whether the ready worklist would offer the issue to an agent now. It informs only; the dispatcher decides.
+function startSummary(issue: Issue, activeBlockers: number, claim: ClaimDisplay, labels: ReadonlyMap<string, string>): string {
+  const ownerWait = ownerWaitLabels.some(label => issue.labels.includes(label));
+  const ready = issue.labels.includes(readyLabel);
+  const locked = issue.labels.includes('main-lock');
+  const claimed = claim.state === 'active';
+  const parts = [
+    ...(ownerWait ? ['owner wait, not agent work'] : []),
+    ...(issue.status === 'open' ? [] : [issue.status]),
+    ready ? 'ready' : 'not ready',
+    ...(locked ? ['main-lock'] : []),
+    activeBlockers === 0 ? 'no blockers' : `blocked ${activeBlockers}`,
+    claimed ? `claimed by ${claim.agentLabel ?? person(claim.actor, labels)} until ${japanTimeFromSeconds(claim.expiresAt)}` : 'not claimed',
+  ];
+  const startable = ready && issue.status === 'open' && !locked && !ownerWait && activeBlockers === 0 && !claimed;
+  return [...parts, startable ? 'can start now' : 'will not start now'].join(' · ');
+}
+
+function dispatchForm(issue: Issue, activeBlockers: number, claim: ClaimDisplay, labels: ReadonlyMap<string, string>, control: DispatchControl): string {
   if (control === 'hidden') return '';
-  const action = `/ui/i/${escape(issueId)}/dispatch`;
+  const action = `/ui/i/${escape(issue.id)}/dispatch`;
   const button = control === 'unavailable'
     ? '<button type="submit" disabled>Dispatch</button><p class="quiet-note">Dispatch is not set up.</p>'
     : '<button type="submit">Dispatch</button>';
-  return `<form method="post" action="${action}">${button}</form>`;
+  return `<form method="post" action="${action}"><p class="secondary">${escape(startSummary(issue, activeBlockers, claim, labels))}</p>
+<label for="dispatch-notes">Notes for the agent (optional)</label>
+<textarea id="dispatch-notes" name="notes" maxlength="4096" rows="3"></textarea>
+${button}</form>`;
 }
 
 function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>, dispatch: DispatchControl): string {
@@ -217,7 +238,7 @@ function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisp
 <span class="secondary">${escape(issue.project)}</span>
 ${labelLine}
 ${detailClaim(claim, labels)}
-${dispatchForm(issue.id, dispatch)}
+${dispatchForm(issue, open.length, claim, labels, dispatch)}
 ${parentLine(parent)}
 ${childrenSection(children, moreChildren)}
 <div class="prose">${escape(bodyAfterTitle(issue.body))}</div>
@@ -386,7 +407,7 @@ function workingItem(row: ActiveClaimIssue, labels: ReadonlyMap<string, string>)
   const agent = row.agentLabel === null ? '' : `<span class="secondary">${escape(row.agentLabel)}</span>\n`;
   return `<li class="quiet-row"><a href="${escape(issueHref(row.issue.id))}">
 <span class="primary">${escape(title(row.issue.body))}</span>
-<span class="secondary">${escape(row.issue.project)}</span>
+<span class="secondary">${escape(row.issue.id)} · ${escape(row.issue.project)}</span>
 ${agent}<span class="secondary">${escape(labels.get(row.actor) ?? row.actor)}</span>
 <span class="secondary"><time datetime="${escape(at)}">${escape(japanTime(at))}</time></span>
 </a></li>`;

@@ -667,8 +667,8 @@ A slash in the project name is its own path segment.
 **Waiting for main** sits under the project list.
 It lists open issues with the label `main-wait`, newest update first, at most 50.
 That label marks work that is enqueued on the `queue` branch and is not yet on the remote main branch.
-Each row shows the title, the issue ID, the last update, and the actor of that update.
-The row has no link.
+Each row links to the issue.
+It shows the title, the issue ID, the last update, and the actor of that update.
 
 ### Project view
 
@@ -706,6 +706,7 @@ It lists this project's closed issues, newest close first, at most 50.
 A recorded close shows `closed_at` and `closed_by`.
 An issue with no close record sorts after the recorded closes and shows its last update, which is not the close time.
 An edit after the close does not move a recorded close.
+Each row links to the issue, like the rows in **Waiting for main**.
 Choosing the `closed` chip shows those issues in the filtered list as well, still ordered by last update.
 
 ### Issue detail
@@ -739,7 +740,15 @@ An Access human who can write sees it.
 When dispatch is not set up, the button is disabled and the page says `Dispatch is not set up.`
 A reader, an agent, or a service actor sees no button.
 The button posts to `/ui/i/<id>/dispatch`.
-The page has no notes field.
+The form has one optional field, `Notes for the agent`, sent as `notes` in the dispatch envelope.
+The field hints at 4096 characters; the server refuses notes above 4096 UTF-8 bytes.
+A reader, an agent, or a service actor sees no notes field.
+Above the field, one line sums up whether the ready worklist would offer the issue to an agent now.
+It names an owner wait (`owner-decision` or `owner-action`) first, as not agent work.
+It then shows the status when it is not `open`, `ready` or `not ready`, `main-lock` when present, the active-blocker count or `no blockers`, and the active claim's holder and expiry or `not claimed`.
+It ends with `can start now` only when the issue is open, has `ready`, has no `main-lock` or owner-wait label, has no active blocker, and has no active claim; otherwise it ends with `will not start now`.
+The line informs only.
+It does not disable the button; the dispatcher decides.
 Pressing Dispatch does not change the issue.
 
 ### Inbox
@@ -772,7 +781,7 @@ The page lists active claims only.
 The soonest expiry comes first.
 The page shows at most 50 claims.
 Each row links to the issue.
-It shows the title, the project, the agent label when the claim has one, the actor, and the expiry time.
+It shows the title, the issue ID and project, the agent label when the claim has one, the actor, and the expiry time.
 
 ### Blocked
 

@@ -656,16 +656,20 @@ function speculationRules(html: string): string {
   return body;
 }
 
+const notesField = '<textarea id="dispatch-notes" name="notes" maxlength="4096" rows="3"></textarea>';
+const notesLabel = '<label for="dispatch-notes">Notes for the agent (optional)</label>';
+const freshSummary = '<p class="secondary">not ready · no blockers · not claimed · will not start now</p>';
+
 function assertNoApplicationControls(html: string): void {
   const forms = [...html.matchAll(/<form\b[^>]*>[\s\S]*?<\/form>/g)].map(match => match[0]);
   if (forms.length === 0) {
-    assert.equal(/<(form|input|button)\b/.test(html), false);
+    assert.equal(/<(form|input|button|textarea)\b/.test(html), false);
   } else {
     assert.equal(forms.length, 1);
     const form = forms[0] ?? '';
     assert.match(form, /^<form method="post" action="\/ui\/i\/[a-z][a-z0-9]{0,15}-[1-9][0-9]*(?:\.[1-9][0-9]*){0,7}\/dispatch">/);
     assert.equal(/<input\b/.test(html), false);
-    assert.equal(html.includes('name="notes"'), false);
+    assert.deepEqual([...html.matchAll(/<textarea\b[^>]*>[\s\S]*?<\/textarea>/g)].map(match => match[0]), [notesField]);
     const button = form.includes('disabled')
       ? '<button type="submit" disabled>Dispatch</button>'
       : '<button type="submit">Dispatch</button>';
@@ -2043,6 +2047,49 @@ function assertWebhook(post: ReceivedPost, id: string, now: number, notes?: stri
   assert.equal(Number.isInteger(body.occurred_at), true);
 }
 
+test('ui: Waiting for main links, Working shows ids, and Dispatch has notes and a start summary', async () => {
+  const { env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const configured = withWebhook(env);
+  const operate = async (body: Record<string, unknown>) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
+    }), env, authenticate);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const make = (body: string, labels: string[]) => createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body, labels });
+  const waiting = await make('Landing soon', ['main-wait']);
+  const ready = await make('Ready work', ['ready']);
+  const blocker = await make('Blocker', []);
+  const blocked = await make('Blocked work', ['ready']);
+  const claimed = await make('Claimed work', ['ready']);
+  const owner = await make('Owner decision', ['owner-decision']);
+  await operate({ op: 'dependency_add', dependent_id: blocked, blocker_id: blocker, expected_revision: 1, request_id: crypto.randomUUID() });
+  const incarnation = (await operate({ op: 'claim_show', issue_id: claimed })).claim.store_incarnation;
+  await operate({ op: 'claim_acquire', issue_id: claimed, incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'lane-a', ttl: 3600 });
+
+  const home = uiSection(await (await viewUi(env, auth)).text(), 'Waiting for main');
+  assert.ok(home.includes(`<li class="quiet-row"><a href="/ui/i/${waiting}">\n<span class="primary">Landing soon</span>`));
+  const working = await (await handleRequest(new Request('https://issues.example/ui/working', { headers: auth }), env, authenticate)).text();
+  assert.ok(working.includes(`<span class="secondary">${claimed} · meganemura/polylinedb</span>`));
+
+  const summary = async (id: string) => {
+    const page = await (await viewIssue(configured, id, auth)).text();
+    const form = page.match(/<form method="post"[\s\S]*?<\/form>/)?.[0] ?? '';
+    assert.ok(form.includes('<label for="dispatch-notes">Notes for the agent (optional)</label>'), id);
+    assert.ok(form.includes('<textarea id="dispatch-notes" name="notes" maxlength="4096" rows="3"></textarea>'), id);
+    return form.match(/<p class="secondary">([^<]*)<\/p>/)?.[1];
+  };
+  assert.equal(await summary(ready), 'ready · no blockers · not claimed · can start now');
+  assert.equal(await summary(blocked), 'ready · blocked 1 · not claimed · will not start now');
+  assert.match(await summary(claimed) ?? '', /^ready · no blockers · claimed by lane-a until \d{4}-\d{2}-\d{2} \d{2}:\d{2} JST · will not start now$/);
+  assert.equal(await summary(owner), 'owner wait, not agent work · not ready · no blockers · not claimed · will not start now');
+  const hidden = await (await viewIssue(env, ready, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) })).text();
+  assert.equal(hidden.includes('name="notes"'), false);
+});
+
 test('dispatch module exports only the factory and the secret names', () => {
   assert.deepEqual(Object.keys(dispatchModule).sort(), ['createDispatcher', 'dispatchSecretNames']);
   assert.deepEqual(dispatchSecretNames, ['POLYLINEDB_DISPATCH_WEBHOOK_URL', 'POLYLINEDB_DISPATCH_WEBHOOK_KEY']);
@@ -2103,7 +2150,7 @@ test('dispatch: unset or invalid secrets show a disabled button and do not fetch
       const target = withWebhook(env, secret);
       const page = await viewIssue(target, id, { 'cf-access-jwt-assertion': token });
       const html = await page.text();
-      assert.ok(html.includes(`<form method="post" action="/ui/i/${id}/dispatch"><button type="submit" disabled>Dispatch</button><p class="quiet-note">Dispatch is not set up.</p></form>`));
+      assert.ok(html.includes(`<form method="post" action="/ui/i/${id}/dispatch">${freshSummary}\n${notesLabel}\n${notesField}\n<button type="submit" disabled>Dispatch</button><p class="quiet-note">Dispatch is not set up.</p></form>`));
       assert.equal(html.includes('<input'), false);
       const response = await pressDispatch(target, id, token, dispatcher, browserPress());
       await assertOutcome(response, 503, 'Dispatch is not set up.', id);
@@ -2123,8 +2170,7 @@ test('dispatch: a press sends one envelope, and the next press inside the window
     const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
     const before = storedIssue(sqlite, id);
     const page = await (await viewIssue(configured, id, { 'cf-access-jwt-assertion': token })).text();
-    assert.ok(page.includes(`<form method="post" action="/ui/i/${id}/dispatch"><button type="submit">Dispatch</button></form>`));
-    assert.equal(page.includes('name="notes"'), false);
+    assert.ok(page.includes(`<form method="post" action="/ui/i/${id}/dispatch">${freshSummary}\n${notesLabel}\n${notesField}\n<button type="submit">Dispatch</button></form>`));
     assert.equal(page.includes('<input'), false);
     const sent = await pressDispatch(configured, id, token, dispatcher, browserPress());
     const sentHtml = await assertOutcome(sent, 200, 'Sent.', id);
