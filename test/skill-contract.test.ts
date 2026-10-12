@@ -55,3 +55,9 @@ test('the queue skill copies match and keep pd issue ids out of the changelogs a
   assert.doesNotMatch(queue, /landing changelog commit|one commit on top of the commits being landed/);
   assert.ok(readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8').includes('[docs/releasing.md](docs/releasing.md)'));
 });
+
+test('the skill tells a new holder about an expired lease and a stalled holder to hand off', () => {
+  assert.ok(skill.includes('It also returns `previous_lease`: the lease that expired without a release just before this acquisition, or `null`.'));
+  assert.ok(skill.includes('read the issue comments and look for a pushed `work/<issue id>` branch'));
+  assert.ok(skill.includes('Push `work/<issue id>`, write a `comment` that says what is done and what remains, and release the claim.'));
+});

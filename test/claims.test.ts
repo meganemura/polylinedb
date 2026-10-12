@@ -50,7 +50,7 @@ test('claim commands preserve history and require ownership on all requested sta
   const release = { op: 'claim_release', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request() };
   await run(release); await assert.rejects(run({ op: 'reopen', id: issue.id, expected: 2 }), { code: 'claim_required' });
   const shown = await run({ op: 'claim_show', issue_id: issue.id }); assert.ok('claim' in shown); assert.equal(shown.claim.state, 'released'); assert.equal(shown.claim.lease?.agent_label, 'Codex');
-  assert.deepEqual(await run(owner.command), { claim_receipt: owner.receipt, open_blockers: [] });
+  assert.deepEqual(await run(owner.command), { claim_receipt: owner.receipt, open_blockers: [], previous_lease: null });
   const next = await acquire(run, issue.id); assert.equal(next.receipt.generation, 2); assert.equal(next.receipt.revision, 3); assert.equal(next.receipt.agent_label, null);
   await run({ op: 'reopen', id: issue.id, expected: 2, claim_proof: proof(next.receipt) });
   await assert.rejects(run({ op: 'update', id: issue.id, changes: [{ field: 'body', value: 'bad', expected: 2 }], claim_proof: proof(owner.receipt) }), { code: 'claim_required' });
@@ -249,6 +249,32 @@ test('an opted-in release of an expired own lease is a no-op, and a default rele
   assert.equal(cleanup.current?.lease?.revision, third.receipt.revision);
   assert.equal((await shown()).lease?.revision, third.receipt.revision);
 });
+test('acquiring after an expired lease reports that lease, and a released or missing lease reports null', async t => {
+  const { run, db } = fixture(t);
+  const issue = await create(run);
+  const first = await acquire(run, issue.id, { agent_label: 'lane-a', ttl: 600 });
+  const firstResult = await run(first.command);
+  assert.ok('previous_lease' in firstResult);
+  assert.equal(firstResult.previous_lease, null);
+  await db.batch([{ sql: 'UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?', params: [issue.id] }]);
+  const command = { op: 'claim_acquire', issue_id: issue.id, incarnation: first.receipt.incarnation, session_id: request(), request_id: request(), agent_label: 'lane-b' };
+  const takeover = await run(command);
+  assert.ok('claim_receipt' in takeover && 'previous_lease' in takeover);
+  assert.deepEqual(takeover.previous_lease, {
+    issue_id: issue.id, incarnation: first.receipt.incarnation, session_id: first.receipt.session_id, generation: 1,
+    actor: 'test:owner', agent_label: 'lane-a', revision: 1, acquired_at: first.receipt.acquired_at, changed_at: first.receipt.changed_at,
+    expires_at: first.receipt.acquired_at + 600, released_at: null,
+  });
+  assert.equal(takeover.claim_receipt.generation, 2);
+  const replay = await run(command);
+  assert.ok('previous_lease' in replay);
+  assert.deepEqual(replay.previous_lease, takeover.previous_lease);
+  await run({ op: 'claim_release', claim_proof: proof(takeover.claim_receipt), expected_revision: 2, request_id: request() });
+  const afterRelease = await acquire(run, issue.id);
+  const result = await run(afterRelease.command);
+  assert.ok('previous_lease' in result);
+  assert.equal(result.previous_lease, null);
+});
 test('claim parser validates scope, proof target, session, TTL, and label UTF-8 bounds', async t => {
   const { run } = fixture(t); await create(run); const owner = await acquire(run, 'pd-1');
   for (const extra of [{ ttl: 29 }, { ttl: 3601 }, { ttl: 30.5 }, { session_id: 'bad' }, { incarnation: 'A'.repeat(32) }, { agent_label: 'あ'.repeat(22) }, { agent_label: 'bad\nlabel' }, { clock: 1 }]) assert.throws(() => parseOperation({ ...owner.command, ...extra }), { code: 'invalid_input' });
@@ -268,7 +294,7 @@ test('claim replay recognizes only complete provider duplicate markers', async t
   const marker = 'UNIQUE constraint failed: claim_requests.request_id';
   for (const message of [marker, `D1_ERROR: ${marker}: SQLITE_CONSTRAINT`, `${marker}: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)`]) {
     const failing = { ...db, async batch() { throw new Error('outer', { cause: new Error(message) }); } };
-    assert.deepEqual(await executeOperation(failing, parseOperation(owner.command), 'test:owner'), { claim_receipt: owner.receipt, open_blockers: [] });
+    assert.deepEqual(await executeOperation(failing, parseOperation(owner.command), 'test:owner'), { claim_receipt: owner.receipt, open_blockers: [], previous_lease: null });
   }
   for (const message of [`prefix ${marker}`, `${marker} trailing`, 'claim_receipt_immutable', 'CHECK constraint failed: version > 0']) {
     const error = new Error(message); const failing = { ...db, async batch() { throw error; } };
@@ -313,7 +339,7 @@ test('property: successful claims retain requested TTL and replay after a genera
       assert.equal(first.receipt.expires_at - first.receipt.changed_at, ttl);
       const renewed = await run({ op: 'claim_renew', claim_proof: proof(first.receipt), expected_revision: 1, request_id: request(), ttl: renewedTTL }); assert.ok('claim_receipt' in renewed);
       assert.equal(renewed.claim_receipt.expires_at - renewed.claim_receipt.changed_at, renewedTTL); assert.equal(renewed.claim_receipt.revision, 2); assert.equal(renewed.claim_receipt.generation, 1);
-      assert.deepEqual(await run(first.command), { claim_receipt: first.receipt, open_blockers: [] });
+      assert.deepEqual(await run(first.command), { claim_receipt: first.receipt, open_blockers: [], previous_lease: null });
     } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
   }, { testCases: 30 });
   assert.ok(drawn.has(30) && drawn.has(3600), 'the generated TTLs include the minimum and the maximum');
@@ -330,7 +356,7 @@ test('snapshot5 preserves claim history while restore rotates authority only onc
   assert.deepEqual(destination.store.exportSnapshot().claim_requests.map(row => row.payload), bytes);
   const imported = await destination.run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in imported); assert.equal(imported.claim.state, 'invalidated'); assert.notEqual(imported.claim.store_incarnation, owner.receipt.incarnation);
   await assert.rejects(destination.run({ op: 'close', id: 'pd-1', expected: 1, claim_proof: proof(active.receipt) }), { code: 'claim_required' });
-  assert.deepEqual(await destination.run(owner.command), { claim_receipt: owner.receipt, open_blockers: [] });
+  assert.deepEqual(await destination.run(owner.command), { claim_receipt: owner.receipt, open_blockers: [], previous_lease: null });
   assert.equal(destination.store.importSnapshot(snapshot).result, 'already_present');
   const resumed = await destination.run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in resumed); assert.equal(resumed.claim.store_incarnation, imported.claim.store_incarnation);
   const current = await acquire(destination.run, 'pd-1'); assert.equal(current.receipt.generation, 3); assert.equal(current.receipt.revision, 5);

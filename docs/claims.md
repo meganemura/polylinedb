@@ -32,6 +32,10 @@ A deferred blocker is included.
 Acquire does not fail because active blockers remain, so a lock issue stays acquirable.
 A replay of the same request reads `open_blockers` again, because the stored receipt does not keep the observation.
 When the list is non-empty and the claim was meant to start work, release the claim immediately and pick another issue from the ready worklist.
+Acquire also returns `previous_lease`. It is the lease that expired without a release just before this acquisition, with its actor, session, label, generation, and deadline, or `null` after a release, a first acquisition, or a lease from another store incarnation.
+The value comes from the immutable receipt history, so a replay returns the same `previous_lease`.
+A non-null `previous_lease` means the previous holder may still be running. Read the issue comments and any pushed `work/<issue id>` branch before starting.
+A holder that cannot renew in time pushes its work branch, comments with what remains, and releases the claim instead of letting the lease lapse.
 It leaves the issue status unchanged and can claim a closed issue.
 Concurrent acquisitions elect one winner.
 An already active claim rejects a fresh acquisition, including one from the same session.

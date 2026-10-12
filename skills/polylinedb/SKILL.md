@@ -59,6 +59,8 @@ A successful `claim_acquire` returns `open_blockers`, the ids of active blockers
 An empty list means there are none.
 Acquire does not fail because of those blockers.
 If `open_blockers` is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist.
+It also returns `previous_lease`: the lease that expired without a release just before this acquisition, or `null`.
+A non-null `previous_lease` means its holder may still be running. Before starting, read the issue comments and look for a pushed `work/<issue id>` branch, and continue from what they hold instead of starting over or pushing over that branch.
 For an agent actor, `claim_acquire` rejects an issue without the `ready` label with `not_ready`.
 The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.
 The store checks both rules in the same transaction as the write. A recommendation never overrides a rejection.
@@ -76,6 +78,8 @@ An `in_progress` status does not reserve work.
 Before expiry, read `claim_show` and use `claim_renew` with the proof and observed claim revision.
 The TTL is at most 3600 seconds, so renew between long steps. Cloud agents renew through the MCP connector, not a CLI login with owner credentials.
 If ownership expires or changes, stop protected work and make a deliberate new selection and acquisition.
+If you cannot renew before the lease ends, because writes are suspended or a step outlasts the TTL, hand off instead of letting it lapse.
+Push `work/<issue id>`, write a `comment` that says what is done and what remains, and release the claim.
 After uncertain completion, retain the original request UUID and identical payload for an explicit retry.
 Read current ownership before further work. A replayed receipt does not prove current ownership.
 After a version conflict, reread and reconsider the change.

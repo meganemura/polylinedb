@@ -136,10 +136,10 @@ test('an older Worker claim_acquire without open_blockers decodes the receipt', 
     await wire({ op: 'dependency_add', dependent_id: 'pd-2', blocker_id: 'pd-1', expected_revision: 1, request_id: crypto.randomUUID() });
     const shown = await wire({ op: 'claim_show', issue_id: 'pd-2' });
     const acquire = { op: 'claim_acquire', issue_id: 'pd-2', incarnation: (shown.body.claim as { store_incarnation: string }).store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
-    const acquired = (await wire(acquire)).body as { claim_receipt: Record<string, unknown>; open_blockers: unknown };
+    const acquired = (await wire(acquire)).body as { claim_receipt: Record<string, unknown>; open_blockers: unknown; previous_lease: unknown };
     const current = await decode(acquire, answer(acquired));
-    assert.deepEqual(current, { claim_receipt: acquired.claim_receipt, open_blockers: ['pd-1'] });
-    const { open_blockers: _, ...older } = acquired;
+    assert.deepEqual(current, { claim_receipt: acquired.claim_receipt, open_blockers: ['pd-1'], previous_lease: null });
+    const { open_blockers: _, previous_lease: __, ...older } = acquired;
     assert.equal(Object.hasOwn(older, 'open_blockers'), false);
     assert.deepEqual(await decode(acquire, answer(older)), { claim_receipt: acquired.claim_receipt });
     await assert.rejects(decode(acquire, answer({ ...acquired, open_blockers: ['pd-2'] })), { code: 'cloud_invalid_response' });
@@ -399,7 +399,7 @@ test('existing operation responses keep the keys a released client decodes', asy
     assertShape(inspection.body, { claim: { ...inspectionShape, lease: null } });
     const acquire = { op: 'claim_acquire', issue_id: id, incarnation: (inspection.body.claim as { store_incarnation: string }).store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' };
     const acquiredBody = (await wire(acquire)).body;
-    assertShape(acquiredBody, { claim_receipt: { ...claimShape, outcome: 'string' }, open_blockers: ['string'] });
+    assertShape(acquiredBody, { claim_receipt: { ...claimShape, outcome: 'string' }, open_blockers: ['string'], previous_lease: null });
     assert.deepEqual(acquiredBody.open_blockers, [blocker.id]);
     assert.deepEqual((await wire(acquire)).body.open_blockers, [blocker.id]);
     const replay = await wire({ ...acquire, agent_label: 'Other' });
@@ -432,4 +432,22 @@ test('error envelopes accept unknown fields but keep their fixed messages and de
   await assert.rejects(decode(comment, answer({ error: { code: 'not_found', message: 'Missing', details: { id: 'pd-1', hint: 'x' }, trace: 'x' }, extra: true }, 404)),
     error => { assert.ok(error instanceof PolylinedbError); assert.deepEqual([error.code, error.details], ['not_found', { id: 'pd-1' }]); return true; });
   await assert.rejects(decode(comment, answer({ error: { code: 'invalid_input', message: 'Bad', details: { token: 'synthetic-private-token' } } }, 400)), { code: 'cloud_invalid_response' });
+});
+
+test('claim_acquire after an expired lease decodes the previous lease and rejects one that cannot precede the receipt', async () => {
+  const { sqlite, wire } = await worker();
+  try {
+    await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Issue' });
+    const incarnation = ((await wire({ op: 'claim_show', issue_id: 'pd-1' })).body.claim as { store_incarnation: string }).store_incarnation;
+    const first = (await wire({ op: 'claim_acquire', issue_id: 'pd-1', incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'lane-a' })).body;
+    sqlite.exec("UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = 'pd-1'");
+    const acquire = { op: 'claim_acquire', issue_id: 'pd-1', incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'lane-b' };
+    const body = (await wire(acquire)).body as { claim_receipt: Record<string, unknown>; previous_lease: Record<string, unknown> };
+    assert.equal(body.previous_lease.session_id, (first.claim_receipt as { session_id: string }).session_id);
+    const decoded = await decode(acquire, answer(body));
+    assert.deepEqual(decoded, { claim_receipt: body.claim_receipt, open_blockers: [], previous_lease: body.previous_lease });
+    for (const broken of [{ ...body.previous_lease, released_at: body.previous_lease.changed_at }, { ...body.previous_lease, generation: 2 }, { ...body.previous_lease, issue_id: 'pd-2' }]) {
+      await assert.rejects(decode(acquire, answer({ ...body, previous_lease: broken })), { code: 'cloud_invalid_response' });
+    }
+  } finally { sqlite.close(); }
 });

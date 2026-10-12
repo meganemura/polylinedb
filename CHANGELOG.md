@@ -320,6 +320,7 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+- Return `previous_lease` from `claim_acquire` (local, HTTP, MCP, and `pd claim acquire`). It is the lease that expired without a release just before this acquisition, with `issue_id`, `incarnation`, `session_id`, `generation`, `actor`, `agent_label`, `revision`, `acquired_at`, `changed_at`, `expires_at`, and `released_at: null`, or `null` after a release, on a first acquisition, or when the earlier lease belongs to another store incarnation. It is read from the immutable `claim_requests` history, so a replay returns the same value. A non-null value means the earlier holder may still be running; the polylinedb skill tells the new holder to read the issue comments and the `work/<issue id>` branch first, and tells a holder that cannot renew in time to push its branch, comment, and release instead of letting the lease lapse. Released CLIs ignore the new field. The cloud client rejects a `previous_lease` for another issue or incarnation, a released one, or one whose generation is not lower than the receipt's. No schema change.
 ### Worker version information
 
 Authenticated `GET /v1/version` and the read-only MCP tool `server_info` return `package_version`, `git_commit`, and `schema_version`.

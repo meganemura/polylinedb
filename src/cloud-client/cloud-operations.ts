@@ -124,7 +124,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
           return { released: false, current };
         }
       }
-      const response = known(value, ['claim_receipt'], operation.op === 'claim_acquire' ? ['open_blockers'] : []);
+      const response = known(value, ['claim_receipt'], operation.op === 'claim_acquire' ? ['open_blockers', 'previous_lease'] : []);
       const blockers = operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') ? openBlockers(response.open_blockers, operation.issue_id) : undefined;
       if (operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') && blockers === undefined) return invalid();
       const row = known(response.claim_receipt, [...claimKeys, 'outcome']);
@@ -138,7 +138,14 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         if (parsed.issue_id !== proof.issue_id || parsed.incarnation !== proof.incarnation || parsed.session_id !== proof.session_id || parsed.generation !== proof.generation || parsed.revision !== operation.expected_revision + 1 || (operation.op === 'claim_renew' && parsed.expires_at !== parsed.changed_at + operation.ttl)) return invalid();
       }
       if (expected === 'released' && parsed.released_at !== null) return { claim_receipt: { ...parsed, outcome: expected, released_at: parsed.released_at } };
-      if (expected !== 'released' && parsed.released_at === null) return blockers === undefined ? { claim_receipt: { ...parsed, outcome: expected, released_at: null } } : { claim_receipt: { ...parsed, outcome: expected, released_at: null }, open_blockers: blockers };
+      if (expected !== 'released' && parsed.released_at === null) {
+        const claim_receipt = { ...parsed, outcome: expected, released_at: null } as const;
+        if (operation.op !== 'claim_acquire' || !Object.hasOwn(response, 'previous_lease')) return blockers === undefined ? { claim_receipt } : { claim_receipt, open_blockers: blockers };
+        const previous_lease = response.previous_lease === null ? null : claim(response.previous_lease);
+        if (previous_lease !== null && (previous_lease.issue_id !== parsed.issue_id || previous_lease.incarnation !== parsed.incarnation
+          || previous_lease.released_at !== null || previous_lease.generation >= parsed.generation)) return invalid();
+        return blockers === undefined ? { claim_receipt, previous_lease } : { claim_receipt, open_blockers: blockers, previous_lease };
+      }
       return invalid();
     }
     case 'changes': case 'wait': {

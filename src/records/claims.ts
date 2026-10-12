@@ -24,7 +24,7 @@ export function claimDisplay(inspection: ClaimInspection): ClaimDisplay {
 }
 export type ClaimOperation = ClaimMutation | { op: 'claim_show'; issue_id: string }
   | { op: 'claim_list'; tool?: string; project?: string; after?: string; limit: number };
-export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claim_receipt: ClaimReceipt; open_blockers: string[] } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection };
+export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claim_receipt: ClaimReceipt; open_blockers: string[]; previous_lease?: Claim | null } | { claim_receipt: ClaimReceipt; previous_lease: Claim | null } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection };
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const uuidSchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' };
 const incarnationSchema = { type: 'string', pattern: '^[a-f0-9]{32}$' };
@@ -152,13 +152,13 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     if (decideReplay(row, actor, payload) === 'request_conflict') throw new PolylinedbError('claim_request_conflict', 'The request ID belongs to a different actor, session, or payload', 409);
     const claim_receipt = receipt(row);
     if (!observeBlockers) return { claim_receipt };
-    return { claim_receipt, open_blockers: openBlockerIds(await db.reads.all(issueQueries.openBlockers, { issue_id })) };
+    return { claim_receipt, open_blockers: openBlockerIds(await db.reads.all(issueQueries.openBlockers, { issue_id })), previous_lease: await previousLease(db, claim_receipt) };
   }
   const row = results.at(observeBlockers ? -3 : -2)?.rows[0];
   if (row) {
     const claim_receipt = receipt(row);
     if (!observeBlockers) return { claim_receipt };
-    return { claim_receipt, open_blockers: openBlockerIds(results.at(-1)?.rows ?? []) };
+    return { claim_receipt, open_blockers: openBlockerIds(results.at(-1)?.rows ?? []), previous_lease: await previousLease(db, claim_receipt) };
   }
   const observed = results.at(observeBlockers ? -2 : -1)?.rows[0];
   if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
@@ -168,6 +168,13 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     if (ownsExpiredLease(current.lease, current.store_incarnation, operation.claim_proof, current.issue_id, actor, current.observed_at)) return { released: false, current };
   }
   throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current: inspection(observed) });
+}
+// Receipts are immutable, so the receipt just before an acquisition tells whether that acquisition took over a lease
+// that expired without a release. A fresh acquisition and its replay read the same answer.
+async function previousLease(db: SqlExecutor, acquired: ClaimReceipt): Promise<Claim | null> {
+  if (acquired.revision === 1) return null;
+  const row = (await db.reads.all(issueQueries.previousLease, { issue_id: acquired.issue_id, incarnation: acquired.incarnation, revision: acquired.revision - 1 }))[0];
+  return row ? claimRow(row) : null;
 }
 function openBlockerIds(rows: readonly Record<string, unknown>[]): string[] {
   return rows.map(row => parseIssueId(row.id));
