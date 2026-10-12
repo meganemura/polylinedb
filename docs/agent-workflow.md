@@ -37,6 +37,10 @@ Neither changelog names pd issue ids, because readers cannot open pd. Each entry
 Commit messages follow the same rule: they describe the change in words and never name a pd issue id. The `tip:` comment on the issue links pd to git.
 The `commit-messages` job in `.github/workflows/check.yml` runs `scripts/commit-messages.ts` on the pushed range only, so earlier history is not checked again.
 The Check workflow runs each OS and Node pair as four parallel jobs: `static` (typecheck, architecture, `/ui` latency), `unit` (`npm test`), `d1` (`npm run test:d1`), and `package` (Worker build, Worker integration, package test). A landing waits for the whole run to succeed, not for a job name.
+
+Cloud agents use Node 24 for local tests. Use Node 24.20.0 or a later Node 24 release to meet `package.json` `engines.node`.
+Test commands stop before tests start on an unsupported runtime and print the actual version and required range.
+
 For a handoff, the agent records progress and releases the lease while leaving the issue open.
 
 ## `/ui` latency budget

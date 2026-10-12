@@ -1,4 +1,5 @@
 // Verifies the distributable through npm installation; source-tree imports cannot satisfy this check.
+import './test-node-runtime.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -43,7 +44,7 @@ try {
     'dist/cloud-client/index.js', 'dist/cloud-client/cloud-operations.js', 'dist/cloud-client/oauth.js', 'dist/cloud-client/credential-session.js', 'dist/cloud-client/credential-store.js',
     "dist/records/issue-queries.js", "dist/records/solarsql.generated.js", "dist/records/memories.js", "dist/records/operations.js", 'dist/records/index.js', 'dist/records/persistence.js', 'docs/memory.md', 'docs/adr/0003-project-memory.md', 'docs/operations.md', 'skills/polylinedb/SKILL.md', 'skills/polylinedb-queue/SKILL.md', 'docs/agent-workflow.md', 'docs/architecture.md',
     'docs/cloud.md', 'docs/cli-authentication.md', 'docs/connections.md', 'docs/d1-migration.md', 'docs/dependencies.md', 'docs/releasing.md', 'docs/secure-mcp-tunnel.md', 'docs/adr/0001-field-versions.md', 'docs/adr/0002-solarsql-reads.md',
-    'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md',
+    'docs/local-cloud-cutover.md', 'docs/adr/0004-shared-cloud-cutover.md', 'docs/migration.md', 'docs/adr/0007-cli-runtime-admission.md', 'docs/adr/test-node-runtime.md',
     "dist/host-hooks/index.js", 'docs/host-hooks.md', 'docs/adr/0005-memory-freshness.md', 'docs/adr/0006-capability-boundaries.md', 'docs/verification.md', 'dist/records/dependencies.js', 'docs/prerequisites.md', 'docs/adr/0008-issue-prerequisites.md',
     'dist/records/errors.js', 'dist/records/claims.js', 'dist/records/claims-sql.js', 'dist/records/changes.js', 'dist/records/changes-sql.js', 'dist/records/active-blocker.js', 'dist/records/attention.js', 'dist/records/schema-v5.js', 'dist/records/schema-v6.js', 'dist/records/schema-v7.js', 'docs/claims.md', 'docs/adr/0009-issue-ownership.md',
     'docs/adr/0010-human-output.md', 'dist/records/operation-policy.js', 'dist/records/agent-gate.js', 'dist/transition/index.js', 'dist/transition/claims.js', 'dist/transition/cross-issue.js', 'dist/transition/issue-update.js', 'dist/transition/receipts.js', 'dist/transition/vocabulary.js', 'dist/transition/agent-gate.js', 'docs/agent-actors.md', 'docs/issue-authority.md', 'docs/adr/0011-issue-authority-layers.md', "docs/adr/0012-restored-d1-addition.md", "docs/adr/0013-cloud-actor-roles.md", "docs/adr/0014-mcp-operation-hints.md", "docs/adr/0015-deferred-cloud-client.md", "docs/adr/0016-change-feed.md", "docs/adr/0017-repository-lookup-cache.md", "docs/adr/0018-issue-closure-record.md", "docs/bun-runtime.md", "docs/depug-debugging.md", "docs/performance.md", "docs/ui-latency.md"].sort();

@@ -10,22 +10,22 @@
     "pd": "dist/cli.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "test": "node scripts/test-node-runtime.mjs && node --import ./scripts/test-node-runtime.mjs --test test/*.test.ts",
     "start": "node src/cli.ts",
     "build:worker": "npm run check:sql && cf build",
     "dev:worker": "vite dev",
     "typecheck": "npm run check:sql && tsc --noEmit",
-    "test:d1": "node scripts/test-d1.ts",
+    "test:d1": "node --import ./scripts/test-node-runtime.mjs scripts/test-d1.ts",
     "schema": "node scripts/schema.ts",
     "test:worker": "POLYLINEDB_BUILD_WITHOUT_ACCESS=1 npm run build:worker && node test/worker.integration.ts",
     "build:cli": "npm run check:sql && tsc -p tsconfig.cli.json",
     "prepack": "npm run build:cli",
-    "test:package": "node scripts/test-package.ts",
+    "test:package": "node --import ./scripts/test-node-runtime.mjs scripts/test-package.ts",
     "generate:sql": "node scripts/solarsql.ts",
     "check:sql": "node scripts/solarsql.ts --check",
     "check:architecture": "node scripts/check-architecture.ts",
     "check:ui-latency": "node scripts/ui-latency-budget.ts",
-    "test:properties": "node --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts test/claims.test.ts test/transition-differential.test.ts test/spec-properties.test.ts",
+    "test:properties": "node scripts/test-node-runtime.mjs && node --import ./scripts/test-node-runtime.mjs --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts test/claims.test.ts test/transition-differential.test.ts test/spec-properties.test.ts",
     "test:mutation": "stryker run"
   },
   "devDependencies": {

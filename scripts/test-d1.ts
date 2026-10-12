@@ -1,5 +1,6 @@
 // Runs the local workerd D1 integration files concurrently. Each file starts its own Miniflare and temporary state.
 // Output is printed per file in list order once all files finish, and any failure fails the run.
+import './test-node-runtime.mjs';
 import { spawn } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 
@@ -22,7 +23,7 @@ type Outcome = { file: string; status: number | null; output: string; seconds: n
 function runFile(file: string): Promise<Outcome> {
   return new Promise(resolve => {
     const started = performance.now();
-    const child = spawn(process.execPath, [file], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['--import', new URL('./test-node-runtime.mjs', import.meta.url).href, file], { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
     child.stderr.setEncoding('utf8').on('data', chunk => { output += chunk; });

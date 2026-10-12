@@ -2,6 +2,7 @@
 // On a loaded macOS host, exec of a node binary can wait tens of seconds before any child code runs,
 // while exec of /bin/sh or git stays fast. So the run limit starts at the child's start signal on fd 3,
 // which test/fixtures/child-started.ts sends, and a separate start limit covers the exec wait.
+import '../../scripts/test-node-runtime.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
 

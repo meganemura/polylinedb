@@ -320,6 +320,15 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+### Reject unsupported Node before tests start
+
+- surface: `npm test`, `npm run test:d1`, `npm run test:properties`, `npm run test:package`, and the shared CLI child helper.
+- change: check `package.json` `engines.node` before loading tests or starting test children.
+- errors: exit 1 with the actual Node version and required range on an unsupported runtime.
+- compatibility: the required Node range remains `^24.20.0 || >=26.7.0`. CLI help and version behavior remain the same.
+
+### Queue checks and landing workflow
+
 - Run the `Check` workflow faster. Each OS and Node pair now runs four parallel jobs named `<suite> (<os>, <node>)`: `static` runs the typecheck, `npm run check:architecture`, and `npm run check:ui-latency`; `unit` runs `npm test`; `d1` runs `npm run test:d1`; and `package` runs the Worker build, `node test/worker.integration.ts`, and `npm run test:package`. Every check that ran before still runs on every pair. `npm run check:architecture` runs its archstrict items in a pool sized to the CPUs, and `npm run test:d1` now runs `scripts/test-d1.ts`, which runs the ten local workerd D1 files in such a pool, slowest first, and prints each file's output in list order. The `Publish` workflow runs the same scripts. No CLI, Worker, or schema change.
 - Stop adding a landing-record commit. Each work commit now adds its own entry under `## Unreleased` in `CHANGELOG.md` and `CHANGELOG.human.md`, and a release commit turns that section into a version section. A landing of `queue` onto main adds no commit. `## Main landings` and the dated landing entries in `CHANGELOG.human.md` stay as history.
 - Run the `Check` workflow on every push except to `main` (`push: branches-ignore: [main]`), and on pull requests as before. `main` only receives fast-forwards of a queue tip whose Check already passed, so a landing adds no Check run beyond the work commit's own. The `Publish` workflow still runs on a push to `main` that changes `package.json`.

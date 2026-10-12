@@ -11,6 +11,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 Changes on `queue` or main that are not in a release yet.
 
+Tests now stop before they start on an unsupported Node version. The message shows your Node version and the required range from the package.
+
 The checks that run on every push finish sooner. They now run in parallel pieces instead of one long line, and every check still runs.
 
 Landing work on main is quicker. A change now carries its own changelog lines, so moving it to main needs no extra commit and no extra round of checks, and the checks no longer run a second time on main for a commit that already passed them. The owner's landing agent may now land checked work on main without asking each time. Releases still wait for the owner's approval.
