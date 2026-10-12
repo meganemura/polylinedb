@@ -71,6 +71,8 @@ An absent field means that the transport did not report the closure.
 
 A later change can let new clients ask for the closure on `/v1/operations`.
 The request needs an opt-in that earlier clients never send, and the client must accept both shapes until every Worker sends the fields.
+That opt-in is now the request header `polylinedb-issue-fields: closure`; see `docs/operations.md`.
+A header keeps every operation body unchanged, so no operation schema gains a field.
 
 ## Rollout
 

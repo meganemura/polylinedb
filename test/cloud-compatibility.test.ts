@@ -47,9 +47,13 @@ async function worker() {
   const env = { DB, ACCESS_TEAM_DOMAIN: 'polylinedb-test.cloudflareaccess.com', ACCESS_AUD: 'polylinedb-test',
     ACCESS_ACTORS: '["access:owner"]', ALLOWED_ORIGINS: '["https://client.example"]' };
   const token = await assertion();
-  const transport: typeof fetch = (_url, options) => handleRequest(new Request('https://issues.example/v1/operations', {
-    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: String(options?.body),
-  }), env, authenticate);
+  // Forwards only the issue-field opt-in from the client, so a test sees what that header changes.
+  const transport: typeof fetch = (_url, options) => {
+    const issueFields = new Headers(options?.headers).get('polylinedb-issue-fields');
+    return handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token, ...(issueFields === null ? {} : { 'polylinedb-issue-fields': issueFields }) }, body: String(options?.body),
+    }), env, authenticate);
+  };
   const wire = async (value: Record<string, unknown>) => {
     const response = await transport('https://issues.example/v1/operations', { body: JSON.stringify(value) });
     return { status: response.status, body: await response.json() as Record<string, unknown> };
@@ -65,11 +69,12 @@ async function outcome(pending: Promise<unknown>): Promise<unknown> {
   catch (error) { assert.ok(error instanceof PolylinedbError); return { error: { code: error.code, status: error.status, details: error.details } }; }
 }
 // The names include fields that the issue row decoder reads from storage rows, so a response cannot override them.
+// The closure is a wire field now; the closure test covers it.
 function future(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(future);
   if (typeof value !== 'object' || value === null) return value;
   return { ...Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, future(entry)])),
-    future_field: { nested: [{ deeper: true }] }, closed_at: null, labels_json: '["injected"]', body_v: 99 };
+    future_field: { nested: [{ deeper: true }] }, labels_json: '["injected"]', body_v: 99 };
 }
 
 test('a newer Worker response with unknown top-level and nested fields decodes to the same result as the current shape', async () => {
@@ -193,16 +198,16 @@ test('an older Worker that rejects with_matches answers a search through one pla
     await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Old Worker search' });
     const context = await wire({ op: 'memory_context', project: 'compat', with_revision: true });
     const rejection = (details?: unknown) => Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: with_matches', ...(details === undefined ? {} : { details }) } }, { status: 400 });
-    const recorded = (reply: (operation: Record<string, unknown>) => Response | Promise<Response>) => {
+    const recorded = (reply: (operation: Record<string, unknown>, options?: RequestInit) => Response | Promise<Response>) => {
       const sent: Record<string, unknown>[] = [];
-      const fetch: typeof globalThis.fetch = async (_url, options) => { const operation = JSON.parse(String(options?.body)); sent.push(operation); return reply(operation); };
+      const fetch: typeof globalThis.fetch = async (_url, options) => { const operation = JSON.parse(String(options?.body)); sent.push(operation); return reply(operation, options); };
       return { sent, fetch };
     };
-    const forwarded = (operation: Record<string, unknown>) => transport('https://issues.example/v1/operations', { body: JSON.stringify(operation) });
+    const forwarded = (operation: Record<string, unknown>, options?: RequestInit) => transport('https://issues.example/v1/operations', { ...options, body: JSON.stringify(operation) });
     const sentForm = (value: unknown) => JSON.parse(JSON.stringify(parseOperation(value)));
     for (const plain of [{ op: 'search', query: 'Old Worker' }, { op: 'search', query: 'Old Worker', project: 'compat', limit: 1, observed_memory_revision: context.body.memory_revision }]) {
       const search = { ...plain, with_matches: true };
-      const older = recorded(operation => 'with_matches' in operation ? rejection() : forwarded(operation));
+      const older = recorded((operation, options) => 'with_matches' in operation ? rejection() : forwarded(operation, options));
       const answered = await decode(search, older.fetch);
       assert.equal('matches' in answered, false);
       assert.deepEqual(answered, await decode(plain, transport));
@@ -414,6 +419,50 @@ test('existing operation responses keep the keys a released client decodes', asy
     assertShape(feed.body, { incarnation: 'string', changes: [{ seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' }], next_since: 'number' });
     const waited = await wire({ op: 'wait', since: 0, timeout: 0 });
     assertShape(waited.body, { incarnation: 'string', changes: [{ seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' }], next_since: 'number' });
+  } finally { sqlite.close(); }
+});
+
+test('a client that asks for the closure decodes closed_at and closed_by, and the default body still omits them', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const sent: (string | null)[] = [];
+    const spy: typeof fetch = (url, options) => { sent.push(new Headers(options?.headers).get('polylinedb-issue-fields')); return transport(url, options); };
+    const created = await decode({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Closing' }, spy);
+    assert.ok('issue' in created);
+    assert.deepEqual([created.issue.closed_at, created.issue.closed_by], [null, null]);
+    const id = created.issue.id;
+    const closed = await decode({ op: 'update', id, changes: [{ field: 'status', expected: 1, value: 'closed' }] }, spy);
+    assert.ok('issue' in closed);
+    assert.equal(closed.issue.closed_by, 'access:owner');
+    assert.equal(closed.issue.closed_at, closed.issue.updated_at);
+    const shown = await decode({ op: 'show', id }, spy);
+    assert.ok('issue' in shown);
+    assert.deepEqual([shown.issue.closed_at, shown.issue.closed_by], [closed.issue.closed_at, 'access:owner']);
+    assert.deepEqual(sent, ['closure', 'closure', 'closure']);
+
+    const conflict = await transport('https://issues.example/v1/operations', { headers: { 'polylinedb-issue-fields': 'closure' },
+      body: JSON.stringify({ op: 'update', id, changes: [{ field: 'body', expected: 9, value: 'Stale' }] }) });
+    const details = (await conflict.json() as { error: { details: { issue: Record<string, unknown> } } }).error.details.issue;
+    assert.equal(details.closed_by, 'access:owner');
+    for (const plain of [(await wire({ op: 'show', id })).body.issue, (await wire({ op: 'list', project: 'compat', status: 'closed' })).body.issues]) {
+      assert.equal(JSON.stringify(plain).includes('closed_'), false);
+    }
+
+    const body = (await wire({ op: 'show', id })).body;
+    const olderWorker = await decode({ op: 'show', id }, answer(body));
+    assert.ok('issue' in olderWorker);
+    assert.equal(Object.hasOwn(olderWorker.issue, 'closed_at'), false);
+    const issue = body.issue as Record<string, unknown>;
+    const broken = [
+      { ...issue, closed_at: closed.issue.closed_at },
+      { ...issue, closed_by: 'access:owner' },
+      { ...issue, status: 'open', closed_at: closed.issue.closed_at, closed_by: 'access:owner' },
+      { ...issue, closed_at: 7, closed_by: 'access:owner' },
+    ];
+    for (const value of broken) {
+      assert.deepEqual(await outcome(decode({ op: 'show', id }, answer({ ...body, issue: value }))),
+        { error: { code: 'cloud_invalid_response', status: 502, details: undefined } }, JSON.stringify(value));
+    }
   } finally { sqlite.close(); }
 });
 

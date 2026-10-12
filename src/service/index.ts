@@ -3,7 +3,7 @@ import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, ty
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { createDispatcher, dispatchSecretNames, type Dispatcher } from "./dispatch.ts";
 import { dispatchResponse, uiNotFoundResponse, uiResponse, type ActivityCursor, type UiRoute } from "./ui.ts";
-import { withoutClosure } from "./released-issues.ts";
+import { issueFieldsFor } from "./released-issues.ts";
 import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseIssueId, parseOperation, parseRequestId } from "../records/index.ts";
 import type { Status } from "../records/index.ts";
@@ -346,10 +346,10 @@ export async function handleRequest(
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
     if (target.kind === 'mcp') return await mcp(request, env, caller);
-    return json(withoutClosure(await execute(request, env, parseRequested('/v1/operations', await readJson(request), caller), caller)));
+    return json(issueFieldsFor(request)(await execute(request, env, parseRequested('/v1/operations', await readJson(request), caller), caller)));
   } catch (error) {
     const failure = publicError(error);
-    return json(withoutClosure(failure.body), failure.status, failure.status === 401 ? { 'www-authenticate': 'Bearer' } : {});
+    return json(issueFieldsFor(request)(failure.body), failure.status, failure.status === 401 ? { 'www-authenticate': 'Bearer' } : {});
   }
 }
 

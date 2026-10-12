@@ -28,8 +28,10 @@ function known(value: unknown, required: readonly string[], optional: readonly s
   if (required.some(key => !Object.hasOwn(row, key))) return invalid();
   return Object.fromEntries([...required, ...optional].filter(key => Object.hasOwn(row, key)).map(key => [key, row[key]]));
 }
+// The client asks for the closure. A Worker that ignores the request sends neither key, and the issue then has none.
 function issue(value: unknown): Issue {
-  const row = known(value, ['id', ...fields, 'versions', 'created_at', 'created_by', 'updated_at', 'updated_by']);
+  const row = known(value, ['id', ...fields, 'versions', 'created_at', 'created_by', 'updated_at', 'updated_by'], ['closed_at', 'closed_by']);
+  if (Object.hasOwn(row, 'closed_at') !== Object.hasOwn(row, 'closed_by')) return invalid();
   const versions = known(row.versions, fields);
   const parsed = issueRow({ ...row, labels_json: JSON.stringify(row.labels), ...Object.fromEntries(fields.map(field => [`${field}_v`, versions[field]])) });
   if (JSON.stringify(parsed.labels) !== JSON.stringify(row.labels)) return invalid();
@@ -426,7 +428,7 @@ export async function executeCloudOperation(input: {
   try {
     response = await (input.fetch ?? globalThis.fetch)(new URL('/v1/operations', origin), {
       method: 'POST', redirect: 'error', signal: controller.signal,
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json' },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json', 'polylinedb-issue-fields': 'closure' },
       body: JSON.stringify(input.operation),
     });
     if (response.status === 401) throw new PolylinedbError('auth_required', 'Run auth login for this cloud connection.', 401);

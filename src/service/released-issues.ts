@@ -1,5 +1,6 @@
 // Shapes /v1/operations bodies for released CLIs, whose decoders reject any issue key they do not know.
 // MCP output keeps the full issue; agents read it directly and need no fixed key set.
+// A client that sends `polylinedb-issue-fields: closure` decodes the closure, so its bodies keep both keys.
 const closureKeys = ['closed_at', 'closed_by'];
 const isIssue = (value: object) => Object.hasOwn(value, 'versions') && closureKeys.some(key => Object.hasOwn(value, key));
 
@@ -10,4 +11,11 @@ export function withoutClosure(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value)
     .filter(([key]) => !(issue && closureKeys.includes(key)))
     .map(([key, entry]) => [key, withoutClosure(entry)]));
+}
+
+export const issueFieldsHeader = 'polylinedb-issue-fields';
+
+export function issueFieldsFor(request: Request): (value: unknown) => unknown {
+  const requested = (request.headers.get(issueFieldsHeader) ?? '').split(',').map(token => token.trim().toLowerCase());
+  return requested.includes('closure') ? value => value : withoutClosure;
 }

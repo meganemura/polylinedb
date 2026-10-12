@@ -45,7 +45,10 @@ Local results and MCP add `closed_at` and `closed_by`: the time and actor of the
 Both are null while the issue is not closed, and for an issue closed before schema 8.
 Closing an issue that is already closed keeps the first closure.
 Reopen and any other status change away from `closed` clear them, and other edits keep them.
-`/v1/operations` responses omit both fields, so released cloud clients keep reading the same issue shape.
+`/v1/operations` responses omit both fields by default, so released cloud clients keep reading the same issue shape.
+A request with the header `polylinedb-issue-fields: closure` keeps both fields on every issue in its success or error body.
+The cloud CLI sends that header from this release on and accepts an issue with both fields or with neither, because an older Worker ignores the header.
+It rejects an issue with only one of them, or with a closure on an issue that is not closed, as `cloud_invalid_response`.
 Timestamps use UTC ISO strings.
 
 Use `tool` for the affected tool or component, such as `compiler`, `editor`, or `polylinedb`.
