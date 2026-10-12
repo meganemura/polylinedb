@@ -86,6 +86,21 @@ The `pd` CLI keeps authentication state in `$XDG_CONFIG_HOME/polylinedb/auth`, o
 A sandbox can deny writes to that directory, so allow the directory before a CLI login.
 [CLI authentication](cli-authentication.md) describes the resulting `auth_state_access_denied` error.
 
+## Tools missing on the first response
+
+Some hosts start a session before the pd MCP tools are available.
+In Claude Code, the pd tools can be missing or fail on the first response of a session and work from the second.
+The Worker does no D1 read for `initialize` or `tools/list`. Its only cold-start cost there is fetching the Access signing keys once per isolate.
+Every `/mcp` response carries a `Server-Timing` header with one entry named `worker`, the time the Worker spent on that request, so a slow first response can be split between the Worker and the host.
+In a Claude Code cloud session, the pd tools were observed to arrive as deferred tools that load after the session has started. That points at the host connecting MCP servers in the background, not at the Worker.
+
+Until the host waits for its MCP servers, use one of these:
+
+- Start the work with a cheap read such as `actor`. If the tool is missing or the call fails, call it once more before concluding that the connection is absent. The polylinedb skill says the same.
+- For a local Claude Code, raise its MCP server startup timeout with the `MCP_TIMEOUT` environment variable, in milliseconds, for example `MCP_TIMEOUT=30000`.
+
+Neither changes what the Worker does. If `Server-Timing` on the first `initialize` is large, the time is in the Worker or Access; otherwise it is in the host.
+
 ## Configure the Worker
 
 `cloudflare.config.ts` maps the following deployment environment variables to Worker bindings. Supply configuration from the operator's environment. The application identity and allowlist are configuration, not OAuth credentials.

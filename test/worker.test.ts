@@ -780,6 +780,30 @@ test('ui: every page reports the Worker time in Server-Timing, and a rejected ca
   } finally { sqlite.close(); }
 });
 
+test('MCP initialize, tools/list, and tools/call report the Worker time in Server-Timing', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const rpc = (body: Record<string, unknown>, headers: Record<string, string> = { 'cf-access-jwt-assertion': token }) => handleRequest(new Request('https://issues.example/mcp', {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers }, body: JSON.stringify(body),
+  }), env, authenticate);
+  try {
+    const calls = [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'timing', version: '1' } } },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'actor', arguments: {} } },
+    ];
+    for (const call of calls) {
+      const response = await rpc(call);
+      assert.ok(response.status === 200 || response.status === 202, call.method);
+      assert.match(response.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/, call.method);
+    }
+    const rejected = await rpc(calls[0]!, {});
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.headers.get('server-timing'), null);
+  } finally { sqlite.close(); }
+});
+
 function favicon(html: string): string {
   const links = [...html.matchAll(/<link\b[^>]*\brel="icon"[^>]*>/g)].map(match => match[0]);
   assert.equal(links.length, 1);

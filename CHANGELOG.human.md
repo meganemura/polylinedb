@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+If pd tools are missing on the first reply of a session, the guide now explains why and what to do: retry once, or give a local Claude Code more time to connect. The server also reports how long it spent on each MCP request, so a slow start can be traced.
+
 An agent now hands finished work to the landing queue in one step instead of five. One call records the commit and a summary, marks the issue as waiting for main, and gives up the claim. Either everything is recorded or nothing is, so a crash no longer leaves an issue half handed over.
 
 The packaged-server check now expects the in-place Dispatch script, so release checks pass again.

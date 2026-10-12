@@ -346,7 +346,12 @@ export async function handleRequest(
       return page;
     }
     if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
-    if (target.kind === 'mcp') return await mcp(request, env, caller);
+    if (target.kind === 'mcp') {
+      const answer = await mcp(request, env, caller);
+      // The same Worker time as /ui, so a slow first MCP response can be split between the Worker and the client.
+      answer.headers.set('server-timing', `worker;dur=${(performance.now() - started).toFixed(1)}`);
+      return answer;
+    }
     return json(issueFieldsFor(request)(await execute(request, env, parseRequested('/v1/operations', await readJson(request), caller), caller)));
   } catch (error) {
     const failure = publicError(error);

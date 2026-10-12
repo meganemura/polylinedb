@@ -8,6 +8,7 @@ description: Select, claim, and complete agent work through polylinedb MCP tools
 Use the selected MCP connector's advertised tools and argument schemas.
 They decide what is available, even when the installed package and the connector run different versions.
 Do not substitute another tool.
+Some hosts load MCP tools after the session starts. If a pd tool is missing or fails on the first response, call `actor` once more before concluding that the connection is absent.
 Before stopping because a named tool is missing, see which connection each visible pd tool comes from.
 The name prefix or the namespace names that connection.
 Check for more than one pd connection, such as a host connector import and a configured MCP server.
