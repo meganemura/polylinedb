@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+Owner items in `/ui` now show what they ask for. An issue that starts with a line such as 要対応（owner-action） is listed under its next line, so the To do and To decide rows no longer all read the same. The issue page still shows the marker at the top of the text.
+
 When an agent takes over an issue whose previous claim ran out without being released, it is now told who held it and when it expired, so it can pick up their pushed work instead of duplicating it. Agents that cannot keep their claim alive now hand over their work before the claim runs out.
 
 The CLI module-loading test now runs without opening your computer's credential store.

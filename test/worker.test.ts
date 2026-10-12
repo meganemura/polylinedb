@@ -1476,6 +1476,24 @@ test('ui: owner inbox lists owner-decision, owner-action, and main-wait across p
   } finally { sqlite.close(); }
 });
 
+test('ui: an owner issue whose first line is only a marker shows its next line as the title', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const action = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '要対応（owner-action）\nChoose which hosts connect\nDetails follow', labels: ['owner-action'] });
+    const decision = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '# 判断待ち(owner-decision)\n\nPick a cache policy', labels: ['owner-decision'] });
+    const part = uiSection(await (await viewUi(env, auth)).text(), 'Waiting on you');
+    assert.ok(part.includes(`<a href="/ui/i/${action}">\n<span class="primary">Choose which hosts connect</span>`));
+    assert.ok(part.includes(`<a href="/ui/i/${decision}">\n<span class="primary">Pick a cache policy</span>`));
+    assert.equal(part.includes('<span class="primary">要対応（owner-action）</span>'), false);
+    const page = await (await viewIssue(env, action, auth)).text();
+    assert.ok(page.includes('<h1>Choose which hosts connect</h1>'));
+    assert.ok(page.includes('<title>Choose which hosts connect'));
+    assert.ok(page.includes('要対応（owner-action）\nDetails follow'));
+  } finally { sqlite.close(); }
+});
+
 test('ui: home lists what waits on the owner above the projects', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();

@@ -629,6 +629,10 @@ Every page starts with the same links.
 
 An actor name is the roster [label](#label-an-actor-for-the-ui-page).
 When that actor has no label, the page shows the actor ID.
+An issue's title is the first non-empty line of its body, without leading `#` heading markers.
+When that line is only an owner marker, such as `要対応（owner-action）` or `判断待ち(owner-decision)`, and another non-empty line follows, the title is that next line.
+The issue page then shows the marker as the first line of the body text.
+The rows, the issue page `<h1>`, and the browser title all use this title.
 Times use Japan Standard Time.
 The store does not record when an issue closed.
 A shown update time is `updated_at`.
@@ -642,7 +646,7 @@ On **Waiting on you**, the time is how long since the issue was created.
 It lists open issues labeled `owner-decision` or `owner-action`, across all projects, and says how many there are.
 `owner-decision` issues are under **To decide**, and `owner-action` issues are under **To do**. An issue with both labels is under **To decide** only.
 Each group lists higher priority first, then the issue that has waited longest.
-Each row shows the first line of the body, the issue ID, the project, and how long the issue has waited, and opens the issue.
+Each row shows the title, the issue ID, the project, and how long the issue has waited, and opens the issue.
 The waiting time counts from `created_at`, by the store clock, in whole hours or days. The store does not record when a label was added.
 The section reads the same Attention rule as the [Inbox](#inbox). It lists only the `open` issues, and it counts the deferred and in-progress owner issues and links to the Inbox for them.
 The rule is read at most 100 issues at a time; when more exist, the section says so.
@@ -663,7 +667,7 @@ A slash in the project name is its own path segment.
 **Waiting for main** sits under the project list.
 It lists open issues with the label `main-wait`, newest update first, at most 50.
 That label marks work that is enqueued on the `queue` branch and is not yet on the remote main branch.
-Each row shows the first line of the body, the issue ID, the last update, and the actor of that update.
+Each row shows the title, the issue ID, the last update, and the actor of that update.
 The row has no link.
 
 ### Project view
@@ -689,7 +693,7 @@ A `status` other than those four values returns the not-found page.
 A `label` that is empty, longer than 256 UTF-8 bytes, or that contains a control character returns the not-found page.
 
 Each issue row links to that issue.
-The row shows the first line of the body, the status, the priority, the type, and the issue ID.
+The row shows the title, the status, the priority, the type, and the issue ID.
 The row also lists each of `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action` that the issue carries.
 An active claim adds the claim's agent label when one is set, the actor, and the expiry time.
 When blockers are not closed, the row shows how many.

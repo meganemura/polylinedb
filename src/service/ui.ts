@@ -34,8 +34,22 @@ function escape(value: string): string {
   return value.replace(/[&<>"']/g, character => escapes[character] ?? character);
 }
 
-function title(body: string): string {
-  const line = body.split('\n').map(text => text.trim()).find(text => text.length > 0) ?? '';
+// Some owner issues open with a marker line such as 要対応（owner-action）; the request itself is on the next line.
+const ownerMarker = /^#*\s*(?:要対応|判断待ち)[（(][^（()）]*[）)]。?$/;
+
+// Picks the title line, skipping one leading owner marker when another non-empty line follows it.
+function titleLines(body: string): { lines: string[]; title: number; marker: number } {
+  const lines = body.split('\n');
+  const filled = lines.flatMap((line, index) => line.trim() ? [index] : []);
+  const first = filled[0] ?? -1;
+  const next = filled[1];
+  if (first >= 0 && next !== undefined && ownerMarker.test(lines[first]!.trim())) return { lines, title: next, marker: first };
+  return { lines, title: first, marker: -1 };
+}
+
+export function title(body: string): string {
+  const { lines, title: index } = titleLines(body);
+  const line = index < 0 ? '' : lines[index]!.trim();
   return line.replace(/^#+\s*/, '') || line;
 }
 
@@ -124,10 +138,12 @@ ${attention(issue.labels)}${activeClaim(row.claim, labels)}${blocked}<span class
 </a></li>`;
 }
 
-function bodyAfterTitle(body: string): string {
-  const lines = body.split('\n');
-  const index = lines.findIndex(line => line.trim().length > 0);
-  return index < 0 ? '' : lines.slice(index + 1).join('\n');
+// The issue page keeps a skipped owner marker as the first body line, so the reader still sees it is an owner item.
+export function bodyAfterTitle(body: string): string {
+  const { lines, title: index, marker } = titleLines(body);
+  if (index < 0) return '';
+  const rest = lines.slice(index + 1);
+  return (marker < 0 ? rest : [lines[marker]!.trim(), ...rest]).join('\n');
 }
 
 function commentItem(comment: Comment, labels: ReadonlyMap<string, string>): string {
