@@ -108,3 +108,9 @@ test('the release guide states the rules the workflow enforces', () => {
   ]) assert.ok(guide.includes(promise), promise);
   assert.doesNotMatch(guide, /workflow_dispatch|gh workflow run|APPROVED_SHA/);
 });
+
+test('Check runs on every push except to main, where only checked queue tips arrive', () => {
+  const check = readFileSync(new URL('.github/workflows/check.yml', root), 'utf8');
+  assert.match(check, /^on:\n  push:\n    branches-ignore: \[main\]\n  pull_request:\n/m);
+  assert.match(publish, /^on:\n  push:\n    branches: \[main\]\n/m);
+});

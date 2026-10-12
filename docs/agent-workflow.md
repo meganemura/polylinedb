@@ -8,8 +8,8 @@ Agents refetch ready candidates before each claim attempt because another actor 
 The current MCP vocabulary represents ready work as `dependency_worklist` with `state: "ready"`.
 `claim_show`, `claim_acquire`, `claim_renew`, and `claim_release` supply the issue lease lifecycle.
 The skill reads schemas at runtime.
-Agents enqueue finished work on the shared `queue` branch, and the owner lands `queue` onto main.
-Agents do not push main or take the main-lock.
+Agents enqueue finished work on the shared `queue` branch. The owner, or rocky with the owner's standing permission, lands `queue` onto main under the main-lock once Check is green on the queue tip.
+Other agents do not push main or take the main-lock.
 
 A successful `claim_acquire` returns `open_blockers`, the ids of active blockers, observed at acquire time.
 An empty list means there are none.
@@ -31,7 +31,8 @@ Any number of agents may push `queue` without force at the same time. A rejected
 After the enqueue, the agent sets the issue `open`, replaces `ready` with `main-wait`, and releases the lease.
 Whoever lands `queue` onto main claims the issue again, closes it, and then releases that claim.
 Close comes first, because close requires the current proof.
-Every landing of `queue` onto main adds an entry to both changelogs: [CHANGELOG.md](../CHANGELOG.md) for agents, with commits, fields, errors, secrets by name, schema, and deploy steps, and [CHANGELOG.human.md](../CHANGELOG.human.md) for people, in plain English.
+Each work commit adds its own entry under `## Unreleased` in both changelogs: [CHANGELOG.md](../CHANGELOG.md) for agents, with fields, errors, secrets by name, schema, and deploy steps, and [CHANGELOG.human.md](../CHANGELOG.human.md) for people, in plain English.
+A landing adds no changelog commit, so it starts no extra Check run. Check does not run on main, which only receives queue tips that already passed it.
 Neither changelog names pd issue ids, because readers cannot open pd. Each entry describes the change in words.
 Commit messages follow the same rule: they describe the change in words and never name a pd issue id. The `tip:` comment on the issue links pd to git.
 The `commit-messages` job in `.github/workflows/check.yml` runs `scripts/commit-messages.ts` on the pushed range only, so earlier history is not checked again.

@@ -1,7 +1,9 @@
 name: Check
 
+# main only receives fast-forwards of a queue tip whose Check already passed, so Check does not run again there.
 on:
   push:
+    branches-ignore: [main]
   pull_request:
 
 permissions:

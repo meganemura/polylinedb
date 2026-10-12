@@ -28,7 +28,7 @@ Version `0.5.1` reached npm, but its `release` job failed, so it has no tag and 
    ```
 
 5. Enqueue the commit on `queue` with the queue skill (`skills/polylinedb-queue/SKILL.md`), including the full test suite after the final rebase.
-6. The owner lands `queue` onto main, with the landing changelog commit on top.
+6. Once Check is green on the queue tip, the owner or rocky fast-forwards main to it under the main-lock. A landing adds no commit of its own.
 7. The push to main that changes `package.json` starts the `Publish` workflow. The owner reviews the run and approves the `publish` environment.
 
 Nobody pushes a release tag, runs `npm publish`, or creates a GitHub Release by hand. The workflow does all three.
@@ -76,7 +76,8 @@ The tag's tagger is `github-actions[bot]`.
 
 ## Who does what
 
-- Lanes prepare release commits and enqueue them on `queue`. A lane lands `queue` onto main only when the owner authorizes that landing.
+- Lanes prepare release commits and enqueue them on `queue`.
+- The owner, or rocky with the owner's standing permission, lands `queue` onto main under the main-lock once Check is green on the queue tip. Other lanes do not push main.
 - Only the owner approves the `publish` environment.
 - Nobody pushes tags or runs `npm publish` by hand.
 - Claude cloud sessions cannot push tags. Their git proxy answers 403 to a tag push, while branch pushes work.

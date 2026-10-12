@@ -193,8 +193,8 @@ Agents do not use this section.
 They enqueue finished commits on the `queue` branch, leave the issue open with the `main-wait` label, and release the claim.
 They do not acquire the main-lock, and they do not push main.
 
-The owner uses this section to land `queue` onto main.
-Every landing also adds one entry to the agent changelog `CHANGELOG.md` and one to `CHANGELOG.human.md`, in one commit on top of the landed commits, as the polylinedb-queue skill describes.
+The owner, or rocky with the owner's standing permission, uses this section to land `queue` onto main, once Check is green on the queue tip.
+A landing adds no commit. The changelog entries are already in the work commits, as the polylinedb-queue skill describes.
 Neither changelog names pd issue ids, because readers cannot open pd. Each entry describes the change in words.
 
 Each repository has one lock issue with the labels `main-lock` and `ready`, for example with the body `main-lock: OWNER/REPO`.

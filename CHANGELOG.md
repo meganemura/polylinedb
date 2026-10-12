@@ -3,19 +3,18 @@
 This is the agent changelog. It records the behavior that an agent or an operator script depends on.
 People should read [CHANGELOG.human.md](CHANGELOG.human.md), which says the same changes in plain English.
 
-Every landing of `queue` onto main adds one entry to `## Main landings` here and one to `CHANGELOG.human.md`.
+Each work commit adds its own entry under `## Unreleased` here and in `CHANGELOG.human.md`. A landing of `queue` onto main adds no entry and no commit.
 An entry covers MCP and CLI behavior, new or changed return fields, error and no-op semantics, required Worker secrets and bindings by name, D1 schema versions and migrations, and deploy prerequisites.
 Entries never contain secret values, tokens, account IDs, or webhook URLs.
-Entries never name pd issue ids, because readers cannot open pd. Each entry describes the change in words and ties it to its commits.
-
-The release sections below `## Main landings`, starting with `## Unreleased`, keep their earlier form.
+Entries never name pd issue ids, because readers cannot open pd. Each entry describes the change in words.
+A release commit turns `## Unreleased` into a version section.
 The publish workflow reads a version section such as `## 0.4.0 (2026-10-09)` for the GitHub Release notes, so keep those headings.
 
 ## Main landings
 
+This section is history. Landings up to 2026-10-12 added a commit with an entry here; later landings add none, and their changes are in `## Unreleased` and the version sections below.
 Newest landing first.
 Each landing is a `### YYYY-MM-DD main SHORT_SHA` heading, where the SHA is the newest landed commit below the changelog commit.
-Whoever lands `queue` onto main writes both entries in one commit on top of the landed commits; the 2026-10-11 entry was added afterwards.
 Each change under it is a `####` heading that names the change in words, and a list of `key: value` lines, so a search such as `grep -n '^- secrets:' CHANGELOG.md` finds it.
 The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`, `schema`, `secrets`, `deploy`, and `status`. A key that does not apply is left out.
 
@@ -320,6 +319,10 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 - compatibility: no output or flag changes.
 
 ## Unreleased
+
+- Stop adding a landing-record commit. Each work commit now adds its own entry under `## Unreleased` in `CHANGELOG.md` and `CHANGELOG.human.md`, and a release commit turns that section into a version section. A landing of `queue` onto main adds no commit. `## Main landings` and the dated landing entries in `CHANGELOG.human.md` stay as history.
+- Run the `Check` workflow on every push except to `main` (`push: branches-ignore: [main]`), and on pull requests as before. `main` only receives fast-forwards of a queue tip whose Check already passed, so a landing adds no Check run beyond the work commit's own. The `Publish` workflow still runs on a push to `main` that changes `package.json`.
+- The queue skill, `docs/agent-workflow.md`, `docs/claims.md`, and `docs/releasing.md` describe the landing: the owner, or rocky with the owner's standing permission, fast-forwards `main` to the queue tip under the main-lock once Check succeeded on that commit, then closes the landed `main-wait` issues. Other agents still do not push main, and only the owner approves the `publish` environment. No CLI, Worker, or schema change.
 
 ## 0.5.2 (2026-10-12)
 

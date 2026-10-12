@@ -3,12 +3,15 @@
 This is the changelog for people who use polylinedb. It says in plain English what you can now do and what changed in `/ui` and in the workflow.
 Agents and scripts should read [CHANGELOG.md](CHANGELOG.md), which lists the exact fields, errors, secrets, and schema versions behind each change.
 
-Every landing of `queue` onto main adds a short entry here and a detailed entry to `CHANGELOG.md`.
-The newest landing comes first.
+Each change adds a short entry under `## Unreleased` here, in the same commit as the change, and a detailed entry to `CHANGELOG.md`.
+A release commit turns `## Unreleased` into a version section such as `## X.Y.Z (YYYY-MM-DD)`.
+The dated landing entries below are history. Landings after 2026-10-12 add no entry of their own.
 
 ## Unreleased
 
-Enqueued on `queue` and not yet on main. Whoever lands `queue` moves these lines into that landing's entry.
+Changes on `queue` or main that are not in a release yet.
+
+Landing work on main is quicker. A change now carries its own changelog lines, so moving it to main needs no extra commit and no extra round of checks, and the checks no longer run a second time on main for a commit that already passed them. The owner's landing agent may now land checked work on main without asking each time. Releases still wait for the owner's approval.
 
 ## 2026-10-12, landing da88994
 

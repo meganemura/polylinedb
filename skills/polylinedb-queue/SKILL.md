@@ -6,8 +6,8 @@ description: Enqueue finished commits onto the shared queue branch, the standard
 # Enqueue onto the queue branch
 
 The `queue` branch is the standard landing path.
-Agents enqueue finished commits onto `queue`. The owner lands `queue` onto main.
-Agents never push or merge main and never take the `main-lock` issue.
+Agents enqueue finished commits onto `queue`. The owner, or rocky with the owner's standing permission, lands `queue` onto main.
+Other agents never push or merge main and never take the `main-lock` issue.
 The polylinedb skill covers selection and claims. This skill covers the worktree, the push, and the issue state after it.
 Use the selected MCP connector's advertised tools and argument schemas.
 If the connector does not advertise a tool that this skill names, stop and report the gap. Do not substitute another tool.
@@ -87,7 +87,7 @@ A cloud connector reports a human actor until per-agent tokens exist and does no
 Do not `close` the issue. Do not write priority.
 Whoever lands `queue` onto main closes the issue.
 A drain is done on the agent side when every issue is enqueued, `open`, labeled `main-wait`, and unclaimed.
-The issues close later, when the owner lands `queue`.
+The issues close later, when `queue` lands on main.
 
 Notes stay in pd, as a `comment` or as project memory.
 Do not use git notes.
@@ -95,15 +95,29 @@ Do not use git notes.
 If the push succeeds but a later write fails, report the remote SHA and reconcile the records before declaring the enqueue complete.
 Never repeat a successful push merely because a later write failed.
 
-## Update both changelogs at each landing
+## Write the changelog entries in the work commit
 
-Every landing of `queue` onto main updates both changelog files at the repository root.
+Each work commit carries its own changelog entries, so a landing adds no commit and no extra Check run.
 `CHANGELOG.md` is the agent changelog. `CHANGELOG.human.md` is the changelog for people.
-Whoever lands `queue` onto main adds one entry for that landing to each file, in one commit on top of the commits being landed, and lands that commit with them.
-The `CHANGELOG.md` entry goes under `## Main landings`, newest first, with the heading `### YYYY-MM-DD main SHORT_SHA`, where the SHA is the newest landed commit below the changelog commit.
-It ties each change to its commits and describes it in words, and names MCP and CLI behavior, return fields, error and no-op semantics, required Worker secrets and bindings, D1 schema versions and migrations, and deploy prerequisites.
+Add the change under `## Unreleased` in both files, in the same commit as the change.
+The `CHANGELOG.md` entry describes the change in words and names MCP and CLI behavior, return fields, error and no-op semantics, required Worker secrets and bindings, D1 schema versions and migrations, and deploy prerequisites.
 The `CHANGELOG.human.md` entry says in a few plain sentences what people can now do or what changed in `/ui` and the workflow, without internals.
 Name Worker secrets and bindings only by name. Never write secret values, tokens, account IDs, or webhook URLs into either file.
 Never write pd issue ids, such as `pd-149`, into either file, including under `## Unreleased`. Readers cannot open pd, so describe the change in words.
-An agent that enqueues may add its own line under `## Unreleased` in `CHANGELOG.md`. The landing entries belong to whoever lands `queue`.
 A release commit turns `## Unreleased` into a version section, as `docs/releasing.md` describes.
+Nobody adds a landing-record commit. The `## Main landings` section of `CHANGELOG.md` and the dated landing entries of `CHANGELOG.human.md` are history.
+
+## Land queue onto main
+
+The owner lands `queue` onto main. Rocky, the owner's landing agent, has the owner's standing permission to land without asking each time.
+Rocky lands only under the `main-lock` claim, and only a queue tip whose Check workflow succeeded on that exact commit.
+
+1. Acquire the `main-lock` issue as `docs/claims.md` describes.
+2. Fetch `main` and `queue`. Confirm that `main` is an ancestor of the queue tip and that Check succeeded on the queue tip SHA.
+3. Push that SHA to main as a fast-forward, for example `git push origin SHA:refs/heads/main`. Never force.
+4. For each `main-wait` issue that is now on main, claim it, remove `main-wait`, close it with the current proof, and release the claim.
+5. Release the main-lock.
+
+Check does not run again on main, because it already passed on the same commit in `queue`.
+A push to main that changes `package.json` starts the Publish workflow. Only the owner approves its `publish` environment.
+Rocky does not tag, publish by hand, or deploy. Other agents never push main and never take the main-lock.
