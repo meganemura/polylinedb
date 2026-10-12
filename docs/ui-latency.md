@@ -178,7 +178,7 @@ A 600 ms rest, measured with prefetch and without the crossfade, paints the foll
 Back in that run was 2.3 ms from the back-forward cache.
 The first load stayed near 196 ms.
 
-No application JavaScript was added.
+No application JavaScript was added for this budget. The issue page later gained one small fixed script for Dispatch; it runs only on a press and does not touch navigation, so page moves and the back-forward cache are unchanged.
 Prefetch meets the 100 ms budget for a 300 ms rest on a 150 ms link.
 The crossfade is the part that can miss that budget.
 

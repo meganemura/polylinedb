@@ -609,8 +609,8 @@ A change to a label therefore changes `/ui` for past updates too.
 
 The Worker serves HTML pages under `/ui` for a phone browser.
 The pages do not change the store.
-They contain no application JavaScript.
-The only script is the prefetch hint described under [Speed](#speed).
+Every page carries the prefetch hint described under [Speed](#speed).
+The only application JavaScript is a small fixed script on an issue page where Dispatch is ready; see the Dispatch notes below.
 Every page accepts only `GET`, except `POST /ui/i/<id>/dispatch`.
 The same Access check as the operation endpoints runs before any page is returned.
 A bad Access configuration returns `503 invalid_access_configuration`.
@@ -752,7 +752,15 @@ It then shows the status when it is not `open`, `ready` or `not ready`, `main-lo
 It ends with `can start now` only when the issue is open, has `ready`, has no `main-lock` or owner-wait label, has no active blocker, and has no active claim; otherwise it ends with `will not start now`.
 The line informs only.
 It does not disable the button; the dispatcher decides.
-Pressing Dispatch does not change the issue.
+When the button is ready, the issue page also carries a fixed inline script and an empty `role="status"` result line inside the form.
+The script sends the same form as a same-origin `fetch` POST, so the page does not move.
+While it sends, the button is disabled and reads `Sending…`, so a second tap does nothing.
+On success the line shows the result sentence, such as `Sent.`, with the local time, and the notes box is cleared.
+On an error it shows the sentence the server returned, or that the server could not be reached, and keeps the notes.
+If Access sends the request to sign in again, the line asks you to reload the page; the notes stay.
+The browser still sends the page origin, so the `Origin` rules above apply unchanged.
+Without JavaScript the form posts and opens the result page as before.
+Pressing Dispatch does not change the issue, so nothing else on the page needs to refresh.
 
 ### Inbox
 
@@ -850,8 +858,9 @@ On a phone, Chrome's moderate heuristic prefetches a small number of likely link
 The prefetch is an ordinary `GET`.
 Access runs first, so a rejected caller still receives `401`, `403`, or `503` and no HTML.
 The rules set `referrer_policy` to `no-referrer`, and they do not prerender a page.
-`Content-Security-Policy` names the SHA-256 hash of that JSON in `script-src`.
+`Content-Security-Policy` names the SHA-256 hash of that JSON in `script-src`, and the hash of the fixed Dispatch script.
 No other script is allowed, and `script-src` does not use `'unsafe-inline'`.
+`connect-src 'self'` lets that script post Dispatch to the same origin and nowhere else.
 The pages do not use `<link rel="prefetch">`.
 A speculation-rules prefetch stays in the document's memory and still applies when the response is `private, no-cache`.
 

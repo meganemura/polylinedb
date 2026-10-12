@@ -8,7 +8,7 @@ import { createAccessVerifier } from "../src/service/access.ts";
 import { createDispatcher, dispatchSecretNames } from "../src/service/dispatch.ts";
 import * as dispatchModule from "../src/service/dispatch.ts";
 import { handleRequest } from "../src/service/index.ts";
-import { dispatchResponse } from "../src/service/ui.ts";
+import { dispatchResponse, dispatchScript } from "../src/service/ui.ts";
 import { SCHEMA_SQL } from "../src/records/schema.ts";
 import { statements } from "../src/records/solarsql.generated.ts";
 import { issueSortKey } from "../src/records/issue-id.ts";
@@ -640,8 +640,11 @@ function uiSection(html: string, heading: string): string {
   return part;
 }
 
+// A page carries the speculation rules and, on an issue page where Dispatch is ready, the fixed Dispatch script.
 function speculationRules(html: string): string {
-  const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];
+  const all = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];
+  const scripts = all.filter(script => script[1] !== '' || script[2] !== dispatchScript);
+  assert.ok(all.length - scripts.length <= 1);
   assert.equal(scripts.length, 1);
   assert.equal(scripts[0][1], ' type="speculationrules"');
   const body = scripts[0][2] ?? '';
@@ -682,7 +685,8 @@ function assertNoApplicationControls(html: string): void {
 
 function uiPolicy(html: string): string {
   const hash = createHash('sha256').update(speculationRules(html)).digest('base64');
-  return `default-src 'none'; script-src 'sha256-${hash}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+  const dispatch = createHash('sha256').update(dispatchScript).digest('base64');
+  return `default-src 'none'; script-src 'sha256-${hash}' 'sha256-${dispatch}'; connect-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
 }
 
 function projectPath(tool: string, project: string): string {
@@ -890,7 +894,7 @@ test('ui: speculation rules prefetch only /ui links under a CSP hash, and a priv
     const html = await first.text();
     const policy = uiPolicy(html);
     assert.equal(first.headers.get('content-security-policy'), policy);
-    assert.match(policy, /script-src 'sha256-[A-Za-z0-9+/]+=';/);
+    assert.match(policy, /script-src 'sha256-[A-Za-z0-9+/]+=' 'sha256-[A-Za-z0-9+/]+=';/);
     assert.equal(/script-src[^;]*unsafe-inline/.test(policy), false);
     assert.equal(policy.includes('inline-speculation-rules'), false);
     assert.equal(first.headers.get('cache-control'), 'private, no-cache');
@@ -2160,6 +2164,28 @@ test('ui: Waiting for main links, Working shows ids, and Dispatch has notes and 
   assert.equal(hidden.includes('name="notes"'), false);
 });
 
+test('ui: a ready Dispatch form carries the in-place script and a result area; unset, reader, and other pages do not', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+  const token = await assertion();
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'In place' });
+    const ready = await viewIssue(withWebhook(env), id, { 'cf-access-jwt-assertion': token });
+    const html = await ready.text();
+    assert.ok(html.includes(`<output class="dispatch-result" role="status" aria-live="polite"></output></form>\n<script>${dispatchScript}</script>`));
+    const hash = createHash('sha256').update(dispatchScript).digest('base64');
+    assert.ok((ready.headers.get('content-security-policy') ?? '').includes(`'sha256-${hash}'; connect-src 'self';`));
+    assert.equal(ready.headers.get('content-security-policy'), uiPolicy(html));
+    for (const page of [
+      await (await viewIssue(env, id, { 'cf-access-jwt-assertion': token })).text(),
+      await (await viewIssue(withWebhook(env), id, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) })).text(),
+      await (await viewUi(withWebhook(env), { 'cf-access-jwt-assertion': token })).text(),
+    ]) {
+      assert.equal(page.includes(dispatchScript), false);
+      assert.equal(page.includes('<output'), false);
+    }
+  } finally { sqlite.close(); }
+});
+
 test('dispatch module exports only the factory and the secret names', () => {
   assert.deepEqual(Object.keys(dispatchModule).sort(), ['createDispatcher', 'dispatchSecretNames']);
   assert.deepEqual(dispatchSecretNames, ['POLYLINEDB_DISPATCH_WEBHOOK_URL', 'POLYLINEDB_DISPATCH_WEBHOOK_KEY']);
@@ -2240,7 +2266,7 @@ test('dispatch: a press sends one envelope, and the next press inside the window
     const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
     const before = storedIssue(sqlite, id);
     const page = await (await viewIssue(configured, id, { 'cf-access-jwt-assertion': token })).text();
-    assert.ok(page.includes(`<form method="post" action="/ui/i/${id}/dispatch" class="dispatch">\n${notesLabel}\n${notesField}\n<div class="dispatch-action"><button type="submit">Dispatch</button>${freshSummary}</div></form>`));
+    assert.ok(page.includes(`<form method="post" action="/ui/i/${id}/dispatch" class="dispatch">\n${notesLabel}\n${notesField}\n<div class="dispatch-action"><button type="submit">Dispatch</button>${freshSummary}</div>\n<output class="dispatch-result" role="status" aria-live="polite"></output></form>`));
     assert.equal(page.includes('<input'), false);
     const sent = await pressDispatch(configured, id, token, dispatcher, browserPress());
     const sentHtml = await assertOutcome(sent, 200, 'Sent.', id);

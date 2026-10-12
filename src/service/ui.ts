@@ -212,6 +212,46 @@ function startSummary(issue: Issue, activeBlockers: number, claim: ClaimDisplay,
   return [...parts, startable ? 'can start now' : 'will not start now'].join(' · ');
 }
 
+// Sends Dispatch without leaving the page and shows the result beside the button. Without script, the form posts as before.
+// The page policy allows this text by hash, so any change to it needs the new hash in htmlHeaders.
+export const dispatchScript = `(() => {
+  const form = document.querySelector('form.dispatch');
+  const button = form && form.querySelector('button');
+  const notes = form && form.querySelector('textarea');
+  const result = form && form.querySelector('output');
+  if (!form || !button || !notes || !result || !window.fetch || !window.DOMParser) return;
+  const show = (text, state) => { result.textContent = text; result.dataset.state = state; };
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (button.disabled) return;
+    const body = new URLSearchParams(new FormData(form));
+    button.disabled = true;
+    button.textContent = 'Sending…';
+    show('', 'sending');
+    try {
+      const response = await fetch(form.action, { method: 'POST', body, credentials: 'same-origin', redirect: 'manual' });
+      if (response.type === 'opaqueredirect' || response.status === 0) {
+        show('Your sign-in has expired. Reload the page, then press Dispatch again. Your notes are kept.', 'error');
+        return;
+      }
+      const sentences = new DOMParser().parseFromString(await response.text(), 'text/html').querySelectorAll('main p');
+      const sentence = sentences.length > 0 ? sentences[sentences.length - 1].textContent.trim() : '';
+      if (response.ok) {
+        const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        show((sentence || 'Sent.') + ' ' + at, 'ok');
+        notes.value = '';
+      } else {
+        show((sentence || 'Dispatch failed (' + response.status + ').') + ' Your notes are kept.', 'error');
+      }
+    } catch {
+      show('Could not reach the server. Your notes are kept.', 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Dispatch';
+    }
+  });
+})();`;
+
 const dispatchPlaceholder = 'What should the agent do or watch for?';
 
 function dispatchForm(issue: Issue, activeBlockers: number, claim: ClaimDisplay, labels: ReadonlyMap<string, string>, control: DispatchControl): string {
@@ -223,7 +263,7 @@ function dispatchForm(issue: Issue, activeBlockers: number, claim: ClaimDisplay,
   return `<form method="post" action="${action}" class="dispatch">
 <label for="dispatch-notes">Notes for the agent (optional)</label>
 <textarea id="dispatch-notes" name="notes" maxlength="4096" rows="4" placeholder="${dispatchPlaceholder}"></textarea>
-<div class="dispatch-action">${button}<p class="secondary">${escape(startSummary(issue, activeBlockers, claim, labels))}</p></div></form>`;
+<div class="dispatch-action">${button}<p class="secondary">${escape(startSummary(issue, activeBlockers, claim, labels))}</p></div>${control === 'ready' ? '\n<output class="dispatch-result" role="status" aria-live="polite"></output>' : ''}</form>${control === 'ready' ? `\n<script>${dispatchScript}</script>` : ''}`;
 }
 
 function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>, dispatch: DispatchControl): string {
@@ -569,7 +609,7 @@ const htmlHeaders = {
   'x-content-type-options': 'nosniff',
   // Under no-referrer, browsers send Origin: null on the same-origin Dispatch POST, and dispatch rejects that origin.
   'referrer-policy': 'same-origin',
-  'content-security-policy': "default-src 'none'; script-src 'sha256-wN5fn7M/0mts3B5WgddVicrWGcNvCBQK0rFn0GgjQx8='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'none'; script-src 'sha256-wN5fn7M/0mts3B5WgddVicrWGcNvCBQK0rFn0GgjQx8=' 'sha256-cGc6YcHTVBmc1w2BjXzpBFQVyud5Cto87clfawJ+ous='; connect-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
 const { 'content-type': _, ...revalidationHeaders } = htmlHeaders;
 
@@ -785,6 +825,10 @@ a { color: inherit; }
 .dispatch button:focus-visible, .dispatch textarea:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
 .dispatch button:disabled { background: var(--chip); color: var(--muted); cursor: not-allowed; filter: none; }
 .dispatch-action .secondary { flex: 1 1 14em; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.dispatch-result { display: block; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.dispatch-result:empty { display: none; }
+.dispatch-result[data-state="ok"] { color: var(--ink); }
+.dispatch-result[data-state="error"] { color: var(--mark); font-weight: 600; }
 .dispatch-action .quiet-note { flex-basis: 100%; order: 3; margin: 0; font-size: 14px; }
 .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 18px 0 0; font-size: 18px; line-height: 1.5; }
 @media (max-width: 420px) {

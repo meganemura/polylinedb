@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+Pressing Dispatch no longer leaves the issue page. The button shows that it is sending, then a line under it says whether it was sent and when, and the notes box empties. If something goes wrong, the line says what happened and your notes stay.
+
 A check that sometimes failed when the clock crossed a second during the test is now stable.
 
 The Dispatch box on an issue page looks tidier, especially on an iPhone: a roomy notes box that does not zoom the page when you tap it, a large Dispatch button, and the start-now line right next to it.
