@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+A check that sometimes failed when the clock crossed a second during the test is now stable.
+
 The Dispatch box on an issue page looks tidier, especially on an iPhone: a roomy notes box that does not zoom the page when you tap it, a large Dispatch button, and the start-now line right next to it.
 
 The CLI now shows who closed an issue and when for a cloud connection too, once the cloud server is updated. Older CLIs keep working unchanged.

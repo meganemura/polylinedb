@@ -89,7 +89,13 @@ test('force reason insertion failure rolls back every updated field and version'
   const run = fixture(t); await issues(run);
   await run.db.batch([{ sql: "CREATE TRIGGER reject_exception BEFORE INSERT ON comments BEGIN SELECT RAISE(ABORT,'exception_rejected'); END", params: [] }]);
   const input = { op: 'update', id: 'pd-1', changes: [{ field: 'body', value: 'changed', expected: 1 }, { field: 'status', value: 'closed', expected: 1 }], force: true, reason: 'Explicit exception' };
-  const before = await run({ op: 'show', id: 'pd-1' }); await assert.rejects(run(input), /exception_rejected/); assert.deepEqual(await run({ op: 'show', id: 'pd-1' }), before);
+  // claim.observed_at is the database clock at read time, so it may tick between the two reads; every stored field must match.
+  const stored = async () => {
+    const shown = await run({ op: 'show', id: 'pd-1' }); assert.ok('claim' in shown);
+    const { observed_at, ...claim } = shown.claim; assert.equal(Number.isSafeInteger(observed_at), true);
+    return { ...shown, claim };
+  };
+  const before = await stored(); await assert.rejects(run(input), /exception_rejected/); assert.deepEqual(await stored(), before);
   for (const override of [{ force: true }, { reason: 'alone' }, { force: false, reason: 'not forced' }]) assert.throws(() => parseOperation({ op: 'close', id: 'pd-1', expected: 1, ...override }), { code: 'invalid_input' });
   assert.throws(() => parseOperation({ ...input, changes: [{ field: 'body', value: 'changed', expected: 1 }] }), { code: 'invalid_input' });
   assert.throws(() => parseOperation({ ...input, reason: 'é'.repeat(32769) }), { code: 'invalid_input' });
