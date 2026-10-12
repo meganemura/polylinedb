@@ -34,3 +34,15 @@ export function requireFields(input: Record<string, unknown>, allowed: readonly 
 export function expectedType(path: string, type: string): never {
   throw new PolylinedbError('invalid_input', `${path}: expected ${type}`);
 }
+// Recognizes a constraint or trigger failure by its exact message, as SQLite and D1 each wrap it, through a bounded cause chain.
+export function knownError(error: unknown, marker: string): boolean {
+  let cause = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 8 && cause instanceof Error && !seen.has(cause); depth++) {
+    seen.add(cause);
+    const suffixes = ['', ': SQLITE_CONSTRAINT', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)'];
+    if (suffixes.some(suffix => cause instanceof Error && (cause.message === marker + suffix || cause.message === `D1_ERROR: ${marker}${suffix}`))) return true;
+    cause = cause.cause;
+  }
+  return false;
+}

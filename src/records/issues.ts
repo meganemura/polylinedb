@@ -28,8 +28,8 @@ type Filters = { tool?: string; project?: string; status?: Status; type?: IssueT
 type StatusOverride = { force?: never; reason?: never } | { force: true; reason: string };
 export type Operation =
   | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
-  | { op: 'show'; id: string }
-  | ({ op: 'list'; claimed?: boolean } & Filters)
+  | { op: 'show'; id: string; with_land_order?: true }
+  | ({ op: 'list'; claimed?: boolean; with_land_order?: true } & Filters)
   | ({ op: 'search'; query: string; with_matches?: true } & Filters)
   | { op: 'comment'; id: string; body: string }
   | ({ op: 'update'; id: string; changes: [Change, ...Change[]]; claim_proof?: ClaimProof } & StatusOverride)
@@ -105,6 +105,7 @@ const fieldRegistry = {
   priority: { column: 'priority', parse: (value: unknown) => integer(value, 'priority', 0, 4), schema: { type: 'integer', minimum: 0, maximum: 4 } },
   labels: { column: 'labels_json', parse: labels, schema: { type: 'array', maxItems: 64, items: nameSchema } },
 };
+const withLandOrderSchema = { const: true, description: 'Also return land_order: which issues this one lands after and before. It never blocks work.' };
 const objectSchema = (properties: Record<string, unknown>, required: readonly string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const valueSchemas = Object.fromEntries(fields.map((field) => [field, fieldRegistry[field].schema]));
 const filterSchemas = { tool: nameSchema, project: nameSchema, status: fieldRegistry.status.schema,
@@ -112,8 +113,8 @@ const filterSchemas = { tool: nameSchema, project: nameSchema, status: fieldRegi
   after: idSchema, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } };
 export const operationSchemas = {
   create: objectSchema({ ...valueSchemas, parent: idSchema, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid', description: 'Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry.' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
-  show: objectSchema({ id: idSchema }, ['id']),
-  list: objectSchema({ ...filterSchemas, claimed: { type: 'boolean', description: 'true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated.' } }),
+  show: objectSchema({ id: idSchema, with_land_order: withLandOrderSchema }, ['id']),
+  list: objectSchema({ ...filterSchemas, claimed: { type: 'boolean', description: 'true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated.' }, with_land_order: withLandOrderSchema }),
   search: objectSchema({ ...filterSchemas, query: bodySchema, with_matches: { const: true, description: 'Also return where each issue matched, with a short excerpt.' } }, ['query']),
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
@@ -160,6 +161,11 @@ function parseOverride(input: Record<string, unknown>): StatusOverride {
   if (input.force !== true || input.reason === undefined) return invalid('force requires true and a nonempty reason');
   return { force: true, reason: text(input.reason, 'reason') };
 }
+function withLandOrder(input: Record<string, unknown>): { with_land_order?: true } {
+  if (input.with_land_order === undefined) return {};
+  if (input.with_land_order !== true) return invalid('with_land_order must be true when present');
+  return { with_land_order: true };
+}
 export function parseOperation(value: unknown): Operation {
   const input = object(value, 'operation');
   const op = enumeration(input.op, 'op', ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen', 'actor']);
@@ -167,10 +173,10 @@ export function parseOperation(value: unknown): Operation {
   requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   switch (op) {
     case 'actor': return { op };
-    case 'show': return { op, id: id(input.id) };
+    case 'show': return { op, id: id(input.id), ...withLandOrder(input) };
     case 'list': {
       if (input.claimed !== undefined && typeof input.claimed !== 'boolean') return invalid('claimed must be true or false when present');
-      return { op, ...parseFilters(input), ...(input.claimed === undefined ? {} : { claimed: input.claimed }) };
+      return { op, ...parseFilters(input), ...(input.claimed === undefined ? {} : { claimed: input.claimed }), ...withLandOrder(input) };
     }
     case 'search': {
       if (input.with_matches !== undefined && input.with_matches !== true) return invalid('with_matches must be true when present');

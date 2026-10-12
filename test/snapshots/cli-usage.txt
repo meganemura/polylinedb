@@ -26,9 +26,9 @@ Commands:
   agent install HOST            Install a user-scope lifecycle hook.
   agent remove HOST             Remove the owned lifecycle hook.
   agent context HOST            Read hook input and return host context JSON.
-  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6 or 7 store to schema 8.
-  snapshot convert --from 2|3|4|5 --file PATH|- [--output PATH|-]
-                                Convert an older snapshot to v6 without touching a store.
+  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6, 7 or 8 store to schema 9.
+  snapshot convert --from 2|3|4|5|6 --file PATH|- [--output PATH|-]
+                                Convert an older snapshot to v7 without touching a store.
   export [--file PATH|-] [--historical]
                                 Export a local snapshot. Historical export recovers old retired stores read-only.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
@@ -36,8 +36,8 @@ Commands:
   create --tool NAME --project NAME --body TEXT [--parent ID]
          [--type bug|task|epic|feature|chore] [--status STATUS]
          [--priority 0..4] [--label NAME ...] [--request-id UUID]
-  show ID
-  list [FILTERS] [--claimed true|false]
+  show ID [--with-land-order]
+  list [FILTERS] [--claimed true|false] [--with-land-order]
                                 --claimed false keeps issues without an active claim.
   search QUERY [FILTERS]
   comment ID --body TEXT
@@ -49,6 +49,9 @@ Commands:
   dependency list ID [--after ID] [--limit 1..100]
   dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
   dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]
+  land-order list ID            Issues this one lands after and before; never blocks work.
+  land-order add --later ID --earlier ID --expected-revision N [--request-id UUID]
+  land-order remove --later ID --earlier ID --expected-revision N [--request-id UUID]
   changes --since SEQ [--incarnation HEX] [--project NAME] [--issue ID ...]
           [--kind KIND ...] [--limit 1..100]
                                 Issue change events after SEQ; continue from next_since.

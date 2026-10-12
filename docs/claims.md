@@ -155,6 +155,10 @@ The change feed records `claim_released`, one `commented` per comment, and `stat
 `pd claim handoff --claim-proof JSON --expected-revision N --tip SHA [--summary TEXT | --summary-file PATH]` sends it. No schema change was needed.
 Renewal, a replayed request, and a lease that passes its deadline record no event, so read `claim_show` for the current deadline.
 
+After the handoff commits, the result adds `land_order_warnings: [{id, status}]`.
+Each entry is an issue that the handed-off issue [lands after](prerequisites.md#land-order) and that is neither closed nor labeled `main-wait`, so it has not reached the queue yet.
+Only direct predecessors count. The list is read after the commit, so it is advisory: report it, and do not reorder or undo the push.
+
 After an uncertain result, retry only with the original request UUID and identical actor, session, incarnation, and payload.
 A committed request returns its original immutable receipt after later renewal, release, reacquisition, or restore.
 That receipt is history; inspect the current claim before more work.

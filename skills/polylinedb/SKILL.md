@@ -112,6 +112,10 @@ The tip pointer is a comment on the claimed issue whose whole body is `tip: ` fo
 The newest `tip:` comment from the claim holder is the current pointer.
 The comment holds only that line, with no reasoning and no tool output.
 
+When the change should reach main after another issue, for example because both touch the same files, record that with `land_order_add` on the issue you hold, after reading its revision with `land_order_list`.
+Land order never blocks starting or closing work. Use a prerequisite only when the work cannot start first.
+The `claim_handoff` result lists `land_order_warnings` for predecessors that have not reached the queue; report them as the polylinedb-queue skill describes.
+
 The `main-lock` issue serializes the owner's pushes to main. It has the labels `main-lock` and `ready`.
 It never appears in the ready worklist. Do not claim it, even when `list` shows it.
 

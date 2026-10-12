@@ -91,6 +91,9 @@
     "dist/records/schema-v5.js",
     "dist/records/schema-v6.js",
     "dist/records/schema-v7.js",
+    "dist/records/schema-v8.js",
+    "dist/records/land-order.js",
+    "dist/records/land-order-sql.js",
     "dist/records/operation-policy.js",
     "dist/records/agent-gate.js",
     "dist/transition/"

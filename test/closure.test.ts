@@ -27,9 +27,14 @@ const base = { tool: 'tool', project: 'project', body: 'body', type: 'task', pri
   versions: { tool: 1, project: 1, body: 1, status: 2, type: 1, priority: 1, labels: 1 },
   created_at: '2026-01-02T03:04:05.000Z', created_by: 'author', updated_at: '2026-01-03T03:04:05.000Z', updated_by: 'editor' };
 function snapshot(issues: readonly Record<string, unknown>[]): Record<string, unknown> {
-  return { format: 'polylinedb.snapshot', version: 6, issues, comments: [], counters: [{ scope: 'pd', last_number: 3 }], requests: [],
+  return { format: 'polylinedb.snapshot', version: 7, issues, comments: [], counters: [{ scope: 'pd', last_number: 3 }], requests: [],
     memories: [], memory_counters: [], memory_requests: [], dependencies: [],
-    dependency_revisions: issues.map(issue => ({ dependent_id: issue.id, revision: 1 })), dependency_requests: [], issue_claims: [], claim_requests: [] };
+    dependency_revisions: issues.map(issue => ({ dependent_id: issue.id, revision: 1 })), dependency_requests: [], issue_claims: [], claim_requests: [],
+    land_order: [], land_order_revisions: [], land_order_requests: [] };
+}
+function snapshotV5(issues: readonly Record<string, unknown>[]): Record<string, unknown> {
+  const { land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, ...rest } = snapshot(issues);
+  return { ...rest, version: 5 };
 }
 const closed = { ...base, id: 'pd-1', status: 'closed', closed_at: '2026-01-03T03:04:05.000Z', closed_by: 'closer' };
 const legacyClosed = { ...base, id: 'pd-2', status: 'closed', closed_at: null, closed_by: null };
@@ -41,14 +46,14 @@ function root(t: test.TestContext): string {
   return directory;
 }
 
-test('snapshot 6 keeps a recorded closure and an empty closure on closed issues', () => {
+test('snapshot 7 keeps a recorded closure and an empty closure on closed issues', () => {
   const parsed = parseSnapshot(snapshot([closed, legacyClosed, open]));
   assert.deepEqual(parsed.issues.map(issue => [issue.id, issue.closed_at, issue.closed_by]), [
     ['pd-1', '2026-01-03T03:04:05.000Z', 'closer'], ['pd-2', null, null], ['pd-3', null, null]]);
   assert.equal(canonicalSnapshot(parsed), JSON.stringify(parseSnapshot(JSON.parse(canonicalSnapshot(parsed)))));
 });
 
-test('snapshot 6 rejects a closure on an unclosed issue, a half closure, missing fields, and an invalid close time', () => {
+test('snapshot 7 rejects a closure on an unclosed issue, a half closure, missing fields, and an invalid close time', () => {
   for (const issue of [
     { ...open, closed_at: '2026-01-03T03:04:05.000Z', closed_by: 'closer' },
     { ...closed, closed_by: null },
@@ -60,25 +65,25 @@ test('snapshot 6 rejects a closure on an unclosed issue, a half closure, missing
 });
 
 test('snapshot 5 converts with empty closures and keeps its own canonical digest', () => {
-  const legacy = { ...snapshot([withoutClosure(legacyClosed)]), version: 5 };
+  const legacy = snapshotV5([withoutClosure(legacyClosed)]);
   assert.throws(() => parseSnapshot(legacy), { code: 'invalid_snapshot' });
   const converted: Snapshot = convertSnapshotV5(legacy);
-  assert.equal(converted.version, 6);
+  assert.equal(converted.version, 7);
   assert.deepEqual(converted.issues.map(issue => [issue.id, issue.status, issue.closed_at, issue.closed_by]), [['pd-2', 'closed', null, null]]);
   const canonical = JSON.parse(canonicalSnapshotV5(legacy));
   assert.equal(canonical.version, 5);
   assert.deepEqual(Object.keys(canonical.issues[0]).filter(key => key.startsWith('closed')), []);
 });
 
-test('the CLI converts snapshot 5 to snapshot 6 without touching a store', t => {
+test('the CLI converts snapshot 5 to the current snapshot without touching a store', t => {
   const directory = root(t); const cwd = join(directory, 'work'); mkdirSync(cwd);
   const file = join(directory, 'v5.json');
-  writeFileSync(file, JSON.stringify({ ...snapshot([withoutClosure(legacyClosed)]), version: 5 }));
+  writeFileSync(file, JSON.stringify(snapshotV5([withoutClosure(legacyClosed)])));
   const converted = spawnSync(process.execPath, [source, 'snapshot', 'convert', '--from', '5', '--file', file], { cwd, encoding: 'utf8',
     env: { ...process.env, POLYLINEDB_DATA_DIR: undefined, POLYLINEDB_CONNECTION: undefined, XDG_CONFIG_HOME: join(directory, 'config') } });
   assert.equal(converted.status, 0, converted.stderr);
   const output = JSON.parse(converted.stdout);
-  assert.equal(output.version, 6);
+  assert.equal(output.version, 7);
   assert.deepEqual(output.issues.map((issue: Record<string, unknown>) => [issue.closed_at, issue.closed_by]), [[null, null]]);
 });
 
@@ -99,7 +104,7 @@ for (const [version, ddl] of [[6, SCHEMA_V6_SQL], [7, SCHEMA_V7_SQL]] as const) 
   database.exec("UPDATE issues SET status = 'closed', status_v = 2 WHERE id = 'pd-1'");
   database.close(); chmodSync(path, 0o600);
   const recovered = exportHistoricalSnapshot({ directory, cwd: join(parent, 'work') });
-  assert.equal(recovered.version, 6);
+  assert.equal(recovered.version, 7);
   assert.equal(recovered.issue_claims.length, 1);
   assert.equal(recovered.claim_requests.length, 1);
   assert.deepEqual(recovered.issues.map(issue => [issue.status, issue.closed_at, issue.closed_by]), [['closed', null, null]]);

@@ -266,7 +266,7 @@ function dispatchForm(issue: Issue, activeBlockers: number, claim: ClaimDisplay,
 <div class="dispatch-action">${button}<p class="secondary">${escape(startSummary(issue, activeBlockers, claim, labels))}</p></div>${control === 'ready' ? '\n<output class="dispatch-result" role="status" aria-live="polite"></output>' : ''}</form>${control === 'ready' ? `\n<script>${dispatchScript}</script>` : ''}`;
 }
 
-function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>, dispatch: DispatchControl): string {
+function detailPage(issue: Issue, comments: readonly Comment[], claim: ClaimDisplay, blockers: readonly { id: string; status: Status }[], landsAfter: readonly { id: string; status: Status }[], parent: IssueLink | null, children: readonly IssueLink[], moreChildren: boolean, labels: ReadonlyMap<string, string>, dispatch: DispatchControl): string {
   const labelLine = issue.labels.length === 0 ? '<span class="secondary">No labels.</span>' : `<span class="secondary">${issue.labels.map(label => escape(label)).join(' ')}</span>`;
   const commentList = comments.length === 0 ? '<p class="quiet-note">No comments.</p>' : `<ul class="quiet-list">${comments.map(comment => commentItem(comment, labels)).join('')}</ul>`;
   const open = blockers.filter(blocker => blockerIsActive(blocker.status));
@@ -287,7 +287,8 @@ ${childrenSection(children, moreChildren)}
 <div class="prose">${escape(bodyAfterTitle(issue.body))}</div>
 <section class="quiet-section"><h2>Comments</h2>${commentList}</section>
 ${blockerSection('Active blockers', open, 'No active blockers.')}
-${blockerSection('Closed blockers', closed, 'No closed blockers.')}`);
+${blockerSection('Closed blockers', closed, 'No closed blockers.')}${landsAfter.length === 0 ? '' : `
+${blockerSection('Lands after', landsAfter, '')}`}`);
 }
 
 function notFoundPage(): string {
@@ -486,7 +487,8 @@ const eventWords: Record<string, string> = {
 
 function activityItem(event: ActivityEvent, labels: ReadonlyMap<string, string>): string {
   const at = new Date(event.occurred_at * 1000).toISOString();
-  const words = event.kind === 'updated' && event.fields.length > 0 ? `Updated ${event.fields.join(', ')}` : eventWords[event.kind] ?? event.kind;
+  const words = event.relation === 'lands_after' ? (event.kind === 'dependency_added' ? 'Land order added' : 'Land order removed')
+    : event.kind === 'updated' && event.fields.length > 0 ? `Updated ${event.fields.join(', ')}` : eventWords[event.kind] ?? event.kind;
   return `<li class="quiet-row"><a href="${escape(issueHref(event.issue_id))}">
 <span class="primary">${escape(title(event.body))}</span>
 <span class="secondary">${escape(words)} · ${escape(event.issue_id)}</span>
@@ -674,14 +676,15 @@ async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, ro
   const actor = viewer.actor;
   if (route.page === 'issue') {
     try {
-      const [result, blockers, parent, children] = await Promise.all([
+      const [result, blockers, landOrder, parent, children] = await Promise.all([
         executeOperation(db, { op: 'show', id: route.id }, actor),
         issueBlockers(db, route.id, actor),
+        executeOperation(db, { op: 'land_order_list', issue_id: route.id }, actor),
         issueParent(db, route.id),
         issueChildren(db, route.id, childLimit),
       ]);
-      if (!('comments' in result)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
-      return detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, parent, children.slice(0, shownChildren), children.length > shownChildren, labels, viewer.dispatch);
+      if (!('comments' in result) || !('after' in landOrder)) throw new PolylinedbError('storage_error', 'Issue detail is unavailable', 500);
+      return detailPage(result.issue, result.comments, claimDisplay(result.claim), blockers, landOrder.after, parent, children.slice(0, shownChildren), children.length > shownChildren, labels, viewer.dispatch);
     } catch (error) {
       if (error instanceof PolylinedbError && error.code === 'not_found') return null;
       throw error;

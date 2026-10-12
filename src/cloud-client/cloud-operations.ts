@@ -1,6 +1,6 @@
 // Owns one authenticated operation request and its response boundary. Login and retries belong to callers.
-// Three older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
-// and a search rejected for `with_matches` or a release rejected for `expired_noop` runs once more without that field.
+// Four older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
+// and a search rejected for `with_matches`, a show or list rejected for `with_land_order`, or a release rejected for `expired_noop` runs once more without that field.
 // A list rejected for `claimed` is not retried, because a page without that filter would answer a different question.
 import { PolylinedbError, type Issue, type SearchMatch } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
@@ -13,7 +13,7 @@ import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence.ts';
 import { claimRow } from '../records/persistence.ts';
 import { parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels, waitPageLimit } from '../records/index.ts';
-import type { Claim, ClaimInspection, ChangeEvent } from '../records/index.ts';
+import type { Claim, ClaimInspection, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;
@@ -66,10 +66,41 @@ const count = (value: unknown, minimum: number): number => typeof value === 'num
 // A later Worker may record a kind or name a field that this client does not know, so both are checked only as names.
 const changeName = (value: unknown): string => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : invalid();
 function changeEvent(value: unknown, incarnation: string): ChangeEvent {
-  const row = known(value, ['seq', 'incarnation', 'issue_id', 'kind', 'fields', 'occurred_at', 'actor']);
+  const row = known(value, ['seq', 'incarnation', 'issue_id', 'kind', 'fields', 'occurred_at', 'actor'], ['relation']);
   if (row.incarnation !== incarnation || !Array.isArray(row.fields) || row.fields.length > 64
     || typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)) return invalid();
-  return { seq: count(row.seq, 1), incarnation, issue_id: parseIssueId(row.issue_id), kind: changeName(row.kind), fields: row.fields.map(changeName), occurred_at: count(row.occurred_at, 0), actor: row.actor };
+  return { seq: count(row.seq, 1), incarnation, issue_id: parseIssueId(row.issue_id), kind: changeName(row.kind), fields: row.fields.map(changeName),
+    ...(row.relation === undefined ? {} : { relation: changeName(row.relation) }), occurred_at: count(row.occurred_at, 0), actor: row.actor };
+}
+function neighbor(value: unknown): LandOrderNeighbor {
+  const row = known(value, ['id', 'project', 'status']);
+  const status = statuses.find(status => status === row.status);
+  if (typeof row.project !== 'string' || !row.project.trim() || /\p{Cc}/u.test(row.project) || new TextEncoder().encode(row.project).length > 256 || status === undefined) return invalid();
+  return { id: parseIssueId(row.id), project: row.project, status };
+}
+function landOrder(value: unknown, issueId: string): LandOrder {
+  const row = known(value, ['issue_id', 'revision', 'after', 'before']);
+  if (row.issue_id !== issueId || !Array.isArray(row.after) || !Array.isArray(row.before)) return invalid();
+  const after = row.after.map(neighbor); const before = row.before.map(neighbor);
+  for (const side of [after, before]) {
+    let previous = '';
+    for (const entry of side) { const sort = issueSortKey(entry.id); if (entry.id === issueId || sort <= previous) return invalid(); previous = sort; }
+  }
+  return { issue_id: issueId, revision: count(row.revision, 1), after, before };
+}
+// An older Worker omits the warnings; a newer one sends each unlanded predecessor once, in issue order.
+function landOrderWarnings(value: unknown, issueId: string): LandOrderWarning[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return invalid();
+  let previous = '';
+  return value.map(entry => {
+    const row = known(entry, ['id', 'status']);
+    const status = statuses.find(status => status === row.status);
+    const id = parseIssueId(row.id); const sort = issueSortKey(id);
+    if (status === undefined || status === 'closed' || id === issueId || sort <= previous) return invalid();
+    previous = sort;
+    return { id, status };
+  });
 }
 // A Worker that reports blockers on acquisition sends sorted active blocker IDs. An older Worker omits the field.
 function openBlockers(value: unknown, dependent: string): string[] | undefined {
@@ -263,15 +294,18 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       return { actor: row.actor };
     }
     case 'show': {
-      const row = known(value, ['issue', 'comments', 'claim']);
+      const withLandOrder = operation.with_land_order === true;
+      const row = known(value, withLandOrder ? ['issue', 'comments', 'claim', 'land_order'] : ['issue', 'comments', 'claim']);
       if (!Array.isArray(row.comments)) return invalid();
       const shown = issue(row.issue); const current = claimInspection(row.claim);
-      if (current.issue_id !== shown.id) return invalid();
-      return { issue: shown, comments: row.comments.map(entry => commentRow(known(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))), claim: current };
+      if (current.issue_id !== shown.id || shown.id !== operation.id) return invalid();
+      const output = { issue: shown, comments: row.comments.map(entry => commentRow(known(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))), claim: current };
+      return withLandOrder ? { ...output, land_order: landOrder(row.land_order, shown.id) } : output;
     }
     case 'list': case 'search': case 'dependency_worklist': {
       const withMatches = operation.op === 'search' && operation.with_matches === true;
-      const row = known(value, withMatches ? ['issues', 'next_cursor', 'matches'] : ['issues', 'next_cursor']);
+      const withLandOrder = operation.op === 'list' && operation.with_land_order === true;
+      const row = known(value, withMatches ? ['issues', 'next_cursor', 'matches'] : withLandOrder ? ['issues', 'next_cursor', 'land_order'] : ['issues', 'next_cursor']);
       if (!Array.isArray(row.issues)) return invalid();
       const issues = row.issues.map(issue); const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
       if (operation.op === 'dependency_worklist') {
@@ -288,11 +322,16 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         if (!Array.isArray(row.matches)) return invalid();
         return { issues, next_cursor, matches: row.matches.map(match => searchMatch(match, issues)) };
       }
+      if (withLandOrder) {
+        if (!Array.isArray(row.land_order) || row.land_order.length !== issues.length) return invalid();
+        const orders = row.land_order;
+        return { issues, next_cursor, land_order: issues.map((current, index) => landOrder(orders[index], current.id)) };
+      }
       return { issues, next_cursor };
     }
     case 'comment': return { comment: commentRow(known(known(value, ['comment']).comment, ['id', 'issue_id', 'body', 'created_at', 'created_by'])) };
     case 'claim_handoff': {
-      const response = known(value, ['claim_receipt', 'handoff']);
+      const response = known(value, ['claim_receipt', 'handoff'], ['land_order_warnings']);
       const { outcome, ...owner } = known(response.claim_receipt, [...claimKeys, 'outcome']); const parsed = claim(owner);
       const proof = operation.claim_proof;
       if (outcome !== 'released' || parsed.released_at === null || parsed.issue_id !== proof.issue_id || parsed.incarnation !== proof.incarnation
@@ -302,8 +341,19 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       if (handed.id !== proof.issue_id || !Array.isArray(parts.comments) || parts.comments.length !== (operation.summary === undefined ? 1 : 2)) return invalid();
       const comments = parts.comments.map(item => commentRow(known(item, ['id', 'issue_id', 'body', 'created_at', 'created_by'])));
       if (comments.some(comment => comment.issue_id !== proof.issue_id)) return invalid();
-      return { claim_receipt: { ...parsed, outcome, released_at: parsed.released_at }, handoff: { issue: handed, comments } };
+      const warnings = landOrderWarnings(response.land_order_warnings, handed.id);
+      const output = { claim_receipt: { ...parsed, outcome: 'released' as const, released_at: parsed.released_at }, handoff: { issue: handed, comments } };
+      return warnings === undefined ? output : { ...output, land_order_warnings: warnings };
     }
+    case 'land_order_add': case 'land_order_remove': {
+      const row = known(known(value, ['land_order_receipt']).land_order_receipt, ['later_id', 'earlier_id', 'revision', 'outcome']);
+      if (row.later_id !== operation.later_id || row.earlier_id !== operation.earlier_id || row.revision !== operation.expected_revision + 1) return invalid();
+      const outcome = operation.op === 'land_order_add'
+        ? (row.outcome === 'added' || row.outcome === 'already_present' ? row.outcome : invalid())
+        : (row.outcome === 'removed' || row.outcome === 'already_absent' ? row.outcome : invalid());
+      return { land_order_receipt: { later_id: operation.later_id, earlier_id: operation.earlier_id, revision: operation.expected_revision + 1, outcome } };
+    }
+    case 'land_order_list': return landOrder(value, operation.issue_id);
     case 'create': case 'update': case 'close': case 'reopen': return { issue: issue(known(value, ['issue']).issue) };
     default: { const exhaustive: never = operation; return exhaustive; }
   }
@@ -321,6 +371,7 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       // The agent gate names only the issue; a missing ownership proof returns the current issue.
       if (object(value).id !== undefined) {
         const target = operation.op === 'dependency_add' || operation.op === 'dependency_remove' ? operation.dependent_id
+          : operation.op === 'land_order_add' || operation.op === 'land_order_remove' ? operation.later_id
           : operation.op === 'update' || operation.op === 'close' || operation.op === 'reopen' || operation.op === 'comment' ? operation.id : invalid();
         if (known(value, ['id']).id !== target) return invalid();
         return { id: target };
@@ -353,6 +404,18 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       const row = known(value, ['dependent_id']);
       if ((operation.op !== 'dependency_add' && operation.op !== 'dependency_remove') || row.dependent_id !== operation.dependent_id || operation.expected_revision !== Number.MAX_SAFE_INTEGER) return invalid();
       return { dependent_id: operation.dependent_id };
+    }
+    case 'land_order_conflict': {
+      if (operation.op !== 'land_order_add' && operation.op !== 'land_order_remove') return invalid();
+      const row = known(value, ['expected_revision', 'current']);
+      const current = landOrder(row.current, operation.later_id);
+      if (row.expected_revision !== operation.expected_revision || current.revision === operation.expected_revision) return invalid();
+      return { expected_revision: operation.expected_revision, current };
+    }
+    case 'land_order_version_exhausted': {
+      const row = known(value, ['later_id']);
+      if ((operation.op !== 'land_order_add' && operation.op !== 'land_order_remove') || row.later_id !== operation.later_id || operation.expected_revision !== Number.MAX_SAFE_INTEGER) return invalid();
+      return { later_id: operation.later_id };
     }
     case 'dependency_blocked': return { issue: issue(known(value, ['issue']).issue) };
     case 'memory_not_found': case 'memory_deleted': {
@@ -479,6 +542,12 @@ export async function executeCloudOperation(input: {
         retried = true;
         return await executeCloudOperation({ ...input, operation: plain });
       }
+      if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'show' || input.operation.op === 'list') && input.operation.with_land_order === true && /\bwith_land_order\b/.test(error.message)) {
+        // A Worker released before land order names the unknown field only in this message. Its answer without land_order still answers the read.
+        const { with_land_order: _, ...plain } = input.operation;
+        retried = true;
+        return await executeCloudOperation({ ...input, operation: plain });
+      }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'claim_release' && input.operation.expired_noop === true && /\bexpired_noop\b/.test(error.message)) {
         // A Worker that does not know expired_noop rejects the field before any write, so the same request UUID is still unused.
         const { expired_noop: _, ...plain } = input.operation;
@@ -506,10 +575,10 @@ export async function executeCloudOperation(input: {
     // The retry is a whole request, so its errors reach the caller as a first request's would. An authorization failure keeps its code.
     if (retried) throw error;
     if (error instanceof PolylinedbError) {
-      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
+      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
       throw error;
     }
-    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release' ? { request_id: input.operation.request_id } : undefined;
+    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release' ? { request_id: input.operation.request_id } : undefined;
     throw new PolylinedbError('cloud_unavailable', 'The cloud operation did not return a valid result. Its outcome may be unknown.', 503, details);
   } finally {
     clearTimeout(timer);

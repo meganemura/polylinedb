@@ -14,15 +14,19 @@ import { claimSchemas, parseClaimOperation, executeClaimOperation } from './clai
 import type { ClaimOperation, ClaimResult } from './claims.ts';
 import { changesSchemas, parseChangesOperation, parseWaitOperation, executeChangesOperation, executeWaitOperation } from './changes.ts';
 import type { ChangesOperation, ChangesResult, WaitOperation } from './changes.ts';
-export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation | ChangesOperation | WaitOperation;
-export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness }) | MemoryResult | DependencyResult | ClaimResult | ChangesResult;
+import { executeLandOrderOperation, landOrderSchemas, landOrderWarnings, parseLandOrderOperation, readLandOrders } from './land-order.ts';
+import type { LandOrder, LandOrderOperation, LandOrderResult, LandOrderWarning } from './land-order.ts';
+export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation | ChangesOperation | WaitOperation | LandOrderOperation;
+/** show and list add land_order only on request; list aligns it with issues. */
+export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness; land_order?: LandOrder | LandOrder[] }) | MemoryResult | DependencyResult | ClaimResult | (Extract<ClaimResult, { handoff: unknown }> & { land_order_warnings?: LandOrderWarning[] }) | ChangesResult | LandOrderResult;
 const observedSchema = { type: 'string', maxLength: 4100, description: 'Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search.' };
-export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas, ...changesSchemas,
+export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas, ...changesSchemas, ...landOrderSchemas,
   ...Object.fromEntries(Object.entries(issueSchemas).filter(([key]) => key !== 'actor').map(([key, value]) => [key, { ...value, properties: { ...value.properties, observed_memory_revision: observedSchema } }])) };
 export function parseOperation(value: unknown): Operation {
   if (value && typeof value === 'object' && 'op' in value && (value.op === 'changes' || value.op === 'wait')) return value.op === 'wait' ? parseWaitOperation(value) : parseChangesOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('claim_')) return parseClaimOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('dependency_')) return parseDependencyOperation(value);
+  if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('land_order_')) return parseLandOrderOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('memory_')) return parseMemoryOperation(value);
   if (value && typeof value === 'object' && !Array.isArray(value) && 'observed_memory_revision' in value) {
     if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return parseIssue(value);
@@ -44,20 +48,28 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ca
 
 async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, store?: MemoryStore): Promise<OperationResult> {
   switch (operation.op) {
-    case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_release': case 'claim_handoff':
+    case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_release':
       return executeClaimOperation(db, operation, actor);
+    case 'claim_handoff': {
+      // The warning is advisory: it reads after the handoff committed, and nothing about the push is undone.
+      const output = await executeClaimOperation(db, operation, actor);
+      if (!('handoff' in output)) return output;
+      return { ...output, land_order_warnings: await landOrderWarnings(db, output.handoff.issue.id) };
+    }
     case 'changes':
       return executeChangesOperation(db, operation);
     case 'wait':
       return executeWaitOperation(db, operation);
     case 'dependency_add': case 'dependency_remove': case 'dependency_list': case 'dependency_worklist': case 'dependency_owner_waits':
       return executeDependencyOperation(db, operation, actor);
+    case 'land_order_add': case 'land_order_remove': case 'land_order_list':
+      return executeLandOrderOperation(db, operation, actor);
     case 'memory_create': case 'memory_show': case 'memory_list': case 'memory_search': case 'memory_update': case 'memory_delete': case 'memory_context':
       return executeMemoryOperation(db, operation, actor.id, store);
     default: {
       if (operation.op === 'actor') return executeIssue(db, operation, actor);
       const { observed_memory_revision, ...issueOperation } = operation;
-      const output = await executeIssue(db, issueOperation, actor);
+      const output = await withLandOrder(db, issueOperation, await executeIssue(db, issueOperation, actor));
       if (observed_memory_revision === undefined) return output;
       let project = observedMemoryProject(observed_memory_revision);
       try {
@@ -73,4 +85,16 @@ async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, sto
       } catch { return { ...output, memory_freshness: { status: 'unavailable', project } }; }
     }
   }
+}
+
+async function withLandOrder(db: SqlExecutor, operation: IssueOperation, output: IssueResult): Promise<IssueResult & { land_order?: LandOrder | LandOrder[] }> {
+  if ((operation.op !== 'show' && operation.op !== 'list') || operation.with_land_order !== true) return output;
+  if ('issue' in output) {
+    const order = (await readLandOrders(db, [output.issue.id])).get(output.issue.id);
+    if (!order) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: output.issue.id });
+    return { ...output, land_order: order };
+  }
+  if (!('issues' in output)) return output;
+  const orders = await readLandOrders(db, output.issues.map(issue => issue.id));
+  return { ...output, land_order: output.issues.map(issue => orders.get(issue.id) ?? { issue_id: issue.id, revision: 1, after: [], before: [] }) };
 }

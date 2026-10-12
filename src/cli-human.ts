@@ -1,5 +1,5 @@
 // Formats issue reads for display; it does not select modes or access storage.
-import type { Comment, Field, Issue, MemoryFreshness, OperationResult } from './records/index.ts';
+import type { Comment, Field, Issue, LandOrder, MemoryFreshness, OperationResult } from './records/index.ts';
 
 type IssueDetails = Extract<OperationResult, { issue: Issue; comments: Comment[] }>;
 type IssuePage = Extract<OperationResult, { issues: Issue[]; next_cursor: string | null }>;
@@ -92,6 +92,11 @@ function memoryFreshnessLines(freshness: MemoryFreshness | undefined): string[] 
   }
 }
 
+function landsAfter(order: LandOrder): string {
+  return 'Lands after: ' + (order.after.length === 0 ? '(none)'
+    : order.after.map(entry => visibleText(entry.id, false) + ' (' + visibleText(entry.status, false) + ')').join(', '));
+}
+
 function issueMemoryFreshness(result: IssueDetails | IssuePage): MemoryFreshness | undefined {
   if ('memory_freshness' in result && result.memory_freshness !== undefined) return result.memory_freshness;
   return undefined;
@@ -118,6 +123,8 @@ function renderIssuePage(title: string, result: IssuePage, color: boolean): stri
     );
     const preview = bodyPreview(issue.body);
     lines.push('  Body: ' + (preview === '' ? '(empty)' : preview));
+    const order = 'land_order' in result && Array.isArray(result.land_order) ? result.land_order[issueCount - 1] : undefined;
+    if (order !== undefined && order.after.length > 0) lines.push('  ' + landsAfter(order));
     for (const match of 'matches' in result ? result.matches.filter(match => match.issue_id === issue.id) : []) {
       const place = match.location === 'body' ? 'body' : 'comment ' + visibleText(match.comment_id, false);
       lines.push('  Matched in ' + place + ': ' + visibleText(match.excerpt, false));
@@ -148,6 +155,7 @@ function renderIssueDetails(result: IssueDetails, color: boolean): string {
       : issue.labels.map(label => visibleText(label, false)).join(', ')),
     'Versions ' + VERSION_FIELDS.map(field => field + '=' + issue.versions[field]).join(' '),
     'Claim ' + result.claim.state + ' · store incarnation ' + result.claim.store_incarnation,
+    ...('land_order' in result && result.land_order !== undefined && !Array.isArray(result.land_order) ? [landsAfter(result.land_order)] : []),
     'Created ' + visibleText(issue.created_at, false) + ' by ' + visibleText(issue.created_by, false),
     'Updated ' + visibleText(issue.updated_at, false) + ' by ' + visibleText(issue.updated_by, false),
     ...(typeof issue.closed_at === 'string' && typeof issue.closed_by === 'string'

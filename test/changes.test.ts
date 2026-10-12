@@ -55,7 +55,7 @@ test('upgrading a schema 6 store adds the canonical change feed DDL, and writes 
   const store = openStore(place);
   try { await executeOperation(store.db, created(), 'alice'); } finally { store.close(); }
   const legacy = new DatabaseSync(database_path); downgradeToSchema6(legacy); legacy.close();
-  assert.deepEqual(upgradeStore(place), { result: 'upgraded', version: 8, database_path });
+  assert.deepEqual(upgradeStore(place), { result: 'upgraded', version: 9, database_path });
   const schema = "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   const upgraded = new DatabaseSync(database_path, { readOnly: true }); const fresh = new DatabaseSync(':memory:'); fresh.exec(SCHEMA_SQL);
   try { assert.deepEqual(upgraded.prepare(schema).all(), fresh.prepare(schema).all()); } finally { upgraded.close(); fresh.close(); }

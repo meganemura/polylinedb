@@ -181,3 +181,15 @@ test('show marks a started non-epic issue whose claim is not active', () => {
     assert.equal(status(output), expected, state);
   }
 });
+
+test('show and list name the issues an issue lands after only when land order was requested', () => {
+  const order = { issue_id: 'pd-17', revision: 3, after: [{ id: 'pd-3', project: 'parser', status: 'open' as const }, { id: 'pd-9', project: 'parser', status: 'closed' as const }], before: [] };
+  const claim = { issue_id: 'pd-17', store_incarnation: '0123456789abcdef0123456789abcdef', observed_at: 1, state: 'never_claimed' as const, lease: null };
+  const shown = renderHumanIssueRead({ command: 'show', result: { issue, comments: [], claim, land_order: order } }, plainTerminal).split('\n');
+  assert.equal(shown[shown.indexOf('Claim never_claimed · store incarnation 0123456789abcdef0123456789abcdef') + 1], 'Lands after: pd-3 (open), pd-9 (closed)');
+  const empty = renderHumanIssueRead({ command: 'show', result: { issue, comments: [], claim, land_order: { ...order, after: [] } } }, plainTerminal);
+  assert.ok(empty.split('\n').includes('Lands after: (none)'));
+  assert.equal(renderShow(issue, []).includes('Lands after'), false);
+  assert.equal(renderHumanIssueRead({ command: 'list', result: { issues: [issue, { ...issue, id: 'pd-18' }], next_cursor: null, land_order: [order, { ...order, issue_id: 'pd-18', after: [] }] } }, plainTerminal),
+    'Issues\npd-17  open  P2  bug\n  Project: parser · Tool: compiler\n  Body: Failure when parsing empty input\n  Lands after: pd-3 (open), pd-9 (closed)\n\npd-18  open  P2  bug\n  Project: parser · Tool: compiler\n  Body: Failure when parsing empty input\n\nEnd of results.');
+});

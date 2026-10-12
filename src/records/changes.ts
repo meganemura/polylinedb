@@ -3,7 +3,7 @@ import { PolylinedbError, requireFields } from './errors.ts';
 import { parseIssueId } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
 import { parseIncarnation } from './claims.ts';
-import { changeKinds } from './changes-sql.ts';
+import { changeKinds, changeRelations } from './changes-sql.ts';
 import type { ChangeKind } from './changes-sql.ts';
 import type { SqlExecutor } from './issues.ts';
 
@@ -11,7 +11,8 @@ export type { ChangeKind };
 type FeedFilter = { since: number; incarnation?: string; project?: string; issue_ids?: string[]; kinds?: ChangeKind[] };
 export type ChangesOperation = FeedFilter & { op: 'changes'; limit: number };
 export type WaitOperation = FeedFilter & { op: 'wait'; timeout: number };
-export type ChangeEvent = { seq: number; incarnation: string; issue_id: string; kind: string; fields: string[]; occurred_at: number; actor: string };
+/** relation names a non-prerequisite edge on dependency_added and dependency_removed; a prerequisite edge carries none. */
+export type ChangeEvent = { seq: number; incarnation: string; issue_id: string; kind: string; fields: string[]; relation?: string; occurred_at: number; actor: string };
 export type ChangesResult = { incarnation: string; changes: ChangeEvent[]; next_since: number };
 
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
@@ -94,7 +95,9 @@ function storedEvent(row: Record<string, unknown>, incarnation: string): ChangeE
     const kind = changeKinds.find(kind => kind === row.kind);
     if (kind === undefined) throw new Error('kind is unknown');
     if (typeof row.actor !== 'string' || !row.actor) throw new Error('actor is empty');
-    return { seq: integer(row.seq, 'seq', 1), incarnation, issue_id: parseIssueId(row.issue_id), kind, fields, occurred_at: integer(row.occurred_at, 'occurred_at', 0), actor: row.actor };
+    const relation = row.relation === null ? undefined : changeRelations.find(relation => relation === row.relation);
+    if (row.relation !== null && relation === undefined) throw new Error('relation is unknown');
+    return { seq: integer(row.seq, 'seq', 1), incarnation, issue_id: parseIssueId(row.issue_id), kind, fields, ...(relation === undefined ? {} : { relation }), occurred_at: integer(row.occurred_at, 'occurred_at', 0), actor: row.actor };
   } catch (error) {
     throw new PolylinedbError('invalid_store', `Stored change is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);
   }

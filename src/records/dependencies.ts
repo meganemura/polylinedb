@@ -1,7 +1,7 @@
 // Owns prerequisite graphs and immutable mutation receipts; issue fields remain a separate aggregate.
 import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
 import { parseOperation as parseIssue, issueRow } from './issues.ts';
-import { PolylinedbError, requireFields } from './errors.ts';
+import { knownError, PolylinedbError, requireFields } from './errors.ts';
 import type { Operation as IssueOperation, Issue, SqlExecutor, SqlStatement, Status } from './issues.ts';
 import { issueQueries } from './issue-queries.ts';
 import { recordingChanges } from './changes-sql.ts';
@@ -89,17 +89,6 @@ function rowsAt(results: readonly { rows: readonly Record<string, unknown>[] }[]
   const result = results[index];
   if (!result) throw new PolylinedbError('storage_error', 'Database omitted a dependency result', 503);
   return result.rows;
-}
-function knownError(error: unknown, marker: string): boolean {
-  let cause = error;
-  const seen = new Set<unknown>();
-  for (let depth = 0; depth < 8 && cause instanceof Error && !seen.has(cause); depth++) {
-    seen.add(cause);
-    const suffixes = ['', ': SQLITE_CONSTRAINT', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)', ': SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)'];
-    if (suffixes.some(suffix => cause instanceof Error && (cause.message === marker + suffix || cause.message === `D1_ERROR: ${marker}${suffix}`))) return true;
-    cause = cause.cause;
-  }
-  return false;
 }
 export async function executeDependencyOperation(db: SqlExecutor, operation: DependencyOperation, by: string | Actor): Promise<DependencyResult> {
   const caller = asActor(by);

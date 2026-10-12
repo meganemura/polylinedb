@@ -531,3 +531,65 @@ test('an older Worker that rejects claimed fails the list instead of answering w
     assert.deepEqual(await decode({ op: 'list', claimed: false }, transport), { issues: [], next_cursor: null });
   } finally { sqlite.close(); }
 });
+
+test('land order: receipts, reads, and conflict details decode, and default show and list bodies keep their released keys', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const create = async (body: string) => ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body })).body.issue as { id: string }).id;
+    const later = await create('Later'); const earlier = await create('Earlier');
+    const add = { op: 'land_order_add', later_id: later, earlier_id: earlier, expected_revision: 1, request_id: crypto.randomUUID() };
+    assert.deepEqual(await decode(add, transport), { land_order_receipt: { later_id: later, earlier_id: earlier, revision: 2, outcome: 'added' } });
+    assert.deepEqual(await decode({ op: 'land_order_list', issue_id: earlier }, transport), { issue_id: earlier, revision: 1, after: [], before: [{ id: later, project: 'compat', status: 'open' }] });
+    assert.deepEqual(await outcome(decode({ ...add, request_id: crypto.randomUUID() }, transport)), { error: { code: 'land_order_conflict', status: 409,
+      details: { expected_revision: 1, current: { issue_id: later, revision: 2, after: [{ id: earlier, project: 'compat', status: 'open' }], before: [] } } } });
+    assert.deepEqual(await outcome(decode({ op: 'land_order_add', later_id: earlier, earlier_id: later, expected_revision: 1, request_id: crypto.randomUUID() }, transport)),
+      { error: { code: 'dependency_cycle', status: 409, details: undefined } });
+    assert.deepEqual(Object.keys((await wire({ op: 'show', id: later })).body).sort(), ['claim', 'comments', 'issue']);
+    assert.deepEqual(Object.keys((await wire({ op: 'list', project: 'compat' })).body).sort(), ['issues', 'next_cursor']);
+    const shown = await decode({ op: 'show', id: later, with_land_order: true }, transport);
+    assert.deepEqual('land_order' in shown ? shown.land_order : undefined, { issue_id: later, revision: 2, after: [{ id: earlier, project: 'compat', status: 'open' }], before: [] });
+    const listed = await decode({ op: 'list', project: 'compat', with_land_order: true }, transport);
+    assert.deepEqual('land_order' in listed && Array.isArray(listed.land_order) ? listed.land_order.map(order => order.issue_id) : undefined, [later, earlier]);
+    const misaligned = await wire({ op: 'list', project: 'compat', with_land_order: true });
+    await assert.rejects(decode({ op: 'list', project: 'compat', with_land_order: true }, answer({ ...misaligned.body, land_order: (misaligned.body.land_order as unknown[]).slice(1) })), { code: 'cloud_invalid_response' });
+  } finally { sqlite.close(); }
+});
+
+test('an older Worker that rejects with_land_order answers show and list through one plain request', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Old Worker read' })).body.issue as { id: string }).id;
+    for (const plain of [{ op: 'show', id }, { op: 'list', project: 'compat' }]) {
+      const sent: unknown[] = [];
+      const older: typeof fetch = async (_url, options) => {
+        const operation = JSON.parse(String(options?.body)); sent.push(operation);
+        return 'with_land_order' in operation ? Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: with_land_order' } }, { status: 400 }) : transport(_url, options);
+      };
+      const answered = await decode({ ...plain, with_land_order: true }, older);
+      assert.equal('land_order' in answered, false);
+      assert.deepEqual(answered, await decode(plain, transport));
+      assert.deepEqual(sent, [{ ...JSON.parse(JSON.stringify(parseOperation(plain))), with_land_order: true }, JSON.parse(JSON.stringify(parseOperation(plain)))]);
+    }
+  } finally { sqlite.close(); }
+});
+
+test('claim_handoff decodes land_order_warnings from a newer Worker and decodes an older Worker body without them', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const create = async (body: string) => ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body })).body.issue as { id: string }).id;
+    const later = await create('Later'); const earlier = await create('Earlier');
+    await wire({ op: 'land_order_add', later_id: later, earlier_id: earlier, expected_revision: 1, request_id: crypto.randomUUID() });
+    const inspection = await wire({ op: 'claim_show', issue_id: later });
+    const acquired = (await wire({ op: 'claim_acquire', issue_id: later, incarnation: (inspection.body.claim as { store_incarnation: string }).store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() })).body.claim_receipt as { incarnation: string; session_id: string; generation: number; revision: number };
+    const handoff = { op: 'claim_handoff', claim_proof: { issue_id: later, incarnation: acquired.incarnation, session_id: acquired.session_id, generation: acquired.generation }, expected_revision: acquired.revision, request_id: crypto.randomUUID(), tip: 'abcdef0' };
+    const body = (await wire(handoff)).body;
+    assertShape(body, { claim_receipt: { ...claimShape, outcome: 'string', released_at: 'number' }, handoff: { issue: issueShape, comments: [commentShape] }, land_order_warnings: [{ id: 'string', status: 'string' }] });
+    const decoded = await decode(handoff, answer(body));
+    assert.deepEqual('land_order_warnings' in decoded ? decoded.land_order_warnings : undefined, [{ id: earlier, status: 'open' }]);
+    const { land_order_warnings: _, ...older } = body;
+    assert.equal('land_order_warnings' in await decode(handoff, answer(older)), false);
+    await assert.rejects(decode(handoff, answer({ ...body, land_order_warnings: [{ id: earlier, status: 'closed' }] })), { code: 'cloud_invalid_response' });
+    const replayed = await decode(handoff, transport);
+    assert.deepEqual('land_order_warnings' in replayed ? replayed.land_order_warnings : undefined, [{ id: earlier, status: 'open' }]);
+  } finally { sqlite.close(); }
+});

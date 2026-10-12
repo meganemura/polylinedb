@@ -16,6 +16,7 @@ export const d1Files = [
   'test/claims-sql.integration.ts',
   'test/d1.integration.ts',
   'test/dependencies-d1.integration.ts',
+  'test/land-order-d1.integration.ts',
 ];
 
 type Outcome = { file: string; status: number | null; output: string; seconds: number };

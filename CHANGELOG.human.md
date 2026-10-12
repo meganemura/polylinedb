@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+You can now say that one issue should land on main after another, without making it wait to start. `pd land-order add --later ID --earlier ID --expected-revision N` records the order, and `pd show --human` and the issue page in `/ui` show a "Lands after" line. Land order never blocks starting, claiming, or closing an issue. When work is handed to the landing queue before the issues it should land after, the handoff warns about each of them, and the push stays as it is. Upgrade a local store with `pd upgrade`; the shared database needs its migration before the server update.
+
 You can check which server version is running before you use it.
 The server reports its package version, build commit, and database version through MCP or an authenticated HTTP read.
 A build without a known clean source commit reports an unknown commit.

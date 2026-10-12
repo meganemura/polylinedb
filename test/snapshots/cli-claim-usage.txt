@@ -8,6 +8,7 @@
         [--summary TEXT | --summary-file PATH] [--request-id UUID]
                                 Comment the tip and summary, set status open, swap
                                 ready for main-wait, and release, in one write.
+                                land_order_warnings names unlanded issues this one lands after.
   claim keepalive --claim-proof JSON [--ttl 30..3600] [--max-duration 1..28800]
         [--kill-on-loss] (--pid PID | -- COMMAND [ARGS...])
                                 Renew a lease until COMMAND or PID exits; refuses main-lock issues.

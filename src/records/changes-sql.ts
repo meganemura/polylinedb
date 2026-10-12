@@ -7,8 +7,13 @@ export const changeKinds = ['created', 'updated', 'status_changed', 'commented',
 export type ChangeKind = typeof changeKinds[number];
 export const CHANGE_RETENTION = 10000;
 
-const event = (issue: string, kind: string, fieldsJson = "'[]'") =>
-  `INSERT INTO change_events(issue_id,kind,fields_json,occurred_at,actor) SELECT ${issue},${kind},${fieldsJson},unixepoch(),change_writer.actor FROM change_writer`;
+export const changeRelations = ['lands_after'] as const;
+export type ChangeRelation = typeof changeRelations[number];
+// Earlier schemas stored these trigger bodies without the relation column, so an event without a relation keeps that exact text.
+export const changeEvent = (issue: string, kind: string, fieldsJson = "'[]'", relation?: ChangeRelation) => relation === undefined
+  ? `INSERT INTO change_events(issue_id,kind,fields_json,occurred_at,actor) SELECT ${issue},${kind},${fieldsJson},unixepoch(),change_writer.actor FROM change_writer`
+  : `INSERT INTO change_events(issue_id,kind,fields_json,occurred_at,actor,relation) SELECT ${issue},${kind},${fieldsJson},unixepoch(),change_writer.actor,'${relation}' FROM change_writer`;
+const event = changeEvent;
 const writtenFields = `'[' || substr(${fields.map(field => `CASE WHEN NEW.${field}_v <> OLD.${field}_v THEN ',"${field}"' ELSE '' END`).join(' || ')},2) || ']'`;
 const anyFieldWritten = fields.map(field => `NEW.${field}_v <> OLD.${field}_v`).join(' OR ');
 const noActiveBlocker = (dependent: string) => `NOT EXISTS(SELECT 1 FROM dependencies AS other JOIN issues AS blocker ON blocker.id = other.blocker_id
@@ -60,6 +65,10 @@ export const CHANGE_STATEMENTS = [
         WHERE dependent.id = OLD.dependent_id AND removed.id = OLD.blocker_id AND ${activeBlockerStatusSql('removed')} AND dependent.status = 'open'
         AND ${noActiveBlocker('dependent.id')};
     END`,
+];
+
+export const CHANGE_RELATION_STATEMENTS = [
+  `ALTER TABLE change_events ADD COLUMN relation TEXT CONSTRAINT change_relation CHECK(relation IS NULL OR relation IN (${changeRelations.map(relation => `'${relation}'`).join(',')}))`,
 ];
 
 export function recordingChanges(db: SqlExecutor, actor: string): SqlExecutor {

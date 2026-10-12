@@ -12,11 +12,15 @@ export type Statement = { sql: string; params: (string | number | null)[] };
 export type Query = (statement: Statement) => Promise<Record<string, unknown>[]>;
 const claimTable = 'polylinedb_snapshot_claim';
 const claimSql = `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL, original_incarnation TEXT NOT NULL, incarnation TEXT NOT NULL CHECK(length(incarnation)=32 AND incarnation NOT GLOB '*[^a-f0-9]*' AND incarnation<>original_incarnation))`;
-const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests'] as const;
+const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests'] as const;
 type Table = typeof tables[number];
 type Rows = Record<Table, Record<string, unknown>[]>;
-const key = { issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id', memories: 'id', memory_counters: 'prefix', memory_requests: 'request_id', dependencies: 'dependent_id,blocker_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id', issue_claims: 'issue_id', claim_requests: 'request_id' };
-function rowKey(row: Record<string, unknown>, table: Table) { return table === 'dependencies' ? JSON.stringify([row.dependent_id, row.blocker_id]) : row[key[table]]; }
+const key = { issues: 'id', comments: 'id', counters: 'scope', requests: 'request_id', memories: 'id', memory_counters: 'prefix', memory_requests: 'request_id', dependencies: 'dependent_id,blocker_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id', issue_claims: 'issue_id', claim_requests: 'request_id',
+  land_order: 'later_id,earlier_id', land_order_revisions: 'later_id', land_order_requests: 'request_id' };
+// An edge table has no single-column key, so it is keyed and paged by both endpoints.
+const edgeColumns: Partial<Record<Table, readonly [string, string]>> = { dependencies: ['dependent_id', 'blocker_id'], land_order: ['later_id', 'earlier_id'] };
+const edgeNames: Partial<Record<Table, string>> = { dependencies: 'dependency', land_order: 'land-order' };
+function rowKey(row: Record<string, unknown>, table: Table) { const edge = edgeColumns[table]; return edge ? JSON.stringify([row[edge[0]], row[edge[1]]]) : row[key[table]]; }
 const fail = (message: string): never => { throw new Error(message); };
 const querySql = (query: Query, sql: string, params: Statement['params'] = []) => query({ sql, params });
 const digest = (canonical: string) => createHash('sha256').update(canonical).digest('hex');
@@ -35,6 +39,7 @@ function expectedRows(input: unknown): { canonical: string; rows: Rows } {
     memories: snapshot.memories.map(row => ({ ...row, sort_key: memorySortKey(row.id) })), memory_counters: snapshot.memory_counters.map(row => ({ ...row })), memory_requests: snapshot.memory_requests.map(row => ({ ...row })),
     dependencies: snapshot.dependencies.map(row => ({ ...row })), dependency_revisions: snapshot.dependency_revisions.map(row => ({ ...row })), dependency_requests: snapshot.dependency_requests.map(row => ({ ...row })),
     issue_claims: snapshot.issue_claims.map(row => ({ ...row })), claim_requests: snapshot.claim_requests.map(row => ({ ...row })),
+    land_order: snapshot.land_order.map(row => ({ ...row })), land_order_revisions: snapshot.land_order_revisions.map(row => ({ ...row })), land_order_requests: snapshot.land_order_requests.map(row => ({ ...row })),
   } };
 }
 
@@ -59,25 +64,27 @@ async function checkSchema(query: Query): Promise<boolean> {
 }
 
 async function readRows(query: Query): Promise<Rows> {
-  const rows: Rows = { issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [], issue_claims: [], claim_requests: [] };
+  const rows: Rows = { issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [], issue_claims: [], claim_requests: [], land_order: [], land_order_revisions: [], land_order_requests: [] };
   // Large text records use one-row pages because a valid body can approach the response limit.
   for (const table of tables) {
-    if (table === 'dependencies') {
+    const edge = edgeColumns[table];
+    if (edge) {
+      const [first, second] = edge;
       let after: [string, string] | undefined;
       for (;;) {
-        const page = await querySql(query, `SELECT dependencies.*, dependent.sort_key AS dependent_sort, blocker.sort_key AS blocker_sort FROM dependencies LEFT JOIN issues AS dependent ON dependent.id = dependent_id LEFT JOIN issues AS blocker ON blocker.id = blocker_id ${after === undefined ? '' : 'WHERE (dependent.sort_key,blocker.sort_key) > (?,?)'} ORDER BY dependent.sort_key,blocker.sort_key LIMIT 1`, after ?? []);
+        const page = await querySql(query, `SELECT ${table}.*, first.sort_key AS first_sort, second.sort_key AS second_sort FROM ${table} LEFT JOIN issues AS first ON first.id = ${first} LEFT JOIN issues AS second ON second.id = ${second} ${after === undefined ? '' : 'WHERE (first.sort_key,second.sort_key) > (?,?)'} ORDER BY first.sort_key,second.sort_key LIMIT 1`, after ?? []);
         const row = page[0]; if (!row) break;
-        const dependentSort = row.dependent_sort; const blockerSort = row.blocker_sort;
-        if (page.length !== 1 || typeof dependentSort !== 'string' || typeof blockerSort !== 'string') return fail('Invalid dependency tuple page');
-        const next: [string, string] = [dependentSort, blockerSort];
-        if (after && (next[0] < after[0] || (next[0] === after[0] && next[1] <= after[1]))) fail('Dependency cursor did not advance');
-        after = next; rows.dependencies.push({ dependent_id: row.dependent_id, blocker_id: row.blocker_id });
+        const firstSort = row.first_sort; const secondSort = row.second_sort;
+        if (page.length !== 1 || typeof firstSort !== 'string' || typeof secondSort !== 'string') return fail(`Invalid ${edgeNames[table]} tuple page`);
+        const next: [string, string] = [firstSort, secondSort];
+        if (after && (next[0] < after[0] || (next[0] === after[0] && next[1] <= after[1]))) fail(`The ${edgeNames[table]} cursor did not advance`);
+        after = next; rows[table].push({ [first]: row[first], [second]: row[second] });
       }
       continue;
     }
     let after: string | undefined;
     for (;;) {
-      const limit = table === 'issue_claims' || table === 'claim_requests' ? 100 : 1;
+      const limit = table === 'issue_claims' || table === 'claim_requests' || table === 'land_order_revisions' ? 100 : 1;
       const page = await querySql(query, `SELECT * FROM ${table}${after === undefined ? '' : ` WHERE ${key[table]} > ?`} ORDER BY ${key[table]} LIMIT ${limit}`, after === undefined ? [] : [after]);
       if (page.length === 0) break;
       if (page.length > limit) fail('Invalid destination page');
@@ -137,11 +144,12 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     await inspect();
     const actual = await readRows(query);
     if (!compareRows(rows, actual)) fail('Destination snapshot is incomplete');
-    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 6,
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 7,
       issues: actual.issues.map(issueRow), comments: actual.comments.map(commentRow), counters: actual.counters, requests: actual.requests,
       memories: actual.memories.map(memoryRow), memory_counters: actual.memory_counters, memory_requests: actual.memory_requests,
       dependencies: actual.dependencies, dependency_revisions: actual.dependency_revisions, dependency_requests: actual.dependency_requests,
-      issue_claims: actual.issue_claims.map(claimRow), claim_requests: actual.claim_requests.map(claimRequestRow) });
+      issue_claims: actual.issue_claims.map(claimRow), claim_requests: actual.claim_requests.map(claimRequestRow),
+      land_order: actual.land_order, land_order_revisions: actual.land_order_revisions, land_order_requests: actual.land_order_requests });
     if (canonicalSnapshot(snapshot) !== canonical) fail('Destination canonical snapshot differs');
     const hasClaim = await checkSchema(query);
     if (hasClaim) {

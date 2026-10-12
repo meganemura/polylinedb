@@ -10,6 +10,8 @@ import { parseDependencyOperation } from './dependencies.ts';
 import type { Dependency, DependencyRevision, DependencyRequest } from './dependencies.ts';
 import { claimRow, claimRequestRow, parseClaimOperation } from './claims.ts';
 import type { Claim, ClaimRequest } from './claims.ts';
+import { parseLandOrderOperation } from './land-order.ts';
+import type { LandOrderEdge, LandOrderRequest, LandOrderRevision } from './land-order.ts';
 
 export type Counter = { scope: string; last_number: number };
 export type CreateRequest = { request_id: string; actor: string; payload: string; issue_id: string };
@@ -18,8 +20,10 @@ type SnapshotV2 = { format: 'polylinedb.snapshot'; version: 2; issues: readonly 
 type SnapshotV3 = Omit<SnapshotV2, 'version'> & { version: 3; memories: readonly Memory[]; memory_counters: readonly MemoryCounter[]; memory_requests: readonly MemoryRequest[] };
 type SnapshotV4 = Omit<SnapshotV3, 'version'> & { version: 4; dependencies: readonly Dependency[]; dependency_revisions: readonly DependencyRevision[]; dependency_requests: readonly DependencyRequest[] };
 type SnapshotV5 = Omit<SnapshotV4, 'version'> & { version: 5; issue_claims: readonly Claim[]; claim_requests: readonly ClaimRequest[] };
-export type Snapshot = Omit<SnapshotV5, 'version' | 'issues'> & { version: 6; issues: readonly StoredIssue[] };
-export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number; sha256: string };
+type SnapshotV6 = Omit<SnapshotV5, 'version' | 'issues'> & { version: 6; issues: readonly StoredIssue[] };
+export type Snapshot = Omit<SnapshotV6, 'version'> & { version: 7; land_order: readonly LandOrderEdge[]; land_order_revisions: readonly LandOrderRevision[]; land_order_requests: readonly LandOrderRequest[] };
+export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number;
+  land_order: number; land_order_requests: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Expected an object');
@@ -262,10 +266,10 @@ function parseSnapshotV5(input: unknown): SnapshotV5 {
 // Snapshot 5 holds no close records, so conversion leaves every closure empty instead of guessing one.
 export function convertSnapshotV5(input: unknown): Snapshot {
   const old = parseSnapshotV5(input);
-  return { ...old, version: 6, issues: old.issues.map(issue => ({ ...issue, closed_at: null, closed_by: null })) };
+  return convertSnapshotV6({ ...old, version: 6, issues: old.issues.map(issue => ({ ...issue, closed_at: null, closed_by: null })) });
 }
 const issueKeys = ['id', ...fields, 'versions', 'created_at', 'created_by', 'updated_at', 'updated_by'];
-export function parseSnapshot(input: unknown): Snapshot {
+function parseSnapshotV6(input: unknown): SnapshotV6 {
   const source = record(input, snapshotKeys);
   if (source.version !== 6) return fail('Unsupported snapshot version; convert versions 2, 3, 4 and 5 explicitly');
   if (!Array.isArray(source.issues)) return fail('Snapshot collections must be arrays');
@@ -283,5 +287,73 @@ export function parseSnapshot(input: unknown): Snapshot {
     return fail(error instanceof Error ? error.message : 'Invalid issue closure');
   }
 }
+// Snapshot 6 predates land order, so conversion adds empty collections: every issue starts at land-order revision 1.
+export function convertSnapshotV6(input: unknown): Snapshot {
+  return parseSnapshot({ ...parseSnapshotV6(input), version: 7, land_order: [], land_order_revisions: [], land_order_requests: [] });
+}
+const snapshotV7Keys = [...snapshotKeys, 'land_order', 'land_order_revisions', 'land_order_requests'];
+/** Rejects a cycle over the union of prerequisite and land-order edges, which the store triggers also refuse. */
+function acyclic(ids: ReadonlySet<string>, edges: readonly (readonly [later: string, earlier: string])[]): void {
+  const outgoing = new Map<string, string[]>();
+  const degree = new Map([...ids].map(id => [id, 0]));
+  for (const [later, earlier] of edges) {
+    outgoing.set(later, [...outgoing.get(later) ?? [], earlier]);
+    degree.set(earlier, (degree.get(earlier) ?? 0) + 1);
+  }
+  const queue = [...degree].filter(([, count]) => count === 0).map(([id]) => id);
+  for (let i = 0; i < queue.length; i++) {
+    for (const earlier of outgoing.get(queue[i] ?? '') ?? []) {
+      const count = (degree.get(earlier) ?? 0) - 1; degree.set(earlier, count);
+      if (count === 0) queue.push(earlier);
+    }
+  }
+  if (queue.length !== ids.size) fail('Prerequisites and land order contain a cycle');
+}
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, snapshotV7Keys);
+  if (source.version !== 7) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5 and 6 explicitly');
+  const { land_order: edges, land_order_revisions: revisions, land_order_requests: requests, ...legacy } = source;
+  const old = parseSnapshotV6({ ...legacy, version: 6 });
+  if (!Array.isArray(edges) || !Array.isArray(revisions) || !Array.isArray(requests)) return fail('Land-order collections must be arrays');
+  try {
+    const ids = new Set(old.issues.map(issue => issue.id));
+    const endpoint = (value: unknown) => { const id = parseIssueId(value); if (!ids.has(id)) return fail('Land-order endpoint does not exist'); return id; };
+    const counter = (value: unknown, minimum: number) => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) return fail('Invalid land-order revision'); return value; };
+    const byIssue = (a: string, b: string) => compareText(issueSortKey(a), issueSortKey(b));
+    const land_order_revisions = revisions.map(value => {
+      const row = record(value, ['later_id', 'revision']);
+      return { later_id: endpoint(row.later_id), revision: counter(row.revision, 2) };
+    }).sort((a, b) => byIssue(a.later_id, b.later_id));
+    const byId = new Map(land_order_revisions.map(row => [row.later_id, row.revision]));
+    if (byId.size !== land_order_revisions.length) fail('Duplicate land-order revision');
+    const land_order = edges.map(value => {
+      const row = record(value, ['later_id', 'earlier_id']);
+      return { later_id: endpoint(row.later_id), earlier_id: endpoint(row.earlier_id) };
+    }).sort((a, b) => byIssue(a.later_id, b.later_id) || byIssue(a.earlier_id, b.earlier_id));
+    if (new Set(land_order.map(edge => JSON.stringify([edge.later_id, edge.earlier_id]))).size !== land_order.length) fail('Duplicate land-order tuple');
+    acyclic(ids, [...old.dependencies.map(edge => [edge.dependent_id, edge.blocker_id] as const), ...land_order.map(edge => [edge.later_id, edge.earlier_id] as const)]);
+    const land_order_requests = requests.map((value): LandOrderRequest => {
+      const row = record(value, ['request_id', 'actor', 'payload', 'later_id', 'earlier_id', 'result_revision', 'outcome', 'created_at']);
+      const request_id = parseRequestId(row.request_id); const later_id = endpoint(row.later_id); const earlier_id = endpoint(row.earlier_id);
+      const result_revision = counter(row.result_revision, 2);
+      if (result_revision > (byId.get(later_id) ?? 1)) fail('Land-order receipt exceeds the aggregate revision');
+      if (typeof row.actor !== 'string' || !row.actor.trim() || /\p{Cc}/u.test(row.actor) || new TextEncoder().encode(row.actor).length > 256 || typeof row.payload !== 'string') return fail('Invalid land-order receipt actor or payload');
+      timestamp(row.created_at); if (typeof row.created_at !== 'string') return fail('Invalid land-order timestamp');
+      const operation = parseLandOrderOperation(JSON.parse(row.payload));
+      if (operation.op === 'land_order_list' || operation.request_id !== request_id || operation.later_id !== later_id || operation.earlier_id !== earlier_id || operation.expected_revision + 1 !== result_revision || JSON.stringify(operation) !== row.payload) return fail('Invalid canonical land-order receipt');
+      const outcome = row.outcome;
+      if (outcome !== 'added' && outcome !== 'already_present' && outcome !== 'removed' && outcome !== 'already_absent') return fail('Invalid land-order receipt outcome');
+      if ((operation.op === 'land_order_add') !== (outcome === 'added' || outcome === 'already_present')) return fail('Land-order receipt outcome differs from the operation');
+      return { request_id, actor: row.actor, payload: row.payload, later_id, earlier_id, result_revision, outcome, created_at: row.created_at };
+    }).sort((a, b) => compareText(a.request_id, b.request_id));
+    if (new Set(land_order_requests.map(row => row.request_id)).size !== land_order_requests.length) fail('Duplicate land-order request ID');
+    if (new Set(land_order_requests.map(row => JSON.stringify([row.later_id, row.result_revision]))).size !== land_order_requests.length) fail('Duplicate land-order receipt revision');
+    return { ...old, version: 7, land_order, land_order_revisions, land_order_requests };
+  } catch (error) {
+    if (error instanceof PolylinedbError && error.code === 'invalid_snapshot') throw error;
+    return fail(error instanceof Error ? error.message : 'Invalid land-order snapshot');
+  }
+}
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }
 export function canonicalSnapshotV5(input: unknown): string { return JSON.stringify(parseSnapshotV5(input)); }
+export function canonicalSnapshotV6(input: unknown): string { return JSON.stringify(parseSnapshotV6(input)); }

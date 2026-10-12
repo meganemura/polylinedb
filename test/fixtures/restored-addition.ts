@@ -27,6 +27,7 @@ export async function populate(store: Store, prefix: string): Promise<void> {
   await run({ op: 'update', id: epic, changes: [{ field: 'body', value: `${prefix} revised`, expected: 1 }] }, `${prefix}-editor`);
   await run({ op: 'create', prefix, parent: epic, request_id: randomUUID(), tool: 'fixture', project: 'synthetic', body: `${prefix} child` });
   await run({ op: 'dependency_add', dependent_id: `${epic}.1`, blocker_id: epic, expected_revision: 1, request_id: randomUUID() });
+  await run({ op: 'land_order_add', later_id: `${epic}.1`, earlier_id: epic, expected_revision: 1, request_id: randomUUID() });
   await run({ op: 'comment', id: epic, body: `${prefix} comment` }, `${prefix}-commenter`);
   const scope = await run({ op: 'claim_show', issue_id: epic });
   assert.ok('claim' in scope);

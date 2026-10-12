@@ -6,7 +6,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, rea
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import type { Counts, Statement } from './d1-additive-merge.ts';
-import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV5, convertSnapshotV3, convertSnapshotV5, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
+import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV5, canonicalSnapshotV6, convertSnapshotV3, convertSnapshotV5, convertSnapshotV6, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
 import { defaultConnection, readConnections, readRepositoryDefaults, repositoryConfigPath, selectConnection, useRepositoryConnection } from '../src/workspace/index.ts';
 import type { RepositoryConfiguration, RepositorySelection } from '../src/workspace/index.ts';
 import { PolylinedbError } from '../src/records/index.ts';
@@ -64,10 +64,12 @@ const checkpointLayouts = {
   'four-column': {
     ddl: `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL, original_incarnation TEXT NOT NULL, incarnation TEXT NOT NULL CHECK(length(incarnation)=32 AND incarnation NOT GLOB '*[^a-f0-9]*' AND incarnation<>original_incarnation))`,
     columns: ['singleton', 'sha256', 'original_incarnation', 'incarnation'],
-    // Snapshot 5 restores into schema 6 or 7; the schema 8 upgrade leaves what convertSnapshotV5 produces.
-    snapshotVersions: [5, 6],
+    // Snapshot 5 restores into schema 6 or 7 and snapshot 6 into schema 8; the later upgrades leave what the conversions produce.
+    snapshotVersions: [5, 6, 7],
     original(input) {
-      if (input !== null && typeof input === 'object' && 'version' in input && input.version === 5) return { canonical: canonicalSnapshotV5(input), projected: canonicalSnapshot(convertSnapshotV5(input)) };
+      const version = input !== null && typeof input === 'object' && 'version' in input ? input.version : undefined;
+      if (version === 5) return { canonical: canonicalSnapshotV5(input), projected: canonicalSnapshot(convertSnapshotV5(input)) };
+      if (version === 6) return { canonical: canonicalSnapshotV6(input), projected: canonicalSnapshot(convertSnapshotV6(input)) };
       const canonical = canonicalSnapshot(parseSnapshot(input)); return { canonical, projected: canonical };
     },
     valid: row => hexIncarnation(row.original_incarnation) && hexIncarnation(row.incarnation) && row.original_incarnation !== row.incarnation,
@@ -175,7 +177,8 @@ function originalInput(text: string, layout: Layout): { projected: string; diges
   try { input = JSON.parse(text); } catch { return refuse('Original restore input is not JSON'); }
   const declared = input !== null && typeof input === 'object' && 'version' in input ? input.version : undefined;
   const accepted: readonly unknown[] = checkpointLayouts[layout].snapshotVersions;
-  if (!accepted.includes(declared)) refuse(`The ${layout} checkpoint requires snapshot format ${checkpointLayouts[layout].snapshotVersions.join(' or ')}`);
+  const versions = checkpointLayouts[layout].snapshotVersions;
+  if (!accepted.includes(declared)) refuse(`The ${layout} checkpoint requires snapshot format ${versions.length === 1 ? versions[0] : `${versions.slice(0, -1).join(', ')} or ${versions.at(-1)}`}`);
   let forms: OriginalForms;
   try { forms = checkpointLayouts[layout].original(input); } catch { return refuse('Original restore input is not a valid snapshot'); }
   return { projected: forms.projected, digest: sha256(forms.canonical) as OriginalDigest };

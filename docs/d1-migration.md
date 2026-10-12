@@ -1,13 +1,13 @@
 # Restore a local snapshot into D1
 
-These instructions describe schema 8 and snapshot 6.
-Versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
+These instructions describe schema 9 and snapshot 7.
+Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6, versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
 
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.
 
-The repository operator command restores snapshot v6 into a new D1 database.
-It preserves issues and their close records, comments, memories, prerequisites, claims, counters, request receipts, versions, and audit fields.
+The repository operator command restores snapshot v7 into a new D1 database.
+It preserves issues and their close records, comments, memories, prerequisites, land order, claims, counters, request receipts, versions, and audit fields.
 Ordinary `pd` commands can select SQLite or the authenticated cloud API. Snapshot maintenance remains an operator task.
 
 ## Prepare the transfer
@@ -30,7 +30,7 @@ Create a target file with mode 0600 outside Git checkouts. Environment-specific 
   "accountId": "ACCOUNT_ID",
   "databaseId": "DATABASE_UUID",
   "snapshotSha256": "CANONICAL_SNAPSHOT_SHA256",
-  "schemaVersion": 8
+  "schemaVersion": 9
 }
 ```
 
@@ -44,9 +44,9 @@ node scripts/d1-snapshot.ts verify --snapshot SNAPSHOT --target TARGET --output 
 ```
 
 The field order in the command is fixed. `inspect` reads the destination. `restore` writes the snapshot claim and missing rows.
-`verify` reads all twelve collections and compares their canonical representation with the input.
-Dependency edges use numeric dependent/blocker tuple pagination.
-Claim aggregates and receipts use bounded pages of 100 small records.
+`verify` reads all fifteen collections and compares their canonical representation with the input.
+Dependency edges use numeric dependent/blocker tuple pagination, and land-order edges use numeric later/earlier tuple pagination.
+Claim aggregates, claim receipts, and land-order revisions use bounded pages of 100 small records.
 Issues, comments, and memories retain one-record pages to bound large text responses.
 Its optional `--output` writes that verified remote snapshot to a new file with mode 0600.
 The output path must be absolute, and existing files are refused. Keep the output outside Git checkouts.
@@ -58,26 +58,28 @@ The excerpt replaces each run of 20 or more identifier characters with `[redacte
 <a id="upgrade-an-existing-schema-2-3-or-4-deployment"></a>
 <a id="upgrade-an-existing-schema-2-3-4-or-5-deployment"></a>
 <a id="upgrade-an-existing-schema-2-3-4-5-or-6-deployment"></a>
+<a id="upgrade-an-existing-schema-2-3-4-5-6-or-7-deployment"></a>
 
-## Upgrade an existing schema 2, 3, 4, 5, 6 or 7 deployment
+## Upgrade an existing schema 2, 3, 4, 5, 6, 7 or 8 deployment
 
-The new Worker needs schema 8. The CLI's `upgrade` command applies only to local SQLite.
+The new Worker needs schema 9. The CLI's `upgrade` command applies only to local SQLite.
+A schema 9 Worker on a schema 8 database serves every earlier operation, but every land-order operation and every read that asks for land order fails, because the `land_order` tables are missing.
 A schema 7 or later Worker fails every issue, comment, claim, and prerequisite write against a schema 6 database, because the `change_writer` table is missing.
 A schema 8 Worker on a schema 7 database reads issues, but every status change and every creation with status `closed` fails, because those writes name the `closed_at` and `closed_by` columns.
 Upgrade the database before deploying the Worker.
 A schema 6 or 7 Worker keeps working against an upgraded database. A schema 6 Worker records no change events, and neither earlier Worker records closures, so its closes leave them null.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
 Record the account, database UUID, and Worker binding.
-Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL`, `SCHEMA_V6_SQL`, or `SCHEMA_V7_SQL` definition before a write.
+Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL`, `SCHEMA_V6_SQL`, `SCHEMA_V7_SQL`, or `SCHEMA_V8_SQL` definition before a write.
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
 Run `pd snapshot convert --from 2 --file OLD --output NEW` for a v2 snapshot.
-For a v3, v4, or v5 snapshot, use `--from 3`, `--from 4`, or `--from 5` instead.
-Then use the new v6 digest and the normal restore procedure.
+For a v3, v4, v5, or v6 snapshot, use `--from 3`, `--from 4`, `--from 5`, or `--from 6` instead.
+Then use the new v7 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
-For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, `--upgrade-from 6`, or `--upgrade-from 7`.
+For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, `--upgrade-from 6`, `--upgrade-from 7`, or `--upgrade-from 8`.
 Apply every statement in one approved D1 batch or transaction; do not send these statements through the public Worker API.
 The `schemaUpgradeStatements` export provides complete statements, including trigger bodies, for a D1 batch adapter.
 Do not split migration SQL at semicolons because trigger bodies contain semicolons.
@@ -85,8 +87,10 @@ The batch checks the previous version and applies its required memory migrations
 Upgrades from versions 2 through 4 create dependency tables and seed each issue at prerequisite revision 1.
 Upgrades from versions 2 through 5 add empty claim collections.
 Upgrades from versions 2 through 6 add the empty change feed tables and their triggers.
-Every supported upgrade adds the `closed_at` and `closed_by` issue columns with null values and sets schema version 8.
+Upgrades from versions 2 through 7 add the `closed_at` and `closed_by` issue columns with null values.
 The upgrade does not infer close times for issues that are already closed.
+Every supported upgrade adds the nullable `change_events.relation` column, the empty land-order tables, and their triggers.
+It replaces the `dependencies_acyclic` trigger with one that walks prerequisites and land order together, and sets schema version 9.
 Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
 Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
 Verify that schema 2 upgrades create empty memory collections.
@@ -96,7 +100,8 @@ Verify that schema 4 and 5 upgrades preserve memory identity and project revisio
 For schema 5 and 6, verify that graph edges, revisions, and receipt payload bytes remain unchanged.
 Verify that both claim collections remain empty after an upgrade from schema 2 through 5, and that schema 6 claim rows and receipts remain unchanged.
 Verify that `change_events` and `change_writer` are empty after an upgrade from schema 2 through 6, and that schema 7 change events remain unchanged.
-Verify that every issue has null `closed_at` and `closed_by`.
+Verify that every issue has null `closed_at` and `closed_by` after an upgrade from schema 2 through 7, and that schema 8 closures remain unchanged.
+Verify that `land_order`, `land_order_revisions`, and `land_order_requests` are empty, and that every existing change event has a null `relation`.
 Deploy the new Worker only after those checks pass.
 If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
 
@@ -111,6 +116,17 @@ Rolling back the Worker has these costs:
 - Restoring a schema 7 backup after schema 8 writes loses every write made since the backup. Follow the raw database rollback below.
 
 See [the closure record decision](adr/0018-issue-closure-record.md#rollout).
+
+### Rollback cost of the schema 9 upgrade
+
+The schema 8 to 9 upgrade adds tables, one nullable column, and triggers, so the database itself needs no rollback to run a schema 8 Worker.
+Rolling back the Worker has these costs:
+
+- A schema 8 Worker reads change events without `relation`, so a land-order event appears as a prerequisite `dependency_added` or `dependency_removed` event. Read `land_order_list` again with a schema 9 Worker for the edges.
+- A schema 8 Worker cannot read or write land order. The edges stay in the database, and the shared cycle trigger still refuses a prerequisite that would close a cycle through them.
+- Restoring a schema 8 backup after schema 9 writes loses every write made since the backup. Follow the raw database rollback below.
+
+See [the land-order decision](adr/0020-land-order.md#rollout).
 
 The application does not perform this remote upgrade automatically. This procedure requires separate operator approval and live verification.
 For a raw database rollback, stop readers and writers, restore, rotate the incarnation, then resume traffic.
@@ -135,9 +151,9 @@ Historical request UUIDs still replay their original receipts.
 Snapshot validation rejects dangling claim receipts and receipt counters above their aggregate, across every incarnation.
 
 A retired historical local store rejects `pd upgrade` and retains its write guards.
-Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, 6, or 7.
-That export converts the content to snapshot 6 with null close records. Schema 6 and 7 claim records remain intact; earlier schemas receive empty claim collections.
-Schema 5, 6, and 7 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
+Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, 6, 7, or 8.
+That export converts the content to snapshot 7 with empty land order, and with null close records before schema 8. Schema 6, 7, and 8 claim records remain intact; earlier schemas receive empty claim collections.
+Schema 5 through 8 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
 It preserves creation payload strings and source attribution. Transfer it into a separately initialized destination.
 
 Create-request records retain their original actor. Replaying a local request through a different cloud actor returns `request_conflict`. New cloud operations use new request IDs.

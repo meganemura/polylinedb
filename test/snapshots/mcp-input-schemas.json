@@ -654,6 +654,85 @@
       }
     }
   },
+  "land_order_add": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "later_id",
+      "earlier_id",
+      "expected_revision",
+      "request_id"
+    ],
+    "properties": {
+      "later_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$",
+        "description": "The issue that should land later."
+      },
+      "earlier_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$",
+        "description": "The issue that should land first."
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991,
+        "description": "The land-order revision of later_id from land_order_list."
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Reuse one lowercase UUID for each logical mutation."
+      }
+    }
+  },
+  "land_order_list": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "issue_id"
+    ],
+    "properties": {
+      "issue_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      }
+    }
+  },
+  "land_order_remove": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "later_id",
+      "earlier_id",
+      "expected_revision",
+      "request_id"
+    ],
+    "properties": {
+      "later_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$",
+        "description": "The issue that should land later."
+      },
+      "earlier_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$",
+        "description": "The issue that should land first."
+      },
+      "expected_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991,
+        "description": "The land-order revision of later_id from land_order_list."
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Reuse one lowercase UUID for each logical mutation."
+      }
+    }
+  },
   "list": {
     "type": "object",
     "properties": {
@@ -712,6 +791,10 @@
       "claimed": {
         "type": "boolean",
         "description": "true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated."
+      },
+      "with_land_order": {
+        "const": true,
+        "description": "Also return land_order: which issues this one lands after and before. It never blocks work."
       },
       "observed_memory_revision": {
         "type": "string",
@@ -1073,6 +1156,10 @@
       "id": {
         "type": "string",
         "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "with_land_order": {
+        "const": true,
+        "description": "Also return land_order: which issues this one lands after and before. It never blocks work."
       },
       "observed_memory_revision": {
         "type": "string",

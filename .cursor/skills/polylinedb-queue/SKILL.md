@@ -84,6 +84,9 @@ Pass the issue proof, the current claim revision as `expected_revision`, a new r
 In one atomic write it adds the `tip: <sha>` comment and the summary comment, sets status `open`, removes `ready`, adds `main-wait`, keeps the other labels, and releases the claim.
 If any part fails, nothing is written. After an uncertain response, call it again with the same request UUID and the same arguments; it returns the first result.
 
+When the result carries a non-empty `land_order_warnings`, report each `id` and `status` to the user: this issue should land after those issues, and they have not reached the queue yet.
+Do not reorder `queue`, revert the push, or undo the handoff because of it. The person who lands `queue` decides.
+
 When the connection has no `claim_handoff`, write the same records in four steps:
 
 1. Write a `comment` whose whole body is `tip: ` followed by the 40-character SHA of the queue tip. It holds only that line, with no reasoning and no tool output.

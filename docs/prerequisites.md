@@ -70,6 +70,27 @@ Existing issues need no migration. They carry the same labels, and an issue that
 Audit them with `pd list --label owner-decision` and `pd list --label owner-action`.
 A claim that an agent already holds stays in force; the owner releases it or waits for expiry.
 
+## Land order
+
+Land order says that one issue should reach main after another, without making it wait to start.
+It is a separate relation from prerequisites: it never blocks start, claim, or close, and the ready and blocked worklists ignore it.
+
+```sh
+pd land-order list demo-1
+pd land-order add --later demo-1 --earlier demo-2 --expected-revision 1
+pd land-order remove --later demo-1 --earlier demo-2 --expected-revision 2
+pd show demo-1 --with-land-order
+```
+
+The revision belongs to the later issue and follows the prerequisite rules above: a stale request returns `land_order_conflict` with the current land order, a reused request UUID with another actor or payload returns `land_order_request_conflict`, and a retry returns the original receipt.
+`land_order_list` returns `after`, the issues this one lands after, and `before`, the issues that land after it.
+An agent edits land order only for a later issue that it holds a claim on.
+
+A cycle has no order, whichever edges make it.
+A self-edge, or a land-order edge or prerequisite that closes a cycle through either kind or both, fails with `dependency_cycle` and changes nothing.
+The change feed reports land order as `dependency_added` and `dependency_removed` on the later issue with `relation: "lands_after"`, and never as `became_ready`.
+`claim_handoff` warns about the direct predecessors that have not reached the queue; see [the handoff](claims.md#hand-off-to-the-landing-queue).
+
 HTTP and MCP use `dependency_list`, `dependency_add`, `dependency_remove`, `dependency_worklist`, and `dependency_owner_waits` through the shared operation boundary.
 The worklist operation accepts `state: "ready"` or `state: "blocked"` and the same issue filters.
 Existing issue results and their seven field versions retain their shapes.

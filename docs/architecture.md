@@ -21,6 +21,10 @@ The [change feed decision](adr/0016-change-feed.md) records the sequence, retent
 The status write also sets or clears `closed_at` and `closed_by` in the same `UPDATE`, so SQLite and D1 keep one closure rule.
 The [closure record decision](adr/0018-issue-closure-record.md) records the semantics, the upgrade, and the rollback cost.
 
+Land order is a relation beside prerequisites that never takes part in readiness, start, or close decisions.
+One trigger body walks both edge kinds, so a cycle through either kind, or through both, fails in the database on SQLite and D1 alike.
+The [land-order decision](adr/0020-land-order.md) records the relation, the handoff warning, and the rollout.
+
 ## Dependency direction
 
 The architecture check orders source modules as core, domain, adapter, then entrypoint.

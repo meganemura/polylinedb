@@ -62,8 +62,8 @@ An agent's name is not the affected tool merely because that agent created the i
 | Operation | Arguments besides `op` | Result |
 | --- | --- | --- |
 | `create` | Required `tool`, `project`, `body`, `prefix`, `request_id`; optional mutable fields and `parent` | `{ "issue": ... }` |
-| `show` | `id` | `{ "issue": ..., "comments": [...] }` |
-| `list` | Optional filters | `{ "issues": [...], "next_cursor": ... }` |
+| `show` | `id`; optional `with_land_order: true` | `{ "issue": ..., "comments": [...] }`; with `with_land_order`, also `"land_order": ...` |
+| `list` | Optional filters; optional `with_land_order: true` | `{ "issues": [...], "next_cursor": ... }`; with `with_land_order`, also `"land_order": [...]`, one entry per issue in the same order |
 | `search` | `query`, optional filters, optional `with_matches: true` | Same as list; with `with_matches`, also `"matches": [...]` |
 | `comment` | `id`, `body` | `{ "comment": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
@@ -73,12 +73,14 @@ An agent's name is not the affected tool merely because that agent created the i
 | `dependency_list` | `dependent_id`; optional `after`, `limit` | `{ "dependent_id": ..., "revision": ..., "blockers": [...], "next_cursor": ... }` |
 | `dependency_add`, `dependency_remove` | `dependent_id`, `blocker_id`, `expected_revision`, `request_id` | `{ "dependency": { "dependent_id": ..., "blocker_id": ..., "revision": ..., "outcome": ... } }` |
 | `dependency_worklist` | `state: "ready"` or `"blocked"`; optional issue filters except `status` | Same as list |
+| `land_order_list` | `issue_id` | `{ "issue_id": ..., "revision": ..., "after": [...], "before": [...] }` |
+| `land_order_add`, `land_order_remove` | `later_id`, `earlier_id`, `expected_revision`, `request_id` | `{ "land_order_receipt": { "later_id": ..., "earlier_id": ..., "revision": ..., "outcome": ... } }` |
 | `dependency_owner_waits` | Optional `tool`, `project`, `after`, `limit` | `{ "waits": [{ "issue": ..., "dependents": [...], "dependents_next": ... }], "next_cursor": ... }` |
 | `claim_show` | `issue_id` | `{ "claim": ... }` |
 | `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
 | `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ..., "open_blockers": [...] }` |
 | `claim_renew` | `claim_proof`, `expected_revision`, `request_id`; optional `ttl` | `{ "claim_receipt": ... }` |
-| `claim_handoff` | `claim_proof`, `expected_revision`, `request_id`, `tip` (7 to 40 lowercase hex digits); optional `summary` (at most 65536 UTF-8 bytes) | `{ "claim_receipt": ..., "handoff": { "issue": ..., "comments": [...] } }` |
+| `claim_handoff` | `claim_proof`, `expected_revision`, `request_id`, `tip` (7 to 40 lowercase hex digits); optional `summary` (at most 65536 UTF-8 bytes) | `{ "claim_receipt": ..., "handoff": { "issue": ..., "comments": [...] }, "land_order_warnings": [{ "id": ..., "status": ... }] }` |
 | `claim_release` | `claim_proof`, `expected_revision`, `request_id`; optional `expired_noop: true` | `{ "claim_receipt": ... }`; with `expired_noop` and the caller's expired lease, `{ "released": false, "current": ... }` |
 | `changes` | `since`; `incarnation` when `since` is greater than 0; optional `project`, `issue_ids`, `kinds`, `limit` | `{ "incarnation": ..., "changes": [...], "next_since": ... }` |
 
@@ -88,10 +90,12 @@ The cloud actor comes from authentication, so requests cannot supply an actor.
 The parent relationship is immutable; an epic with children cannot change to another type.
 Prerequisites form a separate acyclic graph. They can cross projects within the selected store.
 See [issue prerequisites](prerequisites.md) for aggregate conflicts, immutable request receipts, and readiness semantics.
+[Land order](prerequisites.md#land-order) says which issue should reach main first. It never blocks work, shares the cycle check with prerequisites, and has its own revision and receipts.
 Close and updates that request `in_progress` or `closed` accept `force: true` with a nonempty `reason` for an explicit exception.
 The reason becomes an attributed comment in the successful status transaction. Ordinary operation results retain their existing shapes.
 Schema 7 adds the [change feed](#change-feed) and keeps every operation result unchanged.
 Schema 8 adds `closed_at` and `closed_by` to issues in local results and MCP.
+Schema 9 adds land order and the optional change feed field `relation`; default results keep their shapes.
 Version 0.3.0 uses schema 6 and adds issue ownership while retaining all seven ordinary issue fields.
 Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
@@ -174,11 +178,12 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | --- | --- |
 | `seq` | Position in the store's sequence, from 1, without gaps or repeats within one incarnation |
 | `incarnation` | The store incarnation, the same value as `claim.store_incarnation` |
-| `issue_id` | The changed issue; for a prerequisite edit, the dependent |
+| `issue_id` | The changed issue; for a prerequisite edit, the dependent; for a land-order edit, the later issue |
 | `kind` | One of the kinds in the next table |
 | `fields` | For `updated` and `status_changed`, the written field names in field order; otherwise `[]` |
 | `occurred_at` | Database time of the write, in integer Unix seconds |
 | `actor` | The actor of the write |
+| `relation` | Present only on `dependency_added` and `dependency_removed` for a land-order edit, with the value `lands_after`; a prerequisite edit has no `relation` |
 
 | Kind | Recorded when |
 | --- | --- |
@@ -188,8 +193,8 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `commented` | `comment` appends a comment, or a forced status change appends its reason |
 | `claim_acquired` | `claim_acquire` commits a receipt |
 | `claim_released` | `claim_release` or `claim_handoff` commits a release receipt |
-| `dependency_added` | `dependency_add` inserts an edge |
-| `dependency_removed` | `dependency_remove` deletes an edge |
+| `dependency_added` | `dependency_add` or `land_order_add` inserts an edge |
+| `dependency_removed` | `dependency_remove` or `land_order_remove` deletes an edge |
 | `became_ready` | A blocker closes, or an active blocker is removed, and the dependent is `open` with no active blocker left |
 
 A written field counts even when its value stays the same, because its version advances.
@@ -204,7 +209,7 @@ These writes record no event:
 
 - A rejected write, and a replay of an earlier request.
 - `claim_renew`, which extends the deadline for the same holder. `claim_show` reports the current deadline.
-- A prerequisite edit with the outcome `already_present` or `already_absent`.
+- A prerequisite or land-order edit with the outcome `already_present` or `already_absent`.
 - Memory operations.
 - A lease that passes its deadline. `claim_show` and `claim_list` report it as `expired`.
 - Snapshot import, the D1 restore and merge operators, and schema upgrades.
@@ -300,6 +305,7 @@ Errors keep their JSON object on standard error.
 
 `show` prints the complete body and comments. `list` and `search` print full IDs, project and tool names, short body previews, and the next-page cursor when present.
 `search` also prints one `Matched in body` or `Matched in comment ID` line with the excerpt for each match.
+With `--with-land-order`, `show` adds a `Lands after:` line with each predecessor and its status, or `(none)`, and `list` adds the line to each issue that lands after another.
 Human output adds no terminal control sequences when standard output is piped.
 On a TTY, color applies only to fixed headings when `NO_COLOR` is absent and `TERM` is not `dumb`.
 
@@ -389,11 +395,13 @@ It also must not send a new discriminator value, a new success shape, or details
 The client rejects each of these.
 Version 0.4.0 accepts unknown response fields. The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
 
-Four fields are optional so that the client works with Workers on both sides of a change:
+Six fields are optional so that the client works with Workers on both sides of a change:
 
 - `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
 - `open_blockers` in `claim_acquire`. When the Worker sends it, it must be an array of issue IDs in issue order that does not contain the claimed issue, and the client includes that array. When the Worker omits it, the result has no `open_blockers` key.
 - `matches` in `search`. A Worker that predates `with_matches` answers the request with `invalid_input`, and only the error message names the field. The client then sends the search once more without `with_matches` and returns that page without `matches`. If that request fails, the search fails with its error. A successful response to a request with `with_matches` must still contain `matches`.
+- `land_order` in `show` and `list`. A Worker that predates `with_land_order` answers `invalid_input`, and only the error message names the field. The client then sends the read once more without it and returns the result without `land_order`. A successful response to a request with `with_land_order` from a Worker that knows it must contain `land_order`.
+- `land_order_warnings` in `claim_handoff`. When a Worker omits it, the result has no `land_order_warnings` key. When the Worker sends it, each entry must name another issue whose status is not `closed`, in issue order.
 - `expired_noop` in `claim_release`. `pd claim release` sends `expired_noop: true`. A Worker that knows the field answers `{ "released": false, "current": ... }` for the caller's expired lease, and answers `claim_conflict` when the request omits the field. The client accepts that shape when `current` is the expired lease that the proof names, including a response to a request that omitted the field. A Worker that does not know the field answers `invalid_input`, and only the error message names the field. Nothing is written, so the client sends the release once more with the same request UUID and without the field. An older Worker answers `claim_conflict` for an expired lease. A Worker that answers the no-op for that plain release is decoded as `released: false`.
 
 ## Local repository defaults
@@ -439,16 +447,18 @@ The Worker API does not expose them, and the CLI does not synchronize SQLite wit
 
 Schema 7 adds the change feed and keeps portable snapshot 5. A snapshot carries no change events.
 Schema 8 records who closed an issue and when, and portable snapshot 6 carries `closed_at` and `closed_by` on every issue.
+Schema 9 adds land order, and portable snapshot 7 carries `land_order`, `land_order_revisions`, and `land_order_requests`.
 Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, or 7 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, or 8 store after making a private backup.
 An upgrade from schema 2 through 6 starts with an empty change feed.
 Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
-After the upgrade, an installed CLI that predates schema 8 refuses the store, because it requires its own schema version.
+An upgrade adds no land-order edges.
+After the upgrade, an installed CLI that predates schema 9 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3, v4, or v5 snapshot, use `--from 3`, `--from 4`, or `--from 5` instead.
+For a v3, v4, v5, or v6 snapshot, use `--from 3`, `--from 4`, `--from 5`, or `--from 6` instead.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.

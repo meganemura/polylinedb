@@ -1,6 +1,8 @@
-// Holds records in an older schema: current operations as an earlier release issued them, and schema 6 or 7 stores made from a current one.
+// Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7 or 8 stores made from a current one.
 import type { DatabaseSync } from 'node:sqlite';
 import { CHANGE_STATEMENTS } from '../../src/records/changes-sql.ts';
+import { SCHEMA_V9_ADDITIONS } from '../../src/records/schema.ts';
+import { SCHEMA_V8_STATEMENTS } from '../../src/records/schema-v8.ts';
 import type { SqlExecutor } from '../../src/records/persistence.ts';
 
 export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
@@ -15,8 +17,24 @@ export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
   };
 }
 
+// Schema 9 replaced the prerequisite cycle trigger, so the downgrade restores the schema 8 text of it.
+export function downgradeToSchema8(database: DatabaseSync): void {
+  const order = { TRIGGER: 0, INDEX: 1, TABLE: 2 } as const;
+  const objects = SCHEMA_V9_ADDITIONS.flatMap(sql => {
+    const match = /^CREATE (TABLE|TRIGGER|INDEX) (\w+)/.exec(sql);
+    return match?.[1] && match[2] ? [{ type: match[1] as keyof typeof order, name: match[2] }] : [];
+  }).sort((a, b) => order[a.type] - order[b.type]);
+  const acyclic = SCHEMA_V8_STATEMENTS.find(sql => sql.startsWith('CREATE TRIGGER dependencies_acyclic'));
+  if (!acyclic) throw new Error('Schema 8 has no prerequisite cycle trigger');
+  database.exec('BEGIN');
+  for (const { type, name } of objects) database.exec(`DROP ${type} IF EXISTS ${name}`);
+  database.exec(acyclic);
+  database.exec('ALTER TABLE change_events DROP COLUMN relation; UPDATE schema_version SET version = 8; COMMIT');
+}
+
 // The closure check belongs to closed_by, so dropping closed_by first leaves closed_at unreferenced.
 export function downgradeToSchema7(database: DatabaseSync): void {
+  downgradeToSchema8(database);
   database.exec('BEGIN; ALTER TABLE issues DROP COLUMN closed_by; ALTER TABLE issues DROP COLUMN closed_at; UPDATE schema_version SET version = 7; COMMIT');
 }
 
