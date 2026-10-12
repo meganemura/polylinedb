@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare';
 import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
+import { dispatchScript } from "../src/service/ui.ts";
 
 const bundleUrl = new URL('../.cloudflare/output/v0/workers/default/bundle/index.js', import.meta.url);
 const bundle = await readFile(bundleUrl, 'utf8');
@@ -311,7 +312,9 @@ try {
     prefetch: [{ source: 'document', where: { or: [{ href_matches: '/ui' }, { href_matches: '/ui/*' }] }, eagerness: 'moderate', referrer_policy: 'no-referrer' }],
   });
   const rulesHash = createHash('sha256').update(rulesBody ?? '').digest('base64');
-  assert.equal(page.headers.get('content-security-policy'), `default-src 'none'; script-src 'sha256-${rulesHash}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
+  // The policy also allows the fixed Dispatch script that an issue page carries when Dispatch is ready.
+  const dispatchHash = createHash('sha256').update(dispatchScript).digest('base64');
+  assert.equal(page.headers.get('content-security-policy'), `default-src 'none'; script-src 'sha256-${rulesHash}' 'sha256-${dispatchHash}'; connect-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
   assert.equal(page.headers.get('cache-control')?.includes('public'), false);
   assert.match(html, /@media \(prefers-reduced-motion: no-preference\) \{\s*@view-transition \{ navigation: auto; \}/);
   const revalidated = await runtime.dispatchFetch('http://polylinedb.test/ui', { headers: { 'cf-access-jwt-assertion': viewer, 'if-none-match': `W/${etag}` } });

@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+The packaged-server check now expects the in-place Dispatch script, so release checks pass again.
+
 Pressing Dispatch no longer leaves the issue page. The button shows that it is sending, then a line under it says whether it was sent and when, and the notes box empties. If something goes wrong, the line says what happened and your notes stay.
 
 A check that sometimes failed when the clock crossed a second during the test is now stable.
