@@ -2,7 +2,7 @@
 import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { createDispatcher, dispatchSecretNames, type Dispatcher } from "./dispatch.ts";
-import { dispatchResponse, uiNotFoundResponse, uiResponse, type UiRoute } from "./ui.ts";
+import { dispatchResponse, uiNotFoundResponse, uiResponse, type ActivityCursor, type UiRoute } from "./ui.ts";
 import { withoutClosure } from "./released-issues.ts";
 import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseIssueId, parseOperation, parseRequestId } from "../records/index.ts";
@@ -280,6 +280,16 @@ function issueTarget(pathname: string): { kind: 'ui'; route: UiRoute } | { kind:
   } catch { return { kind: 'missing' }; }
 }
 
+// An after link carries the feed cursor and its store incarnation. Without `after` the page shows the newest events.
+function activityCursor(url: URL): { after?: ActivityCursor | 'invalid' } {
+  const after = url.searchParams.get('after');
+  if (after === null) return {};
+  const incarnation = url.searchParams.get('incarnation');
+  const since = /^(0|[1-9][0-9]{0,15})$/.test(after) ? Number(after) : NaN;
+  if (!Number.isSafeInteger(since) || incarnation === null || !/^[a-f0-9]{32}$/.test(incarnation)) return { after: 'invalid' };
+  return { after: { since, incarnation } };
+}
+
 function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'version' } | { kind: 'ui'; route: UiRoute } | { kind: 'dispatch'; issueId: string } | { kind: 'missing' } {
   if (pathname === '/mcp') return { kind: 'mcp' };
   if (pathname === '/v1/operations') return { kind: 'operations' };
@@ -290,6 +300,7 @@ function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations'
   if (pathname === '/ui/working') return { kind: 'ui', route: { page: 'working' } };
   if (pathname === '/ui/blocked') return { kind: 'ui', route: { page: 'blocked' } };
   if (pathname === '/ui/recent') return { kind: 'ui', route: { page: 'recent' } };
+  if (pathname === '/ui/activity') return { kind: 'ui', route: { page: 'activity' } };
   if (pathname.startsWith('/ui/p/')) {
     const route = projectRoute(pathname);
     return route === null ? { kind: 'missing' } : { kind: 'ui', route };
@@ -326,6 +337,7 @@ export async function handleRequest(
         if (filters === 'invalid') return uiNotFoundResponse();
         route = { ...route, ...filters };
       }
+      if (route.page === 'activity') route = { page: 'activity', ...activityCursor(new URL(request.url)) };
       if (route.page === 'search') route = { page: 'search', query: new URL(request.url).searchParams.get('q') ?? '' };
       const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, { actor: caller.actor, dispatch: dispatcher.control(env, caller) }, request.headers.get('if-none-match'));
       // Workers advance this clock only across I/O, so the duration is the time spent waiting on Access keys and D1.

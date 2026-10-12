@@ -758,7 +758,7 @@ test('ui: every page reports the Worker time in Server-Timing, and a rejected ca
   const auth = { 'cf-access-jwt-assertion': token };
   try {
     const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Timed title' });
-    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/search?q=Timed', '/ui/p/polylinedb/meganemura/polylinedb', `/ui/i/${id}`, '/ui/i/pd-999']) {
+    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/activity', '/ui/search?q=Timed', '/ui/p/polylinedb/meganemura/polylinedb', `/ui/i/${id}`, '/ui/i/pd-999']) {
       const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
       assert.match(response.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/, path);
     }
@@ -788,7 +788,7 @@ test('ui: every page, including not found and a dispatch result, carries the sam
   try {
     const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Icon title' });
     const pages: string[] = [];
-    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/search', '/ui/search?q=Icon', '/ui/p/polylinedb/meganemura/polylinedb', '/ui/p/polylinedb/meganemura/polylinedb?status=open', `/ui/i/${id}`, '/ui/i/pd-999']) {
+    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/activity', '/ui/search', '/ui/search?q=Icon', '/ui/p/polylinedb/meganemura/polylinedb', '/ui/p/polylinedb/meganemura/polylinedb?status=open', `/ui/i/${id}`, '/ui/i/pd-999']) {
       const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
       assert.match(response.headers.get('content-security-policy') ?? '', /; img-src data:;/, path);
       pages.push(await response.text());
@@ -1726,6 +1726,72 @@ test('ui: recent updates lists the newest changes, open and closed', async () =>
     assert.ok(html.includes('<span class="secondary">closed</span>'));
     assert.ok(html.includes('meganemura/nukadoko'));
     assertNoApplicationControls(html);
+  } finally { sqlite.close(); }
+});
+
+test('ui: activity lists comments, claims, and status changes newest first, and an after link lists only later events', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const operate = async (body: Record<string, unknown>) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
+    }), env, authenticate);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const page = async (path: string) => {
+    const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
+    assert.equal(response.status, 200, path);
+    assert.equal(response.headers.get('cache-control'), 'private, no-cache');
+    return response.text();
+  };
+  const rows = (html: string) => [...html.matchAll(/<li class="quiet-row"><a href="\/ui\/i\/([^"]+)">\n<span class="primary">[^<]*<\/span>\n<span class="secondary">([^<]*) · /g)].map(match => `${match[2]} ${match[1]}`);
+  try {
+    const commented = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Commented work' });
+    const claimed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/other', body: 'Claimed work' });
+    const changed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Changed work' });
+    const anonymous = await handleRequest(new Request('https://issues.example/ui/activity'), env, authenticate);
+    assert.equal(anonymous.status, 401);
+    const first = await page('/ui/activity');
+    const resume = first.match(/href="(\/ui\/activity\?after=\d+&amp;incarnation=[a-f0-9]{32})"/)?.[1]?.replace('&amp;', '&');
+    assert.ok(resume, first);
+    const before = sqlite.prepare('SELECT updated_at FROM issues WHERE id = ?').get(commented);
+    await operate({ op: 'comment', id: commented, body: 'tip: 1234567\nrest of the note' });
+    assert.deepEqual(sqlite.prepare('SELECT updated_at FROM issues WHERE id = ?').get(commented), before);
+    const incarnation = (await operate({ op: 'claim_show', issue_id: claimed })).claim.store_incarnation;
+    const proof = { issue_id: claimed, incarnation, session_id: crypto.randomUUID(), generation: 1 };
+    await operate({ op: 'claim_acquire', issue_id: claimed, incarnation, session_id: proof.session_id, request_id: crypto.randomUUID(), agent_label: 'lane-a', ttl: 600 });
+    await operate({ op: 'claim_release', claim_proof: proof, expected_revision: 1, request_id: crypto.randomUUID() });
+    await operate({ op: 'update', id: changed, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] });
+
+    const html = await page('/ui/activity');
+    assert.ok((await viewUi(env, auth).then(response => response.text())).includes('href="/ui/activity"'));
+    assert.deepEqual(rows(html).slice(0, 7), [
+      `Status changed ${changed}`, `Released ${claimed}`, `Claimed ${claimed}`, `Commented ${commented}`,
+      `Created ${changed}`, `Created ${claimed}`, `Created ${commented}`,
+    ]);
+    assert.ok(html.includes(`<span class="primary">Commented work</span>\n<span class="secondary">Commented · ${commented}</span>\n<span class="secondary">meganemura/polylinedb</span>`));
+    assert.match(html, /<span class="secondary"><time datetime="[^"]+">\d{4}-\d{2}-\d{2} \d{2}:\d{2} JST<\/time><\/span>/);
+    assert.ok(html.includes('<span class="secondary">access:owner</span>'));
+    assertNoApplicationControls(html);
+
+    const later = await page(resume);
+    assert.deepEqual(rows(later), [`Commented ${commented}`, `Claimed ${claimed}`, `Released ${claimed}`, `Status changed ${changed}`]);
+    assertNoApplicationControls(later);
+
+    const foreign = await page(resume.replace(/incarnation=[a-f0-9]{32}/, `incarnation=${'0'.repeat(32)}`));
+    assert.ok(foreign.includes('<p class="quiet-note">This activity link is from another store. Start again from the latest activity.</p>'));
+    assert.ok(foreign.includes('<a href="/ui/activity">Latest activity</a>'));
+    sqlite.prepare('DELETE FROM change_events WHERE seq <= ?').run(Number(resume.match(/after=(\d+)/)?.[1]) + 1);
+    const stale = await page(resume);
+    assert.ok(stale.includes('<p class="quiet-note">Some events after this link were removed. Start again from the latest activity.</p>'));
+    const trimmed = await page('/ui/activity');
+    assert.deepEqual(rows(trimmed).slice(0, 2), [`Status changed ${changed}`, `Released ${claimed}`]);
+    for (const path of ['/ui/activity?after=x', '/ui/activity?after=1', '/ui/activity?after=999999&incarnation=' + incarnation]) {
+      const invalid = await page(path);
+      assert.ok(invalid.includes('<p class="quiet-note">This activity link is not valid. Start again from the latest activity.</p>'), path);
+    }
   } finally { sqlite.close(); }
 });
 

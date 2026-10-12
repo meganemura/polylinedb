@@ -24,4 +24,5 @@ export { blockerIsActive } from './active-blocker.ts';
 export type { Claim, ClaimOperation, ClaimReceipt, ClaimRequest, ClaimInspection, ClaimState, ClaimResult } from './claims.ts';
 export type { ClaimProof, ClaimMutation } from './claims-sql.ts';
 export type { ChangesOperation, ChangesResult, ChangeEvent, ChangeKind, WaitOperation } from './changes.ts';
-export { waitPageLimit } from './changes.ts';
+export { activityAfter, activityNewest, waitPageLimit } from './changes.ts';
+export type { ActivityEvent, ActivityPage } from './changes.ts';

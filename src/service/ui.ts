@@ -1,5 +1,5 @@
 /** Renders the /ui pages for phones. GET stays free of side effects. The issue page posts Dispatch; other writes go through the operation endpoints. */
-import { activeClaimIssues, attentionIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, ownerWaitLabels, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, readyLabel, recentUpdates, PolylinedbError, type ActiveClaimIssue, type Actor, type Attention, type AttentionIssue, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type OpenIssue, type OwnerGroup, type OwnerLabel, type OwnerQueue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+import { activeClaimIssues, activityAfter, activityNewest, attentionIssues, blockedIssues, blockerIsActive, claimDisplay, executeOperation, issueChildren, issueParent, ownerWaitLabels, parseIssueId, projectClosedIssues, projectIssues, projectSummaries, readyLabel, recentUpdates, PolylinedbError, type ActiveClaimIssue, type ActivityEvent, type ActivityPage, type Actor, type Attention, type AttentionIssue, type BlockedIssue, type ClaimDisplay, type Comment, type Issue, type IssueLink, type OpenIssue, type OwnerGroup, type OwnerLabel, type OwnerQueue, type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
 
@@ -14,8 +14,9 @@ const childLimit = 101;
 const shownChildren = 100;
 const attentionLabels = ['ready', 'ready-for-land-queue', 'main-wait', 'main-lock', 'owner-decision', 'owner-action'] as const;
 
-export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'working' } | { page: 'blocked' } | { page: 'recent' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
-const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox'], ['/ui/working', 'Working'], ['/ui/blocked', 'Blocked'], ['/ui/recent', 'Recent'], ['/ui/search', 'Search']];
+export type ActivityCursor = { since: number; incarnation: string };
+export type UiRoute = { page: 'home' } | { page: 'inbox' } | { page: 'search'; query: string } | { page: 'working' } | { page: 'blocked' } | { page: 'recent' } | { page: 'activity'; after?: ActivityCursor | 'invalid' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'issue'; id: string };
+const viewLinks: readonly (readonly [string, string])[] = [['/ui', 'Projects'], ['/ui/inbox', 'Inbox'], ['/ui/working', 'Working'], ['/ui/blocked', 'Blocked'], ['/ui/recent', 'Recent'], ['/ui/activity', 'Activity'], ['/ui/search', 'Search']];
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 // Fixed prefetch hint. It is not application code: the page policy allows this text by hash and no other script.
 const speculationRules = '{"prefetch":[{"source":"document","where":{"or":[{"href_matches":"/ui"},{"href_matches":"/ui/*"}]},"eagerness":"moderate","referrer_policy":"no-referrer"}]}';
@@ -436,6 +437,68 @@ function recentPage(issues: readonly Issue[], labels: ReadonlyMap<string, string
 ${body}`);
 }
 
+const eventWords: Record<string, string> = {
+  created: 'Created', updated: 'Updated', status_changed: 'Status changed', commented: 'Commented', claim_acquired: 'Claimed',
+  claim_released: 'Released', dependency_added: 'Blocker added', dependency_removed: 'Blocker removed', became_ready: 'Became ready',
+};
+
+function activityItem(event: ActivityEvent, labels: ReadonlyMap<string, string>): string {
+  const at = new Date(event.occurred_at * 1000).toISOString();
+  const words = event.kind === 'updated' && event.fields.length > 0 ? `Updated ${event.fields.join(', ')}` : eventWords[event.kind] ?? event.kind;
+  return `<li class="quiet-row"><a href="${escape(issueHref(event.issue_id))}">
+<span class="primary">${escape(title(event.body))}</span>
+<span class="secondary">${escape(words)} · ${escape(event.issue_id)}</span>
+<span class="secondary">${escape(event.project)}</span>
+<span class="secondary">${escape(person(event.actor, labels))}</span>
+<span class="secondary"><time datetime="${escape(at)}">${escape(japanTimeFromSeconds(event.occurred_at))}</time></span>
+</a></li>`;
+}
+
+function activityHref(since: number, incarnation: string): string {
+  return `/ui/activity?after=${since}&incarnation=${encodeURIComponent(incarnation)}`;
+}
+
+function activityPage(page: ActivityPage, labels: ReadonlyMap<string, string>, after: ActivityCursor | null): string {
+  const list = page.events.length === 0
+    ? `<p class="quiet-note">${after === null ? 'Nothing has happened yet.' : 'Nothing new since this link.'}</p>`
+    : `<ul class="quiet-list">${page.events.map(event => activityItem(event, labels)).join('')}</ul>`;
+  if (after === null) {
+    const more = page.more ? '\n<p class="section-note">Older events are not shown.</p>' : '';
+    return document('Activity', `<h1>Activity</h1>
+<p class="section-note">Newest first, at most ${listLimit}. Comments and claims show here even when they do not change the last update.</p>
+${list}${more}
+<p class="section-note">Newest event ${page.latest}. <a href="${escape(activityHref(page.latest, page.incarnation))}">Keep this link</a> to see only what happens after now.</p>`);
+  }
+  const last = page.events.at(-1)?.seq ?? after.since;
+  const next = page.more
+    ? `<p class="section-note"><a href="${escape(activityHref(last, page.incarnation))}">Newer events</a></p>`
+    : `<p class="section-note">Up to date. <a href="${escape(activityHref(last, page.incarnation))}">Keep this link</a> to see only what happens after now.</p>`;
+  return document('Activity', `<h1>Activity since event ${after.since}</h1>
+<p class="section-note">Oldest first, at most ${listLimit} per page.</p>
+${list}
+${next}`);
+}
+
+function activityProblemPage(sentence: string): string {
+  return document('Activity', `<h1>Activity</h1>
+<p class="quiet-note">${sentence} Start again from the latest activity.</p>
+<p><a href="/ui/activity">Latest activity</a></p>`);
+}
+
+async function activityHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, after: ActivityCursor | 'invalid' | undefined): Promise<string> {
+  if (after === undefined) return activityPage(await activityNewest(db, listLimit), labels, null);
+  if (after === 'invalid') return activityProblemPage('This activity link is not valid.');
+  try {
+    return activityPage(await activityAfter(db, after.since, after.incarnation, listLimit), labels, after);
+  } catch (error) {
+    if (!(error instanceof PolylinedbError)) throw error;
+    if (error.code === 'incarnation_mismatch') return activityProblemPage('This activity link is from another store.');
+    if (error.code === 'cursor_expired') return activityProblemPage('Some events after this link were removed.');
+    if (error.code === 'invalid_input') return activityProblemPage('This activity link is not valid.');
+    throw error;
+  }
+}
+
 function blockedPage(rows: readonly BlockedIssue[]): string {
   const body = rows.length === 0 ? '<p class="quiet-note">Nothing is blocked.</p>' : `<ul class="quiet-list">${rows.map(blockedItem).join('')}</ul>`;
   return document('Blocked', `<h1>Blocked</h1>
@@ -580,6 +643,7 @@ async function pageHtml(db: SqlExecutor, labels: ReadonlyMap<string, string>, ro
     const issues = await recentUpdates(db, listLimit);
     return recentPage(issues, labels);
   }
+  if (route.page === 'activity') return activityHtml(db, labels, route.after);
   if (route.page === 'blocked') {
     const rows = await blockedIssues(db, listLimit);
     return blockedPage(rows);

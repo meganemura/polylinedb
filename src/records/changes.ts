@@ -100,23 +100,56 @@ function storedEvent(row: Record<string, unknown>, incarnation: string): ChangeE
   }
 }
 
-export async function executeChangesOperation(db: SqlExecutor, operation: ChangesOperation): Promise<ChangesResult> {
-  const rows = await db.reads.all(issueQueries.changes, { since: operation.since, project: operation.project ?? null,
-    issue_ids: operation.issue_ids ?? [], kinds: operation.kinds ?? [], limit: operation.limit + 1 });
+// Checks a feed page's head row: the store incarnation, and that the cursor is neither ahead of the feed nor behind retention.
+// A newest-first read passes no cursor and checks neither.
+function feedHead(rows: Record<string, unknown>[], since: number | null, observed: string | undefined): { incarnation: string; latest: number } {
   const head = rows[0];
   if (!head) throw new PolylinedbError('storage_error', 'Database omitted the store incarnation', 503);
   const incarnation = parseIncarnation(head.store_incarnation);
-  const latest = head.latest_seq; const oldest = head.oldest_seq;
-  if (operation.incarnation !== undefined && operation.incarnation !== incarnation) {
+  const latest = integer(head.latest_seq, 'latest_seq', 0); const oldest = integer(head.oldest_seq, 'oldest_seq', 0);
+  if (observed !== undefined && observed !== incarnation) {
     throw new PolylinedbError('incarnation_mismatch', 'The store incarnation changed. Read the state again, then continue from next_since.', 409, { incarnation, next_since: latest });
   }
-  if (operation.since > latest) return invalid('since must not exceed the newest change seq');
-  if (operation.since < oldest - 1) {
+  if (since === null) return { incarnation, latest };
+  if (since > latest) return invalid('since must not exceed the newest change seq');
+  if (since < oldest - 1) {
     throw new PolylinedbError('cursor_expired', 'Retention removed changes after since. Read the state again, then continue from next_since.', 409, { incarnation, next_since: latest });
   }
+  return { incarnation, latest };
+}
+
+export async function executeChangesOperation(db: SqlExecutor, operation: ChangesOperation): Promise<ChangesResult> {
+  const rows = await db.reads.all(issueQueries.changes, { since: operation.since, project: operation.project ?? null,
+    issue_ids: operation.issue_ids ?? [], kinds: operation.kinds ?? [], limit: operation.limit + 1 });
+  const { incarnation, latest } = feedHead(rows, operation.since, operation.incarnation);
   const events = rows.filter(row => row.seq !== null).map(row => storedEvent(row, incarnation));
   const changes = events.slice(0, operation.limit);
   return { incarnation, changes, next_since: events.length > operation.limit ? changes.at(-1)?.seq ?? latest : latest };
+}
+
+/** A feed event with the issue's body and project, for the /ui activity page. */
+export type ActivityEvent = ChangeEvent & { body: string; project: string };
+export type ActivityPage = { incarnation: string; latest: number; events: ActivityEvent[]; more: boolean };
+
+function activityEvent(row: Record<string, unknown>, incarnation: string): ActivityEvent {
+  if (typeof row.body !== 'string' || typeof row.project !== 'string') throw new PolylinedbError('invalid_store', 'Stored change is invalid: issue text is missing', 500);
+  return { ...storedEvent(row, incarnation), body: row.body, project: row.project };
+}
+
+/** Reads the newest events first, with their issues, in one query. */
+export async function activityNewest(db: SqlExecutor, limit: number): Promise<ActivityPage> {
+  const rows = await db.reads.all(issueQueries.activityNewest, { limit: limit + 1 });
+  const { incarnation, latest } = feedHead(rows, null, undefined);
+  const events = rows.filter(row => row.seq !== null).map(row => activityEvent(row, incarnation));
+  return { incarnation, latest, events: events.slice(0, limit), more: events.length > limit };
+}
+
+/** Reads the events after a feed cursor, oldest first, with their issues, in one query. It validates the cursor like `changes`. */
+export async function activityAfter(db: SqlExecutor, since: number, incarnation: string, limit: number): Promise<ActivityPage> {
+  const rows = await db.reads.all(issueQueries.activityAfter, { since, limit: limit + 1 });
+  const head = feedHead(rows, since, incarnation);
+  const events = rows.filter(row => row.seq !== null).map(row => activityEvent(row, head.incarnation));
+  return { ...head, events: events.slice(0, limit), more: events.length > limit };
 }
 
 function sleep(ms: number): Promise<void> {

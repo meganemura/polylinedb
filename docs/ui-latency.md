@@ -131,6 +131,8 @@ It does not include a network round trip.
 | Search, words | 7.1 ms | 9.3 ms | 19,224 | 3,771 | 6.5 ms |
 | Search, id | 15.8 ms | 16.6 ms | 4,848 | 1,960 | 14.2 ms |
 
+Activity was added after this table. With `--skip-browser` on the same dataset, its Worker median was 5.1 ms (95th 8.3 ms, 27,660 bytes, 4,690 gzip, 304 median 4.0 ms).
+
 `Server-Timing` on these responses was about 3–15 ms.
 A 304 still reads D1 before it compares the `ETag`, so it is not much faster than the full response on local D1.
 Before the prefetch script and the crossfade, the same pages were about 6–19 ms and a few hundred bytes smaller.

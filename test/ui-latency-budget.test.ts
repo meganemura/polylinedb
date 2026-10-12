@@ -27,6 +27,7 @@ test('the current /ui pages meet the latency budget', async () => {
     ['/ui/working', 'private, no-cache', facts],
     ['/ui/blocked', 'private, no-cache', facts],
     ['/ui/recent', 'private, no-cache', facts],
+    ['/ui/activity', 'private, no-cache', facts],
     ['/ui/search?q=lease', 'private, no-cache', facts],
   ]);
 });

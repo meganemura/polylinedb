@@ -166,7 +166,7 @@ export async function runGate(serverDelayMs = 0): Promise<GateReport> {
     assert.equal(created.status, 200, createdText);
     const issueId = (JSON.parse(createdText) as { issue: { id: string } }).issue.id;
     const project = '/ui/p/compiler/parser';
-    const paths = ['/ui', project, `${project}?status=open`, `/ui/i/${issueId}`, '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/search?q=lease'];
+    const paths = ['/ui', project, `${project}?status=open`, `/ui/i/${issueId}`, '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/activity', '/ui/search?q=lease'];
     const pages: LoadedPage[] = [];
     for (const path of paths) {
       const response = await request(path, 'GET');

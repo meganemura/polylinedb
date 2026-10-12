@@ -15,6 +15,8 @@ A build without a known clean source commit reports an unknown commit.
 
 Changes on `queue` or main that are not in a release yet.
 
+`/ui` has a new Activity page. It shows what happened most recently, including comments and claims that do not move an issue on Recent. Keep the link at the bottom to come back later and see only what happened since.
+
 In `/ui`, Waiting for main and Recently closed rows now open the issue, and Working now rows show the issue ID. On the issue page, Dispatch has an optional box for notes to the agent, and one line above it says whether the issue can start now: whether it is ready, blocked, claimed, or waiting on you. The line does not stop you pressing.
 
 Owner items in `/ui` now show what they ask for. An issue that starts with a line such as 要対応（owner-action） is listed under its next line, so the To do and To decide rows no longer all read the same. The issue page still shows the marker at the top of the text.

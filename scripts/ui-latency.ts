@@ -168,7 +168,7 @@ try {
   const largest = projects[0];
   const projectPath = `/ui/p/${largest[0]}/${largest[1]}`;
   const pages: Record<string, string> = {
-    home: '/ui', inbox: '/ui/inbox', working: '/ui/working', blocked: '/ui/blocked', recent: '/ui/recent',
+    home: '/ui', inbox: '/ui/inbox', working: '/ui/working', blocked: '/ui/blocked', recent: '/ui/recent', activity: '/ui/activity',
     project: projectPath, 'project open': `${projectPath}?status=open`, 'project ready': `${projectPath}?label=ready`,
     'issue (epic)': `/ui/i/${epics[0]}`, 'issue (leaf)': `/ui/i/${issues.find(issue => issue.status === 'closed')!.id}`,
     'search words': '/ui/search?q=lease%20worker', 'search id': `/ui/search?q=${issues[500]!.id}`,

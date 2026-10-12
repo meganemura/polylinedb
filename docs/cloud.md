@@ -625,6 +625,7 @@ Every page starts with the same links.
 - **Working** opens `/ui/working`.
 - **Blocked** opens `/ui/blocked`.
 - **Recent** opens `/ui/recent`.
+- **Activity** opens `/ui/activity`.
 - **Search** opens `/ui/search`.
 
 An actor name is the roster [label](#label-an-actor-for-the-ui-page).
@@ -797,6 +798,23 @@ Each row links to the issue and shows the title, status, project, and the active
 Each row links to the issue.
 It shows the title, ID, status, project, last update, and the actor of that update.
 The time is the last update.
+A comment does not change the last update, so a comment alone does not move an issue here; see **Activity**.
+
+### Activity
+
+`/ui/activity` reads the change feed, newest event first, at most 50.
+It lists created issues, field updates, status changes, comments, claim acquisitions and releases, added and removed blockers, and issues that became ready.
+Each row links to the issue.
+It shows the issue title, the event in words with the issue ID (for example `Commented · pd-12` or `Updated body, labels · pd-12`), the project, the actor, and the event time.
+A comment row does not show the comment text, because a feed event does not name its comment.
+The page reads the events and their issues in one query.
+
+The page ends with the newest event number and a link to `/ui/activity?after=<seq>&incarnation=<store incarnation>`.
+Keep that link to come back to the same point.
+It lists only the events after that number, oldest first, at most 50 per page, and links to the next page while more remain.
+On the last page it offers a new link from the newest event shown.
+The page stores no last-visit marker.
+When retention removed events after the link, when the link belongs to another store incarnation, or when the link is malformed or ahead of the feed, the page says so and links back to `/ui/activity`.
 
 ### Night theme
 
