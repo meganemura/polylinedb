@@ -156,8 +156,16 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['update', false, true, true, false],
       ['wait', true, false, true, false],
     ]);
-    const updated = await request('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
+    const claimed = (await (await request('/v1/operations', { op: 'show', id: issue.id })).json()).claim;
+    const session_id = crypto.randomUUID();
+    const receipt = (await (await request('/v1/operations', { op: 'claim_acquire', issue_id: issue.id, incarnation: claimed.store_incarnation, session_id, request_id: crypto.randomUUID() })).json()).claim_receipt;
+    const claim_proof = { issue_id: issue.id, incarnation: receipt.incarnation, session_id, generation: receipt.generation };
+    const unproven = await request('/mcp', { jsonrpc: '2.0', id: 31, method: 'tools/call', params: {
       name: 'update', arguments: { id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] },
+    } });
+    assert.equal((await unproven.json()).result.structuredContent.error.code, 'claim_required');
+    const updated = await request('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
+      name: 'update', arguments: { id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof },
     } });
     assert.equal((await updated.json()).result.structuredContent.issue.status, 'in_progress');
     const conflict = await request('/v1/operations', { op: 'close', id: issue.id, expected: 1 });
@@ -174,7 +182,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     assert.equal((await added.json()).result.structuredContent.dependency.outcome, 'added');
     const graph = await request('/v1/operations', { op: 'dependency_list', dependent_id: issue.id });
     assert.deepEqual((await graph.json()).blockers, [{ id: blockerId, project: 'another', status: 'open' }]);
-    const blockedClose = await request('/v1/operations', { op: 'close', id: issue.id, expected: 2 });
+    const blockedClose = await request('/v1/operations', { op: 'close', id: issue.id, expected: 2, claim_proof });
     assert.equal((await blockedClose.json()).error.code, 'dependency_blocked');
     const removed = await request('/v1/operations', { op: 'dependency_remove', ...graphInput, expected_revision: 2, request_id: crypto.randomUUID() });
     assert.equal((await removed.json()).dependency.outcome, 'removed');
@@ -1117,12 +1125,22 @@ test('/ui reads no issue before Access accepts the caller, and a misconfigured A
 });
 
 async function createIssue(env: ReturnType<typeof fixture>['env'], token: string, fields: Record<string, unknown>): Promise<string> {
-  const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token },
-    body: JSON.stringify({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), ...fields }),
-  }), env, authenticate);
-  assert.equal(response.status, 200, await response.clone().text());
-  return (await response.json()).issue.id;
+  const operate = async (body: Record<string, unknown>) => {
+    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
+    }), env, authenticate);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const started = fields.status === 'in_progress' && fields.type !== 'epic';
+  const { id } = (await operate({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), ...fields, ...(started ? { status: 'open' } : {}) })).issue;
+  if (!started) return id;
+  const { store_incarnation } = (await operate({ op: 'claim_show', issue_id: id })).claim;
+  const session_id = crypto.randomUUID();
+  const { claim_receipt } = await operate({ op: 'claim_acquire', issue_id: id, incarnation: store_incarnation, session_id, request_id: crypto.randomUUID() });
+  const claim_proof = { issue_id: id, incarnation: claim_receipt.incarnation, session_id, generation: claim_receipt.generation };
+  await operate({ op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof });
+  return id;
 }
 
 test('pd-134: /ui lists projects and a project view shows unfinished issues in that project', async () => {
@@ -1795,7 +1813,7 @@ test('ui: activity lists comments, claims, and status changes newest first, and 
     const proof = { issue_id: claimed, incarnation, session_id: crypto.randomUUID(), generation: 1 };
     await operate({ op: 'claim_acquire', issue_id: claimed, incarnation, session_id: proof.session_id, request_id: crypto.randomUUID(), agent_label: 'lane-a', ttl: 600 });
     await operate({ op: 'claim_release', claim_proof: proof, expected_revision: 1, request_id: crypto.randomUUID() });
-    await operate({ op: 'update', id: changed, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] });
+    await operate({ op: 'update', id: changed, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
 
     const html = await page('/ui/activity');
     assert.ok((await viewUi(env, auth).then(response => response.text())).includes('href="/ui/activity"'));

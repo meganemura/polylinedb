@@ -1,6 +1,6 @@
 // Owns atomic lease transitions and proof predicates; transports supply validated commands and actors.
 import type { SqlStatement } from './issues.ts';
-import type { ClaimProof } from '../transition/index.ts';
+import type { ClaimProof, IssueType, Status } from '../transition/index.ts';
 export type { ClaimProof };
 
 export type ClaimMutation =
@@ -47,14 +47,17 @@ export function claimProofPredicate(proof: ClaimProof, actor: string): SqlStatem
     AND actor = ? AND session_id = ? AND generation = ? AND released_at IS NULL AND expires_at > unixepoch())`,
   params: [proof.issue_id, proof.incarnation, proof.incarnation, actor, proof.session_id, proof.generation] };
 }
-export function issueClaimGuard(issue_id: string, proof: ClaimProof | undefined, changesStatus: boolean, actor: string): SqlStatement {
+export type StateChange = { status: Status | null; type: IssueType | null };
+export function issueClaimGuard(issue_id: string, proof: ClaimProof | undefined, next: StateChange, actor: string): SqlStatement {
   if (proof) {
     const ownership = claimProofPredicate(proof, actor);
     return { sql: `(? = ? AND ${ownership.sql})`, params: [issue_id, proof.issue_id, ...ownership.params] };
   }
-  return changesStatus
-    ? { sql: 'NOT EXISTS(SELECT 1 FROM issue_claims WHERE issue_id = ?)', params: [issue_id] }
-    : { sql: '1', params: [] };
+  if (next.status === null && next.type === null) return { sql: '1', params: [] };
+  // WHERE reads the row before the write, so COALESCE yields the status and type the update leaves, as startedWorkNeedsClaim judges them.
+  const started = { sql: "NOT (COALESCE(?, issues.status) = 'in_progress' AND COALESCE(?, issues.type) <> 'epic')", params: [next.status, next.type] };
+  if (next.status === null) return started;
+  return { sql: `${started.sql} AND NOT EXISTS(SELECT 1 FROM issue_claims WHERE issue_id = ?)`, params: [...started.params, issue_id] };
 }
 // The gate is an extra admission condition. A handoff stores its own payload on the release receipt it creates.
 export function claimMutationStatements(command: ClaimMutation, actor: string, gate: SqlStatement = { sql: '1', params: [] }, payload = JSON.stringify(command)): readonly SqlStatement[] {

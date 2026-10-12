@@ -7,7 +7,7 @@ import { expectedType, PolylinedbError, requireFields } from './errors.ts';
 import { claimProofSchema, claimRow, inspectClaim, parseClaimProof, parseIncarnation } from './claims.ts';
 import type { ClaimDisplay } from './claims.ts';
 import type { ClaimInspection } from './claims.ts';
-import { claimState, decideCreation, decideIssueUpdate, decideReplay } from '../transition/index.ts';
+import { claimState, decideCreation, decideIssueUpdate, decideReplay, startedWorkNeedsClaim } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 import { issueClaimGuard } from './claims-sql.ts';
@@ -254,9 +254,11 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   const conditions = ['id = ?', gate.sql];
   const params: (string | number | null)[] = [];
   const guards: (string | number | null)[] = [issueId, ...gate.params];
-  const ownership = issueClaimGuard(issueId, proof, changes.some(change => change.field === 'status'), actor);
+  const statusChange = changes.find((change): change is Extract<Change, { field: 'status' }> => change.field === 'status');
+  const typeChange = changes.find((change): change is Extract<Change, { field: 'type' }> => change.field === 'type');
+  const ownership = issueClaimGuard(issueId, proof, { status: statusChange?.value ?? null, type: typeChange?.value ?? null }, actor);
   conditions.push(ownership.sql); guards.push(...ownership.params);
-  const guardedStatus = changes.some(change => change.field === 'status' && (change.value === 'in_progress' || change.value === 'closed'));
+  const guardedStatus = statusChange?.value === 'in_progress' || statusChange?.value === 'closed';
   if (guardedStatus && !override.force) conditions.push(`NOT ${activeBlockerExists('issues.id')}`);
   for (const change of changes) {
     assignments.push(`${fieldRegistry[change.field].column} = ?`, `${change.field}_v = ${change.field}_v + 1`);
@@ -266,7 +268,6 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
     if (change.field === 'type' && change.value !== 'epic') conditions.push('NOT EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id)');
   }
   const now = new Date().toISOString();
-  const statusChange = changes.find((change): change is Extract<Change, { field: 'status' }> => change.field === 'status');
   const closure = closureAssignments(statusChange?.value, now, actor);
   assignments.push('updated_by = ?', 'updated_at = ?', ...closure.assignments);
   params.push(actor, now, ...closure.params, ...guards);
@@ -281,7 +282,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   const ownershipRow = rowsAt(result, override.force ? 3 : 2)[0];
   if (!ownershipRow || typeof ownershipRow.store_incarnation !== 'string' || typeof ownershipRow.observed_at !== 'number') throw new PolylinedbError('storage_error', 'Database omitted the claim observation', 503);
   rejectAgentWrite(caller, 'issue_write', issueId, issue.labels, ownershipRow);
-  const decision = decideIssueUpdate({ id: issueId, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1,
+  const decision = decideIssueUpdate({ id: issueId, status: issue.status, type: issue.type, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1,
     claim: ownershipRow.generation === null ? null : claimRow(ownershipRow), store_incarnation: ownershipRow.store_incarnation },
     { changes, force: override.force === true, ...(proof === undefined ? {} : { claim_proof: proof }) }, actor, ownershipRow.observed_at);
   if (decision.accepted) throw new PolylinedbError('storage_error', 'The database rejected an update without a matching condition', 503);
@@ -310,6 +311,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
   if (!['show', 'list', 'search'].includes(operation.op)) name(actor, 'actor');
   switch (operation.op) {
     case 'create': {
+      if (startedWorkNeedsClaim(operation.status, operation.type)) invalid('A new issue cannot start in_progress unless it is an epic. Create it open, acquire a claim, then set in_progress with the claim proof');
       const scope = operation.parent ?? operation.prefix;
       const base = operation.parent ? `${operation.parent}.` : `${operation.prefix}-`;
       const sortBase = operation.parent ? `${issueSortKey(operation.parent)}.` : `${operation.prefix}-`;

@@ -29,6 +29,18 @@ async function create(db: SqlExecutor, extra: Record<string, unknown> = {}): Pro
   return result.issue;
 }
 
+async function start(db: SqlExecutor, issue: Issue): Promise<Issue> {
+  const shown = await execute(db, { op: 'claim_show', issue_id: issue.id });
+  assert.ok('claim' in shown);
+  const session_id = crypto.randomUUID();
+  const acquired = await execute(db, { op: 'claim_acquire', issue_id: issue.id, incarnation: shown.claim.store_incarnation, session_id, request_id: crypto.randomUUID() });
+  assert.ok('claim_receipt' in acquired);
+  const claim_proof = { issue_id: issue.id, incarnation: acquired.claim_receipt.incarnation, session_id, generation: acquired.claim_receipt.generation };
+  const started = await execute(db, { op: 'update', id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: issue.versions.status }], claim_proof });
+  assert.ok('issue' in started);
+  return started.issue;
+}
+
 function ago(seconds: number): string {
   return new Date(Date.now() - seconds * 1000).toISOString();
 }
@@ -48,7 +60,7 @@ test('attentionIssues groups open owner issues and keeps main-wait in read order
   const mainAndAction = await create(db, { body: 'MA', labels: ['main-wait', 'owner-action'], priority: 2 });
   const main = await create(db, { body: 'M', labels: ['main-wait'] });
   const deferred = await create(db, { body: 'DEF', status: 'deferred', labels: ['owner-action'] });
-  const progress = await create(db, { body: 'IP', status: 'in_progress', labels: ['owner-decision'] });
+  const progress = await start(db, await create(db, { body: 'IP', labels: ['owner-decision'] }));
   const closed = await create(db, { body: 'C', status: 'closed', labels: ['owner-decision'] });
   const ready = await create(db, { body: 'R', labels: ['ready'] });
   await stamp(db, decision.id, ago(2 * day), '2026-10-02T00:00:00.000Z');

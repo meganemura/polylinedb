@@ -170,7 +170,8 @@ try {
   assert.equal(JSON.parse(pd(creation)).issue.id, issue.id);
   assert.equal(JSON.parse(pd(['show', '1'])).issue.id, issue.id);
   assert.equal(JSON.parse(pd(['show', issue.id])).issue.created_by, 'test:package');
-  assert.equal(JSON.parse(pd(['update', issue.id, '--status', 'in_progress', '--expect', 'status=1'])).issue.versions.status, 2);
+  pd(['update', issue.id, '--status', 'in_progress', '--expect', 'status=1'], 4);
+  assert.equal(JSON.parse(pd(['update', issue.id, '--status', 'deferred', '--expect', 'status=1'])).issue.versions.status, 2);
   pd(['close', issue.id, '--expected', '1'], 4);
   assert.equal(JSON.parse(pd(['comment', issue.id, '--body', 'Works from npm'])).comment.body, 'Works from npm');
   assert.equal(JSON.parse(pd(['search', 'Works from npm'])).issues[0].id, issue.id);

@@ -128,7 +128,7 @@ try {
     ]);
     assert.equal((await read(db, "SELECT * FROM claim_requests WHERE issue_id='pd-3'"))[0]?.request_id, newScopeRequest.request_id);
     const protectedUpdate = async (issue: string, owner: ClaimProof | undefined, status: boolean, expected = 1) => {
-      const guard = issueClaimGuard(issue, owner, status, actor);
+      const guard = issueClaimGuard(issue, owner, { status: status ? 'closed' : null, type: null }, actor);
       return read(db, `UPDATE issues SET body='changed',body_v=body_v+1${status ? ",status='closed',status_v=status_v+1" : ''} WHERE id=? AND body_v=?${status ? ' AND status_v=1' : ''} AND ${guard.sql} RETURNING body,status,body_v,status_v`, [issue, expected, ...guard.params]);
     };
     assert.deepEqual(await protectedUpdate('pd-6', firstProof, true), []);

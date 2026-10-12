@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { claimState, decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, decideReplay } from '../src/transition/index.ts';
-import type { ObservedClaim, ObservedIssue } from '../src/transition/index.ts';
+import type { FieldChange, ObservedClaim, ObservedIssue } from '../src/transition/index.ts';
 
 const store = 'a'.repeat(32);
 const session = '00000000-0000-4000-8000-000000000001';
@@ -12,7 +12,7 @@ const lease = (overrides: Partial<ObservedClaim> = {}): ObservedClaim => ({
 });
 const versions = { tool: 1, project: 1, body: 3, status: 4, type: 1, priority: 1, labels: 1 };
 const issue = (overrides: Partial<ObservedIssue> = {}): ObservedIssue => ({
-  id: 'pd-1', versions, has_active_blockers: false, has_children: false, claim: null, store_incarnation: store, ...overrides,
+  id: 'pd-1', status: 'open', type: 'task', versions, has_active_blockers: false, has_children: false, claim: null, store_incarnation: store, ...overrides,
 });
 const close = { field: 'status', expected: 4, value: 'closed' } as const;
 
@@ -41,6 +41,26 @@ test('a status write needs a proof once the claim lifecycle starts', () => {
   assert.deepEqual(decideIssueUpdate(issue({ claim: lease() }), { changes: [{ field: 'body', expected: 3, value: 'x' }], force: false }, 'alice', 999), { accepted: true });
 });
 
+test('a status or type write that leaves a non-epic issue in progress needs a held proof', () => {
+  const start = { field: 'status', expected: 4, value: 'in_progress' } as const;
+  const required = { accepted: false, rejection: { code: 'claim_required' } };
+  const decide = (observed: ObservedIssue, changes: FieldChange[], extra: { force?: boolean; claim_proof?: typeof proof } = {}, now = 999) =>
+    decideIssueUpdate(observed, { changes, force: extra.force ?? false, ...(extra.claim_proof ? { claim_proof: extra.claim_proof } : {}) }, 'alice', now);
+  assert.deepEqual(decide(issue(), [start]), required);
+  assert.deepEqual(decide(issue({ claim: lease({ released_at: 900 }) }), [start]), required);
+  assert.deepEqual(decide(issue({ claim: lease() }), [start], { claim_proof: proof }, 1000), required);
+  assert.deepEqual(decide(issue({ claim: lease() }), [start], { claim_proof: proof }), { accepted: true });
+  assert.deepEqual(decide(issue({ status: 'in_progress' }), [start]), required);
+  assert.deepEqual(decide(issue({ status: 'deferred' }), [start]), required);
+  assert.deepEqual(decide(issue(), [start], { force: true }), required);
+  assert.deepEqual(decide(issue({ type: 'epic' }), [start]), { accepted: true });
+  assert.deepEqual(decide(issue({ type: 'epic' }), [start, { field: 'type', expected: 1, value: 'bug' }]), required);
+  assert.deepEqual(decide(issue(), [start, { field: 'type', expected: 1, value: 'epic' }]), { accepted: true });
+  assert.deepEqual(decide(issue({ status: 'in_progress', type: 'epic' }), [{ field: 'type', expected: 1, value: 'task' }]), required);
+  assert.deepEqual(decide(issue({ status: 'in_progress' }), [{ field: 'body', expected: 3, value: 'x' }]), { accepted: true });
+  assert.deepEqual(decide(issue({ status: 'in_progress' }), [{ field: 'status', expected: 4, value: 'open' }]), { accepted: true });
+});
+
 test('a proof must match the actor, session, generation, incarnation, and deadline', () => {
   const update = { changes: [close], force: false, claim_proof: proof };
   assert.deepEqual(decideIssueUpdate(issue({ claim: lease() }), update, 'alice', 999), { accepted: true });
@@ -56,7 +76,7 @@ test('a proof must match the actor, session, generation, incarnation, and deadli
 test('start and close need resolved blockers unless forced', () => {
   const blocked = issue({ has_active_blockers: true });
   assert.deepEqual(decideIssueUpdate(blocked, { changes: [close], force: false }, 'alice', 999), { accepted: false, rejection: { code: 'dependency_blocked' } });
-  assert.deepEqual(decideIssueUpdate(blocked, { changes: [{ field: 'status', expected: 4, value: 'in_progress' }], force: false }, 'alice', 999),
+  assert.deepEqual(decideIssueUpdate(issue({ has_active_blockers: true, claim: lease() }), { changes: [{ field: 'status', expected: 4, value: 'in_progress' }], force: false, claim_proof: proof }, 'alice', 999),
     { accepted: false, rejection: { code: 'dependency_blocked' } });
   assert.deepEqual(decideIssueUpdate(blocked, { changes: [{ field: 'status', expected: 4, value: 'open' }], force: false }, 'alice', 999), { accepted: true });
   assert.deepEqual(decideIssueUpdate(blocked, { changes: [close], force: true }, 'alice', 999), { accepted: true });

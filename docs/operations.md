@@ -97,6 +97,8 @@ Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
 The CLI `--claim-proof` flag accepts that object or a `claim_receipt` and sends only those four fields.
 Once acquisition activates an issue, every requested status change requires a current unexpired proof at the write.
+A `status` or `type` change that leaves an issue other than an epic at `in_progress` requires a current proof on every issue, claimed or not, and otherwise fails with `claim_required`.
+`create` rejects `status: in_progress` for a type other than `epic` with `invalid_input`.
 A supplied proof also guards other field changes, including after restore removes the claim row.
 Proofless other-field edits and comments retain their existing cooperative contracts.
 Force bypasses prerequisites only.

@@ -11,6 +11,7 @@ import { initializeStore, openStore } from "../src/local-store/index.ts";
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
 import { issueSortKey } from "../src/records/issue-id.ts";
+import { executeOperation as executeRecord, parseOperation as parseRecord } from "../src/records/index.ts";
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'polylinedb-issues-'));
@@ -32,6 +33,14 @@ async function show(db: SqlExecutor, id: string): Promise<Issue> {
   const result = await execute(db, { op: 'show', id });
   assert.ok('issue' in result);
   return result.issue;
+}
+async function claim(db: SqlExecutor, id: string, actor = 'tester') {
+  const session_id = crypto.randomUUID();
+  const shown = await executeRecord(db, parseRecord({ op: 'show', id }), actor);
+  assert.ok('claim' in shown);
+  const acquired = await executeRecord(db, parseRecord({ op: 'claim_acquire', issue_id: id, incarnation: shown.claim.store_incarnation, session_id, request_id: crypto.randomUUID() }), actor);
+  assert.ok('claim_receipt' in acquired);
+  return { issue_id: id, incarnation: acquired.claim_receipt.incarnation, session_id, generation: acquired.claim_receipt.generation };
 }
 function errorCode(code: string) {
   return (error: unknown) => error instanceof PolylinedbError && error.code === code;
@@ -258,7 +267,8 @@ test('active prerequisites block only start and close, including a close paired 
   const dependent = await create(first);
   const blocker = await create(first);
   await first.batch([{ sql: 'INSERT INTO dependencies(dependent_id, blocker_id) VALUES (?, ?)', params: [dependent.id, blocker.id] }]);
-  const blocked = (changes: unknown[]) => assert.rejects(execute(first, { op: 'update', id: dependent.id, changes }), (error: unknown) => {
+  const claim_proof = await claim(first, dependent.id);
+  const blocked = (changes: unknown[]) => assert.rejects(execute(first, { op: 'update', id: dependent.id, changes, claim_proof }), (error: unknown) => {
     assert.equal(errorCode('dependency_blocked')(error), true);
     assert.equal(detailIssueId(rejectionDetails(error)), dependent.id);
     return true;
@@ -266,7 +276,7 @@ test('active prerequisites block only start and close, including a close paired 
   await blocked([{ field: 'status', value: 'in_progress', expected: 1 }]);
   await blocked([{ field: 'status', value: 'closed', expected: 1 }]);
   await blocked([{ field: 'status', value: 'closed', expected: 1 }, { field: 'body', value: 'together', expected: 1 }]);
-  const deferred = await execute(first, { op: 'update', id: dependent.id, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
+  const deferred = await execute(first, { op: 'update', id: dependent.id, changes: [{ field: 'status', value: 'deferred', expected: 1 }], claim_proof });
   assert.ok('issue' in deferred);
   assert.equal(deferred.issue.status, 'deferred');
   const body = await execute(first, { op: 'update', id: dependent.id, changes: [{ field: 'body', value: 'closed', expected: 1 }] });
@@ -357,7 +367,7 @@ test('parallel SQLite connections elect one same-field winner and allow differen
   assert.deepEqual(results.filter((result) => result.error).map((result) => result.error), ['conflict']);
   const both = await parallel(directory, cwd, [
     { op: 'update', id: issue.id, changes: [{ field: 'priority', value: 0, expected: 1 }] },
-    { op: 'update', id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] },
+    { op: 'update', id: issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof: await claim(first, issue.id, 'parallel') },
   ]);
   assert.equal(both.filter((result) => result.result).length, 2);
   const observed = await show(first, issue.id);

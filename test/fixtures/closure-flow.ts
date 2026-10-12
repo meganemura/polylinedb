@@ -32,7 +32,7 @@ export async function runClosureFlow(run: Run, actor: string): Promise<void> {
   assert.deepEqual(closure(reopened), [null, null], 'reopen clears the closure');
 
   const started = issueOf(await run({ op: 'close', id: created.id, expected: 4 }));
-  const moved = issueOf(await run({ op: 'update', id: created.id, changes: [{ field: 'status', value: 'in_progress', expected: 5 }] }));
+  const moved = issueOf(await run({ op: 'update', id: created.id, changes: [{ field: 'status', value: 'deferred', expected: 5 }] }));
   assert.deepEqual(closure(started), [started.updated_at, actor]);
   assert.deepEqual(closure(moved), [null, null], 'any status change away from closed clears the closure');
 

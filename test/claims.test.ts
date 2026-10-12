@@ -119,6 +119,7 @@ test('an active blocker is the same set for claim acquisition and the worklists'
     const blocker = await create(run);
     assert.deepEqual([dependent.id, blocker.id], ['pd-1', 'pd-2']);
     if (status === 'closed') await run({ op: 'close', id: blocker.id, expected: 1 });
+    else if (status === 'in_progress') await run({ op: 'update', id: blocker.id, changes: [{ field: 'status', value: status, expected: 1 }], claim_proof: proof((await acquire(run, blocker.id)).receipt) });
     else if (status !== 'open') await run({ op: 'update', id: blocker.id, changes: [{ field: 'status', value: status, expected: 1 }] });
     await run({ op: 'dependency_add', dependent_id: dependent.id, blocker_id: blocker.id, expected_revision: 1, request_id: request() });
     const shown = await run({ op: 'claim_show', issue_id: dependent.id });
@@ -181,6 +182,49 @@ test('a supplied claim_proof that the store rejects names the observed claim', a
     return true;
   });
   const shown = await run({ op: 'show', id: issue.id }); assert.ok('issue' in shown); assert.deepEqual(shown.issue.labels, []); assert.equal(shown.issue.versions.labels, 1);
+});
+test('every actor needs a held claim to leave a non-epic issue in progress, and a stale in-progress issue stays readable', async t => {
+  const { run, db } = fixture(t);
+  const refused = (value: Record<string, unknown>, claim?: unknown) => assert.rejects(run(value), (error: unknown) => {
+    assert.ok(error instanceof PolylinedbError);
+    assert.equal(error.code, 'claim_required');
+    assert.deepEqual(Object.keys(error.details as object).sort(), claim === undefined ? ['issue'] : ['claim', 'issue']);
+    if (claim !== undefined) assert.deepEqual((error.details as { claim: unknown }).claim, claim);
+    return true;
+  });
+  const start = (id: string, expected: number, extra: Record<string, unknown> = {}) => ({ op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected }], ...extra });
+  const issue = await create(run);
+  await refused(start(issue.id, 1));
+  await refused({ ...start(issue.id, 1), force: true, reason: 'owner override' });
+  const deferred = await create(run, 'deferred');
+  await refused(start(deferred.id, 1));
+  await assert.rejects(run({ op: 'create', prefix: 'pd', request_id: request(), tool: 'pd', project: 'test', body: 'Started', status: 'in_progress' }),
+    { code: 'invalid_input', message: 'A new issue cannot start in_progress unless it is an epic. Create it open, acquire a claim, then set in_progress with the claim proof' });
+  const epic = await run({ op: 'create', prefix: 'pd', request_id: request(), tool: 'pd', project: 'test', body: 'Epic', status: 'in_progress', type: 'epic' });
+  assert.ok('issue' in epic);
+  await refused({ op: 'update', id: epic.issue.id, changes: [{ field: 'type', value: 'task', expected: 1 }] });
+  const epicStart = await run({ op: 'update', id: epic.issue.id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }] });
+  assert.ok('issue' in epicStart); assert.equal(epicStart.issue.status, 'in_progress');
+
+  const owner = await acquire(run, issue.id);
+  const claim_proof = proof(owner.receipt);
+  const started = await run(start(issue.id, 1, { claim_proof }));
+  assert.ok('issue' in started); assert.equal(started.issue.status, 'in_progress');
+  await refused(start(issue.id, 2));
+  await run({ op: 'claim_release', claim_proof, expected_revision: 1, request_id: request() });
+  const stale = await run({ op: 'list', status: 'in_progress', tool: 'pd', project: 'test' });
+  assert.ok('issues' in stale);
+  assert.deepEqual(stale.issues.map(row => row.id), [issue.id, epic.issue.id]);
+  const edited = await run({ op: 'update', id: issue.id, changes: [{ field: 'body', value: 'Still started', expected: 1 }] });
+  assert.ok('issue' in edited); assert.equal(edited.issue.status, 'in_progress');
+  await refused(start(issue.id, 2, { claim_proof }), { state: 'released', generation: 1, expires_at: owner.receipt.expires_at });
+
+  const lapsed = await create(run);
+  const lease = await acquire(run, lapsed.id);
+  await db.batch([{ sql: 'UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?', params: [lapsed.id] }]);
+  await refused(start(lapsed.id, 1, { claim_proof: proof(lease.receipt) }), { state: 'expired', generation: 1, expires_at: 1000 });
+  const unchanged = await run({ op: 'show', id: lapsed.id });
+  assert.ok('issue' in unchanged); assert.equal(unchanged.issue.status, 'open'); assert.equal(unchanged.issue.versions.status, 1);
 });
 test('an opted-in release of an expired own lease is a no-op, and a default release or a newer lease still conflicts', async t => {
   const { run, db } = fixture(t);

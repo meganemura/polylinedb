@@ -10,7 +10,7 @@ export type FieldChange =
   | { field: Exclude<Field, 'status' | 'type'>; expected: number; value: unknown };
 export type IssueUpdate = { changes: readonly FieldChange[]; force: boolean; claim_proof?: ClaimProof };
 export type ObservedIssue = {
-  id: string; versions: Record<Field, number>;
+  id: string; status: Status; type: IssueType; versions: Record<Field, number>;
   has_active_blockers: boolean; has_children: boolean;
   claim: ObservedClaim | null; store_incarnation: string;
 };
@@ -41,7 +41,16 @@ export function decideIssueUpdate(issue: ObservedIssue, update: IssueUpdate, act
   return { accepted: true };
 }
 
+// An epic tracks its children's work, so it may be in progress with no claim of its own.
+export function startedWorkNeedsClaim(status: Status, type: IssueType): boolean {
+  return status === 'in_progress' && type !== 'epic';
+}
+
 function ownershipAllowed(issue: ObservedIssue, update: IssueUpdate, actor: string, now: number): boolean {
   if (update.claim_proof) return holdsClaim(issue.claim, issue.store_incarnation, update.claim_proof, issue.id, actor, now);
+  const status = update.changes.find((change): change is Extract<FieldChange, { field: 'status' }> => change.field === 'status')?.value ?? issue.status;
+  const type = update.changes.find((change): change is Extract<FieldChange, { field: 'type' }> => change.field === 'type')?.value ?? issue.type;
+  const decidesState = update.changes.some(change => change.field === 'status' || change.field === 'type');
+  if (decidesState && startedWorkNeedsClaim(status, type)) return false;
   return !update.changes.some(change => change.field === 'status') || issue.claim === null;
 }

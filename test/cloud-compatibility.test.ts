@@ -500,3 +500,19 @@ test('claim_acquire after an expired lease decodes the previous lease and reject
     }
   } finally { sqlite.close(); }
 });
+
+test('a released cloud client decodes claim_required when a start has no held claim', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const created = await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Never claimed' });
+    const id = (created.body.issue as { id: string }).id;
+    const start = { op: 'update', id, changes: [{ field: 'status', expected: 1, value: 'in_progress' }] };
+    const refused = await wire(start);
+    assert.equal(refused.status, 409);
+    assertShape(refused.body, { error: { code: 'string', message: 'string', details: { issue: issueShape } } });
+    const released = await outcome(decode(start, answer(refused.body, refused.status)));
+    assert.deepEqual(released, { error: { code: 'claim_required', status: 409, details: { issue: (refused.body.error as { details: { issue: unknown } }).details.issue } } });
+    assert.deepEqual(await outcome(decode(start, transport)), { error: { code: 'claim_required', status: 409, details: { issue: { ...(refused.body.error as { details: { issue: object } }).details.issue, closed_at: null, closed_by: null } } } });
+    assert.equal(((await wire({ op: 'show', id })).body.issue as { status: string }).status, 'open');
+  } finally { sqlite.close(); }
+});

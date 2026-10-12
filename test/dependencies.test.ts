@@ -16,6 +16,13 @@ function fixture(t: test.TestContext) {
   return Object.assign(async (input: unknown, actor = 'tester') => executeOperation(store.db, parseOperation(input), actor), { db: store.db });
 }
 const request = () => crypto.randomUUID();
+async function claim(run: ReturnType<typeof fixture>, issue_id: string) {
+  const shown = await run({ op: 'claim_show', issue_id }); assert.ok('claim' in shown);
+  const session_id = request();
+  const acquired = await run({ op: 'claim_acquire', issue_id, incarnation: shown.claim.store_incarnation, session_id, request_id: request() });
+  assert.ok('claim_receipt' in acquired);
+  return { issue_id, incarnation: acquired.claim_receipt.incarnation, session_id, generation: acquired.claim_receipt.generation };
+}
 async function issues(run: ReturnType<typeof fixture>) {
   for (let i = 0; i < 3; i++) await run({ op: 'create', prefix: 'pd', request_id: request(), tool: 'pd', project: 'test', body: `Issue ${i}` });
 }
@@ -65,7 +72,7 @@ test('fresh no-ops consume one revision, while stale no-ops and changed receipts
 test('readiness covers each stored dependent and blocker status', async t => {
   for (const dependent of ['open', 'in_progress', 'deferred', 'closed']) for (const blocker of ['open', 'in_progress', 'deferred', 'closed']) {
     const run = fixture(t); await issues(run);
-    for (const [id, status] of [['pd-1', dependent], ['pd-2', blocker]]) if (status !== 'open') await run({ op: 'update', id, changes: [{ field: 'status', value: status, expected: 1 }] });
+    for (const [id, status] of [['pd-1', dependent], ['pd-2', blocker]]) if (status !== 'open') await run({ op: 'update', id, changes: [{ field: 'status', value: status, expected: 1 }], ...(status === 'in_progress' ? { claim_proof: await claim(run, id) } : {}) });
     await run({ op: 'dependency_add', dependent_id: 'pd-1', blocker_id: 'pd-2', expected_revision: 1, request_id: request() });
     const ready = await run({ op: 'dependency_worklist', state: 'ready' }); const blocked = await run({ op: 'dependency_worklist', state: 'blocked' });
     assert.ok('issues' in ready && 'issues' in blocked);

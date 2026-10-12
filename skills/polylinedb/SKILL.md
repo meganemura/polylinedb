@@ -73,14 +73,15 @@ Retain `issue_id`, `incarnation`, `session_id`, and `generation` from `claim_rec
 The CLI `--claim-proof` flag accepts that object or the whole receipt.
 Read field versions with `show` before `update` or `close`.
 Pass the proof to issue mutations wherever their schemas accept it.
-Use `update` to record `in_progress` with the observed status version.
-An `in_progress` status does not reserve work.
+Use `update` to record `in_progress` with the observed status version and the proof.
+`in_progress` requires the proof, for every actor, unless the issue is an epic. Without it, `update` fails with `claim_required`.
+An `in_progress` status does not reserve work. Release and expiry do not change it.
 
 Before expiry, read `claim_show` and use `claim_renew` with the proof and observed claim revision.
 The TTL is at most 3600 seconds, so renew between long steps. Cloud agents renew through the MCP connector, not a CLI login with owner credentials.
 If ownership expires or changes, stop protected work and make a deliberate new selection and acquisition.
 If you cannot renew before the lease ends, because writes are suspended or a step outlasts the TTL, hand off instead of letting it lapse.
-Push `work/<issue id>`, write a `comment` that says what is done and what remains, and release the claim.
+Push `work/<issue id>`, write a `comment` that says what is done and what remains, set status `open` with the proof, and release the claim.
 After uncertain completion, retain the original request UUID and identical payload for an explicit retry.
 Read current ownership before further work. A replayed receipt does not prove current ownership.
 After a version conflict, reread and reconsider the change.
@@ -124,5 +125,5 @@ After an uncertain comment response, read the comments before appending again.
 After an enqueue, leave the issue open and release the claim as the polylinedb-queue skill describes.
 Whoever lands `queue` onto main closes the issue with `close`, a current claim proof, and the observed status version.
 Read the current claim revision and call `claim_release` with the issue proof and a retained request UUID.
-For a handoff, record the current pointers and release the issue claim while leaving the issue open.
+For a handoff without `claim_handoff`, record the current pointers, set status `open` with the proof, and then release the issue claim.
 Release invalidates the proof, so close must precede release when close requires ownership.

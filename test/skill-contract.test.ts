@@ -59,5 +59,10 @@ test('the queue skill copies match and keep pd issue ids out of the changelogs a
 test('the skill tells a new holder about an expired lease and a stalled holder to hand off', () => {
   assert.ok(skill.includes('It also returns `previous_lease`: the lease that expired without a release just before this acquisition, or `null`.'));
   assert.ok(skill.includes('read the issue comments and look for a pushed `work/<issue id>` branch'));
-  assert.ok(skill.includes('Push `work/<issue id>`, write a `comment` that says what is done and what remains, and release the claim.'));
+  assert.ok(skill.includes('Push `work/<issue id>`, write a `comment` that says what is done and what remains, set status `open` with the proof, and release the claim.'));
+});
+
+test('the skill says that in_progress needs the claim proof and that a plain handoff reopens the issue first', () => {
+  assert.ok(skill.includes('`in_progress` requires the proof, for every actor, unless the issue is an epic. Without it, `update` fails with `claim_required`.'));
+  assert.ok(skill.includes('For a handoff without `claim_handoff`, record the current pointers, set status `open` with the proof, and then release the issue claim.'));
 });

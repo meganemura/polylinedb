@@ -57,7 +57,7 @@ Read the issue before writing, then use the returned field versions:
 
 ```sh
 pd show ISSUE_ID
-pd --actor local:owner update ISSUE_ID --status in_progress --expect status=1
+pd --actor local:owner update ISSUE_ID --status deferred --expect status=1
 pd --actor local:owner comment ISSUE_ID --body 'Reproduced with empty input'
 pd --actor local:owner close ISSUE_ID --expected 2
 pd --actor local:owner reopen ISSUE_ID --expected 3
@@ -87,6 +87,7 @@ Replace placeholders with observed values and retained lowercase UUIDs.
 `pd --claim-proof` also accepts the whole `claim_receipt` and reads those four fields.
 Read field and claim revisions before each new mutation.
 After a claim lifecycle starts, status writes require a current proof, and force overrides prerequisites only.
+Setting `in_progress` always requires a current proof, unless the issue is an epic.
 See [ownership coordination](docs/claims.md) for deadlines, inspection, handoff, and retry rules.
 Give each local agent its own actor with [local agent actors](docs/agent-actors.md).
 

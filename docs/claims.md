@@ -35,7 +35,7 @@ When the list is non-empty and the claim was meant to start work, release the cl
 Acquire also returns `previous_lease`. It is the lease that expired without a release just before this acquisition, with its actor, session, label, generation, and deadline, or `null` after a release, a first acquisition, or a lease from another store incarnation.
 The value comes from the immutable receipt history, so a replay returns the same `previous_lease`.
 A non-null `previous_lease` means the previous holder may still be running. Read the issue comments and any pushed `work/<issue id>` branch before starting.
-A holder that cannot renew in time pushes its work branch, comments with what remains, and releases the claim instead of letting the lease lapse.
+A holder that cannot renew in time pushes its work branch, comments with what remains, sets status `open` with its proof, and releases the claim instead of letting the lease lapse.
 It leaves the issue status unchanged and can claim a closed issue.
 Concurrent acquisitions elect one winner.
 An already active claim rejects a fresh acquisition, including one from the same session.
@@ -86,8 +86,21 @@ After acquisition has activated an issue's claim lifecycle, every requested stat
 This includes unchanged status values and multifield updates.
 Release or expiry requires a new acquisition before another status write.
 
+Starting work requires a held claim.
+A `status` or `type` change that leaves an issue other than an epic at `in_progress` requires a current proof.
+The rule applies to every actor, the owner included, and to a never-claimed issue too.
+It covers an unchanged `in_progress` value, a change from `deferred`, and a type change that turns an `in_progress` epic into another type.
+The type after the update decides, so one update can set `in_progress` and `type: epic` without a proof.
+Without a proof, the write fails with `claim_required` and changes nothing.
+An epic can be `in_progress` without a claim.
+`create` refuses `status: in_progress` for a type other than `epic` with `invalid_input`, because no claim exists yet.
+Create the issue `open`, acquire a claim, and then set `in_progress` with the proof.
+Release and expiry leave the status unchanged, and reads never fail because of it.
+Before a release without `claim_handoff`, set status `open` with the proof.
+
 An explicitly supplied proof also guards body-only updates.
 Without a proof, other field edits retain their existing CAS contract, and comments remain cooperative.
+A body, priority, or label edit of an `in_progress` issue needs no proof.
 The prerequisite `--force --reason` option never bypasses ownership.
 No-op status changes still advance their field version when accepted.
 

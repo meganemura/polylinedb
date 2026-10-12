@@ -55,6 +55,15 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   const edge = (op: 'dependency_add' | 'dependency_remove', dependent_id: string, blocker_id: string, expected_revision: number) =>
     ({ op, dependent_id, blocker_id, expected_revision, request_id: crypto.randomUUID() });
 
+  async function claimFor(issue_id: string, actor = 'alice', session_id = aliceSession) {
+    let generation = 0;
+    await records([[issue_id, 'claim_acquired', [], actor]], async () => {
+      const result = await run({ op: 'claim_acquire', issue_id, incarnation, session_id, request_id: crypto.randomUUID(), ttl: 600 }, actor);
+      assert.ok('claim_receipt' in result); generation = result.claim_receipt.generation;
+    });
+    return { issue_id, incarnation, session_id, generation };
+  }
+
   const first = create('cf', 'dependent');
   await records([['cf-1', 'created']], first.run);
   await records([['cf-2', 'created']], create('cf', 'first blocker').run);
@@ -76,8 +85,9 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   await records([['cf-1', 'updated', ['body', 'priority']]], () => run({ op: 'update', id: 'cf-1', changes: [{ field: 'priority', value: 1, expected: 1 }, { field: 'body', value: 'dependent v2', expected: 1 }] }));
   await silent(() => run({ op: 'update', id: 'cf-1', changes: [{ field: 'body', value: 'stale', expected: 1 }] }), 'conflict');
   await records([['cf-1', 'updated', ['body']]], () => run({ op: 'update', id: 'cf-1', changes: [{ field: 'body', value: 'dependent v2', expected: 2 }] }));
-  await records([['cf-2', 'status_changed', ['status', 'priority'], 'bob']], () => run({ op: 'update', id: 'cf-2', changes: [{ field: 'status', value: 'in_progress', expected: 1 }, { field: 'priority', value: 0, expected: 1 }] }, 'bob'));
-  await records([['cf-2', 'status_changed', ['status'], 'bob']], () => run({ op: 'close', id: 'cf-2', expected: 2 }, 'bob'));
+  const started = await claimFor('cf-2', 'bob', bobSession);
+  await records([['cf-2', 'status_changed', ['status', 'priority'], 'bob']], () => run({ op: 'update', id: 'cf-2', changes: [{ field: 'status', value: 'in_progress', expected: 1 }, { field: 'priority', value: 0, expected: 1 }], claim_proof: started }, 'bob'));
+  await records([['cf-2', 'status_changed', ['status'], 'bob']], () => run({ op: 'close', id: 'cf-2', expected: 2, claim_proof: started }, 'bob'));
 
   const acquire = { op: 'claim_acquire', issue_id: 'cf-3', incarnation, session_id: bobSession, request_id: crypto.randomUUID(), ttl: 600 };
   let generation = 0;
@@ -128,13 +138,15 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   await records([['cf-11', 'status_changed', ['status']], ['cf-12', 'became_ready']], () => run({ op: 'close', id: 'cf-11', expected: 2 }));
   await records([['cf-14', 'created']], create('cf', 'in progress blocker').run);
   await records([['cf-15', 'created']], create('cf', 'waits on progress').run);
-  await records([['cf-14', 'status_changed', ['status']]], () => run({ op: 'update', id: 'cf-14', changes: [{ field: 'status', value: 'in_progress', expected: 1 }] }));
+  const progress = await claimFor('cf-14');
+  await records([['cf-14', 'status_changed', ['status']]], () => run({ op: 'update', id: 'cf-14', changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof: progress }));
   await records([['cf-15', 'dependency_added']], () => run(edge('dependency_add', 'cf-15', 'cf-14', 1)));
   await records([['cf-15', 'dependency_removed'], ['cf-15', 'became_ready']], () => run(edge('dependency_remove', 'cf-15', 'cf-14', 2)));
   await records([['cf-16', 'created']], create('cf', 'started while blocked').run);
   await records([['cf-17', 'created']], create('cf', 'blocks the started issue').run);
   await records([['cf-16', 'dependency_added']], () => run(edge('dependency_add', 'cf-16', 'cf-17', 1)));
-  await records([['cf-16', 'status_changed', ['status']], ['cf-16', 'commented']], () => run({ op: 'update', id: 'cf-16', changes: [{ field: 'status', value: 'in_progress', expected: 1 }], force: true, reason: 'Started despite the blocker' }));
+  const forced = await claimFor('cf-16');
+  await records([['cf-16', 'status_changed', ['status']], ['cf-16', 'commented']], () => run({ op: 'update', id: 'cf-16', changes: [{ field: 'status', value: 'in_progress', expected: 1 }], force: true, reason: 'Started despite the blocker', claim_proof: forced }));
   await records([['cf-17', 'status_changed', ['status']]], () => run({ op: 'close', id: 'cf-17', expected: 1 }));
 
   const lapse = { op: 'claim_acquire', issue_id: 'cf-5', incarnation, session_id: aliceSession, request_id: crypto.randomUUID(), ttl: 600 };

@@ -75,7 +75,9 @@ const changes: readonly FieldChange[] = [
   { field: 'type', expected: 1, value: 'task' },
   { field: 'type', expected: 1, value: 'epic' },
 ];
-type UpdateWorld = { lease: Lease; clock: Clock; proof: Proof; caller: Caller; change: FieldChange; blockers: boolean; children: boolean; force: boolean };
+const currents = [{ status: 'open', type: 'task' }, { status: 'deferred', type: 'bug' }, { status: 'in_progress', type: 'epic' }] as const;
+type Current = typeof currents[number];
+type UpdateWorld = { current: Current; lease: Lease; clock: Clock; proof: Proof; caller: Caller; change: FieldChange; blockers: boolean; children: boolean; force: boolean };
 type Rule<World> = { code: string; source: string; violated: (world: World) => boolean };
 
 const updateRules: Rule<UpdateWorld>[] = [
@@ -83,6 +85,10 @@ const updateRules: Rule<UpdateWorld>[] = [
     violated: world => world.change.field === 'status' && world.lease !== 'never_claimed' && !currentProof(world) },
   { code: 'claim_required', source: 'docs/adr/0009-issue-ownership.md: An explicitly supplied proof also guards edits to other fields.',
     violated: world => world.proof.supplied && !currentProof(world) },
+  { code: 'claim_required', source: 'docs/claims.md "Change status with a proof": Any status or type change that leaves an issue other than an epic at `in_progress` requires a current proof, for every actor, on a never-claimed issue too. The type that counts is the type after the update.',
+    violated: world => (world.change.field === 'status' || world.change.field === 'type') && !currentProof(world)
+      && (world.change.field === 'status' ? world.change.value : world.current.status) === 'in_progress'
+      && (world.change.field === 'type' ? world.change.value : world.current.type) !== 'epic' },
   { code: 'dependency_blocked', source: 'docs/prerequisites.md: A requested start or close requires resolved prerequisites. An explicit exception requires `--force --reason TEXT`.',
     violated: world => world.change.field === 'status' && (world.change.value === 'in_progress' || world.change.value === 'closed') && world.blockers && !world.force },
   { code: 'epic_has_children', source: 'docs/architecture.md "Containment and queries": A parent with children must remain an epic.',
@@ -90,16 +96,16 @@ const updateRules: Rule<UpdateWorld>[] = [
 ];
 
 function* updateWorlds(): Generator<UpdateWorld> {
-  for (const lease of leases) for (const clock of clocks) for (const proof of proofs) for (const caller of callers)
+  for (const current of currents) for (const lease of leases) for (const clock of clocks) for (const proof of proofs) for (const caller of callers)
     for (const change of changes) for (const blockers of [false, true]) for (const children of [false, true]) for (const force of [false, true])
-      yield { lease, clock, proof, caller, change, blockers, children, force };
+      yield { current, lease, clock, proof, caller, change, blockers, children, force };
 }
-const updateDomainSize = leases.length * clocks.length * proofs.length * callers.length * changes.length * 2 * 2 * 2;
+const updateDomainSize = currents.length * leases.length * clocks.length * proofs.length * callers.length * changes.length * 2 * 2 * 2;
 
 function decideUpdate(world: UpdateWorld) {
   const versions = { tool: 1, project: 1, body: 1, status: 1, type: 1, priority: 1, labels: 1 };
   return decideIssueUpdate(
-    { id: 'pd-1', versions, has_active_blockers: world.blockers, has_children: world.children, claim: observedClaim(world.lease), store_incarnation: store },
+    { id: 'pd-1', status: world.current.status, type: world.current.type, versions, has_active_blockers: world.blockers, has_children: world.children, claim: observedClaim(world.lease), store_incarnation: store },
     { changes: [world.change], force: world.force, ...(world.proof.supplied ? { claim_proof: concreteProof(world.lease, world.proof.differs) } : {}) },
     actorId(world.caller), clockValue[world.clock]);
 }
@@ -246,8 +252,16 @@ test('property: an issue is ready only when it is open and every blocker is clos
   const human = 'spec-human'; const agent: Actor = { id: 'spec-agent', kind: 'agent' };
   const run = (value: unknown, actor: string | Actor = human) => executeOperation(local.db, parseOperation(value), actor);
   const create = async (project: string, status: Status, labels: readonly string[]) => {
-    const result = await run({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'spec', project, body: 'spec', status, labels });
-    assert.ok('issue' in result); return result.issue.id;
+    const result = await run({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'spec', project, body: 'spec', status: status === 'in_progress' ? 'open' : status, labels });
+    assert.ok('issue' in result);
+    if (status !== 'in_progress') return result.issue.id;
+    const id = result.issue.id;
+    const shown = await run({ op: 'show', id }); assert.ok('claim' in shown);
+    const acquired = await run({ op: 'claim_acquire', issue_id: id, incarnation: shown.claim.store_incarnation, session_id: session, request_id: crypto.randomUUID(), ttl: 300 });
+    assert.ok('claim_receipt' in acquired);
+    const claim_proof = { issue_id: id, incarnation: acquired.claim_receipt.incarnation, session_id: session, generation: acquired.claim_receipt.generation };
+    await run({ op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof });
+    return id;
   };
   const blockerPool = new Map<Status, string[]>();
   for (const status of statuses) blockerPool.set(status, [await create('spec-blockers', status, []), await create('spec-blockers', status, [])]);

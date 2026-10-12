@@ -8,7 +8,7 @@ import * as gs from '@hegeldev/hegel/generators';
 import { executeOperation, parseOperation, PolylinedbError } from '../../src/records/index.ts';
 import { claimRow } from '../../src/records/persistence.ts';
 import type { SqlExecutor } from '../../src/records/persistence.ts';
-import { decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, statuses, issueTypes } from '../../src/transition/index.ts';
+import { decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, startedWorkNeedsClaim, statuses, issueTypes } from '../../src/transition/index.ts';
 import type { ObservedClaim } from '../../src/transition/index.ts';
 
 const owner = 'alice';
@@ -23,6 +23,12 @@ const coverage = ['accepted', 'conflict', 'claim_required', 'dependency_blocked'
 const seen = new Set<string>();
 const boundaries = ['empty_blockers', 'empty_labels', 'clock_at_deadline'];
 const reached = new Set<string>();
+
+function oneOf<T extends string>(values: readonly T[], value: unknown): T {
+  const match = values.find(candidate => candidate === value);
+  assert.ok(match !== undefined, `unexpected stored value ${String(value)}`);
+  return match;
+}
 
 async function outcome(run: () => Promise<unknown>): Promise<string> {
   try { await run(); seen.add('accepted'); return 'accepted'; }
@@ -67,7 +73,10 @@ export function differentialCases(db: SqlExecutor, label: string) {
     update: async (tc: hegel.TestCase) => {
       const prefix = scope();
       const epic = tc.draw(gs.booleans()); const child = epic && tc.draw(gs.booleans());
-      const issue = await create(prefix, { type: epic ? 'epic' : tc.draw(gs.sampledFrom(issueTypes.filter(type => type !== 'epic'))), status: tc.draw(gs.sampledFrom(statuses)) });
+      const type = epic ? 'epic' : tc.draw(gs.sampledFrom(issueTypes.filter(type => type !== 'epic')));
+      const status = tc.draw(gs.sampledFrom(statuses));
+      const issue = await create(prefix, { type, status: startedWorkNeedsClaim(status, type) ? 'open' : status });
+      if (issue.status !== status) await sql('UPDATE issues SET status = ? WHERE id = ?', status, issue.id);
       if (child) await create(prefix, { parent: issue.id });
       const blocker = tc.draw(gs.sampledFrom(['none', 'open', 'open', 'closed'] as const));
       if (blocker === 'none') reached.add('empty_blockers');
@@ -98,7 +107,7 @@ export function differentialCases(db: SqlExecutor, label: string) {
       const parsed = parseOperation(command);
       assert.ok(parsed.op === 'update');
       const claim = await observedClaim(issue.id); const store = await incarnation(); const clock = await now(); observeClock(claim, clock);
-      const decision = decideIssueUpdate({ id: issue.id, versions, has_active_blockers: row.blocked === 1, has_children: row.parent === 1, claim, store_incarnation: store },
+      const decision = decideIssueUpdate({ id: issue.id, status: oneOf(statuses, row.status), type: oneOf(issueTypes, row.type), versions, has_active_blockers: row.blocked === 1, has_children: row.parent === 1, claim, store_incarnation: store },
         { changes: parsed.changes, force, ...(proof ? { claim_proof: proof } : {}) }, actor, clock);
       assert.equal(await outcome(() => actorRun(command, actor)), decision.accepted ? 'accepted' : decision.rejection.code, JSON.stringify({ command, decision }));
     },
@@ -135,9 +144,11 @@ export function differentialCases(db: SqlExecutor, label: string) {
       const kind = tc.draw(gs.sampledFrom(['none', 'missing', 'epic', 'task'] as const));
       const parent = kind === 'none' ? undefined : kind === 'missing' ? `${prefix}-99` : (await create(prefix, { type: kind })).id;
       const observed = parent === undefined ? null : (await sql('SELECT type FROM issues WHERE id = ?', parent))[0];
-      const decision = decideCreation(parent, observed ? { type: issueTypes.find(type => type === observed.type) ?? 'task' } : null);
+      const status = tc.draw(gs.sampledFrom(statuses)); const type = tc.draw(gs.sampledFrom(issueTypes));
+      const decision = decideCreation(parent, observed ? { type: oneOf(issueTypes, observed.type) } : null);
       const codes = { parent_not_found: 'not_found', parent_not_epic: 'invalid_input' } as const;
-      assert.equal(await outcome(() => create(prefix, parent === undefined ? {} : { parent })), decision.accepted ? 'accepted' : codes[decision.reason]);
+      const expected = startedWorkNeedsClaim(status, type) ? 'invalid_input' : decision.accepted ? 'accepted' : codes[decision.reason];
+      assert.equal(await outcome(() => create(prefix, { status, type, ...(parent === undefined ? {} : { parent }) })), expected);
     },
   };
 }
