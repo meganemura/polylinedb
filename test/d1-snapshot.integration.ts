@@ -122,6 +122,21 @@ try {
   await query({ sql: 'UPDATE issues SET sort_key = ? WHERE id = ?', params: ['corrupt', created.issue.id] });
   await assert.rejects(migration.verify(), /differing/);
   await reset();
+  let raced = false;
+  await snapshotMigration(async statement => {
+    if (!raced && statement.sql.startsWith('SELECT') && /\bFROM issues\b/.test(statement.sql)) {
+      raced = true;
+      let added = 0;
+      await assert.rejects(snapshotMigration(async other => {
+        const rows = await query(other);
+        if (other.sql.startsWith('INSERT INTO issues') && ++added === 1) throw new Error('interrupted');
+        return rows;
+      }, snapshot, sha256).restore(), /interrupted/);
+    }
+    return query(statement);
+  }, snapshot, sha256).restore();
+  assert.ok(raced);
+  await reset();
   await Promise.all([migration.restore(), migration.restore()]);
   const remote = d1Executor(database);
   assert.deepEqual(await executeOperation(remote, parseOperation(claimCommand), 'test:original'), claimReceipt);

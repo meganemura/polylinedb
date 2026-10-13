@@ -142,6 +142,10 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     if (Buffer.byteLength(JSON.stringify(row)) > 1_900_000) fail('Snapshot row exceeds the operator transfer limit');
   }
   const inspect = async () => {
+    await checkSchema(query);
+    // Rows come before the claim read: a row is written only under a claim, and no restore removes one,
+    // so a concurrent restore cannot show rows here without its claim below.
+    const actual = await readRows(query);
     const hasClaim = await checkSchema(query);
     const claims = hasClaim ? await querySql(query, `SELECT * FROM ${claimTable}`) : [];
     if (claims.length > 1 || (claims.length === 1 && (claims[0]?.singleton !== 1 || claims[0]?.sha256 !== sha256))) fail('Destination belongs to another snapshot');
@@ -149,7 +153,6 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
       const identity = (await querySql(query, 'SELECT incarnation FROM memory_store_identity WHERE singleton=1'))[0];
       if (!identity || (identity.incarnation !== claims[0]?.incarnation && identity.incarnation !== claims[0]?.original_incarnation)) fail('Destination incarnation differs from the durable restore claim');
     }
-    const actual = await readRows(query);
     const complete = compareRows(rows, actual, claims.length === 1);
     if (complete && claims.length === 1) {
       const identity = (await querySql(query, 'SELECT incarnation FROM memory_store_identity WHERE singleton=1'))[0];
