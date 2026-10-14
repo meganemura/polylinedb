@@ -10,6 +10,8 @@ export default {
     ".*/**",
     "**/.*/**",
     "test/**",
+    "features/**",
+    "nukadoko.config.ts",
   ],
   declaredModules: [
     { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },

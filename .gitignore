@@ -10,3 +10,5 @@ dist/
 .env
 .env.*
 *.sqlite*
+.nukadoko/
+!.env.example

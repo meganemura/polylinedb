@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The stale-write refusal now has an end-to-end scenario written in plain sentences: two people edit the same issue body, and the one who read the older version is refused while the first edit stays. It runs on every check.
+
 An issue can now keep a list of things its work created outside the repository, such as a preview database or a test Worker. Record each one with `pd resource add` before you create it, then mark it created, deleted, and finally verified deleted. Until every entry is verified deleted, closing the issue is refused and pd lists what is left. If you decide to keep something, close with `--resources-reason` and say why; the reason is saved as a comment. `pd resource live` shows every issue that still has something to clean up. Record names and IDs only, never passwords or tokens.
 
 You can now say that one issue should land on main after another, without making it wait to start. `pd land-order add --later ID --earlier ID --expected-revision N` records the order, and `pd show --human` and the issue page in `/ui` show a "Lands after" line. Land order never blocks starting, claiming, or closing an issue. When work is handed to the landing queue before the issues it should land after, the handoff warns about each of them, and the push stays as it is. Upgrade a local store with `pd upgrade`; the shared database needs its migration before the server update.

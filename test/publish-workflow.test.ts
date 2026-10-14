@@ -124,6 +124,7 @@ test('Check runs every check once per OS and Node pair, split into parallel suit
     'static: npm run check:architecture',
     'static: npm run check:ui-latency',
     'unit: npm test',
+    'unit: npm run test:scenarios',
     'd1: npm run test:d1',
     'package: npm exec -- vite build',
     'package: node test/worker.integration.ts',

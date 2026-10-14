@@ -37,6 +37,8 @@ jobs:
         run: npm run check:ui-latency
       - if: matrix.suite == 'unit'
         run: npm test
+      - if: matrix.suite == 'unit'
+        run: npm run test:scenarios
       - if: matrix.suite == 'd1'
         run: npm run test:d1
       - if: matrix.suite == 'package'
