@@ -1,7 +1,7 @@
 // Verifies auth grammar, JSON output, and real OAuth wiring without live credentials or HTTPS traffic.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -124,6 +124,17 @@ test('auth state and lock creation errors keep the file system code without a pa
     assert.equal(result.stderr.includes(root), false);
     assert.equal(result.stderr.includes('synthetic-private-token'), false);
   }
+});
+
+test('a read-only cloud command names the authentication state directory it could not use', async context => {
+  const { root, run } = await fixture(context);
+  const stateDirectory = join(root, 'config', 'polylinedb', 'auth');
+  writeFileSync(stateDirectory, '');
+  const result = await run(['--connection', 'cloud', 'search', 'lock'], 1);
+  assert.equal(result.stdout, '');
+  assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'auth_lock_failed',
+    message: `Could not acquire the authentication lock: the file system returned EEXIST for ${stateDirectory}. This is not contention with another pd process, so waiting does not help. Resolve the file system error and retry.`,
+    details: { diagnostic: { code: 'EEXIST', path: stateDirectory } } } });
 });
 
 test('repository-selected cloud auth ignores the retained local actor', async context => {
