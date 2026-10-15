@@ -198,27 +198,37 @@ Deleting it does not change behavior.
 
 ## Defect injections
 
-pd-142 keeps a known defect in front of each check that already exists.
-The production writer stays unchanged.
-A check that is not in the repository yet has no injection.
+A check that passes is evidence only when it fails on the defect it targets.
+Each existing check keeps its injected defects as a test, so a change that weakens the check fails CI.
+The injections wrap the store executor. The production writer stays unchanged.
+
+| Check | Injected defect | Test that keeps the injection | Status |
+| --- | --- | --- | --- |
+| Change feed contract | The store deletes the first committed event | `test/change-feed-defects.test.ts` (SQLite), `test/changes-d1.integration.ts` (D1) | Fails as expected |
+| Change feed contract | The store records an event for a rejected `request_conflict` create | `test/change-feed-defects.test.ts` (SQLite), `test/changes-d1.integration.ts` (D1) | Fails as expected |
+| Interleaving model | The order of restrictive and permissive changes between an issue authority and the port | None | Pending: the model does not exist |
+| Interleaving model | The release of claim request ID reservations | None | Pending: the model does not exist |
+| Interleaving model | Routing to objects named by the incarnation | None | Pending: the model does not exist |
+| Interleaving model | Creation of an issue authority from its creation receipt | None | Pending: the model does not exist |
+| Cold reconciliation | A projection that still shows a released claim | None | Pending: reconciliation does not exist |
+
+No check has found a defect that stays unfixed, so CI pins no expected failure.
+When a check finds one, pin the failure in CI, so the fix makes CI report the stale pin.
 
 ### Change feed contract
 
 ```sh
 node --test test/change-feed-defects.test.ts
-node --test --test-name-pattern='change feed records the shared flow' test/changes.test.ts
+node --import ./scripts/test-node-runtime.mjs test/changes-d1.integration.ts
 ```
 
 The contract is `runChangeFeedFlow` in `test/fixtures/change-feed-flow.ts`.
-pd-139.1 requires that shared command sequence.
-`test/changes.test.ts` runs it on local SQLite.
-`test/changes-d1.integration.ts` runs the same function on workerd D1.
+`test/changes.test.ts` runs it on an unmodified local SQLite store, and `test/changes-d1.integration.ts` runs it on an unmodified workerd D1 database.
+`test/fixtures/change-feed-defects.ts` wraps a real store executor with one defect and calls `runChangeFeedFlow`.
+The injection passes only when the contract fails an assertion with the expected message.
+The SQLite test and the D1 integration run the same injections, each on a fresh database.
 
-`test/change-feed-defects.test.ts` opens a real local SQLite store and wraps its executor.
-It calls `runChangeFeedFlow`.
-The test passes only when the contract's own assertion fails.
-
-On 2026-10-11, Node 24.21.0 reported both failures.
+On 2026-10-15, Node 24.22.0 reported both failures on local SQLite and on workerd D1.
 
 A store that deletes the newest `change_events` row after the first committed event makes the contract expect the `created` event for `cf-1` at `seq` 1 and observe no events.
 The assertion text is `Expected values to be strictly deep-equal`, with actual `[]` and expected `issue_id: 'cf-1'`, `kind: 'created'`, `seq: 1`.
@@ -230,22 +240,18 @@ That injection waits for the contract's second mutation that records nothing.
 The first is the create replay.
 The second is the `request_conflict` create.
 
-The same Node run passed `change feed records the shared flow on a local SQLite store` on an unmodified store.
-The contract file was not changed.
+The same run with the injection removed failed both SQLite tests and the D1 integration with `Missing expected rejection`.
+The injection tests therefore depend on the defect, not on an unrelated failure.
 
 ### Interleaving model
 
 `docs/issue-authority.md` requires a `node:test` that interleaves port admissions, commits, aborts, lost responses, resets, and reordered or repeated signals before a per-issue or per-project split.
 The repository has no such test.
-These four mechanisms have no check to fail.
-
-- The order of restrictive and permissive changes between an issue authority and the port.
-- The release of claim request ID reservations.
-- Routing to objects named by the incarnation.
-- Creation of an issue authority from its creation receipt.
+When the model exists, inject each of the four mechanisms in the table and confirm that the model fails on each one.
 
 ### Cold reconciliation
 
-pd-51.8 describes a comparison of the store with the D1 projection.
-The repository has no `src/projection/` module and no reconciliation run.
-A projection that still shows a released claim is not counted as a missed revocation here, because that comparison does not exist.
+`docs/issue-authority.md` describes a comparison of the store Durable Object with the D1 projection.
+The repository has no projection and no reconciliation run.
+When reconciliation exists, inject a projection that still shows a released claim.
+The run must count it as a missed revocation and repair it.
