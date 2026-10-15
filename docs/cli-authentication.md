@@ -84,7 +84,8 @@ A filesystem sandbox that denies writes to the configuration directory typically
 Allow access to the authentication state directory, then retry the command.
 Another filesystem error reports `auth_lock_failed`, and its message names the error code, such as `ENOSPC`.
 Neither error means lock contention, so waiting for another pd process does not help.
-Both errors put the code in `error.details.diagnostic.code` without a path.
+Both messages name the error code and the directory where the CLI tried to create the state directory or the lock.
+`error.details.diagnostic` carries the same values as `code` and `path`; `path` is a directory and never a credential, and `code` is absent when the error had no filesystem code.
 A command that finds an existing lock waits up to ten seconds, then returns `auth_busy`.
 Another pd process may still hold that lock while it works, for example during a token refresh or an interactive `pd auth login`.
 `pd auth login` can wait up to 300 seconds for the browser callback.

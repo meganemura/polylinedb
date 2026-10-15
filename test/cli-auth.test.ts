@@ -82,7 +82,7 @@ test('auth backend errors stay safe and never expose child diagnostics', async c
   }
 });
 
-test('auth state write denial reports safe guidance without its path', async context => {
+test('auth state write denial names the denied directory', async context => {
   if (process.platform === 'win32' || process.getuid?.() === 0) {
     context.skip('This permission fixture requires a non-root Unix process.');
     return;
@@ -95,33 +95,33 @@ test('auth state write denial reports safe guidance without its path', async con
     const result = await run(['auth', 'status', '--connection', 'cloud'], 1);
     assert.equal(result.stdout, '');
     assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'auth_state_access_denied',
-      message: 'Authentication state is not writable. Allow access to the authentication state directory and retry.',
-      details: { diagnostic: { code: 'EACCES' } } } });
-    assert.equal(result.stderr.includes(root), false);
+      message: `Authentication state is not writable: the file system returned EACCES for ${stateDirectory}. Allow access to that directory and retry.`,
+      details: { diagnostic: { code: 'EACCES', path: stateDirectory } } } });
     assert.equal(existsSync(join(root, 'synthetic-credential')), false);
   } finally {
     chmodSync(stateDirectory, 0o700);
   }
 });
 
-test('auth state and lock creation errors keep the file system code without a path', async context => {
+test('auth state and lock creation errors name the file system code and the directory', async context => {
   const { root, run } = await fixture(context);
-  const denied = 'Authentication state is not writable. Allow access to the authentication state directory and retry.';
-  const failed = (code: string) => `Could not acquire the authentication lock: the file system returned ${code} for the authentication state directory. This is not contention with another pd process, so waiting does not help. Resolve the file system error and retry.`;
+  const directory = join(root, 'config', 'polylinedb', 'auth');
+  const denied = (code: string) => `Authentication state is not writable: the file system returned ${code} for ${directory}. Allow access to that directory and retry.`;
+  const failed = (code: string) => `Could not acquire the authentication lock: the file system returned ${code} for ${directory}. This is not contention with another pd process, so waiting does not help. Resolve the file system error and retry.`;
   for (const [failure, error] of [
-    ['state:EROFS', { code: 'auth_state_access_denied', message: denied, details: { diagnostic: { code: 'EROFS' } } }],
-    ['state:EACCES', { code: 'auth_state_access_denied', message: denied, details: { diagnostic: { code: 'EACCES' } } }],
-    ['state:ENOSPC', { code: 'auth_lock_failed', message: failed('ENOSPC'), details: { diagnostic: { code: 'ENOSPC' } } }],
-    ['lock:EROFS', { code: 'auth_state_access_denied', message: denied, details: { diagnostic: { code: 'EROFS' } } }],
-    ['lock:EPERM', { code: 'auth_state_access_denied', message: denied, details: { diagnostic: { code: 'EPERM' } } }],
-    ['lock:ENOSPC', { code: 'auth_lock_failed', message: failed('ENOSPC'), details: { diagnostic: { code: 'ENOSPC' } } }],
-    ['lock:ENOENT', { code: 'auth_lock_failed', message: failed('ENOENT'), details: { diagnostic: { code: 'ENOENT' } } }],
-    ['lock:ERR_SYNTHETIC', { code: 'auth_lock_failed', message: 'Could not acquire the authentication lock. This is not contention with another pd process, so waiting does not help.' }],
+    ['state:EROFS', { code: 'auth_state_access_denied', message: denied('EROFS'), details: { diagnostic: { code: 'EROFS', path: directory } } }],
+    ['state:EACCES', { code: 'auth_state_access_denied', message: denied('EACCES'), details: { diagnostic: { code: 'EACCES', path: directory } } }],
+    ['state:ENOSPC', { code: 'auth_lock_failed', message: failed('ENOSPC'), details: { diagnostic: { code: 'ENOSPC', path: directory } } }],
+    ['lock:EROFS', { code: 'auth_state_access_denied', message: denied('EROFS'), details: { diagnostic: { code: 'EROFS', path: directory } } }],
+    ['lock:EPERM', { code: 'auth_state_access_denied', message: denied('EPERM'), details: { diagnostic: { code: 'EPERM', path: directory } } }],
+    ['lock:ENOSPC', { code: 'auth_lock_failed', message: failed('ENOSPC'), details: { diagnostic: { code: 'ENOSPC', path: directory } } }],
+    ['lock:ENOENT', { code: 'auth_lock_failed', message: failed('ENOENT'), details: { diagnostic: { code: 'ENOENT', path: directory } } }],
+    ['lock:ERR_SYNTHETIC', { code: 'auth_lock_failed', message: `Could not acquire the authentication lock in ${directory}. This is not contention with another pd process, so waiting does not help.`, details: { diagnostic: { path: directory } } }],
   ] as const) {
     const result = await run(['auth', 'status', '--connection', 'cloud'], 1, 'normal', undefined, failure);
     assert.equal(result.stdout, '');
     assert.deepEqual(JSON.parse(result.stderr), { error }, failure);
-    assert.equal(result.stderr.includes(root), false);
+    assert.equal(result.stderr.includes('.lock'), false);
     assert.equal(result.stderr.includes('synthetic-private-token'), false);
   }
 });

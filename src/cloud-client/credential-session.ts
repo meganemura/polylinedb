@@ -13,8 +13,8 @@ export interface CredentialStore {
 
 export class OAuthError extends Error {
   readonly code: string;
-  /** A diagnostic carries only a file system error code, never a path. */
-  readonly details: { readonly diagnostic: { readonly code: string } } | undefined;
+  /** A diagnostic names a file system error code and a directory, never credential contents. */
+  readonly details: { readonly diagnostic: { readonly code?: string; readonly path?: string } } | undefined;
   constructor(code: string, message: string, details?: OAuthError['details']) { super(message); this.name = 'OAuthError'; this.code = code; this.details = details; }
 }
 
@@ -41,13 +41,13 @@ function fileSystemCode(error: unknown): string | undefined {
   return typeof code === 'string' && /^E[A-Z0-9]{1,31}$/.test(code) ? code : undefined;
 }
 
-function lockCreationError(code: string | undefined): OAuthError {
+function lockCreationError(code: string | undefined, directory: string): OAuthError {
   if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
-    return new OAuthError('auth_state_access_denied', 'Authentication state is not writable. Allow access to the authentication state directory and retry.', { diagnostic: { code } });
+    return new OAuthError('auth_state_access_denied', `Authentication state is not writable: the file system returned ${code} for ${directory}. Allow access to that directory and retry.`, { diagnostic: { code, path: directory } });
   }
   const notContention = 'This is not contention with another pd process, so waiting does not help.';
-  if (code === undefined) return new OAuthError('auth_lock_failed', `Could not acquire the authentication lock. ${notContention}`);
-  return new OAuthError('auth_lock_failed', `Could not acquire the authentication lock: the file system returned ${code} for the authentication state directory. ${notContention} Resolve the file system error and retry.`, { diagnostic: { code } });
+  if (code === undefined) return new OAuthError('auth_lock_failed', `Could not acquire the authentication lock in ${directory}. ${notContention}`, { diagnostic: { path: directory } });
+  return new OAuthError('auth_lock_failed', `Could not acquire the authentication lock: the file system returned ${code} for ${directory}. ${notContention} Resolve the file system error and retry.`, { diagnostic: { code, path: directory } });
 }
 
 export async function credentialTransaction<T>(options: {
@@ -55,7 +55,7 @@ export async function credentialTransaction<T>(options: {
 }, action: (key: string) => Promise<T>): Promise<T> {
   if (!isAbsolute(options.stateDirectory)) throw new OAuthError('auth_state_invalid', 'The authentication state directory must be absolute.');
   try { await mkdir(options.stateDirectory, { recursive: true, mode: 0o700 }); }
-  catch (error) { throw lockCreationError(fileSystemCode(error)); }
+  catch (error) { throw lockCreationError(fileSystemCode(error), options.stateDirectory); }
   const directory = await lstat(options.stateDirectory);
   if (!directory.isDirectory() || (directory.mode & 0o077) !== 0 || (process.getuid && directory.uid !== process.getuid())) {
     throw new OAuthError('auth_state_invalid', 'The authentication state directory must be private and owned by the current user.');
@@ -68,7 +68,7 @@ export async function credentialTransaction<T>(options: {
     try { await mkdir(lock, { mode: 0o700 }); break; }
     catch (error) {
       const code = fileSystemCode(error);
-      if (code !== 'EEXIST') throw lockCreationError(code);
+      if (code !== 'EEXIST') throw lockCreationError(code, namespace);
       if (Date.now() >= deadline) throw new OAuthError('auth_busy', authBusyMessage(await lockShowsLogin(lock)));
       await setTimeout(25);
     }

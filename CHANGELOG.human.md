@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+When the CLI cannot write its authentication state, for example inside a sandbox that blocks the configuration directory, the error now names that directory next to the file system error code. An agent can allow exactly that directory instead of guessing, and the message still says that waiting for another pd process does not help.
+
 The stale-write refusal now has an end-to-end scenario written in plain sentences: two people edit the same issue body, and the one who read the older version is refused while the first edit stays. It runs on every check.
 
 An issue can now keep a list of things its work created outside the repository, such as a preview database or a test Worker. Record each one with `pd resource add` before you create it, then mark it created, deleted, and finally verified deleted. Until every entry is verified deleted, closing the issue is refused and pd lists what is left. If you decide to keep something, close with `--resources-reason` and say why; the reason is saved as a comment. `pd resource live` shows every issue that still has something to clean up. Record names and IDs only, never passwords or tokens.

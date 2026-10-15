@@ -30,6 +30,7 @@ test('credential lock distinguishes denied writes from an existing lock', async 
     await chmod(deniedStateDirectory, 0o700);
     await rm(deniedStateDirectory, { recursive: true, force: true });
   });
+  const deniedNamespace = await realpath(deniedStateDirectory);
   await chmod(deniedStateDirectory, 0o500);
   let deniedActionInvoked = false;
   await assert.rejects(credentialTransaction({ stateDirectory: deniedStateDirectory, resource, lockTimeoutMs: 25 }, async () => {
@@ -38,9 +39,8 @@ test('credential lock distinguishes denied writes from an existing lock', async 
   }), error => {
     assert.ok(error instanceof OAuthError);
     assert.equal(error.code, 'auth_state_access_denied');
-    assert.equal(error.message, 'Authentication state is not writable. Allow access to the authentication state directory and retry.');
-    assert.deepEqual(error.details, { diagnostic: { code: 'EACCES' } });
-    assert.equal(error.message.includes(deniedStateDirectory), false);
+    assert.equal(error.message, `Authentication state is not writable: the file system returned EACCES for ${deniedNamespace}. Allow access to that directory and retry.`);
+    assert.deepEqual(error.details, { diagnostic: { code: 'EACCES', path: deniedNamespace } });
     return true;
   });
   assert.equal(deniedActionInvoked, false);
@@ -77,9 +77,8 @@ test('denied creation of the authentication state directory reports access denie
   await assert.rejects(credentialTransaction({ stateDirectory: join(parent, 'auth'), resource, lockTimeoutMs: 25 }, async () => 'unexpected success'), error => {
     assert.ok(error instanceof OAuthError);
     assert.equal(error.code, 'auth_state_access_denied');
-    assert.equal(error.message, 'Authentication state is not writable. Allow access to the authentication state directory and retry.');
-    assert.deepEqual(error.details, { diagnostic: { code: 'EACCES' } });
-    assert.equal(error.message.includes(parent), false);
+    assert.equal(error.message, `Authentication state is not writable: the file system returned EACCES for ${join(parent, 'auth')}. Allow access to that directory and retry.`);
+    assert.deepEqual(error.details, { diagnostic: { code: 'EACCES', path: join(parent, 'auth') } });
     return true;
   });
 });
@@ -102,9 +101,8 @@ test('a lock creation failure names its file system code instead of reporting co
   }), error => {
     assert.ok(error instanceof OAuthError);
     assert.equal(error.code, 'auth_lock_failed');
-    assert.equal(error.message, 'Could not acquire the authentication lock: the file system returned ENAMETOOLONG for the authentication state directory. This is not contention with another pd process, so waiting does not help. Resolve the file system error and retry.');
-    assert.deepEqual(error.details, { diagnostic: { code: 'ENAMETOOLONG' } });
-    assert.equal(error.message.includes(root), false);
+    assert.equal(error.message, `Could not acquire the authentication lock: the file system returned ENAMETOOLONG for ${stateDirectory}. This is not contention with another pd process, so waiting does not help. Resolve the file system error and retry.`);
+    assert.deepEqual(error.details, { diagnostic: { code: 'ENAMETOOLONG', path: stateDirectory } });
     return true;
   });
   assert.equal(actionInvoked, false);
