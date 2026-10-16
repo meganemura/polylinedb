@@ -517,7 +517,11 @@ test('help and version answer on an unsupported runtime while commands stay reje
 const runtimePreloadPath = fileURLToPath(new URL('./fixtures/cli-runtime-preload.mjs', import.meta.url));
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 type SimulatedRuntime = { PD_TEST_NODE_VERSION?: string; PD_TEST_RUNTIME?: string; PD_TEST_SQLITE_VERSION?: string };
-const linkedSqlite = String(new DatabaseSync(':memory:').prepare('SELECT sqlite_version() AS v').get()?.v);
+const linkedSqlite = (() => {
+  const probe = new DatabaseSync(':memory:');
+  try { return String(probe.prepare('SELECT sqlite_version() AS v').get()?.v); }
+  finally { probe.close(); }
+})();
 
 test('Bun, Deno, and an old SQLite build are refused before any command runs, init included', t => {
   const { root, cwd, directory } = fixture(t);
@@ -573,7 +577,9 @@ test('the CLI admits exactly the runtimes that solarsql node() admits', t => {
     const result = spawnSync(process.execPath, ['--import', runtimePreloadPath, executable, '--data-dir', directory, '--actor', 'local:test', 'list'], {
       cwd, env: { ...isolatedEnvironment(cwd), HOME: join(root, 'home'), XDG_DATA_HOME: join(root, 'data'), ...runtime }, encoding: 'utf8',
     });
-    return JSON.parse(result.stderr).error.code === 'unsupported_runtime' ? 'UNSUPPORTED_RUNTIME' : 'admitted';
+    assert.ifError(result.error);
+    const code = result.stderr === '' ? undefined : JSON.parse(result.stderr).error?.code;
+    return code === 'unsupported_runtime' ? 'UNSUPPORTED_RUNTIME' : 'admitted';
   };
   const runtimes: SimulatedRuntime[] = [
     {}, { PD_TEST_RUNTIME: 'bun:1.4.2' }, { PD_TEST_RUNTIME: 'deno:2.5.0' },

@@ -14,7 +14,7 @@ Direct dependencies use exact versions, and `package-lock.json` fixes the resolv
 | `@types/node` | `24.19.0` | Describe Node APIs used by the CLI and tests | 2026-09-25 |
 | `undici` override | `7.30.0` | Replace the vulnerable HTTP dependency selected by the development runtime | 2026-09-25 |
 
-The version dates were checked through the npm registry on October 3, 2026.
+The version dates were checked through the npm registry on October 3, 2026, and the solarsql 0.8.0 date on October 16, 2026.
 The development dependency versions had been available for at least seven days.
 The owner approved a release-age exception for solarsql 0.7.1 to fix analysis of correlated table-valued functions.
 solarsql 0.8.0 was adopted on its release date, October 16, 2026, so it is also an exception to the seven-day release age.
