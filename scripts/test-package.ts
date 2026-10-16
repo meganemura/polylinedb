@@ -54,14 +54,14 @@ try {
   const tarball = join(root, pack.filename);
   const prefix = join(root, 'install');
   const dependencyPack = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', root, join(project, 'node_modules', 'solarsql')], root));
-  assert.equal(dependencyPack[0].name, 'solarsql'); assert.equal(dependencyPack[0].version, '0.7.1');
+  assert.equal(dependencyPack[0].name, 'solarsql'); assert.equal(dependencyPack[0].version, '0.8.0');
   const dependencyTarball = join(root, dependencyPack[0].filename);
   run('npm', ['install', '--global', '--prefix', prefix, '--ignore-scripts', '--omit=dev', '--offline', tarball, dependencyTarball], root);
   const installed = join(prefix, 'lib', 'node_modules', 'polylinedb');
   const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
   assert.equal(manifest.license, 'MIT');
   assert.equal(manifest.private, undefined);
-  assert.deepEqual(manifest.dependencies, { solarsql: '0.7.1' });
+  assert.deepEqual(manifest.dependencies, { solarsql: '0.8.0' });
   assert.equal(manifest.engines.node, '^24.20.0 || >=26.7.0');
   assert.equal(manifest.bin.pd, 'dist/cli.js');
   const malformedRoot = join(root, 'malformed-package');
@@ -152,6 +152,9 @@ try {
         actual_node: nodeVersion,
         required_node: manifest.engines.node,
         package_version: manifest.version,
+        runtime: 'node',
+        runtime_version: nodeVersion,
+        required_sqlite: '3.53.4',
       });
       assert.match(report.error.message, new RegExp(nodeVersion.replaceAll('.', '\\.')));
       assert.ok(report.error.message.includes(manifest.engines.node));

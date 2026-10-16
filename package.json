@@ -111,6 +111,6 @@
     "url": "git+https://github.com/meganemura/polylinedb.git"
   },
   "dependencies": {
-    "solarsql": "0.7.1"
+    "solarsql": "0.8.0"
   }
 }

@@ -514,6 +514,95 @@ test('help and version answer on an unsupported runtime while commands stay reje
   assert.deepEqual(readdirSync(root), ['work']);
 });
 
+const runtimePreloadPath = fileURLToPath(new URL('./fixtures/cli-runtime-preload.mjs', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
+type SimulatedRuntime = { PD_TEST_NODE_VERSION?: string; PD_TEST_RUNTIME?: string; PD_TEST_SQLITE_VERSION?: string };
+const linkedSqlite = String(new DatabaseSync(':memory:').prepare('SELECT sqlite_version() AS v').get()?.v);
+
+test('Bun, Deno, and an old SQLite build are refused before any command runs, init included', t => {
+  const { root, cwd, directory } = fixture(t);
+  const invoke = (runtime: SimulatedRuntime, args: string[]) => spawnSync(process.execPath, ['--import', runtimePreloadPath, executable, ...args], {
+    cwd, env: { ...isolatedEnvironment(cwd), HOME: join(root, 'home'), XDG_DATA_HOME: join(root, 'data'), ...runtime }, encoding: 'utf8',
+  });
+  const base = { required_node: '^24.20.0 || >=26.7.0', package_version: JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8')).version, required_sqlite: '3.53.4' };
+  const cases: { runtime: SimulatedRuntime; message: string; details: Record<string, unknown> }[] = [
+    {
+      runtime: { PD_TEST_RUNTIME: 'bun:1.4.2', PD_TEST_NODE_VERSION: '26.7.0', PD_TEST_SQLITE_VERSION: '3.51.0' },
+      message: 'Unsupported runtime Bun 1.4.2, which reports Node 26.7.0 and whose node:sqlite runs SQLite 3.51.0. polylinedb requires Node ^24.20.0 || >=26.7.0 with node:sqlite on SQLite 3.53.4 or later. Run pd with Node.',
+      details: { actual_node: '26.7.0', runtime: 'bun', runtime_version: '1.4.2', actual_sqlite: '3.51.0' },
+    },
+    {
+      runtime: { PD_TEST_RUNTIME: 'deno:2.5.0', PD_TEST_NODE_VERSION: '24.20.0', PD_TEST_SQLITE_VERSION: 'none' },
+      message: 'Unsupported runtime Deno 2.5.0, which reports Node 24.20.0 and whose node:sqlite reports no SQLite version. polylinedb requires Node ^24.20.0 || >=26.7.0 with node:sqlite on SQLite 3.53.4 or later. Run pd with Node.',
+      details: { actual_node: '24.20.0', runtime: 'deno', runtime_version: '2.5.0', actual_sqlite: null },
+    },
+    {
+      runtime: { PD_TEST_NODE_VERSION: '26.7.0', PD_TEST_SQLITE_VERSION: '3.53.3' },
+      message: 'Unsupported SQLite build: Node 26.7.0 runs SQLite 3.53.3. polylinedb requires Node ^24.20.0 || >=26.7.0 with node:sqlite on SQLite 3.53.4 or later. A Node build that links a system SQLite can do this; use an official Node build.',
+      details: { actual_node: '26.7.0', runtime: 'node', runtime_version: '26.7.0', actual_sqlite: '3.53.3' },
+    },
+    {
+      runtime: { PD_TEST_NODE_VERSION: '25.0.0' },
+      message: 'Unsupported Node runtime 25.0.0; required range is ^24.20.0 || >=26.7.0.',
+      details: { actual_node: '25.0.0', runtime: 'node', runtime_version: '25.0.0' },
+    },
+  ];
+  for (const { runtime, message, details } of cases) {
+    for (const args of [['--data-dir', directory, '--actor', 'local:test', 'init', '--tool', 't', '--project', 'p'], ['list'], ['connection', 'list']]) {
+      const result = invoke(runtime, args);
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '');
+      assert.deepEqual(JSON.parse(result.stderr), { error: { code: 'unsupported_runtime', message, details: { ...base, ...details } } });
+    }
+    const help = invoke(runtime, ['--help']);
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /^polylinedb \(polyline database\)/);
+  }
+  assert.deepEqual(readdirSync(root), ['work']);
+});
+
+test('the CLI admits exactly the runtimes that solarsql node() admits', t => {
+  const { root, cwd, directory } = fixture(t);
+  const solarsql = (runtime: SimulatedRuntime) => spawnSync(process.execPath, ['--import', runtimePreloadPath, '--input-type=module', '-e', [
+    "import { node } from 'solarsql/node';",
+    "import { DatabaseSync } from 'node:sqlite';",
+    "try { node(new DatabaseSync(':memory:')); process.stdout.write('admitted'); }",
+    'catch (error) { process.stdout.write(error.code); }',
+  ].join('\n')], { cwd: repositoryRoot, env: { ...process.env, ...runtime }, encoding: 'utf8' });
+  const cli = (runtime: SimulatedRuntime) => {
+    const result = spawnSync(process.execPath, ['--import', runtimePreloadPath, executable, '--data-dir', directory, '--actor', 'local:test', 'list'], {
+      cwd, env: { ...isolatedEnvironment(cwd), HOME: join(root, 'home'), XDG_DATA_HOME: join(root, 'data'), ...runtime }, encoding: 'utf8',
+    });
+    return JSON.parse(result.stderr).error.code === 'unsupported_runtime' ? 'UNSUPPORTED_RUNTIME' : 'admitted';
+  };
+  const runtimes: SimulatedRuntime[] = [
+    {}, { PD_TEST_RUNTIME: 'bun:1.4.2' }, { PD_TEST_RUNTIME: 'deno:2.5.0' },
+    ...['20.20.2', '24.19.0', '24.20.0', '25.9.0', '26.6.9', '26.7.0', '27.0.0'].map(version => ({ PD_TEST_NODE_VERSION: version })),
+    ...['none', '3.6.0', '3.51.0', '3.53.3', '3.53.4', '3.53.10', '3.54.0', '4.0.0'].map(version => ({ PD_TEST_SQLITE_VERSION: version })),
+  ];
+  const decisions = runtimes.map(runtime => ({ runtime, cli: cli(runtime), solarsql: solarsql(runtime).stdout }));
+  assert.deepEqual(decisions.map(({ runtime, solarsql }) => ({ runtime, decision: solarsql })), decisions.map(({ runtime, cli }) => ({ runtime, decision: cli })));
+  assert.deepEqual(decisions.filter(({ cli }) => cli === 'admitted').map(({ runtime }) => runtime), [
+    {}, { PD_TEST_NODE_VERSION: '24.20.0' }, { PD_TEST_NODE_VERSION: '26.7.0' }, { PD_TEST_NODE_VERSION: '27.0.0' },
+    { PD_TEST_SQLITE_VERSION: '3.53.4' }, { PD_TEST_SQLITE_VERSION: '3.53.10' }, { PD_TEST_SQLITE_VERSION: '3.54.0' }, { PD_TEST_SQLITE_VERSION: '4.0.0' },
+  ]);
+});
+
+test('openStore reports solarsql UNSUPPORTED_RUNTIME as unsupported_runtime', t => {
+  const { run, cwd, directory } = fixture(t);
+  run(['init', '--tool', 'runtime', '--project', 'p']);
+  const result = spawnSync(process.execPath, ['--import', runtimePreloadPath, '--input-type=module', '-e', [
+    `import { openStore } from ${JSON.stringify(new URL('../src/local-store/index.ts', import.meta.url).href)};`,
+    `try { openStore({ directory: ${JSON.stringify(directory)} }); process.stdout.write('opened'); }`,
+    'catch (error) { process.stdout.write(JSON.stringify({ name: error.name, code: error.code, status: error.status, details: error.details, message: error.message })); }',
+  ].join('\n')], { cwd, env: { ...process.env, PD_TEST_RUNTIME: 'bun:1.4.2' }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    name: 'PolylinedbError', code: 'unsupported_runtime', status: 500, details: { solarsql_code: 'UNSUPPORTED_RUNTIME' },
+    message: `solarsql requires Node ^24.20.0 || >=26.7.0 and node:sqlite on SQLite 3.53.4 or later, the SQLite that workerd runs in the release's tests. This process runs Bun 1.4.2, which reports Node ${process.versions.node}, and its node:sqlite runs SQLite ${linkedSqlite}. solarsql does not support Bun; run the command with Node.`,
+  });
+});
+
 test('a local command leaves the cloud client unloaded', t => {
   const { root, cwd, directory } = fixture(t);
   const tracePreload = fileURLToPath(new URL('./fixtures/cli-import-trace.mjs', import.meta.url));

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Admit the Node runtime before loading operational modules. Help and version answers load
+// Admit the runtime before loading operational modules. Help and version answers load
 // no operational module, so they print on any runtime. The package manifest owns the version
-// and engine range used here.
+// and engine range used here; the SQLite floor and the refused runtimes follow solarsql's own
+// runtime check, which only throws once a store opens and so cannot guard init or cloud commands.
 import { readFileSync } from 'node:fs';
 import type { InternalError } from './cli-diagnostics.ts';
 
@@ -29,12 +30,22 @@ type BootstrapError =
       readonly actual_node: string;
       readonly required_node: string;
       readonly package_version: string;
+      readonly runtime: string;
+      readonly runtime_version: string;
+      readonly actual_sqlite?: string | null;
+      readonly required_sqlite: string;
     };
   }
   | InternalError;
 
 // The package authors these messages from its own manifest, so they stay readable for release checks.
 class PackageManifestError extends Error {}
+
+// solarsql 0.8.0 does not export its floor: the SQLite of the workerd that its release tests
+// against. A test compares this admission with solarsql's node() on the same runtimes.
+const requiredSqlite = '3.53.4';
+// Bun and Deno report a Node version they imitate, which says nothing about their node:sqlite.
+const otherRuntimes = [['bun', 'Bun'], ['deno', 'Deno']] as const;
 
 const versionPattern = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const comparatorVersionPattern = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
@@ -114,6 +125,67 @@ function supportsNode(actualNode: string, clauses: readonly NodeRangeClause[]): 
   });
 }
 
+// Every connection in a process links the same SQLite, so a closed in-memory probe reads it.
+// The module is looked up at run time because an unsupported runtime may not have node:sqlite,
+// and the lookup stays inside the try in case such a runtime throws instead of returning undefined.
+function linkedSqliteVersion(): string | null {
+  try {
+    const sqlite = process.getBuiltinModule?.('node:sqlite') as typeof import('node:sqlite') | undefined;
+    if (sqlite === undefined) return null;
+    const probe = new sqlite.DatabaseSync(':memory:');
+    try { return String(probe.prepare('SELECT sqlite_version() AS version').get()?.version); }
+    finally { probe.close(); }
+  } catch {
+    return null;
+  }
+}
+
+function sqliteAtLeast(actual: string | null, floor: string): boolean {
+  const parts = (version: string) => /^(\d+)\.(\d+)\.(\d+)/.exec(version)?.slice(1).map(Number);
+  const current = actual === null ? undefined : parts(actual);
+  const required = parts(floor);
+  if (current === undefined || required === undefined) return false;
+  const difference = current[0] - required[0] || current[1] - required[1] || current[2] - required[2];
+  return difference >= 0;
+}
+
+// The order follows solarsql: the runtime's name, then the Node range, then the SQLite build.
+// A Node outside the range is refused before the probe, because older Node prints an
+// experimental warning to stderr when node:sqlite loads, and stderr carries only the JSON error.
+function runtimeRefusal(metadata: PackageMetadata, clauses: readonly NodeRangeClause[]): BootstrapError | undefined {
+  const actualNode = process.versions.node;
+  const other = otherRuntimes.find(([key]) => typeof process.versions[key] === 'string');
+  const runtime = other === undefined ? 'node' : other[0];
+  const runtimeVersion = other === undefined ? actualNode : String(process.versions[other[0]]);
+  const requirement = `polylinedb requires Node ${metadata.requiredNode} with node:sqlite on SQLite ${requiredSqlite} or later.`;
+  const refuse = (message: string, actualSqlite?: string | null): BootstrapError => ({
+    code: 'unsupported_runtime',
+    message,
+    details: {
+      actual_node: actualNode,
+      required_node: metadata.requiredNode,
+      package_version: metadata.version,
+      runtime,
+      runtime_version: runtimeVersion,
+      ...(actualSqlite === undefined ? {} : { actual_sqlite: actualSqlite }),
+      required_sqlite: requiredSqlite,
+    },
+  });
+  const sqliteText = (actualSqlite: string | null) => actualSqlite === null ? 'reports no SQLite version' : `runs SQLite ${actualSqlite}`;
+  if (other !== undefined) {
+    const actualSqlite = linkedSqliteVersion();
+    return refuse(`Unsupported runtime ${other[1]} ${runtimeVersion}, which reports Node ${actualNode} and whose node:sqlite ${sqliteText(actualSqlite)}. ${requirement} Run pd with Node.`, actualSqlite);
+  }
+  if (!supportsNode(actualNode, clauses)) {
+    return refuse(`Unsupported Node runtime ${actualNode}; required range is ${metadata.requiredNode}.`);
+  }
+  const actualSqlite = linkedSqliteVersion();
+  if (!sqliteAtLeast(actualSqlite, requiredSqlite)) {
+    return refuse(`Unsupported SQLite build: Node ${actualNode} ${sqliteText(actualSqlite)}. ${requirement} A Node build that links a system SQLite can do this; use an official Node build.`, actualSqlite);
+  }
+  return undefined;
+}
+
 function isVersionInquiry(args: readonly string[]): boolean {
   if (args.length === 1) return args[0] === '--version';
   return args.length === 2 && args.includes('--version') && args.includes('--json');
@@ -174,16 +246,9 @@ async function runBootstrap(): Promise<void> {
     return;
   }
 
-  if (!supportsNode(actualNode, clauses)) {
-    reportBootstrapError({
-      code: 'unsupported_runtime',
-      message: `Unsupported Node runtime ${actualNode}; required range is ${metadata.requiredNode}.`,
-      details: {
-        actual_node: actualNode,
-        required_node: metadata.requiredNode,
-        package_version: metadata.version,
-      },
-    });
+  const refusal = runtimeRefusal(metadata, clauses);
+  if (refusal !== undefined) {
+    reportBootstrapError(refusal);
     return;
   }
 

@@ -8,7 +8,8 @@ These are independent stores; polylinedb does not synchronize them.
 
 ## Start locally
 
-Use Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later.
+Use Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later, with its bundled SQLite 3.53.4 or later.
+The CLI refuses Bun, Deno, and a Node build that links an older system SQLite with `unsupported_runtime`.
 Install Git and keep it on PATH; the CLI uses it to resolve repository defaults safely.
 Install the CLI from npm:
 

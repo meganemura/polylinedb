@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+pd now refuses to run under Bun or Deno, or on a Node build whose SQLite is older than 3.53.4, and says which of these it found. Before, Bun got a message about its Node version only, and nothing checked the SQLite of a Node build. `pd --help` and `pd --version` still answer everywhere. Use an official Node.js 24.20 or later in the 24.x line, or 26.7 or later.
+
 The stale-write refusal now has an end-to-end scenario written in plain sentences: two people edit the same issue body, and the one who read the older version is refused while the first edit stays. It runs on every check.
 
 An issue can now keep a list of things its work created outside the repository, such as a preview database or a test Worker. Record each one with `pd resource add` before you create it, then mark it created, deleted, and finally verified deleted. Until every entry is verified deleted, closing the issue is refused and pd lists what is left. If you decide to keep something, close with `--resources-reason` and say why; the reason is saved as a comment. `pd resource live` shows every issue that still has something to clean up. Record names and IDs only, never passwords or tokens.
