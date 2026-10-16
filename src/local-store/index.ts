@@ -1,6 +1,6 @@
 // Owns local database paths and transactions; record rules belong to records.
 import { DatabaseSync } from 'node:sqlite';
-import { node } from 'solarsql/node';
+import { node, UnsupportedRuntimeError } from 'solarsql/node';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -24,7 +24,9 @@ function sqliteBusy(error: unknown): boolean {
   const errcode = error.errcode;
   return typeof errcode === 'number' && (errcode & 0xff) === 5;
 }
+// The CLI bootstrap refuses these runtimes first; a library caller of openStore reaches solarsql's check.
 function rethrow(error: unknown): never {
+  if (error instanceof UnsupportedRuntimeError) throw new PolylinedbError('unsupported_runtime', error.message, 500, { solarsql_code: error.code });
   if (sqliteBusy(error)) throw new PolylinedbError('store_busy', 'The local database is busy. Retry the command.', 503);
   throw error;
 }

@@ -136,7 +136,7 @@ Keep local evidence and article drafts outside the published artifact.
 
 The build emits JavaScript because Node does not strip TypeScript inside installed packages.
 See [Node TypeScript support](https://nodejs.org/api/typescript.html#type-stripping-in-dependencies).
-Consumers need Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later.
+Consumers need Node.js 24.20 or later in the 24.x line, or Node.js 26.7 or later, and its `node:sqlite` must run SQLite 3.53.4 or later.
 They do not need a compiler.
 Package inclusion follows npm's [files and bin settings](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/).
 
