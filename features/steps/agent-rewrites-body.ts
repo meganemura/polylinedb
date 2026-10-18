@@ -3,6 +3,8 @@ import { rewriteBody, rewriteResult } from './pd.ts';
 import createIssue from './create-issue.ts';
 import initLocalStore from './init-local-store.ts';
 
+// The command is the same as the other actor's except for the actor and the
+// text, so the only reason it can fail is the version it was decided on.
 export default defineStep({
   description: 'Runs the same `pd update --body --expect body=<version>` as local:agent, with the version it read before the other write.',
   pattern: "the agent rewrites the body at the same old version",
@@ -19,7 +21,6 @@ export default defineStep({
     bodyVersion: [createIssue, 'bodyVersion'],
   },
   mutates: true,
-  rationale: "The command is the same as the other actor's except for the actor and the text, so the only reason it can fail is the version it was decided on.",
   run({}, read) {
     return rewriteBody('local:agent', read);
   },

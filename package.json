@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test": "node scripts/test-node-runtime.mjs && node --import ./scripts/test-node-runtime.mjs --test test/*.test.ts",
-    "test:scenarios": "nuka check && nuka run features",
+    "test:scenarios": "nuka run",
     "start": "node src/cli.ts",
     "build:worker": "npm run check:sql && cf build",
     "dev:worker": "vite dev",
@@ -36,7 +36,7 @@
     "@stryker-mutator/tap-runner": "10.0.0",
     "@types/node": "24.19.0",
     "archstrict": "0.2.1",
-    "nukadoko": "0.14.0",
+    "nukadoko": "0.17.0",
     "stryker-agent-reporter": "0.2.0",
     "typescript": "7.0.2",
     "vite": "8.3.1"

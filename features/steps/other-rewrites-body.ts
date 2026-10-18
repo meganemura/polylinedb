@@ -3,6 +3,8 @@ import { rewriteBody, rewriteResult } from './pd.ts';
 import createIssue from './create-issue.ts';
 import initLocalStore from './init-local-store.ts';
 
+// The other actor writes first, at the version the agent also read, so its
+// write is accepted and moves the body to the next version.
 export default defineStep({
   description: 'Runs `pd --actor local:other update <id> --body <text> --expect body=<version>` with the version the agent read.',
   pattern: "another actor rewrites the issue's body at the version the agent read",
@@ -19,7 +21,6 @@ export default defineStep({
     bodyVersion: [createIssue, 'bodyVersion'],
   },
   mutates: true,
-  rationale: 'The other actor writes first, at the version the agent also read, so its write is accepted and moves the body to the next version.',
   run({}, read) {
     return rewriteBody('local:other', read);
   },

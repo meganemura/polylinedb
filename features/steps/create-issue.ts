@@ -2,6 +2,8 @@ import { defineStep, z } from 'nukadoko';
 import { pd } from './pd.ts';
 import initLocalStore from './init-local-store.ts';
 
+// The create response already carries the field versions, so it is the read
+// the agent decides on.
 export default defineStep({
   description: 'Runs `pd --actor local:agent create` and keeps the id and the body version the create returned.',
   pattern: 'an issue the agent created',
@@ -12,9 +14,8 @@ export default defineStep({
   }),
   from: { workDir: [initLocalStore, 'workDir'], dataDir: [initLocalStore, 'dataDir'] },
   mutates: true,
-  rationale: 'The create response already carries the field versions, so it is the read the agent decides on.',
-  run({}, store) {
-    const { exitCode, output } = pd(
+  async run({}, store) {
+    const { exitCode, output } = await pd(
       ['--actor', 'local:agent', 'create', '--tool', 'app', '--project', 'demo', '--body', 'Handle empty input'],
       store,
     );
