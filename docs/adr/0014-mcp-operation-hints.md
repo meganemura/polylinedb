@@ -43,7 +43,7 @@ A repeat with the same UUID and a different actor or payload fails with `request
 The store keeps every receipt, and snapshots carry the receipts to a restored store.
 So these operations advertise `idempotentHint: true`.
 
-**Version checks.** `update`, `close`, `reopen`, `memory_update`, and `memory_delete` require the version that the caller observed.
+**Version checks.** `update`, `close`, `reopen`, `comment_edit`, `memory_update`, and `memory_delete` require the version that the caller observed.
 A successful write increments the version, or it deletes the memory.
 Versions only increase, and the store does not reuse a memory ID.
 So a repeat with the same arguments fails with a conflict or `not_found`, and it writes nothing.
@@ -62,10 +62,11 @@ The hint promises only that a repeat adds nothing to a call that the store accep
 **Comments.** `comment` has no request UUID and no version check.
 Each call appends a new comment, so `comment` advertises `idempotentHint: false`.
 It is the only mutation that a repeat can duplicate.
+`comment_edit` replaces a comment body under a version check, so it advertises `idempotentHint: true`.
 After an uncertain comment result, read the issue before you decide whether to comment again.
 
 **Destructive updates.** A mutation advertises `destructiveHint: true` when it can remove or replace current state that other callers read.
-Issue field writes, memory edits, prerequisite removal, and claim release do this.
+Issue field writes, comment edits, memory edits, prerequisite removal, and claim release do this.
 Creation, comments, prerequisite addition, claim acquisition, and claim renewal add records or extend the caller's own lease, so they advertise `destructiveHint: false`.
 Claim acquisition succeeds only when the issue has no active lease, so it does not take ownership from another session.
 

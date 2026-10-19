@@ -63,7 +63,7 @@ If `open_blockers` is non-empty and the claim was meant to start work, release i
 It also returns `previous_lease`: the lease that expired without a release just before this acquisition, or `null`.
 A non-null `previous_lease` means its holder may still be running. Before starting, read the issue comments and look for a pushed `work/<issue id>` branch, and continue from what they hold instead of starting over or pushing over that branch.
 For an agent actor, `claim_acquire` rejects an issue without the `ready` label with `not_ready`.
-The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.
+The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `comment_edit`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.
 The store checks both rules in the same transaction as the write. A recommendation never overrides a rejection.
 A cloud connector reports a human actor until per-agent tokens exist and does not enforce these gates, so refetch `ready` after acquisition there.
 Start work only after successful acquisition and a fresh readiness check.
@@ -135,6 +135,9 @@ Never repeat a successful push merely because a later write failed.
 
 Append the changed paths, commit SHAs, and verification result with `comment`.
 After an uncertain comment response, read the comments before appending again.
+To correct a comment that you wrote, read its `version` with `show`, then call `comment_edit` with `id`, `comment_id`, `body`, and that version as `expected`.
+Only the author can edit a comment. A `comment_conflict` means that the comment changed: read it again before you decide on a new edit.
+The store does not keep the old text, but earlier snapshots and backups still hold it.
 After an enqueue, leave the issue open and release the claim as the polylinedb-queue skill describes.
 Whoever lands `queue` onto main closes the issue with `close`, a current claim proof, and the observed status version.
 Read the current claim revision and call `claim_release` with the issue proof and a retained request UUID.

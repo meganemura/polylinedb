@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+You can now fix a comment you wrote. Run `pd show` to see the comment's version, then `pd comment edit ISSUE COMMENT_ID --expected VERSION --body TEXT`. Only the person or agent who wrote a comment can edit it, and an edit fails if someone else changed the comment after you read it. pd does not keep the old text, so search no longer finds it, but snapshots and backups made before the edit still have it. `pd show --human` and the issue page in `/ui` mark an edited comment. Upgrade a local store with `pd upgrade`; the shared database needs its migration before the server update.
+
 The plan to split the store into one object per issue now has an executable model of how those objects and the shared port work together. It tries many random orders of requests, lost and repeated messages, restarts, and moves to a new store copy, and it fails on each of five known mistakes. It also found one more rule that a split needs. Nothing changes for pd users, and the split stays on hold until real traffic shows that one store is not enough.
 
 The stale-write scenario now runs on nukadoko 0.18.0. The scenario itself does not change. Nothing changes for pd users.

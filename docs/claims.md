@@ -218,7 +218,7 @@ An agent reads the ready worklist only through the `ready` label, so `pd ready` 
 The ready worklist leaves out owner waits (`owner-decision`, `owner-action`) for every actor; see [owner waits](prerequisites.md#owner-waits). The claim gate itself checks only the `ready` label.
 
 An agent needs its own active claim before it changes an issue.
-The rule covers `update`, `close`, `reopen`, `comment`, and prerequisite edits where the issue is the dependent.
+The rule covers `update`, `close`, `reopen`, `comment`, `comment_edit`, and prerequisite edits where the issue is the dependent.
 Without that claim, the write fails with `claim_required` and changes nothing.
 When the agent's own lease has expired, that error says `The agent's own claim expired`, and `details.claim` reports `state`, `generation`, and `expires_at` next to `id`.
 The store checks the claim and the `ready` label inside the same transaction as the write, so a release, an expiry, or a label removal just before the write cannot let it land.

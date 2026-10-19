@@ -66,6 +66,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `list` | Optional filters; optional `with_land_order: true` | `{ "issues": [...], "next_cursor": ... }`; with `with_land_order`, also `"land_order": [...]`, one entry per issue in the same order |
 | `search` | `query`, optional filters, optional `with_matches: true` | Same as list; with `with_matches`, also `"matches": [...]` |
 | `comment` | `id`, `body` | `{ "comment": ... }` |
+| `comment_edit` | `id`, `comment_id`, `body`, `expected` comment version | `{ "comment": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
 | `close` | `id`, `expected` status version; optional `resources_reason` | `{ "issue": ... }` |
 | `reopen` | `id`, `expected` status version | `{ "issue": ... }` |
@@ -101,6 +102,7 @@ The reason becomes an attributed comment in the successful status transaction. O
 Schema 7 adds the [change feed](#change-feed) and keeps every operation result unchanged.
 Schema 8 adds `closed_at` and `closed_by` to issues in local results and MCP.
 Schema 9 adds land order, external resources, and the optional change feed field `relation`; default results keep their shapes.
+Schema 10 adds [comment edits](#comment-edits). Every comment in a result has `version`, `updated_at`, and `updated_by`.
 Version 0.3.0 uses schema 6 and adds issue ownership while retaining all seven ordinary issue fields.
 Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
@@ -232,6 +234,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `updated` | `update` writes fields other than `status`, or `resource_add` or `resource_update` commits an entry change |
 | `status_changed` | `update`, `close`, or `reopen` writes `status`; `fields` includes `status` |
 | `commented` | `comment` appends a comment, or a forced status change appends its reason |
+| `comment_edited` | `comment_edit` replaces the body of a comment; `fields` is `[]` |
 | `claim_acquired` | `claim_acquire` commits a receipt |
 | `claim_released` | `claim_release` or `claim_handoff` commits a release receipt |
 | `dependency_added` | `dependency_add` or `land_order_add` inserts an edge |
@@ -270,7 +273,7 @@ Filters narrow a page, and every supplied filter must match:
 
 - `project` matches the current project of the issue. Events do not copy issue fields, so an issue that moves to another project matches the new project, earlier events included.
 - `issue_ids` lists 1 through 50 complete issue IDs without repeats.
-- `kinds` lists 1 through 9 kinds without repeats.
+- `kinds` lists 1 through 10 kinds without repeats.
 
 The store keeps the newest 10,000 events.
 Each new event beyond that removes the oldest one.
@@ -381,6 +384,59 @@ Comments append independently and leave issue versions and update metadata uncha
 Comment requests have no idempotency key.
 After an uncertain comment result, inspect the store before deciding whether to repeat it.
 
+## Comment edits
+
+`comment_edit` replaces the body of one comment.
+Only the author of the comment can edit it: the actor of the request must be the `created_by` value of the comment.
+The [comment edit decision](adr/0022-comment-edits.md) records the design and its alternatives.
+
+Every comment has a `version`. It starts at 1, and each accepted edit adds 1.
+Read the comment with `show`, then send that version as `expected`:
+
+```json
+{ "op": "comment_edit", "id": "pd-42", "comment_id": "4f0c…", "body": "Reproduced on the editor too.", "expected": 1 }
+```
+
+The body has the same limits as `comment`.
+The result is `{ "comment": ... }` with the new body and version.
+`updated_at` and `updated_by` are `null` until the first edit. After an edit, they give the time of the last edit and its actor, who is always the author.
+Two writers that send the same `expected` value produce one accepted edit and one `comment_conflict`.
+After a conflict, read the comment again before you decide on a new edit.
+A repeated edit with the same arguments gets `comment_conflict`, because the first edit already changed the version.
+
+An edit leaves the issue fields, the field versions, and the issue `updated_at` unchanged.
+It records one `comment_edited` event in the [change feed](#change-feed).
+An agent caller needs its own active claim on the issue, as for `comment`.
+`comment_edit` also accepts `observed_memory_revision`, as `comment` does.
+
+The store does not keep the old body.
+`search` finds the new text and not the old text after the edit.
+Copies made before the edit still hold the old text: snapshots, D1 Time Travel, and other backups.
+To remove text from those copies, remove or replace each copy.
+
+| Code | Status | Cause | `details` |
+| --- | --- | --- | --- |
+| `not_found` | 404 | The issue does not exist | `id` |
+| `comment_not_found` | 404 | The issue has no comment with `comment_id` | `id`, `comment_id` |
+| `comment_author_required` | 403 | The actor did not write the comment | `id`, `comment_id` |
+| `claim_required` | 409 | An agent caller holds no active claim on the issue | `id` |
+| `comment_conflict` | 409 | `expected` is not the current version | `comment` (the current comment), `expected` |
+| `comment_version_exhausted` | 409 | The version is at JavaScript's maximum safe integer | `comment` |
+
+`comment_author_required` details name the comment and do not contain its body.
+
+The CLI command takes the issue ID, the comment ID, and `--expected`, with `--body` or `--body-file`.
+A numeric issue ID uses the selected prefix.
+`comment_not_found` exits with code 3, the two 409 errors exit with code 4, and `comment_author_required` exits with code 1.
+
+```sh
+pd comment edit pd-42 4f0c… --expected 1 --body 'Reproduced on the editor too.'
+pd comment edit 42 4f0c… --expected 2 --body-file note.md
+```
+
+`pd show --human` prints ` · version N` after each comment heading, and ` · edited TIME by ACTOR` after an edited one.
+The web view marks an edited comment with its edit time. It has no edit control.
+
 ## Transport errors
 
 HTTP errors use `{ "error": { "code": ..., "message": ..., "details": ... } }`.
@@ -436,7 +492,7 @@ It also must not send a new discriminator value, a new success shape, or details
 The client rejects each of these.
 Version 0.4.0 accepts unknown response fields. The CLI 0.3.1 and earlier reject every field that they do not know, so a Worker change that adds a field still breaks those releases.
 
-Six fields are optional so that the client works with Workers on both sides of a change:
+These fields are optional so that the client works with Workers on both sides of a change:
 
 - `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
 - `open_blockers` in `claim_acquire`. When the Worker sends it, it must be an array of issue IDs in issue order that does not contain the claimed issue, and the client includes that array. When the Worker omits it, the result has no `open_blockers` key.
@@ -445,7 +501,11 @@ Six fields are optional so that the client works with Workers on both sides of a
 - `land_order_warnings` in `claim_handoff`. When a Worker omits it, the result has no `land_order_warnings` key. When the Worker sends it, each entry must name another issue whose status is not `closed`, in issue order.
 - `expired_noop` in `claim_release`. `pd claim release` sends `expired_noop: true`. A Worker that knows the field answers `{ "released": false, "current": ... }` for the caller's expired lease, and answers `claim_conflict` when the request omits the field. The client accepts that shape when `current` is the expired lease that the proof names, including a response to a request that omitted the field. A Worker that does not know the field answers `invalid_input`, and only the error message names the field. Nothing is written, so the client sends the release once more with the same request UUID and without the field. An older Worker answers `claim_conflict` for an expired lease. A Worker that answers the no-op for that plain release is decoded as `released: false`.
 
+- `version`, `updated_at`, and `updated_by` on a comment. A Worker that predates comment edits omits all three, and the comment then has none of them. The client rejects a comment that has only some of them, a `version` 1 comment with an editor, and an edited comment whose editor is not its author.
+
 A Worker that predates `resources_reason` or the resource operations answers `invalid_input`. The client does not retry without `resources_reason`, because that Worker would close without recording the reason. It reports that the Worker needs an update instead.
+A Worker that predates `comment_edit` also answers `invalid_input`. The client reports that the Worker needs an update and does not send the edit again.
+For `comment_edit`, the result and the `comment_conflict` and `comment_version_exhausted` details must echo the requested issue ID and comment ID. The result must also carry the requested body and the version after `expected`, and the `comment_not_found` and `comment_author_required` details must echo both IDs.
 
 ## Local repository defaults
 
@@ -491,17 +551,20 @@ The Worker API does not expose them, and the CLI does not synchronize SQLite wit
 Schema 7 adds the change feed and keeps portable snapshot 5. A snapshot carries no change events.
 Schema 8 records who closed an issue and when, and portable snapshot 6 carries `closed_at` and `closed_by` on every issue.
 Schema 9 adds land order, and portable snapshot 7 carries `land_order`, `land_order_revisions`, `land_order_requests`, `issue_resources`, `resource_revisions`, and `resource_requests`.
+Schema 10 adds comment edits, and portable snapshot 8 carries `version`, `updated_at`, and `updated_by` on every comment.
 Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, or 8 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, 8, or 9 store after making a private backup.
 An upgrade from schema 2 through 6 starts with an empty change feed.
 Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
 An upgrade adds no land-order edges and no resource entries.
-After the upgrade, an installed CLI that predates schema 9 refuses the store, because it requires its own schema version.
+An upgrade gives each existing comment version 1 with a null `updated_at` and `updated_by`. The upgrade from schema 9 keeps every change event with its `seq`, so a cursor that a reader holds stays valid.
+After the upgrade, an installed CLI that predates schema 10 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3, v4, v5, or v6 snapshot, use `--from 3`, `--from 4`, `--from 5`, or `--from 6` instead.
+For a v3, v4, v5, v6, or v7 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, or `--from 7` instead.
+The conversion from v7 gives each comment version 1 with a null `updated_at` and `updated_by`. Import also accepts a v7 snapshot only after this conversion.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.
