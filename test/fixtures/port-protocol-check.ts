@@ -3,8 +3,8 @@
 import { AssertionError } from 'node:assert/strict';
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
-import { enabled, initialWorld, sequenceName, step } from './port-protocol.ts';
-import type { Action, ActionKind, Authority, Close, EventTag, Fact, Incarnation, IssueId, Issued, Message, ObjectName, RequestKey, Rules, World } from './port-protocol.ts';
+import { enabled, initialWorld, routed, sequenceName, step } from './port-protocol.ts';
+import type { Action, ActionKind, Authority, Close, EventTag, Fact, Incarnation, IssueId, Issued, Message, ObjectName, RequestKey, Route, Rules, World } from './port-protocol.ts';
 
 export type Reliance =
   | { kind: 'mirror'; seq: number }
@@ -19,7 +19,7 @@ export type Violation =
 export function authorityOf(world: World, issue: IssueId): Authority | null {
   for (let incarnation = Number(world.current.slice(1)); incarnation >= 0; incarnation--) {
     const authority = world.objects.get(`s${incarnation}:${issue}`);
-    if (authority) return authority;
+    if (authority && !authority.durable.retired) return authority;
   }
   return null;
 }
@@ -79,13 +79,16 @@ export function report(step: number, found: readonly Violation[], trace: readonl
   return [...found.map(violation => headline(step, violation)), 'trace:', ...trace].join('\n');
 }
 
-export type ExploreOptions = { cases: number; seed: number; steps: number };
+// Hegel keys a stored example by the test function's source, which every explore call shares,
+// so each caller names its own database and one injection's failure never replays in another.
+export type ExploreOptions = { cases: number; seed: number; steps: number; database: string };
 export type Tally = Map<EventTag, number>;
 
 // Weights pick the action kind; every action of that kind is then equally likely. idle comes first in the
 // weighted list, so choice 0 means idle and Hegel shrinks an unneeded step to a line the report does not print.
 export const weights: Record<ActionKind, number> = {
   idle: 1, request: 8, deliver: 20, finish: 2, reset: 1, 'age-out': 1, create: 1, 'add-edge': 1,
+  rotate: 1, 'settle-routing': 1, materialize: 1,
 };
 
 export function schedule(world: World, choice: readonly [number, number]): Action {
@@ -113,7 +116,7 @@ export function explore(rules: Rules, options: ExploreOptions): Tally {
       const found = violations(world);
       if (found.length > 0) throw new AssertionError({ message: report(world.step, found, trace) });
     }
-  }, { testCases: options.cases, seed: options.seed, database: hegel.Database.fromPath('.hegel') });
+  }, { testCases: options.cases, seed: options.seed, database: hegel.Database.fromPath(options.database) });
   return tally;
 }
 
@@ -127,7 +130,7 @@ function describeMessage(message: Message): string {
 export function describe(action: Action, world: World): string {
   switch (action.kind) {
     case 'idle': return 'idle';
-    case 'request': return `request ${action.issue} ${action.ask.kind === 'flip' ? `flip ${action.ask.fact}` : `acquire ${action.ask.request}`} via ${world.current}`;
+    case 'request': return `request ${action.issue} ${action.ask.kind === 'flip' ? `flip ${action.ask.fact}` : `acquire ${action.ask.request}`} ${via(world, action.route)}`;
     case 'deliver': {
       if (action.item.kind === 'row') return `deliver ${action.item.object} row ${action.item.seq}, ack ${action.fate === 'delivered' ? 'received' : 'lost'}`;
       const verb = action.fate === 'lost' ? 'lose' : action.fate === 'duplicated' ? 'deliver a copy of' : 'deliver';
@@ -137,7 +140,12 @@ export function describe(action: Action, world: World): string {
     case 'finish': return `finish ${action.object}`;
     case 'reset': return `reset ${action.object}`;
     case 'age-out': return `age-out ${action.port} ${action.issue} seq ${action.seq}`;
-    case 'create': return `create ${action.request}${action.parent ? ` under ${action.parent}` : ''} as ${action.epic ? 'epic' : 'task'} via ${world.current}, init ${action.init}`;
-    case 'add-edge': return `add edge ${action.dependent} -> ${action.blocker} via ${world.current}`;
+    case 'create': return `create ${action.request}${action.parent ? ` under ${action.parent}` : ''} as ${action.epic ? 'epic' : 'task'} ${via(world, action.route)}, init ${action.init}`;
+    case 'add-edge': return `add edge ${action.dependent} -> ${action.blocker} ${via(world, action.route)}`;
+    case 'rotate': return 'rotate';
+    case 'settle-routing': return 'settle routing';
+    case 'materialize': return `materialize ${action.issue}`;
   }
 }
+
+const via = (world: World, route: Route): string => `via ${routed(world, route)}${world.stale ? ` (${route})` : ''}`;

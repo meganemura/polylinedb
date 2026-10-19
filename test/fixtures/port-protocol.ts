@@ -28,10 +28,11 @@ const guarded = (change: Change): boolean => change.kind === 'fact' && change.fa
 export type Row = { issue: IssueId; seq: number; nonce: Nonce; end: 'commit' | 'abort'; facts: Facts; claim: ClaimRequest | null };
 export type Marker = { seq: number; nonce: Nonce; change: Change };
 
-// A reset keeps Durable and loses Volatile, so neither can lose or carry the wrong half.
+// A reset keeps Durable and loses Volatile, and a pull copies Durable, so neither can lose or carry the wrong half.
 export type Durable = {
   facts: Facts; seq: number; marker: Marker | null; ended: Map<number, Row>; outbox: Row[];
   claims: Map<ClaimRequest, ReceiptUid>;
+  retired: boolean;
 };
 export type Verdict = 'admitted' | 'refused';
 export type Handler = { seq: number; nonce: Nonce };
@@ -45,12 +46,14 @@ export type Reservation =
   | { state: 'open'; issue: IssueId; seq: number; nonce: Nonce }
   | { state: 'bound'; issue: IssueId; seq: number }
   | { state: 'released' };
+// incarnation names where the issue's authority lives, or will be made. Only creation and a pull write it (rule 7).
 export type CreationReceipt = {
   request: CreationRequest; issue: IssueId; parent: IssueId | null; facts: Facts;
   incarnation: Incarnation; uid: ReceiptUid;
 };
 export type Port = {
   incarnation: Incarnation;
+  successor: Incarnation | null;
   mirror: Map<IssueId, Mirror>;
   admissions: Admission[];
   blockers: Map<IssueId, Set<IssueId>>;
@@ -71,6 +74,9 @@ export type Close = { issue: IssueId; by: ObjectName; seq: number; step: number 
 export type World = {
   step: number;
   current: Incarnation;
+  // A Worker instance that still routes by the previous incarnation, until settle-routing.
+  stale: Incarnation | null;
+  rotations: number;
   ports: Map<Incarnation, Port>;
   objects: Map<ObjectName, Authority>;
   network: Message[];
@@ -83,32 +89,40 @@ export type World = {
   closes: Close[];
 };
 
+export type Route = 'current' | 'stale';
 export type Ask = { kind: 'flip'; fact: Fact } | { kind: 'acquire'; request: ClaimRequest };
 // A row stays in its sender's outbox until an ack arrives, so a delivered row is acked or repeated, never lost.
 export type InFlight = { kind: 'message'; id: number } | { kind: 'row'; object: ObjectName; seq: number };
 export type Fate = 'delivered' | 'duplicated' | 'lost';
 export type Action =
   | { kind: 'idle' }
-  | { kind: 'request'; issue: IssueId; ask: Ask }
+  | { kind: 'request'; issue: IssueId; ask: Ask; route: Route }
   | { kind: 'deliver'; item: InFlight; fate: Fate }
   | { kind: 'finish'; object: ObjectName }
   | { kind: 'reset'; object: ObjectName }
   | { kind: 'age-out'; port: Incarnation; issue: IssueId; seq: number }
-  | { kind: 'create'; request: CreationRequest; parent: IssueId | null; epic: boolean; init: 'delivered' | 'lost' }
-  | { kind: 'add-edge'; dependent: IssueId; blocker: IssueId };
+  | { kind: 'create'; request: CreationRequest; parent: IssueId | null; epic: boolean; route: Route; init: 'delivered' | 'lost' }
+  | { kind: 'add-edge'; dependent: IssueId; blocker: IssueId; route: Route }
+  | { kind: 'rotate' }
+  | { kind: 'settle-routing' }
+  | { kind: 'materialize'; issue: IssueId };
 export type ActionKind = Action['kind'];
 
 export const eventTags = [
   'idle', 'requested', 'replayed', 'refused-busy', 'aborted-after-reset',
-  'admitted', 'readmitted', 'refused-blocked', 'refused-pinned', 'refused-children', 'refused-reserved', 'refused-unknown',
+  'admitted', 'readmitted', 'refused-blocked', 'refused-pinned', 'refused-children', 'refused-reserved',
+  'refused-rotated', 'refused-retired', 'refused-unknown',
   'answer-dropped', 'lost',
   'committed', 'aborted-refused', 'aborted-lost-reply', 'dropped', 'reset',
   'row-applied', 'row-stale', 'row-below-floor', 'reservation-bound', 'reservation-released', 'reservation-kept',
   'resolve-abort', 'resolve-reemit', 'resolve-unknown',
-  'created', 'creation-replayed', 'creation-refused', 'created-from-receipt', 'edge-added', 'edge-refused',
+  'created', 'creation-replayed', 'creation-refused', 'edge-added', 'edge-refused',
+  'rotated', 'routing-settled', 'pulled', 'created-from-receipt', 'tombstoned',
 ] as const;
 export type EventTag = typeof eventTags[number];
 export type Event = { tag: EventTag; detail: string };
+
+export type Origin = { from: 'receipt' } | { from: 'pull'; incarnation: Incarnation };
 
 // The defect switch. Each member is the one decision a mechanism turns on; a defect replaces exactly one member.
 export type Rules = {
@@ -120,26 +134,34 @@ export type Rules = {
   holdsAnswer(port: Port, dependent: IssueId): boolean;
   // Mechanism 2, rule 5: what an abort row does to the reservation of its claim request ID.
   afterAbort(reservation: Reservation, abort: Row): Reservation;
+  // Mechanism 3, rule 6: whether a port admits anything. A rotation gives the old port a successor.
+  admits(port: Port): boolean;
+  // Mechanism 4, rule 7: where an empty object gets its authority, given the receipt that names its home.
+  origin(receipt: CreationReceipt, object: Incarnation): Origin;
 };
 
 export const protocolRules: Rules = {
   order: change => restrictive(change) ? 'port-first' : 'authority-first',
   holdsAnswer: (port, dependent) => port.admissions.some(admission => admission.issue === dependent && admission.guarded),
   afterAbort: (reservation, abort) => reservation.state === 'open' && reservation.nonce === abort.nonce ? { state: 'released' } : reservation,
+  admits: port => port.successor === null,
+  origin: (receipt, object) => receipt.incarnation === object ? { from: 'receipt' } : { from: 'pull', incarnation: receipt.incarnation },
 };
 
 // i1 is a closed task that holds claim receipt c1. i2 and i3 depend on i1. i3 is an epic.
+// i1's creation receipt still says open, so an authority made from it after a rotation is wrong.
+// i2's init was lost, so its first touch makes its authority, and after a rotation that touch leaves a tombstone.
 export const seedScript: readonly Action[] = [
-  { kind: 'create', request: 'k1', parent: null, epic: false, init: 'delivered' },
-  { kind: 'create', request: 'k2', parent: null, epic: false, init: 'delivered' },
-  { kind: 'create', request: 'k3', parent: null, epic: true, init: 'delivered' },
-  { kind: 'add-edge', dependent: 'i2', blocker: 'i1' },
-  { kind: 'add-edge', dependent: 'i3', blocker: 'i1' },
-  { kind: 'request', issue: 'i1', ask: { kind: 'acquire', request: 'c1' } },
+  { kind: 'create', request: 'k1', parent: null, epic: false, route: 'current', init: 'delivered' },
+  { kind: 'create', request: 'k2', parent: null, epic: false, route: 'current', init: 'lost' },
+  { kind: 'create', request: 'k3', parent: null, epic: true, route: 'current', init: 'delivered' },
+  { kind: 'add-edge', dependent: 'i2', blocker: 'i1', route: 'current' },
+  { kind: 'add-edge', dependent: 'i3', blocker: 'i1', route: 'current' },
+  { kind: 'request', issue: 'i1', ask: { kind: 'acquire', request: 'c1' }, route: 'current' },
   { kind: 'deliver', item: { kind: 'message', id: 1 }, fate: 'delivered' },
   { kind: 'deliver', item: { kind: 'message', id: 2 }, fate: 'delivered' },
   { kind: 'deliver', item: { kind: 'row', object: 's0:i1', seq: 1 }, fate: 'delivered' },
-  { kind: 'request', issue: 'i1', ask: { kind: 'flip', fact: 'closed' } },
+  { kind: 'request', issue: 'i1', ask: { kind: 'flip', fact: 'closed' }, route: 'current' },
   { kind: 'deliver', item: { kind: 'message', id: 3 }, fate: 'delivered' },
   { kind: 'deliver', item: { kind: 'message', id: 4 }, fate: 'delivered' },
   { kind: 'deliver', item: { kind: 'row', object: 's0:i1', seq: 2 }, fate: 'delivered' },
@@ -147,12 +169,12 @@ export const seedScript: readonly Action[] = [
 
 export function initialWorld(): World {
   const port: Port = {
-    incarnation: 's0', mirror: new Map(), admissions: [], blockers: new Map(), parent: new Map(), counter: 0,
+    incarnation: 's0', successor: null, mirror: new Map(), admissions: [], blockers: new Map(), parent: new Map(), counter: 0,
     receipts: new Map(), reservations: new Map(),
   };
   const world: World = {
-    step: 0, current: 's0', ports: new Map([['s0', port]]), objects: new Map(), network: [], sent: 0, nonces: 0,
-    uids: 0, issued: new Map(), closes: [],
+    step: 0, current: 's0', stale: null, rotations: 0, ports: new Map([['s0', port]]), objects: new Map(), network: [],
+    sent: 0, nonces: 0, uids: 0, issued: new Map(), closes: [],
   };
   for (const action of seedScript) step(world, action, protocolRules);
   world.step = 0;
@@ -171,8 +193,9 @@ const rowFates: readonly Fate[] = ['delivered', 'duplicated'];
 export function enabled(world: World): Action[] {
   const port = currentPort(world);
   const issues = [...port.mirror.keys()];
+  const routes: Route[] = world.stale ? ['current', 'stale'] : ['current'];
   const actions: Action[] = [{ kind: 'idle' }];
-  for (const issue of issues) for (const ask of asks) actions.push({ kind: 'request', issue, ask });
+  for (const issue of issues) for (const ask of asks) for (const route of routes) actions.push({ kind: 'request', issue, ask, route });
   for (const message of world.network) for (const fate of messageFates) actions.push({ kind: 'deliver', item: { kind: 'message', id: message.id }, fate });
   for (const authority of world.objects.values()) {
     for (const row of authority.durable.outbox) for (const fate of rowFates) actions.push({ kind: 'deliver', item: { kind: 'row', object: authority.name, seq: row.seq }, fate });
@@ -180,13 +203,19 @@ export function enabled(world: World): Action[] {
   for (const authority of world.objects.values()) {
     if (authority.volatile.handler) actions.push({ kind: 'finish', object: authority.name }, { kind: 'reset', object: authority.name });
   }
-  for (const admission of port.admissions) actions.push({ kind: 'age-out', port: port.incarnation, issue: admission.issue, seq: admission.seq });
+  for (const aging of world.stale ? [port, world.ports.get(world.stale)!] : [port]) {
+    for (const admission of aging.admissions) actions.push({ kind: 'age-out', port: aging.incarnation, issue: admission.issue, seq: admission.seq });
+  }
   for (const request of ['n1', 'n2'] as const) for (const parent of [null, ...issues]) for (const epic of [false, true]) {
-    for (const init of ['delivered', 'lost'] as const) actions.push({ kind: 'create', request, parent, epic, init });
+    for (const route of routes) for (const init of ['delivered', 'lost'] as const) actions.push({ kind: 'create', request, parent, epic, route, init });
   }
   for (const dependent of issues) for (const blocker of issues) {
-    if (dependent !== blocker && !port.blockers.get(dependent)?.has(blocker)) actions.push({ kind: 'add-edge', dependent, blocker });
+    if (dependent === blocker || port.blockers.get(dependent)?.has(blocker)) continue;
+    for (const route of routes) actions.push({ kind: 'add-edge', dependent, blocker, route });
   }
+  if (world.rotations < 2 && !world.stale) actions.push({ kind: 'rotate' });
+  if (world.stale) actions.push({ kind: 'settle-routing' });
+  for (const issue of issues) if (!world.objects.has(`${world.current}:${issue}`)) actions.push({ kind: 'materialize', issue });
   return actions;
 }
 
@@ -196,13 +225,19 @@ export function step(world: World, action: Action, rules: Rules): Event[] {
   if (action.kind === 'idle') return [event('idle', '')];
   world.step += 1;
   switch (action.kind) {
-    case 'request': return request(world, action);
+    case 'request': return request(world, action, rules);
     case 'deliver': return deliver(world, action, rules);
     case 'finish': return [finish(world, object(world, action.object))];
     case 'reset': object(world, action.object).volatile.handler = null; return [event('reset', 'the handler is lost; the marker stays')];
-    case 'age-out': return ageOut(world, action);
-    case 'create': return create(world, action);
+    case 'age-out': return ageOut(world, action, rules);
+    case 'create': return create(world, action, rules);
     case 'add-edge': return addEdge(world, action, rules);
+    case 'rotate': return [rotate(world)];
+    case 'settle-routing': world.stale = null; return [event('routing-settled', `every Worker instance routes by ${world.current}`)];
+    case 'materialize': {
+      const touched = touch(world, world.current, action.issue, rules);
+      return 'refused' in touched ? [touched.refused] : touched.events;
+    }
   }
 }
 
@@ -214,6 +249,9 @@ const currentPort = (world: World): Port => world.ports.get(world.current)!;
 const object = (world: World, name: ObjectName): Authority => world.objects.get(name)!;
 const incarnationOf = (name: ObjectName): Incarnation => name.split(':')[0] as Incarnation;
 const issueOf = (name: ObjectName): IssueId => name.split(':')[1] as IssueId;
+export const routed = (world: World, route: Route): Incarnation => route === 'current' ? world.current : world.stale!;
+const rotatedBy = (port: Port): string => port.successor ? ' by a rotated port' : '';
+const rotatedAway = (port: Port): string => `port ${port.incarnation} was rotated to ${port.successor}`;
 
 export function sequenceName(change: Change, issue: IssueId, seq: number): string {
   if (change.kind === 'claim') return `claim ${change.request} by ${issue} seq ${seq}`;
@@ -226,8 +264,8 @@ function send(world: World, message: Unsent): void {
   world.network.push({ ...message, id: ++world.sent });
 }
 
-function request(world: World, action: Extract<Action, { kind: 'request' }>): Event[] {
-  const touched = touch(world, world.current, action.issue);
+function request(world: World, action: Extract<Action, { kind: 'request' }>, rules: Rules): Event[] {
+  const touched = touch(world, routed(world, action.route), action.issue, rules);
   if ('refused' in touched) return [touched.refused];
   const { authority, events } = touched;
   const { durable, volatile } = authority;
@@ -266,6 +304,7 @@ function deliver(world: World, action: Extract<Action, { kind: 'deliver' }>, rul
 function admit(port: Port, issue: IssueId, marker: Marker, rules: Rules): Answer {
   const { change, seq, nonce } = marker;
   const name = sequenceName(change, issue, seq);
+  if (!rules.admits(port)) return { verdict: 'refused', tag: 'refused-rotated', detail: `${name} refused, ${rotatedAway(port)}` };
   const mirror = port.mirror.get(issue);
   if (!mirror) return { verdict: 'refused', tag: 'refused-unknown', detail: `${name} refused, port ${port.incarnation} has no ${issue}` };
   if (port.admissions.some(admission => admission.issue === issue && admission.seq === seq && admission.nonce === nonce)) {
@@ -277,7 +316,7 @@ function admit(port: Port, issue: IssueId, marker: Marker, rules: Rules): Answer
     if (reservation.state === 'open') return { verdict: 'refused', tag: 'refused-reserved', detail: `${name} refused, ${change.request} is open for ${reservation.issue} seq ${reservation.seq}` };
     port.reservations.set(change.request, { state: 'open', issue, seq, nonce });
     port.admissions.push({ issue, seq, nonce, guarded: false });
-    return { verdict: 'admitted', tag: 'admitted', detail: `${name} admitted` };
+    return { verdict: 'admitted', tag: 'admitted', detail: `${name} admitted${rotatedBy(port)}` };
   }
   if (guarded(change)) {
     const open = [...port.blockers.get(issue) ?? []].find(blocker => !port.mirror.get(blocker)?.facts.closed);
@@ -298,7 +337,7 @@ function admit(port: Port, issue: IssueId, marker: Marker, rules: Rules): Answer
     mirror.facts[change.fact] = change.to;
     mirror.floor[change.fact] = Math.max(mirror.floor[change.fact], seq);
   }
-  return { verdict: 'admitted', tag: 'admitted', detail: `${name} admitted (${order === 'port-first' ? 'port first' : 'authority first'})` };
+  return { verdict: 'admitted', tag: 'admitted', detail: `${name} admitted${rotatedBy(port)} (${order === 'port-first' ? 'port first' : 'authority first'})` };
 }
 
 // The waiting handler resumes on its answer; a reset lost the handler, and then the answer reaches nobody.
@@ -387,10 +426,10 @@ function applyClaim(port: Port, row: Row, request: ClaimRequest, rules: Rules): 
     : event('reservation-released', `reservation ${request} ${was} -> released`);
 }
 
-function ageOut(world: World, action: Extract<Action, { kind: 'age-out' }>): Event[] {
+function ageOut(world: World, action: Extract<Action, { kind: 'age-out' }>, rules: Rules): Event[] {
   const admission = world.ports.get(action.port)!.admissions.find(open => open.issue === action.issue && open.seq === action.seq)!;
   // Rule 4: the port asks the authority to resolve and never reads and replaces a fact itself.
-  const touched = touch(world, action.port, action.issue);
+  const touched = touch(world, action.port, action.issue, rules);
   if ('refused' in touched) return [touched.refused];
   return [...touched.events, resolve(world, touched.authority, admission.seq, admission.nonce)];
 }
@@ -407,10 +446,11 @@ function resolve(world: World, authority: Authority, seq: number, nonce: Nonce):
   return event('resolve-reemit', `${authority.name} re-emitted ${row.end} row seq ${seq}`);
 }
 
-function create(world: World, action: Extract<Action, { kind: 'create' }>): Event[] {
-  const port = currentPort(world);
+function create(world: World, action: Extract<Action, { kind: 'create' }>, rules: Rules): Event[] {
+  const port = world.ports.get(routed(world, action.route))!;
   const replayed = port.receipts.get(action.request);
-  if (replayed) return [event('creation-replayed', `${action.request} already created ${replayed.issue}`), ...init(world, port, replayed.issue, action.init)];
+  if (replayed) return [event('creation-replayed', `${action.request} already created ${replayed.issue}`), ...init(world, port, replayed.issue, action.init, rules)];
+  if (!rules.admits(port)) return [event('refused-rotated', `creation refused, ${rotatedAway(port)}`)];
   if (action.parent !== null && !port.mirror.get(action.parent)?.facts.epic) {
     return [event('creation-refused', `parent ${action.parent} is not an epic`)];
   }
@@ -421,7 +461,7 @@ function create(world: World, action: Extract<Action, { kind: 'create' }>): Even
   port.mirror.set(issue, { facts: { ...created }, seq: 0, floor: { closed: 0, epic: 0 } });
   if (action.parent !== null) port.parent.set(issue, action.parent);
   recordIssued(world, `create ${action.request}`, { uid, by: `port ${port.incarnation}`, step: world.step });
-  return [event('created', `created ${issue}`), ...init(world, port, issue, action.init)];
+  return [event('created', `created ${issue}${rotatedBy(port)}`), ...init(world, port, issue, action.init, rules)];
 }
 
 function recordIssued(world: World, key: RequestKey, receipt: Issued): void {
@@ -429,20 +469,36 @@ function recordIssued(world: World, key: RequestKey, receipt: Issued): void {
 }
 
 // A lost init leaves the first later touch to make the authority.
-function init(world: World, port: Port, issue: IssueId, delivery: 'delivered' | 'lost'): Event[] {
+function init(world: World, port: Port, issue: IssueId, delivery: 'delivered' | 'lost', rules: Rules): Event[] {
   if (delivery === 'lost') return [];
-  const touched = touch(world, port.incarnation, issue);
+  const touched = touch(world, port.incarnation, issue, rules);
   return 'refused' in touched ? [touched.refused] : touched.events;
 }
 
+// Edges live only in the port, so no authority takes part.
 function addEdge(world: World, action: Extract<Action, { kind: 'add-edge' }>, rules: Rules): Event[] {
-  const port = currentPort(world);
+  const port = world.ports.get(routed(world, action.route))!;
+  if (!rules.admits(port)) return [event('refused-rotated', `edge refused, ${rotatedAway(port)}`)];
+  if (!port.mirror.has(action.dependent) || !port.mirror.has(action.blocker)) return [event('edge-refused', `port ${port.incarnation} lacks an end of the edge`)];
   if (reaches(port, action.blocker, action.dependent)) return [event('edge-refused', `${action.blocker} already depends on ${action.dependent}`)];
   if (!port.mirror.get(action.blocker)?.facts.closed && rules.holdsAnswer(port, action.dependent)) {
     return [event('refused-pinned', `edge refused, ${action.dependent} holds an open close admission and ${action.blocker} is not closed`)];
   }
   port.blockers.set(action.dependent, new Set([...port.blockers.get(action.dependent) ?? [], action.blocker]));
-  return [event('edge-added', `edge ${action.dependent} -> ${action.blocker} added`)];
+  return [event('edge-added', `edge ${action.dependent} -> ${action.blocker} added${rotatedBy(port)}`)];
+}
+
+// The old port gets a successor before the copy, so it stops admitting before anything is copied (rule 6). No authority
+// is copied here: touch pulls each one on first use, so the outage is one port copy.
+function rotate(world: World): Event {
+  const old = currentPort(world);
+  const next: Incarnation = `s${world.rotations + 1}`;
+  old.successor = next;
+  world.ports.set(next, { ...structuredClone(old), incarnation: next, successor: null });
+  world.stale = world.current;
+  world.current = next;
+  world.rotations += 1;
+  return event('rotated', `${old.incarnation} -> ${next}; a Worker instance still routes by ${old.incarnation}`);
 }
 
 function reaches(port: Port, from: IssueId, to: IssueId): boolean {
@@ -458,17 +514,40 @@ function reaches(port: Port, from: IssueId, to: IssueId): boolean {
 }
 
 // Every request to an object goes through touch, so an empty object is filled in exactly one place.
-function touch(world: World, incarnation: Incarnation, issue: IssueId): Touched {
+function touch(world: World, incarnation: Incarnation, issue: IssueId, rules: Rules): Touched {
   const name: ObjectName = `${incarnation}:${issue}`;
   const existing = world.objects.get(name);
+  if (existing?.durable.retired) return { refused: event('refused-retired', `${name} is retired`) };
   if (existing) return { authority: existing, events: [] };
-  const receipt = [...world.ports.get(incarnation)!.receipts.values()].find(candidate => candidate.issue === issue);
+  const port = world.ports.get(incarnation)!;
+  const receipt = [...port.receipts.values()].find(candidate => candidate.issue === issue);
   if (!receipt) return { refused: event('refused-unknown', `${incarnation} has no creation receipt for ${issue}`) };
-  const authority: Authority = {
-    name,
-    durable: { facts: { ...receipt.facts }, seq: 0, marker: null, ended: new Map(), outbox: [], claims: new Map() },
-    volatile: { handler: null },
+  // Filling an object repairs its receipt, which is a port write (rule 6).
+  if (!rules.admits(port)) return { refused: event('refused-rotated', `${name} not filled, ${rotatedAway(port)}`) };
+  const origin = rules.origin(receipt, incarnation);
+  const repaired = `receipt ${receipt.request} now names ${incarnation}`;
+  const fresh = (retired: boolean): Durable => ({ facts: { ...receipt.facts }, seq: 0, marker: null, ended: new Map(), outbox: [], claims: new Map(), retired });
+  const fill = (durable: Durable, made: Event): Touched => {
+    const authority: Authority = { name, durable, volatile: { handler: null } };
+    world.objects.set(name, authority);
+    receipt.incarnation = incarnation;
+    return { authority, events: [made] };
   };
-  world.objects.set(name, authority);
-  return { authority, events: [event('created-from-receipt', `${name} created from its own receipt`)] };
+  if (origin.from === 'receipt') {
+    const home = receipt.incarnation === incarnation ? 'its own receipt' : `a receipt naming another incarnation (${receipt.incarnation})`;
+    return fill(fresh(false), event('created-from-receipt', `${name} created from ${home}`));
+  }
+  const sourceName: ObjectName = `${origin.incarnation}:${issue}`;
+  const source = world.objects.get(sourceName);
+  if (source?.durable.retired) return { refused: event('refused-retired', `${sourceName} is retired`) };
+  if (!source) {
+    // A late init in the old incarnation finds the tombstone, so the issue is never made there.
+    world.objects.set(sourceName, { name: sourceName, durable: fresh(true), volatile: { handler: null } });
+    return fill(fresh(false), event('tombstoned', `${sourceName} was never made, so it is a tombstone and ${name} is created from receipt ${receipt.request}; ${repaired}`));
+  }
+  // The open sequence ends in the old object, so the old object can never commit it after the copy.
+  const aborted = source.durable.marker ? `abort row seq ${endSequence(world, source, 'abort').seq} in ${sourceName}, then ` : '';
+  const durable: Durable = { ...structuredClone(source.durable), outbox: [], retired: false };
+  source.durable.retired = true;
+  return fill(durable, event('pulled', `${aborted}${name} pulled from ${sourceName} at seq ${durable.seq}; ${repaired}`));
 }

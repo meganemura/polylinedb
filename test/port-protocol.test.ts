@@ -31,16 +31,30 @@ const protocolDefects: readonly ProtocolDefect[] = [
     failure: /Safety A violated[^\n]*\(answer to i\d+ at seq \d+\)/,
     through: /reopen i\d+ seq \d+ admitted|edge i\d+ -> i\d+ added/,
   },
+  {
+    defect: 'a rotated port still admits what a stale Worker instance routes to it',
+    rules: { admits: () => true },
+    // The stale port answers from its own copy, so each invariant can fire, and only the mechanism is pinned.
+    failure: /(Safety [AB]|Close witness) violated/,
+    through: /by a rotated port/,
+  },
+  {
+    defect: 'an empty object builds its authority from a receipt that names another incarnation',
+    rules: { origin: () => ({ from: 'receipt' }) },
+    failure: /Safety A violated/,
+    through: /created from a receipt naming another incarnation/,
+  },
 ];
 
 test('property: a split store keeps every port answer as strict as its issue authority and one receipt per request ID', () => {
-  const tally = explore(protocolRules, options);
+  const tally = explore(protocolRules, { ...options, database: '.hegel/port-protocol/property' });
   assert.equal(tally.get('resolve-unknown') ?? 0, 0, 'an age-out met a sequence its authority never admitted');
 });
 
 for (const { defect, rules, failure, through } of protocolDefects) {
   test(`port protocol model fails when ${defect}`, () => {
-    assert.throws(() => explore({ ...protocolRules, ...rules }, options), (error: unknown) => {
+    const database = `.hegel/port-protocol/${Object.keys(rules).join('-')}`;
+    assert.throws(() => explore({ ...protocolRules, ...rules }, { ...options, database }), (error: unknown) => {
       assert.ok(error instanceof Error, 'the model did not report a violation');
       assert.match(error.message, failure);
       assert.match(error.message, through);
