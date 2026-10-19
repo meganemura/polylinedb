@@ -4,9 +4,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { explore } from './fixtures/port-protocol-check.ts';
 import { protocolRules } from './fixtures/port-protocol.ts';
-import type { Rules } from './fixtures/port-protocol.ts';
+import type { EventTag, Rules } from './fixtures/port-protocol.ts';
 
 const options = { cases: Number(process.env.PD_HEGEL_CASES ?? 100), seed: 20261019, steps: 60 };
+
+// Events the property must reach at least once. Each one exercises a rule on a path that only an interleaving
+// reaches. A zero means the weights stopped exploring that path: raise the weight, keep the entry.
+const mustReach: readonly EventTag[] = [
+  'admitted', 'readmitted', 'committed', 'dropped', 'answer-dropped',
+  'aborted-refused', 'aborted-after-reset', 'aborted-lost-reply',
+  'refused-blocked', 'refused-pinned', 'refused-children', 'refused-reserved', 'refused-rotated', 'refused-retired',
+  'row-stale', 'row-below-floor', 'reservation-bound', 'reservation-released', 'reservation-kept',
+  'resolve-abort', 'resolve-reemit', 'creation-replayed', 'rotated', 'pulled', 'created-from-receipt', 'tombstoned',
+];
 
 type ProtocolDefect = { defect: string; rules: Partial<Rules>; failure: RegExp; through: RegExp };
 
@@ -27,7 +37,7 @@ const protocolDefects: readonly ProtocolDefect[] = [
     defect: 'a blocker reopens while a dependent holds the answer that it is closed',
     rules: { holdsAnswer: () => false },
     // The answer reliance lasts from the dependent's admission until its row, which comes after its close commits,
-    // so Safety A fires when the blocker reopens, at least one step before the close witness can.
+    // so Safety A fires when the blocker reopens or an open blocker joins, at least one step before the close witness can.
     failure: /Safety A violated[^\n]*\(answer to i\d+ at seq \d+\)/,
     through: /reopen i\d+ seq \d+ admitted|edge i\d+ -> i\d+ added/,
   },
@@ -48,6 +58,7 @@ const protocolDefects: readonly ProtocolDefect[] = [
 
 test('property: a split store keeps every port answer as strict as its issue authority and one receipt per request ID', () => {
   const tally = explore(protocolRules, { ...options, database: '.hegel/port-protocol/property' });
+  for (const tag of mustReach) assert.ok((tally.get(tag) ?? 0) > 0, `no case reached ${tag}`);
   assert.equal(tally.get('resolve-unknown') ?? 0, 0, 'an age-out met a sequence its authority never admitted');
 });
 
