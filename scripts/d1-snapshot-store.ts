@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence.ts';
-import { commentRow, issueRow } from '../src/records/persistence.ts';
+import { issueRow, storedCommentRow } from '../src/records/persistence.ts';
 import { issueSortKey } from '../src/records/persistence.ts';
 import { fields, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
 import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
@@ -166,8 +166,8 @@ export function snapshotMigration(query: Query, input: unknown, expectedDigest: 
     await inspect();
     const actual = await readRows(query);
     if (!compareRows(rows, actual)) fail('Destination snapshot is incomplete');
-    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 7,
-      issues: actual.issues.map(issueRow), comments: actual.comments.map(commentRow), counters: actual.counters, requests: actual.requests,
+    const snapshot = parseSnapshot({ format: 'polylinedb.snapshot', version: 8,
+      issues: actual.issues.map(issueRow), comments: actual.comments.map(storedCommentRow), counters: actual.counters, requests: actual.requests,
       memories: actual.memories.map(memoryRow), memory_counters: actual.memory_counters, memory_requests: actual.memory_requests,
       dependencies: actual.dependencies, dependency_revisions: actual.dependency_revisions, dependency_requests: actual.dependency_requests,
       issue_claims: actual.issue_claims.map(claimRow), claim_requests: actual.claim_requests.map(claimRequestRow),

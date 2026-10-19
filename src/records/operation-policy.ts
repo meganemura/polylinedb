@@ -20,6 +20,7 @@ const operationPolicy = {
   list: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   search: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   comment: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: false } },
+  comment_edit: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   update: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   close: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   reopen: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },

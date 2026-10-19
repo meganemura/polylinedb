@@ -55,7 +55,7 @@ test('a resource snapshot round-trips, a snapshot 6 converts with no resources, 
 
   const { issue_resources: _entries, resource_revisions: _revisions, resource_requests: _requests, land_order: _edges, land_order_revisions: _orders, land_order_requests: _orderRequests, ...rest } = snapshot;
   const converted = convertSnapshotV6({ ...rest, version: 6 });
-  assert.deepEqual([converted.version, converted.issue_resources, converted.resource_revisions, converted.resource_requests], [7, [], [], []]);
+  assert.deepEqual([converted.version, converted.issue_resources, converted.resource_revisions, converted.resource_requests], [8, [], [], []]);
 
   const refused = (change: Record<string, unknown>) => assert.throws(() => parseSnapshot({ ...snapshot, ...change }), { code: 'invalid_snapshot' }, JSON.stringify(change));
   refused({ issue_resources: [{ ...entry, issue_id: 'pd-9' }] });
@@ -77,7 +77,7 @@ test('a schema 8 store upgrades to the canonical schema 9 DDL and then records r
   const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_V8_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(legacy.prepare(schema).all(), reference.prepare(schema).all()); } finally { legacy.close(); reference.close(); }
-  assert.equal(upgradeStore(location).version, 9);
+  assert.equal(upgradeStore(location).version, 10);
   const upgraded = new DatabaseSync(database_path, { readOnly: true }); const fresh = new DatabaseSync(':memory:'); fresh.exec(SCHEMA_SQL);
   try { assert.deepEqual(upgraded.prepare(schema).all(), fresh.prepare(schema).all()); } finally { upgraded.close(); fresh.close(); }
   const store = openStore(location);

@@ -4,11 +4,11 @@ import { node, UnsupportedRuntimeError } from 'solarsql/node';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { commentRow, issueRow } from "../records/persistence.ts";
+import { commentRow, issueRow, storedCommentRow } from "../records/persistence.ts";
 import { PolylinedbError } from "../records/index.ts";
 import type { SqlExecutor, SqlStatement } from "../records/persistence.ts";
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6 } from "../records/persistence.ts";
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7 } from "../records/persistence.ts";
 import { claimRow, claimRequestRow } from '../records/persistence.ts';
 import type { Snapshot, SnapshotImport } from "../records/persistence.ts";
 import { issueSortKey } from "../records/persistence.ts";
@@ -147,6 +147,14 @@ function rollbackWrite(database: DatabaseSync, error: unknown): never {
   throw error;
 }
 
+// The exact DDL each older schema version stored, which an upgrade or a historical export requires before it reads.
+const legacySchemas = { 2: SCHEMA_V2_SQL, 3: SCHEMA_V3_SQL, 4: SCHEMA_V4_SQL, 5: SCHEMA_V5_SQL, 6: SCHEMA_V6_SQL, 7: SCHEMA_V7_SQL, 8: SCHEMA_V8_SQL, 9: SCHEMA_V9_SQL } as const;
+type LegacyVersion = keyof typeof legacySchemas;
+function legacyVersion(rows: readonly Record<string, unknown>[]): LegacyVersion | undefined {
+  const version = rows.length === 1 ? rows[0]?.version : undefined;
+  return ([2, 3, 4, 5, 6, 7, 8, 9] as const).find(known => known === version);
+}
+
 export function initializeStore(location: StoreLocation): { database_path: string } {
   try { return initializeApproved(location); }
   catch (error) { rethrow(error); }
@@ -189,9 +197,9 @@ function upgradeApproved(location: StoreLocation): { result: 'upgraded' | 'alrea
         database.exec('COMMIT');
         return { result: 'already_current', version: SCHEMA_VERSION, database_path };
       }
-      if (versions.length !== 1 || (versions[0]?.version !== 2 && versions[0]?.version !== 3 && versions[0]?.version !== 4 && versions[0]?.version !== 5 && versions[0]?.version !== 6 && versions[0]?.version !== 7 && versions[0]?.version !== 8)) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3, 4, 5, 6, 7 and 8 can be upgraded', 409);
-      const previous = versions[0].version;
-      reference.exec(previous === 2 ? SCHEMA_V2_SQL : previous === 3 ? SCHEMA_V3_SQL : previous === 4 ? SCHEMA_V4_SQL : previous === 5 ? SCHEMA_V5_SQL : previous === 6 ? SCHEMA_V6_SQL : previous === 7 ? SCHEMA_V7_SQL : SCHEMA_V8_SQL);
+      const previous = legacyVersion(versions);
+      if (previous === undefined) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3, 4, 5, 6, 7, 8 and 9 can be upgraded', 409);
+      reference.exec(legacySchemas[previous]);
       const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
       if (JSON.stringify(database.prepare(sql).all()) !== JSON.stringify(reference.prepare(sql).all())) throw new PolylinedbError('invalid_store', `Upgrade requires the canonical schema ${previous}`, 409);
       database.exec(schemaUpgradeStatements(previous).join(';\n') + ';');
@@ -228,7 +236,7 @@ function openApproved(location: StoreLocation): LocalStore {
     },
   };
   const readSnapshot = (): Snapshot => parseSnapshot({
-    format: 'polylinedb.snapshot', version: 7,
+    format: 'polylinedb.snapshot', version: 8,
     issues: database.prepare('SELECT * FROM issues').all().map(row => {
       const issue = issueRow(row);
       const split = issue.id.lastIndexOf('.');
@@ -236,7 +244,7 @@ function openApproved(location: StoreLocation): LocalStore {
       if (row.sort_key !== issueSortKey(issue.id)) throw new PolylinedbError('invalid_store', 'Stored ordering does not match the issue ID', 500);
       return issue;
     }),
-    comments: database.prepare('SELECT * FROM comments').all().map(commentRow),
+    comments: database.prepare('SELECT * FROM comments').all().map(storedCommentRow),
     counters: database.prepare('SELECT scope, last_number FROM counters').all(),
     requests: database.prepare('SELECT request_id, actor, payload, issue_id FROM requests').all(),
     memories: database.prepare('SELECT * FROM memories').all().map(row => {
@@ -292,8 +300,8 @@ function openApproved(location: StoreLocation): LocalStore {
           const split = issue.id.lastIndexOf('.');
           insertIssue.run(issue.id, split < 0 ? null : issue.id.slice(0, split), issueSortKey(issue.id), ...fields.map(field => field === 'labels' ? JSON.stringify(issue.labels) : issue[field]), ...fields.map(field => issue.versions[field]), issue.created_at, issue.created_by, issue.updated_at, issue.updated_by, issue.closed_at, issue.closed_by);
         }
-        const insertComment = database.prepare('INSERT INTO comments (id, issue_id, body, created_at, created_by) VALUES (?, ?, ?, ?, ?)');
-        for (const comment of snapshot.comments) insertComment.run(comment.id, comment.issue_id, comment.body, comment.created_at, comment.created_by);
+        const insertComment = database.prepare('INSERT INTO comments (id, issue_id, body, created_at, created_by, version, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        for (const comment of snapshot.comments) insertComment.run(comment.id, comment.issue_id, comment.body, comment.created_at, comment.created_by, comment.version, comment.updated_at, comment.updated_by);
         const insertCounter = database.prepare('INSERT INTO counters(scope, last_number) VALUES (?, ?)');
         for (const counter of snapshot.counters) insertCounter.run(counter.scope, counter.last_number);
         const insertRequest = database.prepare('INSERT INTO requests(request_id, actor, payload, issue_id) VALUES (?, ?, ?, ?)');
@@ -335,10 +343,9 @@ function exportHistorical(location: StoreLocation): Snapshot {
   const reference = new DatabaseSync(':memory:');
   try {
     database.exec('BEGIN');
-    const rows = database.prepare('SELECT version FROM schema_version').all();
-    const version = rows[0]?.version;
-    if (rows.length !== 1 || (version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8)) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3, 4, 5, 6, 7 or 8', 409);
-    reference.exec(version === 2 ? SCHEMA_V2_SQL : version === 3 ? SCHEMA_V3_SQL : version === 4 ? SCHEMA_V4_SQL : version === 5 ? SCHEMA_V5_SQL : version === 6 ? SCHEMA_V6_SQL : version === 7 ? SCHEMA_V7_SQL : SCHEMA_V8_SQL);
+    const version = legacyVersion(database.prepare('SELECT version FROM schema_version').all());
+    if (version === undefined) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3, 4, 5, 6, 7, 8 or 9', 409);
+    reference.exec(legacySchemas[version]);
     const guards = database.prepare("SELECT name FROM sqlite_master WHERE name GLOB 'polylinedb_retired_*'").all();
     if (guards.length && historicalRetirement(database) === undefined) throw new PolylinedbError('invalid_store', 'Historical retirement guards differ from the canonical guards', 409);
     const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT GLOB 'polylinedb_retired_*' ORDER BY name";
@@ -361,7 +368,10 @@ function exportHistorical(location: StoreLocation): Snapshot {
       : version === 3 || version === 4 ? convertSnapshotV3({ ...issues, version: 3, ...memories() })
       : version === 5 ? convertSnapshotV4({ ...issues, version: 4, ...memories(), ...dependencies() })
       : version === 6 || version === 7 ? convertSnapshotV5({ ...issues, version: 5, ...memories(), ...dependencies(), ...claims() })
-      : convertSnapshotV6({ ...issues, version: 6, ...memories(), ...dependencies(), ...claims() });
+      : version === 8 ? convertSnapshotV6({ ...issues, version: 6, ...memories(), ...dependencies(), ...claims() })
+      : convertSnapshotV7({ ...issues, version: 7, ...memories(), ...dependencies(), ...claims(), land_order: all('SELECT later_id,earlier_id FROM land_order'),
+        land_order_revisions: all('SELECT later_id,revision FROM land_order_revisions'), land_order_requests: all('SELECT * FROM land_order_requests'),
+        issue_resources: all('SELECT * FROM issue_resources'), resource_revisions: all('SELECT issue_id,revision FROM resource_revisions'), resource_requests: all('SELECT * FROM resource_requests') });
     database.exec('COMMIT'); return complete;
   } finally { reference.close(); database.close(); }
 }

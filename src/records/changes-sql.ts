@@ -3,8 +3,11 @@ import type { SqlExecutor } from './issues.ts';
 import { fields } from '../transition/index.ts';
 import { activeBlockerStatusSql } from './active-blocker.ts';
 
-export const changeKinds = ['created', 'updated', 'status_changed', 'commented', 'claim_acquired', 'claim_released', 'dependency_added', 'dependency_removed', 'became_ready'] as const;
+// Schemas 6 through 9 check exactly these kinds, so CHANGE_STATEMENTS keeps them and schema 10 rebuilds the table for the full list.
+const schemaV6ChangeKinds = ['created', 'updated', 'status_changed', 'commented', 'claim_acquired', 'claim_released', 'dependency_added', 'dependency_removed', 'became_ready'] as const;
+export const changeKinds = [...schemaV6ChangeKinds, 'comment_edited'] as const;
 export type ChangeKind = typeof changeKinds[number];
+const kindCheck = (kinds: readonly string[]) => `kind TEXT NOT NULL CHECK(kind IN (${kinds.map(kind => `'${kind}'`).join(',')}))`;
 export const CHANGE_RETENTION = 10000;
 
 export const changeRelations = ['lands_after'] as const;
@@ -24,7 +27,7 @@ export const CHANGE_STATEMENTS = [
   `CREATE TABLE change_events (
     seq INTEGER PRIMARY KEY NOT NULL CHECK(seq BETWEEN 1 AND 9007199254740991),
     issue_id TEXT NOT NULL REFERENCES issues(id),
-    kind TEXT NOT NULL CHECK(kind IN (${changeKinds.map(kind => `'${kind}'`).join(',')})),
+    ${kindCheck(schemaV6ChangeKinds)},
     fields_json TEXT NOT NULL CHECK(json_valid(fields_json) AND json_type(fields_json) = 'array'),
     occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at) = 'integer' AND occurred_at >= 0),
     actor TEXT NOT NULL CHECK(length(actor) > 0)
@@ -67,8 +70,31 @@ export const CHANGE_STATEMENTS = [
     END`,
 ];
 
-export const CHANGE_RELATION_STATEMENTS = [
-  `ALTER TABLE change_events ADD COLUMN relation TEXT CONSTRAINT change_relation CHECK(relation IS NULL OR relation IN (${changeRelations.map(relation => `'${relation}'`).join(',')}))`,
+const relationColumn = `relation TEXT CONSTRAINT change_relation CHECK(relation IS NULL OR relation IN (${changeRelations.map(relation => `'${relation}'`).join(',')}))`;
+export const CHANGE_RELATION_STATEMENTS = [`ALTER TABLE change_events ADD COLUMN ${relationColumn}`];
+
+// SQLite cannot change a CHECK in place, so schema 10 copies the feed into a table that admits comment_edited, keeping each seq.
+// A rename to change_events fails while a trigger names that table and it does not exist, so the caller drops and recreates those triggers around it.
+export const CHANGE_KIND_REBUILD_STATEMENTS = [
+  `CREATE TABLE change_events_v10 (
+    seq INTEGER PRIMARY KEY NOT NULL CHECK(seq BETWEEN 1 AND 9007199254740991),
+    issue_id TEXT NOT NULL REFERENCES issues(id),
+    ${kindCheck(changeKinds)},
+    fields_json TEXT NOT NULL CHECK(json_valid(fields_json) AND json_type(fields_json) = 'array'),
+    occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at) = 'integer' AND occurred_at >= 0),
+    actor TEXT NOT NULL CHECK(length(actor) > 0),
+    ${relationColumn}
+  )`,
+  'INSERT INTO change_events_v10(seq,issue_id,kind,fields_json,occurred_at,actor,relation) SELECT seq,issue_id,kind,fields_json,occurred_at,actor,relation FROM change_events ORDER BY seq',
+  'DROP TABLE change_events',
+  'ALTER TABLE change_events_v10 RENAME TO change_events',
+];
+
+// Only a version change is an edit; the comment insert trigger keeps recording commented.
+export const COMMENT_EDIT_CHANGE_STATEMENTS = [
+  `CREATE TRIGGER comments_change_update AFTER UPDATE OF version ON comments
+    WHEN NEW.version <> OLD.version
+    BEGIN ${event('NEW.issue_id', "'comment_edited'")}; END`,
 ];
 
 export function recordingChanges(db: SqlExecutor, actor: string): SqlExecutor {

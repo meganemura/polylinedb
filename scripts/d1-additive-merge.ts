@@ -1,7 +1,7 @@
 // Owns additive D1 merge planning and local source retirement. Remote selection and execution stay outside.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { commentRow, issueRow } from '../src/records/persistence.ts';
+import { issueRow, storedCommentRow } from '../src/records/persistence.ts';
 import { issueSortKey } from '../src/records/persistence.ts';
 import { fields, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
 import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
@@ -210,9 +210,9 @@ function snapshotFromRows(rows: Rows): Snapshot {
   for (const row of rows.memories) if (!projects.has(textField(row, 'project'))) fail('Memory project has no captured revision');
   const snapshot = parseSnapshot({
     format: 'polylinedb.snapshot',
-    version: 7,
+    version: 8,
     issues: rows.issues.map(issueRow),
-    comments: rows.comments.map(commentRow),
+    comments: rows.comments.map(storedCommentRow),
     counters: rows.counters,
     requests: rows.requests,
     memories: rows.memories.map(memoryRow),

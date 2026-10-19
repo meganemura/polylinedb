@@ -16,7 +16,7 @@ import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } fr
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from "./workspace/index.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6 } from './records/persistence.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7 } from './records/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 import { help } from './cli-help.ts';
@@ -55,13 +55,13 @@ const commandFlags: Record<string, readonly string[]> = {
   connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file', 'historical'], import: ['file'], actor: [], show: ['with-land-order'],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
-  comment: ['body', 'body-file'],
+  comment: ['body', 'body-file'], comment_edit: ['body', 'body-file', 'expected'],
   update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'resources-reason', 'claim-proof'],
   close: ['expected', 'force', 'reason', 'resources-reason', 'claim-proof'], reopen: ['expected', 'claim-proof'],
   list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit', 'claimed', 'with-land-order'],
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
-for (const command of ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen']) commandFlags[command] = [...(commandFlags[command] ?? []), 'observed-memory-revision'];
+for (const command of ['create', 'show', 'list', 'search', 'comment', 'comment_edit', 'update', 'close', 'reopen']) commandFlags[command] = [...(commandFlags[command] ?? []), 'observed-memory-revision'];
 type PrefixSource = 'flag' | 'repository' | 'builtin';
 type PrefixOrigin = { prefix: string; prefix_source: PrefixSource };
 function plainRecord(value: unknown): Record<string, unknown> | undefined {
@@ -174,7 +174,9 @@ async function main(argv: readonly string[]): Promise<void> {
     flags.set(name, [...previous, value]);
   }
   const [first, ...rest] = positionals;
-  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency' || first === 'claim' || first === 'land-order' || first === 'resource';
+  // An issue ID never reads "edit", so `comment edit` cannot shadow `comment ID`.
+  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency' || first === 'claim' || first === 'land-order' || first === 'resource'
+    || (first === 'comment' && rest[0] === 'edit');
   const command = nested ? `${first === 'land-order' ? 'land_order' : first}_${rest[0] ?? ''}` : first;
   const operands = nested ? rest.slice(1) : rest;
   if (!command || !Object.hasOwn(commandFlags, command)) invalid('Unknown command');
@@ -184,7 +186,7 @@ async function main(argv: readonly string[]): Promise<void> {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
   const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list', 'land_order_list', 'resource_list', 'resource_add', 'resource_update', 'claim_show', 'claim_acquire'].includes(command);
-  if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
+  if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (command === 'comment_edit' ? 2 : needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
     if ([...flags.keys()].some(key => !['file', 'output', 'from'].includes(key))) invalid('Snapshot conversion accepts only --file, --output and --from');
@@ -193,9 +195,9 @@ async function main(argv: readonly string[]): Promise<void> {
     let source: unknown;
     try { source = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
     catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
-    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6 };
+    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6, '7': convertSnapshotV7 };
     const from = one('from') ?? '2';
-    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5 or 6');
+    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5, 6 or 7');
     const converted = converters[from as keyof typeof converters](source);
     const content = canonicalSnapshot(converted) + '\n';
     const output = one('output') ?? '-';
@@ -395,6 +397,7 @@ async function main(argv: readonly string[]): Promise<void> {
   };
   if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
   if (command === 'search') raw.with_matches = true;
+  if (command === 'comment_edit') { raw.id = expandedId(operands[0]); raw.comment_id = operands[1]; }
   if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : command === 'claim_show' || command === 'claim_acquire' || command === 'land_order_list' || command.startsWith('resource_') ? 'issue_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   const proof = one('claim-proof');
   if (proof !== undefined) {

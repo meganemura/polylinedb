@@ -357,7 +357,8 @@ const issueShape = {
   versions: { tool: 'number', project: 'number', body: 'number', status: 'number', type: 'number', priority: 'number', labels: 'number' },
   created_at: 'string', created_by: 'string', updated_at: 'string', updated_by: 'string',
 };
-const commentShape = { id: 'string', issue_id: 'string', body: 'string', created_at: 'string', created_by: 'string' };
+// A released client keeps only the first five comment keys and drops the edit fields, so adding them is safe for it.
+const commentShape = { id: 'string', issue_id: 'string', body: 'string', created_at: 'string', created_by: 'string', version: 'number', updated_at: 'string|null', updated_by: 'string|null' };
 const claimShape = { issue_id: 'string', incarnation: 'string', session_id: 'string', generation: 'number', actor: 'string', agent_label: 'string|null', revision: 'number', acquired_at: 'number', changed_at: 'number', expires_at: 'number', released_at: 'number|null' };
 const inspectionShape = { issue_id: 'string', store_incarnation: 'string', observed_at: 'number', state: 'string', lease: claimShape };
 function assertShape(value: unknown, shape: unknown, path = 'response'): void {
@@ -643,5 +644,91 @@ test('an older Worker that rejects resources_reason or a resource operation fail
     await assert.rejects(decode({ op: 'resource_list', issue_id: id }, older), { code: 'invalid_input', message: 'The cloud Worker does not support resource operations. Deploy a newer Worker to use them.' });
     assert.deepEqual(sent, [{ op: 'close', id, expected: 1, resources_reason: 'kept' }, { op: 'resource_list', issue_id: id }]);
     assert.equal(((await wire({ op: 'show', id })).body.issue as { status: string }).status, 'open');
+  } finally { sqlite.close(); }
+});
+
+test('comment_edit decodes the edited comment and every rejection, and refuses damaged or mismatched bodies', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Edits' })).body.issue as { id: string }).id;
+    const written = (await wire({ op: 'comment', id, body: 'First' })).body.comment as Record<string, unknown> & { id: string };
+    const edit = { op: 'comment_edit', id, comment_id: written.id, body: 'Second', expected: 1 };
+    const body = (await wire(edit)).body;
+    assertShape(body, { comment: { ...commentShape, updated_at: 'string', updated_by: 'string' } });
+    const edited = await decode(edit, answer(body));
+    assert.ok('comment' in edited);
+    assert.deepEqual(edited.comment, { ...written, body: 'Second', version: 2, updated_at: (body.comment as { updated_at: string }).updated_at, updated_by: 'access:owner' });
+    assert.deepEqual(await decode(edit, answer(future(body))), edited);
+    const current = body.comment as Record<string, unknown>;
+    for (const damaged of [{ comment: { ...current, id: crypto.randomUUID() } }, { comment: { ...current, issue_id: 'pd-99' } }, { comment: { ...current, body: 'Other' } },
+      { comment: { ...current, version: 3 } }, { comment: { ...current, updated_by: 'access:other' } }, { comment: { ...current, version: undefined } }, { comment: { ...current, updated_at: null } }]) {
+      await assert.rejects(decode(edit, answer(damaged)), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+
+    const conflict = await outcome(decode(edit, transport));
+    assert.deepEqual(conflict, { error: { code: 'comment_conflict', status: 409, details: { comment: edited.comment, expected: 1 } } });
+    const stale = await wire(edit);
+    const details = (stale.body.error as { details: { comment: Record<string, unknown>; expected: number } }).details;
+    for (const damaged of [{ ...details, expected: 2 }, { ...details, comment: { ...details.comment, version: 1 } }, { ...details, comment: { ...details.comment, id: crypto.randomUUID() } }, { comment: details.comment }]) {
+      await assert.rejects(decode(edit, answer({ error: { code: 'comment_conflict', message: 'Conflict', details: damaged } }, 409)), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+
+    const missing = { ...edit, comment_id: crypto.randomUUID() };
+    assert.deepEqual(await outcome(decode(missing, transport)), { error: { code: 'comment_not_found', status: 404, details: { id, comment_id: missing.comment_id } } });
+    await assert.rejects(decode(missing, answer({ error: { code: 'comment_not_found', message: 'Missing', details: { id, comment_id: written.id } } }, 404)), { code: 'cloud_invalid_response' });
+    assert.deepEqual(await outcome(decode({ ...edit, id: 'pd-99' }, transport)), { error: { code: 'not_found', status: 404, details: { id: 'pd-99' } } });
+
+    const foreign = crypto.randomUUID();
+    sqlite.prepare("INSERT INTO comments(id,issue_id,body,created_at,created_by) VALUES (?,?,'Theirs','2021-01-01T00:00:00Z','access:other')").run(foreign, id);
+    const theirs = { ...edit, comment_id: foreign };
+    assert.deepEqual(await outcome(decode(theirs, transport)), { error: { code: 'comment_author_required', status: 403, details: { id, comment_id: foreign } } });
+    const refused = await wire(theirs);
+    assert.equal(refused.status, 403); assert.equal(JSON.stringify(refused.body).includes('Theirs'), false);
+    assert.deepEqual(await outcome(decode(theirs, answer({ error: { code: 'comment_author_required', message: 'Author', details: { id, comment_id: written.id } } }, 403))),
+      { error: { code: 'denied', status: 403, details: undefined } });
+
+    sqlite.prepare("UPDATE comments SET version=?, updated_at='2021-01-02T00:00:00Z', updated_by=created_by WHERE id=?").run(Number.MAX_SAFE_INTEGER, written.id);
+    const exhausted = { ...edit, expected: Number.MAX_SAFE_INTEGER };
+    const result = await outcome(decode(exhausted, transport));
+    assert.deepEqual(result, { error: { code: 'comment_version_exhausted', status: 409, details: { comment: { ...edited.comment, version: Number.MAX_SAFE_INTEGER, updated_at: '2021-01-02T00:00:00Z' } } } });
+  } finally { sqlite.close(); }
+});
+
+test('comments from an older Worker decode without the edit fields, and a partial set of them is refused', async () => {
+  const { sqlite, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Older' })).body.issue as { id: string }).id;
+    const strip = ({ version: _v, updated_at: _a, updated_by: _b, ...rest }: Record<string, unknown>) => rest;
+    const comment = { op: 'comment', id, body: 'Noted' };
+    const written = (await wire(comment)).body as { comment: Record<string, unknown> };
+    assert.deepEqual(await decode(comment, answer({ comment: strip(written.comment) })), { comment: strip(written.comment) });
+    assert.deepEqual(await decode(comment, answer(written)), written);
+    const shown = (await wire({ op: 'show', id })).body as { comments: Record<string, unknown>[] };
+    const older = { ...shown, comments: shown.comments.map(strip) };
+    const decoded = await decode({ op: 'show', id }, answer(older));
+    assert.ok('comments' in decoded);
+    assert.deepEqual(decoded.comments, older.comments);
+    for (const partial of [{ ...strip(written.comment), version: 1 }, { ...strip(written.comment), version: 1, updated_at: null }, { ...written.comment, version: 2 }, { ...written.comment, version: 1, updated_by: 'access:owner' },
+      { ...written.comment, version: 2, updated_at: '2021-01-02T00:00:00Z', updated_by: 'access:other' }]) {
+      await assert.rejects(decode(comment, answer({ comment: partial })), { code: 'cloud_invalid_response' }, JSON.stringify(partial));
+    }
+  } finally { sqlite.close(); }
+});
+
+test('an older Worker that rejects comment_edit fails with a clear message and no retry', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Old Worker' })).body.issue as { id: string }).id;
+    const written = (await wire({ op: 'comment', id, body: 'Kept' })).body.comment as { id: string };
+    const sent: unknown[] = [];
+    const older: typeof fetch = async (_url, options) => {
+      const operation = JSON.parse(String(options?.body)); sent.push(operation);
+      if (operation.op === 'comment_edit') return Response.json({ error: { code: 'invalid_input', message: 'op must be one of create, show, list, search, comment, update, close, reopen, actor' } }, { status: 400 });
+      return transport(_url, options);
+    };
+    const edit = { op: 'comment_edit', id, comment_id: written.id, body: 'Changed', expected: 1 };
+    await assert.rejects(decode(edit, older), { code: 'invalid_input', message: 'The cloud Worker does not support comment edits. Deploy a newer Worker to use them.' });
+    assert.deepEqual(sent, [edit]);
+    assert.equal(((await wire({ op: 'show', id })).body.comments as { body: string }[])[0]?.body, 'Kept');
   } finally { sqlite.close(); }
 });

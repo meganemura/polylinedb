@@ -28,6 +28,7 @@ const descriptions: Record<string, string> = {
   list: 'List issues with optional filters and ID pagination. claimed: false keeps issues without an active claim, such as an in_progress issue whose claim was released or expired; claimed: true keeps issues with one. with_land_order: true also returns land_order, one entry per issue in the same order.',
   search: 'Find literal, case-sensitive text in issue bodies and comments. matches names the body or comment IDs of each hit, with a short excerpt.',
   comment: 'Append a comment. Does not change issue field versions. Do not blindly retry after a network failure.',
+  comment_edit: 'Replace the body of a comment that you wrote. Read the comment version with show first and pass it as expected. A conflict means the comment changed: read it again before a new edit. Only the author can edit a comment. The old text is not kept. Does not change issue field versions.',
   update: 'Change fields using their observed versions. On conflict, read again and reconsider the edit. Never silently retry with new versions. Closing follows the close rules for external resources, including resources_reason.',
   close: 'Set status to closed using its observed version. Does not close children. An issue with external resources that are not verified deleted fails with resources_remaining; mark them with resource_update, or pass resources_reason, which becomes a comment. force does not bypass this.',
   reopen: 'Set status to open using its observed version.',

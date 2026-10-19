@@ -150,7 +150,8 @@ export function bodyAfterTitle(body: string): string {
 function commentItem(comment: Comment, labels: ReadonlyMap<string, string>): string {
   return `<li class="quiet-row">
 <span class="secondary"><time datetime="${escape(comment.created_at)}">${escape(japanTime(comment.created_at))}</time></span>
-<span class="secondary">${escape(labels.get(comment.created_by) ?? comment.created_by)}</span>
+<span class="secondary">${escape(labels.get(comment.created_by) ?? comment.created_by)}</span>${typeof comment.updated_at === 'string'
+    ? `\n<span class="secondary">edited <time datetime="${escape(comment.updated_at)}">${escape(japanTime(comment.updated_at))}</time></span>` : ''}
 <div class="prose">${escape(comment.body)}</div>
 </li>`;
 }

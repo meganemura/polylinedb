@@ -79,7 +79,7 @@ async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, sto
       let project = observedMemoryProject(observed_memory_revision);
       try {
         if ('issue' in output) project = output.issue.project;
-        else if (operation.op === 'comment') {
+        else if (operation.op === 'comment' || operation.op === 'comment_edit') {
           const rows = await db.reads.all(issueQueries.issueProject, { id: operation.id });
           const row = rows[0];
           if (rows.length !== 1 || !row || typeof row.project !== 'string') throw new Error('Issue project is unavailable');

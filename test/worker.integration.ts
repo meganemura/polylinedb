@@ -286,7 +286,16 @@ try {
   assert.deepEqual(await database.prepare('SELECT actor FROM issue_claims WHERE issue_id = ?').bind(readyIssue.id).first(), { actor: 'service:codex-token' });
   assert.deepEqual(await database.prepare('SELECT created_by FROM comments WHERE issue_id = ?').bind(readyIssue.id).all().then((result: { results: unknown[] }) => result.results),
     [{ created_by: 'service:codex-token' }]);
-  const view = (token: string | null, method = 'GET') => runtime.dispatchFetch('http://polylinedb.test/ui', {
+  const started = record((record(await as(codex, { op: 'show', id: readyIssue.id })).comments as unknown[])[0]);
+  const editStarted = { op: 'comment_edit', id: readyIssue.id, comment_id: started.id, body: 'Started, with a plan', expected: started.version };
+  assert.equal(record((await as(viewer, editStarted, 403)).error).code, 'read_only_actor');
+  assert.deepEqual(record((await as(claude, editStarted, 403)).error).details, { id: readyIssue.id, comment_id: started.id });
+  assert.equal(record((await http(editStarted, 403)).error).code, 'comment_author_required');
+  const editedStarted = record((await as(codex, editStarted)).comment);
+  assert.deepEqual([editedStarted.version, editedStarted.updated_by, editedStarted.body], [2, 'service:codex-token', 'Started, with a plan']);
+  assert.equal(record((await as(codex, editStarted, 409)).error).code, 'comment_conflict');
+  assert.deepEqual(await database.prepare("SELECT actor FROM change_events WHERE kind = 'comment_edited'").all().then((result: { results: unknown[] }) => result.results), [{ actor: 'service:codex-token' }]);
+  const view =(token: string | null, method = 'GET') => runtime.dispatchFetch('http://polylinedb.test/ui', {
     method, headers: token === null ? {} : { 'cf-access-jwt-assertion': token },
   });
   await database.prepare('UPDATE issues SET status = ?, labels_json = ?, updated_at = ?, updated_by = ? WHERE id = ?')
@@ -373,7 +382,7 @@ try {
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
-      'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'read-only /ui page',
+      'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'author-only comment edit with a conflict and a comment_edited event', 'read-only /ui page',
       'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
       'Waiting on you lists an owner-action issue with a store-clock age',
       '/ui speculation rules prefetch behind a CSP hash', '/ui cross-document view transition',

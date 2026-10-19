@@ -1,15 +1,17 @@
 // Owns the persistent schema for the shared issue vocabulary; runtime adapters own database access.
 import { CLAIM_STATEMENTS } from './claims-sql.ts';
-import { CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS } from './changes-sql.ts';
+import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS, COMMENT_EDIT_CHANGE_STATEMENTS } from './changes-sql.ts';
 import { LAND_ORDER_STATEMENTS } from './land-order-sql.ts';
 import { RESOURCE_STATEMENTS } from './resources-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
 export { SCHEMA_V6_SQL } from './schema-v6.ts';
 export { SCHEMA_V7_SQL } from './schema-v7.ts';
 export { SCHEMA_V8_SQL } from './schema-v8.ts';
+export { SCHEMA_V9_SQL } from './schema-v9.ts';
+import { SCHEMA_V9_STATEMENTS } from './schema-v9.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
 export { statuses, issueTypes, fields };
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export const MEMORY_SCHEMA_SQL = `
 CREATE TABLE memories (
@@ -157,7 +159,26 @@ export const CLOSURE_STATEMENTS = [
 ];
 // Schema 9 adds the change relation, the land order, and external resources after the closure columns, in the same order on a fresh store and an upgrade.
 export const SCHEMA_V9_ADDITIONS = [...CHANGE_RELATION_STATEMENTS, ...LAND_ORDER_STATEMENTS, ...RESOURCE_STATEMENTS];
-export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8): readonly string[] {
+// An edit keeps no history: version counts edits, and updated_at and updated_by name the last one. A comment never edited holds version 1 and no editor.
+export const COMMENT_EDIT_STATEMENTS = [
+  `ALTER TABLE comments ADD COLUMN version INTEGER NOT NULL DEFAULT 1
+    CHECK(typeof(version) = 'integer' AND version BETWEEN 1 AND 9007199254740991)`,
+  'ALTER TABLE comments ADD COLUMN updated_at TEXT',
+  `ALTER TABLE comments ADD COLUMN updated_by TEXT CONSTRAINT comment_edit CHECK((version = 1 AND updated_at IS NULL AND updated_by IS NULL)
+    OR (version > 1 AND typeof(updated_at) = 'text' AND length(updated_at) > 0 AND typeof(updated_by) = 'text' AND length(updated_by) > 0))`,
+];
+// The schema 9 triggers that write the feed, recreated with their exact text after the rebuild.
+const changeFeedTriggers = SCHEMA_V9_STATEMENTS.filter(sql => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql));
+const triggerName = (sql: string) => /^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? '';
+// Schema 10 adds comment edits after the schema 9 objects, in the same order on a fresh store and an upgrade.
+export const SCHEMA_V10_ADDITIONS = [
+  ...COMMENT_EDIT_STATEMENTS,
+  ...changeFeedTriggers.map(sql => `DROP TRIGGER ${triggerName(sql)}`),
+  ...CHANGE_KIND_REBUILD_STATEMENTS,
+  ...changeFeedTriggers,
+  ...COMMENT_EDIT_CHANGE_STATEMENTS,
+];
+export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9): readonly string[] {
   return [
     `INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT count(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ${previous})`,
     ...(previous === 2 ? MEMORY_SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean) : []),
@@ -166,7 +187,8 @@ export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8): re
     ...(previous < 6 ? CLAIM_STATEMENTS : []),
     ...(previous < 7 ? CHANGE_STATEMENTS : []),
     ...(previous < 8 ? CLOSURE_STATEMENTS : []),
-    ...SCHEMA_V9_ADDITIONS,
+    ...(previous < 9 ? SCHEMA_V9_ADDITIONS : []),
+    ...SCHEMA_V10_ADDITIONS,
     `UPDATE schema_version SET version = ${SCHEMA_VERSION} WHERE version = ${previous}`,
   ];
 }
@@ -179,5 +201,6 @@ export const SCHEMA_STATEMENTS = [
   ...CHANGE_STATEMENTS,
   ...CLOSURE_STATEMENTS,
   ...SCHEMA_V9_ADDITIONS,
+  ...SCHEMA_V10_ADDITIONS,
 ];
 export const SCHEMA_SQL = SCHEMA_STATEMENTS.join(';\n') + ';\n';

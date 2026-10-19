@@ -3,7 +3,7 @@
 // and a search rejected for `with_matches`, a show or list rejected for `with_land_order`, or a release rejected for `expired_noop` runs once more without that field.
 // A list rejected for `claimed` is not retried, because a page without that filter would answer a different question.
 // A close or update rejected for `resources_reason` is not retried either, because without it an older Worker would close with no recorded reason.
-import { PolylinedbError, type Issue, type SearchMatch } from '../records/index.ts';
+import { PolylinedbError, type Comment, type Issue, type SearchMatch } from '../records/index.ts';
 import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
 import { memoryRow } from '../records/persistence.ts';
@@ -38,6 +38,15 @@ function issue(value: unknown): Issue {
   const parsed = issueRow({ ...row, labels_json: JSON.stringify(row.labels), ...Object.fromEntries(fields.map(field => [`${field}_v`, versions[field]])) });
   if (JSON.stringify(parsed.labels) !== JSON.stringify(row.labels)) return invalid();
   return parsed;
+}
+// A Worker from before comment edits sends none of the edit fields, and the comment then has none; commentRow refuses a partial set.
+function comment(value: unknown): Comment {
+  return commentRow(known(value, ['id', 'issue_id', 'body', 'created_at', 'created_by'], ['version', 'updated_at', 'updated_by']));
+}
+function editedComment(value: unknown, operation: Operation): Comment & { version: number } {
+  const current = comment(value);
+  if (operation.op !== 'comment_edit' || current.id !== operation.comment_id || current.issue_id !== operation.id || current.version === undefined) return invalid();
+  return { ...current, version: current.version };
 }
 function memory(value: unknown): Memory {
   return memoryRow(known(value, ['id', 'project', 'title', 'body', 'version', 'created_at', 'created_by', 'updated_at', 'updated_by']));
@@ -137,7 +146,7 @@ function result(operation: Operation, value: unknown): OperationResult {
     const freshness = known(memory_freshness, ['status', 'project'], ['reason']);
     if (typeof freshness.project !== 'string' || !freshness.project.trim() || new TextEncoder().encode(freshness.project).length > 256 || /\p{Cc}/u.test(freshness.project)) return invalid();
     const expectedProject = 'issue' in output ? output.issue.project : ('project' in operation ? operation.project : undefined) ?? observedMemoryProject(operation.observed_memory_revision);
-    if (operation.op !== 'comment' && freshness.project !== expectedProject) return invalid();
+    if (operation.op !== 'comment' && operation.op !== 'comment_edit' && freshness.project !== expectedProject) return invalid();
     const observedProject = observedMemoryProject(operation.observed_memory_revision);
     if (freshness.status === 'current' && freshness.project !== observedProject) return invalid();
     if (freshness.status === 'stale' && (freshness.reason === 'project_changed') !== (freshness.project !== observedProject)) return invalid();
@@ -318,7 +327,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       if (!Array.isArray(row.comments)) return invalid();
       const shown = issue(row.issue); const current = claimInspection(row.claim);
       if (current.issue_id !== shown.id || shown.id !== operation.id) return invalid();
-      const output = { issue: shown, comments: row.comments.map(entry => commentRow(known(entry, ['id', 'issue_id', 'body', 'created_at', 'created_by']))), claim: current };
+      const output = { issue: shown, comments: row.comments.map(comment), claim: current };
       return withLandOrder ? { ...output, land_order: landOrder(row.land_order, shown.id) } : output;
     }
     case 'list': case 'search': case 'dependency_worklist': {
@@ -348,7 +357,13 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       }
       return { issues, next_cursor };
     }
-    case 'comment': return { comment: commentRow(known(known(value, ['comment']).comment, ['id', 'issue_id', 'body', 'created_at', 'created_by'])) };
+    case 'comment': return { comment: comment(known(value, ['comment']).comment) };
+    case 'comment_edit': {
+      const edited = comment(known(value, ['comment']).comment);
+      if (edited.id !== operation.comment_id || edited.issue_id !== operation.id || edited.body !== operation.body
+        || edited.version !== operation.expected + 1 || edited.updated_by !== edited.created_by) return invalid();
+      return { comment: edited };
+    }
     case 'claim_handoff': {
       const response = known(value, ['claim_receipt', 'handoff'], ['land_order_warnings']);
       const { outcome, ...owner } = known(response.claim_receipt, [...claimKeys, 'outcome']); const parsed = claim(owner);
@@ -358,7 +373,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       const parts = known(response.handoff, ['issue', 'comments']);
       const handed = issue(parts.issue);
       if (handed.id !== proof.issue_id || !Array.isArray(parts.comments) || parts.comments.length !== (operation.summary === undefined ? 1 : 2)) return invalid();
-      const comments = parts.comments.map(item => commentRow(known(item, ['id', 'issue_id', 'body', 'created_at', 'created_by'])));
+      const comments = parts.comments.map(comment);
       if (comments.some(comment => comment.issue_id !== proof.issue_id)) return invalid();
       const warnings = landOrderWarnings(response.land_order_warnings, handed.id);
       const output = { claim_receipt: { ...parsed, outcome: 'released' as const, released_at: parsed.released_at }, handoff: { issue: handed, comments } };
@@ -417,7 +432,7 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
         const target = operation.op === 'dependency_add' || operation.op === 'dependency_remove' ? operation.dependent_id
           : operation.op === 'land_order_add' || operation.op === 'land_order_remove' ? operation.later_id
           : operation.op === 'resource_add' || operation.op === 'resource_update' ? operation.issue_id
-          : operation.op === 'update' || operation.op === 'close' || operation.op === 'reopen' || operation.op === 'comment' ? operation.id : invalid();
+          : operation.op === 'update' || operation.op === 'close' || operation.op === 'reopen' || operation.op === 'comment' || operation.op === 'comment_edit' ? operation.id : invalid();
         if (known(value, ['id']).id !== target) return invalid();
         return { id: target };
       }
@@ -500,6 +515,22 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
         || current.version !== Number.MAX_SAFE_INTEGER || current.version !== operation.expected) return invalid();
       return { memory: current };
     }
+    case 'comment_not_found': case 'comment_author_required': {
+      const row = known(value, ['id', 'comment_id']);
+      if (operation.op !== 'comment_edit' || row.id !== operation.id || row.comment_id !== operation.comment_id) return invalid();
+      return { id: operation.id, comment_id: operation.comment_id };
+    }
+    case 'comment_conflict': {
+      const row = known(value, ['comment', 'expected']);
+      const current = editedComment(row.comment, operation);
+      if (operation.op !== 'comment_edit' || row.expected !== operation.expected || current.version === operation.expected) return invalid();
+      return { comment: current, expected: operation.expected };
+    }
+    case 'comment_version_exhausted': {
+      const current = editedComment(known(value, ['comment']).comment, operation);
+      if (operation.op !== 'comment_edit' || current.version !== Number.MAX_SAFE_INTEGER || current.version !== operation.expected) return invalid();
+      return { comment: current };
+    }
     case 'not_found': return { id: parseIssueId(known(value, ['id']).id) };
     case 'epic_has_children': return { issue: issue(known(value, ['issue']).issue) };
     case 'version_exhausted': {
@@ -575,11 +606,14 @@ export async function executeCloudOperation(input: {
     if (response.status === 403) {
       // Access itself answers 403 without this envelope, so only the Worker's read-only rejection keeps its code.
       let readOnly = false;
+      let notAuthor: unknown;
       try {
         const error = known(known(await readResponse(response, controller.signal), ['error']).error, ['code', 'message', 'details']);
         readOnly = error.code === 'read_only_actor' && known(error.details, ['op']).op === input.operation.op;
+        if (error.code === 'comment_author_required') notAuthor = errorDetails(input.operation, error.code, error.details);
       } catch { controller.signal.throwIfAborted(); }
       if (readOnly) throw new PolylinedbError('read_only_actor', 'This cloud actor can only read.', 403, { op: input.operation.op });
+      if (notAuthor !== undefined) throw new PolylinedbError('comment_author_required', 'Only the author of a comment can edit it.', 403, notAuthor);
       throw new PolylinedbError('denied', 'Cloud access was denied.', 403);
     }
     let value: unknown;
@@ -626,6 +660,9 @@ export async function executeCloudOperation(input: {
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op.startsWith('resource_') && /^op must be one of /.test(error.message) && !error.message.includes(input.operation.op)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support resource operations. Deploy a newer Worker to use them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'comment_edit' && /^op must be one of /.test(error.message) && !error.message.includes(input.operation.op)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support comment edits. Deploy a newer Worker to use them.', 400);
       }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);
     }

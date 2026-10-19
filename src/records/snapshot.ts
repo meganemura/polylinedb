@@ -1,8 +1,8 @@
 // Owns portable snapshot validation and canonical form; storage and file access belong to callers.
-import { commentRow, issueRow, parseClosure, parseOperation } from "./issues.ts";
+import { commentRow, issueRow, parseClosure, parseOperation, storedCommentRow } from "./issues.ts";
 import { PolylinedbError } from './errors.ts';
 import { issueSortKey, parseIssueId, parsePrefix, parseRequestId } from "./issue-id.ts";
-import type { Comment, Issue, StoredIssue } from "./issues.ts";
+import type { Comment, Issue, StoredComment, StoredIssue } from "./issues.ts";
 import { fields } from "./schema.ts";
 import { memoryRow, memorySortKey, parseMemoryId, parseMemoryOperation } from "./memories.ts";
 import type { Memory, MemoryCounter, MemoryRequest } from "./memories.ts";
@@ -23,8 +23,9 @@ type SnapshotV3 = Omit<SnapshotV2, 'version'> & { version: 3; memories: readonly
 type SnapshotV4 = Omit<SnapshotV3, 'version'> & { version: 4; dependencies: readonly Dependency[]; dependency_revisions: readonly DependencyRevision[]; dependency_requests: readonly DependencyRequest[] };
 type SnapshotV5 = Omit<SnapshotV4, 'version'> & { version: 5; issue_claims: readonly Claim[]; claim_requests: readonly ClaimRequest[] };
 type SnapshotV6 = Omit<SnapshotV5, 'version' | 'issues'> & { version: 6; issues: readonly StoredIssue[] };
-export type Snapshot = Omit<SnapshotV6, 'version'> & { version: 7; land_order: readonly LandOrderEdge[]; land_order_revisions: readonly LandOrderRevision[]; land_order_requests: readonly LandOrderRequest[];
+type SnapshotV7 = Omit<SnapshotV6, 'version'> & { version: 7; land_order: readonly LandOrderEdge[]; land_order_revisions: readonly LandOrderRevision[]; land_order_requests: readonly LandOrderRequest[];
   issue_resources: readonly ResourceEntry[]; resource_revisions: readonly ResourceRevision[]; resource_requests: readonly ResourceRequest[] };
+export type Snapshot = Omit<SnapshotV7, 'version' | 'comments'> & { version: 8; comments: readonly StoredComment[] };
 export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number;
   land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
@@ -292,7 +293,7 @@ function parseSnapshotV6(input: unknown): SnapshotV6 {
 }
 // Snapshot 6 predates land order and external resources, so conversion adds empty collections: every issue starts at revision 1 of both.
 export function convertSnapshotV6(input: unknown): Snapshot {
-  return parseSnapshot({ ...parseSnapshotV6(input), version: 7, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [] });
+  return convertSnapshotV7({ ...parseSnapshotV6(input), version: 7, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [] });
 }
 const snapshotV7Keys = [...snapshotKeys, 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests'];
 /** Rejects a cycle over the union of prerequisite and land-order edges, which the store triggers also refuse. */
@@ -312,7 +313,7 @@ function acyclic(ids: ReadonlySet<string>, edges: readonly (readonly [later: str
   }
   if (queue.length !== ids.size) fail('Prerequisites and land order contain a cycle');
 }
-export function parseSnapshot(input: unknown): Snapshot {
+function parseSnapshotV7(input: unknown): SnapshotV7 {
   const source = record(input, snapshotV7Keys);
   if (source.version !== 7) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5 and 6 explicitly');
   const { land_order: edges, land_order_revisions: revisions, land_order_requests: requests, issue_resources: resources, resource_revisions: resourceRevisions, resource_requests: resourceRequests, ...legacy } = source;
@@ -399,6 +400,30 @@ function parseResources(ids: ReadonlySet<string>, entries: unknown, revisions: u
   if (new Set(resource_requests.map(row => JSON.stringify([row.issue_id, row.result_revision]))).size !== resource_requests.length) fail('Duplicate resource receipt revision');
   return { issue_resources, resource_revisions, resource_requests };
 }
+// Snapshot 7 predates comment edits, so every comment converts as never edited.
+export function convertSnapshotV7(input: unknown): Snapshot {
+  const old = parseSnapshotV7(input);
+  return parseSnapshot({ ...old, version: 8, comments: old.comments.map(comment => ({ ...comment, version: 1, updated_at: null, updated_by: null })) });
+}
+const commentKeys = ['id', 'issue_id', 'body', 'created_at', 'created_by'];
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, snapshotV7Keys);
+  if (source.version !== 8) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6 and 7 explicitly');
+  if (!Array.isArray(source.comments)) return fail('Snapshot collections must be arrays');
+  const edits = new Map<unknown, Record<string, unknown>>();
+  const comments = source.comments.map(value => {
+    const { version, updated_at, updated_by, ...comment } = record(value, [...commentKeys, 'version', 'updated_at', 'updated_by']);
+    if (updated_at !== null) timestamp(updated_at);
+    edits.set(comment.id, { version, updated_at, updated_by });
+    return comment;
+  });
+  const old = parseSnapshotV7({ ...source, version: 7, comments });
+  return { ...old, version: 8, comments: old.comments.map(comment => {
+    // storedCommentRow also refuses an editor other than the author, because only the author edits a comment.
+    try { return storedCommentRow({ ...comment, ...edits.get(comment.id) }); } catch { return fail('Invalid comment edit'); }
+  }) };
+}
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }
+export function canonicalSnapshotV7(input: unknown): string { return JSON.stringify(parseSnapshotV7(input)); }
 export function canonicalSnapshotV5(input: unknown): string { return JSON.stringify(parseSnapshotV5(input)); }
 export function canonicalSnapshotV6(input: unknown): string { return JSON.stringify(parseSnapshotV6(input)); }

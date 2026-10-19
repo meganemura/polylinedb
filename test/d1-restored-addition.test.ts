@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { rawToSnapshot, tables } from '../scripts/d1-additive-merge.ts';
 import { snapshotMigration, type Query, type Statement } from '../scripts/d1-snapshot-store.ts';
 import { AdditionRefused, AdditionUnknown, restoredAddition, type Batch } from '../scripts/d1-restored-addition.ts';
-import { canonicalSnapshot, canonicalSnapshotV3, convertSnapshotV3 } from '../src/records/snapshot.ts';
+import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV7, convertSnapshotV3 } from '../src/records/snapshot.ts';
 import { SCHEMA_V3_SQL, schemaUpgradeStatements } from '../src/records/schema.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { openStore } from '../src/local-store/index.ts';
@@ -256,7 +256,7 @@ test('refuses missing, mismatched, edited, unknown, and legacy restore evidence'
   await refused(run({ original: other.path }), /checkpoint digest differs/);
   const legacyInput = join(f.root, 'legacy.json');
   writeFileSync(legacyInput, JSON.stringify({ format: 'polylinedb.snapshot', version: 3, issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] }));
-  await refused(run({ original: legacyInput }), /requires snapshot format 5, 6 or 7/);
+  await refused(run({ original: legacyInput }), /requires snapshot format 5, 6, 7 or 8/);
   await refused(run({ connection: 'Bad Name' }), /connection name/);
   const self = await localStore(f.root, 'collision', 'dst');
   self.store.close();
@@ -266,7 +266,7 @@ test('refuses missing, mismatched, edited, unknown, and legacy restore evidence'
   const checkpointDigest = String(f.destination.prepare('SELECT sha256 FROM polylinedb_snapshot_claim').get()?.sha256);
   const edits: [string, string, RegExp][] = [
     ["UPDATE comments SET body = 'edited'", "UPDATE comments SET body = 'dst comment'", /differ from the original/],
-    ['CREATE TABLE extra(x)', 'DROP TABLE extra', /not canonical schema 9/],
+    ['CREATE TABLE extra(x)', 'DROP TABLE extra', /not canonical schema 10/],
     ["UPDATE memory_store_identity SET incarnation = (SELECT original_incarnation FROM polylinedb_snapshot_claim)", "UPDATE memory_store_identity SET incarnation = (SELECT incarnation FROM polylinedb_snapshot_claim)", /identity differs/],
     [`UPDATE polylinedb_snapshot_claim SET sha256 = '${'0'.repeat(64)}'`, `UPDATE polylinedb_snapshot_claim SET sha256 = '${checkpointDigest}'`, /checkpoint digest differs/],
   ];
@@ -297,7 +297,7 @@ test('refuses a snapshot 5 input for the release 0.1.0 checkpoint layout', async
 
 type LegacyFixture = { root: string; original: string; source: string; environment: NodeJS.ProcessEnv; destination: DatabaseSync; batch: Batch; journal(): string; finishRestore(): void; rows(): Record<string, Record<string, unknown>[]>; state(): string; close(): void };
 
-/** Applies the first `restoredWrites` recorded release 0.1.0 writes to a schema 3 store, then upgrades it to schema 9 unless told not to. */
+/** Applies the first `restoredWrites` recorded release 0.1.0 writes to a schema 3 store, then upgrades it to schema 10 unless told not to. */
 async function legacyFixture(restoredWrites = legacyRestore.writes.length, options: { upgrade?: boolean } = {}): Promise<LegacyFixture> {
   const root = mkdtempSync(join(tmpdir(), 'pd-restored-addition-legacy-'));
   const original = join(root, 'original-v3.json');
@@ -336,7 +336,7 @@ test('the release 0.1.0 checkpoint digests the snapshot 3 canonical form, which 
   assert.deepEqual(f.destination.prepare('SELECT * FROM polylinedb_snapshot_claim').all().map(row => ({ ...row })), [{ singleton: 1, sha256: legacyRestore.sha256 }]);
 });
 
-test('a release 0.1.0 restore upgraded to schema 9 holds the converted snapshot 3 rows', async context => {
+test('a release 0.1.0 restore upgraded to schema 10 holds the converted snapshot 3 rows', async context => {
   const f = await legacyFixture();
   context.after(f.close);
   assert.equal(canonicalSnapshot(rawToSnapshot(f.rows())), canonicalSnapshot(convertSnapshotV3(legacyRestore.input)));
@@ -347,7 +347,7 @@ test('a release 0.1.0 restore upgraded to schema 9 holds the converted snapshot 
   assert.equal(f.destination.prepare('SELECT COUNT(*) AS n FROM issue_claims').get()?.n, 0);
 });
 
-test('a release 0.1.0 restore upgraded to schema 9 accepts one addition and fences that release restore SQL', async context => {
+test('a release 0.1.0 restore upgraded to schema 10 accepts one addition and fences that release restore SQL', async context => {
   const f = await legacyFixture();
   context.after(f.close);
   const journal = f.journal();
@@ -424,7 +424,7 @@ test('refuses missing, invalid, mismatched, edited, and unupgraded release 0.1.0
     ["UPDATE comments SET body = 'edited' WHERE body = 'first comment'", "UPDATE comments SET body = 'first comment' WHERE body = 'edited'", /differ from the original/],
     ["DELETE FROM dependency_revisions WHERE dependent_id = 'old-2'", "INSERT INTO dependency_revisions VALUES ('old-2', 1)", /differ from the original|not a canonical store/],
     [`UPDATE polylinedb_snapshot_claim SET sha256 = '${'0'.repeat(64)}'`, `UPDATE polylinedb_snapshot_claim SET sha256 = '${legacyRestore.sha256}'`, /checkpoint digest differs/],
-    ['ALTER TABLE polylinedb_snapshot_claim ADD COLUMN note TEXT', 'ALTER TABLE polylinedb_snapshot_claim DROP COLUMN note', /not canonical schema 9/],
+    ['ALTER TABLE polylinedb_snapshot_claim ADD COLUMN note TEXT', 'ALTER TABLE polylinedb_snapshot_claim DROP COLUMN note', /not canonical schema 10/],
   ];
   for (const [edit, undo, pattern] of edits) {
     f.destination.exec(edit);
@@ -435,7 +435,7 @@ test('refuses missing, invalid, mismatched, edited, and unupgraded release 0.1.0
 
   const unupgraded = await legacyFixture(legacyRestore.writes.length, { upgrade: false });
   context.after(unupgraded.close);
-  await refused(restoredAddition(unupgraded.batch, unupgraded.journal(), unupgraded.environment).run({ original: unupgraded.original, source: unupgraded.source, connection: 'cloud' }), /not canonical schema 9/);
+  await refused(restoredAddition(unupgraded.batch, unupgraded.journal(), unupgraded.environment).run({ original: unupgraded.original, source: unupgraded.source, connection: 'cloud' }), /not canonical schema 10/);
 });
 
 test('refuses an atomic packet above the statement limit before journaling it', async context => {
@@ -488,7 +488,7 @@ test('a destination change racing the commit rolls back the whole batch for ever
       const journal = f.journal();
       await assert.rejects(restoredAddition(racing, journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown, race.name);
       assert.ok(changed, race.name);
-      await assert.rejects(restoredAddition(f.batch, journal, f.environment).resume(), (error: unknown) => error instanceof AdditionRefused && /changed after freezing|not canonical schema 9/.test(error.message), race.name);
+      await assert.rejects(restoredAddition(f.batch, journal, f.environment).resume(), (error: unknown) => error instanceof AdditionRefused && /changed after freezing|not canonical schema 10/.test(error.message), race.name);
       assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive')").get()?.n, 0, race.name);
       assert.equal(f.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0, race.name);
       assert.equal((await restoredAddition(f.batch, journal, f.environment).releaseSource()).outcome, 'released', race.name);
@@ -504,7 +504,7 @@ test('an empty original input requires the same checks and atomic barrier', asyn
   const empty = await fixture({ emptyOriginal: true });
   context.after(empty.close);
   assert.deepEqual(empty.restoreWrites, [], 'the current restore treats an empty destination as already identical');
-  await refused(restoredAddition(empty.batch, empty.journal(), empty.environment).run({ original: empty.original, source: empty.source, connection: 'cloud' }), /not canonical schema 9 with a recognized restore checkpoint/);
+  await refused(restoredAddition(empty.batch, empty.journal(), empty.environment).run({ original: empty.original, source: empty.source, connection: 'cloud' }), /not canonical schema 10 with a recognized restore checkpoint/);
 
   const writes = (await fixture()).restoreWrites;
   const emptyDigest = digest(canonicalSnapshot(JSON.parse((await import('node:fs')).readFileSync(empty.original, 'utf8'))));
@@ -544,7 +544,7 @@ test('a schema change after a lost response still finds the committed receipt', 
   const journal = f.journal();
   await assert.rejects(restoredAddition(loseResponse(f.batch, isAddition), journal, f.environment).run({ original: f.original, source: f.source, connection: 'cloud' }), AdditionUnknown);
   f.destination.exec('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY)');
-  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /not canonical schema 9/);
+  await refused(restoredAddition(f.batch, journal, f.environment).resume(), /not canonical schema 10/);
   assert.deepEqual(readdirSync(journal).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json']);
 });
 
@@ -664,4 +664,21 @@ test('a source that another addition retired is refused before freezing', async 
   await refused(restoredAddition(other.batch, journal, f.environment).run({ original: other.original, source: f.source, connection: 'cloud' }), /source store is retired; another addition or cutover owns it/);
   assert.deepEqual(readdirSync(journal), []);
   assert.equal(other.destination.prepare("SELECT COUNT(*) AS n FROM issues WHERE id LIKE 'src-%'").get()?.n, 0);
+});
+
+test('a snapshot 7 restore upgraded to schema 10 accepts one addition from its snapshot 7 input', async context => {
+  const f = await fixture();
+  context.after(f.close);
+  // The release before comment edits wrote snapshot 7 and digested it in that form; the schema 10 upgrade then gave each comment version 1 and no editor.
+  const current = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[] };
+  const v7 = { ...current, version: 7, comments: current.comments.map(({ version: _v, updated_at: _a, updated_by: _b, ...comment }) => comment) };
+  assert.ok(v7.comments.length > 0, 'the original holds a comment');
+  const original = join(f.root, 'original-v7.json');
+  writeFileSync(original, JSON.stringify(v7));
+  f.destination.prepare('UPDATE polylinedb_snapshot_claim SET sha256 = ?').run(digest(canonicalSnapshotV7(v7)));
+  const edited = join(f.root, 'original-v7-edited.json');
+  writeFileSync(edited, JSON.stringify({ ...v7, comments: v7.comments.map(comment => ({ ...comment, body: 'changed' })) }));
+  await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: edited, source: f.source, connection: 'cloud' }), /checkpoint digest differs/);
+  const result = await restoredAddition(f.batch, f.journal(), f.environment).run({ original, source: f.source, connection: 'cloud' });
+  assert.equal(result.outcome, 'routed');
 });

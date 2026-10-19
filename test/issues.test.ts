@@ -91,7 +91,7 @@ test('generated show preserves empty comments and timestamp/ID ordering without 
   const earlier = '2026-01-01T00:00:00.000Z';
   const later = '2026-01-02T00:00:00.000Z';
   for (const [suffix, date, body] of [['3', later, 'last'], ['2', earlier, 'second'], ['1', earlier, 'first\n"quoted"']]) {
-    await first.batch([{ sql: 'INSERT INTO comments VALUES (?, ?, ?, ?, ?)',
+    await first.batch([{ sql: 'INSERT INTO comments(id, issue_id, body, created_at, created_by) VALUES (?, ?, ?, ?, ?)',
       params: [`00000000-0000-4000-8000-00000000000${suffix}`, 'pd-1', body, date, 'tester'] }]);
   }
   const shown = await execute(first, { op: 'show', id: 'pd-1' });

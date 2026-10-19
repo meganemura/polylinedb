@@ -51,11 +51,12 @@
             "claim_released",
             "dependency_added",
             "dependency_removed",
-            "became_ready"
+            "became_ready",
+            "comment_edited"
           ]
         },
         "minItems": 1,
-        "maxItems": 9,
+        "maxItems": 10,
         "uniqueItems": true
       },
       "limit": {
@@ -408,6 +409,44 @@
     "required": [
       "id",
       "body"
+    ],
+    "additionalProperties": false
+  },
+  "comment_edit": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "comment_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The comment ID that show returns."
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "At most 65536 UTF-8 bytes."
+      },
+      "expected": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991,
+        "description": "The comment version that show returned."
+      },
+      "observed_memory_revision": {
+        "type": "string",
+        "maxLength": 4100,
+        "description": "Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search."
+      }
+    },
+    "required": [
+      "id",
+      "comment_id",
+      "body",
+      "expected"
     ],
     "additionalProperties": false
   },
@@ -1644,11 +1683,12 @@
             "claim_released",
             "dependency_added",
             "dependency_removed",
-            "became_ready"
+            "became_ready",
+            "comment_edited"
           ]
         },
         "minItems": 1,
-        "maxItems": 9,
+        "maxItems": 10,
         "uniqueItems": true
       },
       "timeout": {

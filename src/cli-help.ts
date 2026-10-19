@@ -28,9 +28,9 @@ Commands:
   agent install HOST            Install a user-scope lifecycle hook.
   agent remove HOST             Remove the owned lifecycle hook.
   agent context HOST            Read hook input and return host context JSON.
-  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6, 7 or 8 store to schema 9.
-  snapshot convert --from 2|3|4|5|6 --file PATH|- [--output PATH|-]
-                                Convert an older snapshot to v7 without touching a store.
+  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6, 7, 8 or 9 store to schema 10.
+  snapshot convert --from 2|3|4|5|6|7 --file PATH|- [--output PATH|-]
+                                Convert an older snapshot to v8 without touching a store.
   export [--file PATH|-] [--historical]
                                 Export a local snapshot. Historical export recovers old retired stores read-only.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
@@ -43,6 +43,8 @@ Commands:
                                 --claimed false keeps issues without an active claim.
   search QUERY [FILTERS]
   comment ID --body TEXT
+  comment edit ID COMMENT_ID --expected VERSION --body TEXT
+                                Replace the body of your own comment. The old text is not kept.
   update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]
          [--type TYPE] [--priority 0..4] [--label NAME ... | --clear-labels]
          --expect FIELD=VERSION [--expect FIELD=VERSION ...] [--claim-proof JSON]
@@ -110,7 +112,7 @@ Unfiltered list/search check the token's project; current does not certify compl
 STATUS: open, in_progress, deferred, closed.
 FILTERS: --tool, --project, --status, --type, --priority, --label, --after, --limit.
 --tool identifies the affected tool or component, such as compiler or editor.
-create, comment and update accept --body-file PATH instead of --body.
+create, comment, comment edit and update accept --body-file PATH instead of --body.
 Use --body-file - to read standard input. Local mutations require an explicit actor.
 Cloud commands use OAuth. Run auth login once; tokens stay in the OS credential store.
 Each update field requires its own expected version from show. Conflicts require rereading.

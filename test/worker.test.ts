@@ -120,7 +120,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -135,6 +135,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['claim_show', true, false, true, false],
       ['close', false, true, true, false],
       ['comment', false, false, false, false],
+      ['comment_edit', false, true, true, false],
       ['create', false, false, true, false],
       ['dependency_add', false, false, true, false],
       ['dependency_list', true, false, true, false],
@@ -203,6 +204,20 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const searched = (await mcpSearch.json()).result.structuredContent;
     assert.deepEqual(searched.issues.map((hit: { id: string }) => hit.id), [issue.id]);
     assert.deepEqual(searched.matches, [{ issue_id: issue.id, location: 'comment', comment_id: shown.comments[0].id, excerpt: 'confirmed' }]);
+    assert.deepEqual([shown.comments[0].version, shown.comments[0].updated_at, shown.comments[0].updated_by], [1, null, null]);
+    const editInput = { id: issue.id, comment_id: shown.comments[0].id, body: 'reproduced', expected: 1 };
+    const mcpEdit = await request('/mcp', { jsonrpc: '2.0', id: 23, method: 'tools/call', params: { name: 'comment_edit', arguments: editInput } });
+    const editedComment = (await mcpEdit.json()).result.structuredContent.comment;
+    assert.deepEqual([editedComment.body, editedComment.version, editedComment.updated_by], ['reproduced', 2, 'access:owner']);
+    const httpEditConflict = await request('/v1/operations', { op: 'comment_edit', ...editInput, body: 'stale' });
+    assert.equal(httpEditConflict.status, 409);
+    assert.deepEqual((await httpEditConflict.json()).error.details, { comment: editedComment, expected: 1 });
+    const afterEdit = await (await request('/v1/operations', { op: 'show', id: issue.id })).json();
+    assert.deepEqual(afterEdit.comments, [editedComment]); assert.deepEqual(afterEdit.issue.versions, shown.issue.versions); assert.equal(afterEdit.issue.updated_at, shown.issue.updated_at);
+    assert.deepEqual((await (await request('/v1/operations', { op: 'search', query: 'reproduced' })).json()).issues.map((hit: { id: string }) => hit.id), [issue.id]);
+    assert.deepEqual((await (await request('/v1/operations', { op: 'search', query: 'confirmed' })).json()).issues, []);
+    const edits = (await (await request('/v1/operations', { op: 'changes', since: 0, kinds: ['comment_edited'] })).json()).changes;
+    assert.deepEqual(edits.map((change: { issue_id: string; kind: string; actor: string; fields: string[] }) => [change.issue_id, change.kind, change.actor, change.fields]), [[issue.id, 'comment_edited', 'access:owner', []]]);
     const memoryCreate = await request('/v1/operations', { op: 'memory_create', project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Parser constraint', body: 'Keep empty input valid.' });
     assert.equal(memoryCreate.status, 200);
     const savedMemory = (await memoryCreate.json()).memory;
@@ -431,6 +446,8 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     await repeat('close', { id: issue.id, expected: 1 });
     await repeat('reopen', { id: issue.id, expected: 2 });
     await append('comment', { id: issue.id, body: 'confirmed' });
+    const noted = (await read('show', { id: issue.id })).comments[0];
+    await repeat('comment_edit', { id: issue.id, comment_id: noted.id, body: 'reproduced', expected: noted.version });
     const memory = (await repeat('memory_create', { project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Parser constraint', body: 'Keep empty input valid.' })).memory;
     await read('memory_show', { project: 'parser', id: memory.id }); await read('memory_list', { project: 'parser' });
     await read('memory_search', { project: 'parser', query: 'empty' }); await read('memory_context', { project: 'parser' });
@@ -2659,5 +2676,24 @@ test('dispatch: a bad form and a missing issue do not send, and a missing issue 
     await assertOutcome(followed, 200, 'Sent.', id);
     assert.equal(probeReceiver.posts.length, 1);
     assert.deepEqual(storedIssue(sqlite, id), before);
+  } finally { sqlite.close(); }
+});
+
+test('ui: the issue page marks an edited comment with its edit time and offers no edit control', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const operate = async (body: Record<string, unknown>) => (await handleRequest(new Request('https://issues.example/v1/operations', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
+  }), env, authenticate)).json();
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Edited comments' });
+    const kept = (await operate({ op: 'comment', id, body: 'unchanged note' })).comment;
+    const changed = (await operate({ op: 'comment', id, body: 'retracted words' })).comment;
+    const edited = (await operate({ op: 'comment_edit', id, comment_id: changed.id, body: 'corrected words', expected: 1 })).comment;
+    const html = await (await viewIssue(env, id, { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(html.includes(`edited <time datetime="${edited.updated_at}">`));
+    assert.equal(html.split('>edited <time').length - 1, 1, `only the edited comment is marked: ${kept.id}`);
+    assert.ok(html.includes('corrected words')); assert.equal(html.includes('retracted words'), false);
+    assert.equal(html.includes('comment_edit'), false);
   } finally { sqlite.close(); }
 });

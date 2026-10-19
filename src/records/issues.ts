@@ -7,7 +7,7 @@ import { expectedType, PolylinedbError, requireFields } from './errors.ts';
 import { claimProofSchema, claimRow, inspectClaim, parseClaimProof, parseIncarnation } from './claims.ts';
 import type { ClaimDisplay } from './claims.ts';
 import type { ClaimInspection } from './claims.ts';
-import { claimState, decideCreation, decideIssueUpdate, decideReplay, startedWorkNeedsClaim } from '../transition/index.ts';
+import { claimState, decideCommentEdit, decideCreation, decideIssueUpdate, decideReplay, startedWorkNeedsClaim } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 import { issueClaimGuard } from './claims-sql.ts';
@@ -33,6 +33,7 @@ export type Operation =
   | ({ op: 'list'; claimed?: boolean; with_land_order?: true } & Filters)
   | ({ op: 'search'; query: string; with_matches?: true } & Filters)
   | { op: 'comment'; id: string; body: string }
+  | { op: 'comment_edit'; id: string; comment_id: string; body: string; expected: number }
   | ({ op: 'update'; id: string; changes: [Change, ...Change[]]; claim_proof?: ClaimProof } & StatusOverride)
   | ({ op: 'close'; id: string; expected: number; claim_proof?: ClaimProof } & StatusOverride)
   | { op: 'reopen'; id: string; expected: number; claim_proof?: ClaimProof }
@@ -43,7 +44,11 @@ export type Closure = { closed_at: string | null; closed_by: string | null };
 export type Issue = Values & { id: string; versions: Record<Field, number>;
   created_at: string; created_by: string; updated_at: string; updated_by: string } & Partial<Closure>;
 export type StoredIssue = Issue & Closure;
-export type Comment = { id: string; issue_id: string; body: string; created_at: string; created_by: string };
+// version counts edits from 1; updated_at and updated_by name the last edit and stay null until one. An edit keeps no earlier body.
+// A transport from before comment edits leaves all three fields out.
+export type CommentEdits = { version: number; updated_at: string | null; updated_by: string | null };
+export type Comment = { id: string; issue_id: string; body: string; created_at: string; created_by: string } & Partial<CommentEdits>;
+export type StoredComment = Comment & CommentEdits;
 export type SearchMatch = { issue_id: string; excerpt: string } & ({ location: 'body' } | { location: 'comment'; comment_id: string });
 export type OperationResult = { issue: Issue } | { issue: Issue; comments: Comment[]; claim: ClaimInspection }
   | { issues: Issue[]; next_cursor: string | null } | { issues: Issue[]; next_cursor: string | null; matches: SearchMatch[] }
@@ -119,6 +124,8 @@ export const operationSchemas = {
   list: objectSchema({ ...filterSchemas, claimed: { type: 'boolean', description: 'true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated.' }, with_land_order: withLandOrderSchema }),
   search: objectSchema({ ...filterSchemas, query: bodySchema, with_matches: { const: true, description: 'Also return where each issue matched, with a short excerpt.' } }, ['query']),
   comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
+  comment_edit: objectSchema({ id: idSchema, comment_id: { type: 'string', format: 'uuid', description: 'The comment ID that show returns.' }, body: bodySchema,
+    expected: { ...versionSchema, description: 'The comment version that show returned.' } }, ['id', 'comment_id', 'body', 'expected']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
     oneOf: fields.map((field) => objectSchema({ field: { const: field }, value: fieldRegistry[field].schema, expected: versionSchema }, ['field', 'value', 'expected']))
   } }, force: { const: true }, reason: reasonSchema, resources_reason: resourcesReasonSchema, claim_proof: claimProofSchema }, ['id', 'changes']),
@@ -171,7 +178,7 @@ function withLandOrder(input: Record<string, unknown>): { with_land_order?: true
 }
 export function parseOperation(value: unknown): Operation {
   const input = object(value, 'operation');
-  const op = enumeration(input.op, 'op', ['create', 'show', 'list', 'search', 'comment', 'update', 'close', 'reopen', 'actor']);
+  const op = enumeration(input.op, 'op', ['create', 'show', 'list', 'search', 'comment', 'comment_edit', 'update', 'close', 'reopen', 'actor']);
   const schema = operationSchemas[op];
   requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   switch (op) {
@@ -186,6 +193,8 @@ export function parseOperation(value: unknown): Operation {
       return { op, ...parseFilters(input), query: text(input.query, 'query'), ...(input.with_matches === true ? { with_matches: true } : {}) };
     }
     case 'comment': return { op, id: id(input.id), body: text(input.body, 'body') };
+    case 'comment_edit': return { op, id: id(input.id), comment_id: validated(parseRequestId, input.comment_id), body: text(input.body, 'body'),
+      expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER) };
     case 'close': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...parseOverride(input), ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
     case 'reopen': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
     case 'create': {
@@ -235,10 +244,33 @@ export function issueRow(row: Record<string, unknown>): Issue {
     throw new PolylinedbError('invalid_store', `Stored issue is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);
   }
 }
+const editKeys = ['version', 'updated_at', 'updated_by'] as const;
+function commentEdits(row: Record<string, unknown>): CommentEdits {
+  const version = integer(row.version, 'version', 1, Number.MAX_SAFE_INTEGER);
+  if (version === 1) {
+    if (row.updated_at !== null || row.updated_by !== null) return invalid('an unedited comment has no editor');
+    return { version, updated_at: null, updated_by: null };
+  }
+  return { version, updated_at: text(row.updated_at, 'updated_at'), updated_by: name(row.updated_by, 'updated_by') };
+}
+/** Reads a comment with or without its edit fields: all three or none, because an older transport omits them together. */
 export function commentRow(row: Record<string, unknown>): Comment {
-  try { return { id: validated(parseRequestId, row.id), issue_id: id(row.issue_id), body: text(row.body, 'body'),
-    created_at: text(row.created_at, 'created_at'), created_by: name(row.created_by, 'created_by') }; }
-  catch { throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500); }
+  try {
+    const comment: Comment = { id: validated(parseRequestId, row.id), issue_id: id(row.issue_id), body: text(row.body, 'body'),
+      created_at: text(row.created_at, 'created_at'), created_by: name(row.created_by, 'created_by') };
+    const present = editKeys.filter(key => Object.hasOwn(row, key)).length;
+    if (present === 0) return comment;
+    if (present !== editKeys.length) return invalid('edit fields come together');
+    const edits = commentEdits(row);
+    // Only the author edits a comment, so any other editor means the row did not come from comment_edit.
+    if (edits.updated_by !== null && edits.updated_by !== comment.created_by) return invalid('the editor is the author');
+    return { ...comment, ...edits };
+  } catch { throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500); }
+}
+export function storedCommentRow(row: Record<string, unknown>): StoredComment {
+  const comment = commentRow(row);
+  if (comment.version === undefined || comment.updated_at === undefined || comment.updated_by === undefined) throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500);
+  return { ...comment, version: comment.version, updated_at: comment.updated_at, updated_by: comment.updated_by };
 }
 function rowsAt(results: readonly { rows: readonly Record<string, unknown>[] }[], index: number): readonly Record<string, unknown>[] {
   const result = results[index];
@@ -332,6 +364,34 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   }
 }
 
+// One guarded UPDATE decides the edit, so two writers that read the same version cannot both succeed. The issue keeps its updated_at and field versions.
+async function editComment(db: SqlExecutor, operation: Extract<Operation, { op: 'comment_edit' }>, caller: Actor): Promise<OperationResult> {
+  const actor = caller.id;
+  const gate = agentHoldsClaim(operation.id, caller);
+  const result = await recordingChanges(db, actor).batch([
+    { sql: `UPDATE comments SET body = ?, version = version + 1, updated_at = ?, updated_by = ?
+      WHERE id = ? AND issue_id = ? AND created_by = ? AND version = ? AND version < 9007199254740991 AND ${gate.sql} RETURNING *`,
+    params: [operation.body, new Date().toISOString(), actor, operation.comment_id, operation.id, actor, operation.expected, ...gate.params] },
+    { sql: 'SELECT labels_json FROM issues WHERE id = ?', params: [operation.id] },
+    { sql: 'SELECT * FROM comments WHERE id = ? AND issue_id = ?', params: [operation.comment_id, operation.id] },
+    ...(caller.kind === 'agent' ? [heldClaimObservation(operation.id)] : [])]);
+  const row = rowsAt(result, 0)[0];
+  if (row) return { comment: storedCommentRow(row) };
+  const issue = rowsAt(result, 1)[0];
+  if (!issue) return notFound(operation.id);
+  const stored = rowsAt(result, 2)[0];
+  const comment = stored === undefined ? null : storedCommentRow(stored);
+  const decision = decideCommentEdit(comment, { actor, expected: operation.expected });
+  const named = { id: operation.id, comment_id: operation.comment_id };
+  if (!decision.accepted && decision.code === 'comment_not_found') throw new PolylinedbError('comment_not_found', 'Comment was not found on this issue', 404, named);
+  if (!decision.accepted && decision.code === 'comment_author_required') throw new PolylinedbError('comment_author_required', 'Only the author of a comment can edit it', 403, named);
+  if (typeof issue.labels_json !== 'string') throw new PolylinedbError('invalid_store', 'Stored issue is invalid: labels_json is not text', 500);
+  rejectAgentWrite(caller, 'issue_write', operation.id, labels(JSON.parse(issue.labels_json)), caller.kind === 'agent' ? rowsAt(result, 3)[0] : undefined);
+  if (decision.accepted || comment === null) throw new PolylinedbError('storage_error', 'The database rejected a comment edit without a matching condition', 503);
+  if (decision.code === 'comment_conflict') throw new PolylinedbError('comment_conflict', 'Comment changed; read it again before editing', 409, { comment, expected: operation.expected });
+  throw new PolylinedbError('comment_version_exhausted', 'Comment version reached its limit', 409, { comment });
+}
+
 export async function executeOperation(db: SqlExecutor, operation: Operation, by: string | Actor): Promise<OperationResult> {
   const caller = asActor(by);
   const actor = caller.id;
@@ -381,11 +441,13 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
       const rows = await db.reads.all(issueQueries.show, { id: operation.id });
       const [row] = rows;
       if (!row) return notFound(operation.id);
-      return { issue: issueRow(row), comments: rows.filter(row => row.comment_id !== null).map(row => commentRow({
+      return { issue: issueRow(row), comments: rows.filter(row => row.comment_id !== null).map(row => storedCommentRow({
         id: row.comment_id, issue_id: row.id, body: row.comment_body,
         created_at: row.comment_created_at, created_by: row.comment_created_by,
+        version: row.comment_version, updated_at: row.comment_updated_at, updated_by: row.comment_updated_by,
       })), claim: await inspectClaim(db, operation.id) };
     }
+    case 'comment_edit': return editComment(db, operation, caller);
     case 'comment': {
       const gate = agentHoldsClaim(operation.id, caller);
       const result = await recordingChanges(db, actor).batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by)

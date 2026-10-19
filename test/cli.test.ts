@@ -866,7 +866,7 @@ test('CLI reports retired stores for writes while reads and exports remain avail
     try {
       assert.deepEqual(destinationCli(['import', '--file', '-'], { input: JSON.stringify(snapshot), status: 4 }).error,
         { code: 'store_retired', message });
-      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 7, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [],
+      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 8, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [],
         issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
     } finally { destinationRetirement.close(); }
   } finally {
@@ -1063,4 +1063,24 @@ test('a local command reports store_busy when the database lock outlasts the wai
     error: { code: 'store_busy', message: 'The local database is busy. Retry the command.' },
   });
   assert.ok(elapsed >= 4500 && elapsed < 12000, `waited ${elapsed} ms`);
+});
+
+test('CLI comment edit replaces the body of the own comment, refuses a stale version or another author, and marks the edit in human show', t => {
+  const { run } = fixture(t);
+  run(['init']);
+  const { issue } = run(['create', '--tool', 'editor', '--project', 'parser', '--body', 'Edits']);
+  const comment = run(['comment', issue.id, '--body', 'first words']).comment;
+  assert.deepEqual([comment.version, comment.updated_at, comment.updated_by], [1, null, null]);
+  assert.match(run(['show', issue.id, '--human'], { raw: true }), / · version 1\n/);
+  const edited = run(['comment', 'edit', issue.id, comment.id, '--expected', '1', '--body-file', '-'], { input: 'second words' }).comment;
+  assert.deepEqual(edited, { ...comment, body: 'second words', version: 2, updated_at: edited.updated_at, updated_by: 'local:test' });
+  assert.deepEqual(run(['show', issue.id]).comments, [edited]);
+  const human = run(['show', issue.id, '--human'], { raw: true });
+  assert.ok(human.includes(` · version 2 · edited ${edited.updated_at} by local:test\n`), human);
+  assert.ok(human.includes('    second words'));
+  assert.deepEqual(run(['comment', 'edit', issue.id, comment.id, '--expected', '1', '--body', 'stale'], { status: 4 }).error.details, { comment: edited, expected: 1 });
+  assert.equal(run(['comment', 'edit', issue.id, comment.id, '--expected', '2', '--body', 'theirs'], { status: 1, env: { POLYLINEDB_ACTOR: 'local:other' }, actor: false }).error.code, 'comment_author_required');
+  assert.equal(run(['comment', 'edit', issue.id, crypto.randomUUID(), '--expected', '2', '--body', 'missing'], { status: 3 }).error.code, 'comment_not_found');
+  assert.equal(run(['comment', 'edit', issue.id, comment.id, '--body', 'no version'], { status: 2 }).error.code, 'invalid_input');
+  assert.equal(run(['comment', issue.id, '--body', 'edit']).comment.body, 'edit', 'the comment command keeps its shape');
 });

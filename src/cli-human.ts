@@ -169,7 +169,10 @@ function renderIssueDetails(result: IssueDetails, color: boolean): string {
       '  ' + visibleText(comment.id, false)
       + ' · ' + visibleText(comment.issue_id, false)
       + ' · ' + visibleText(comment.created_at, false)
-      + ' · ' + visibleText(comment.created_by, false),
+      + ' · ' + visibleText(comment.created_by, false)
+      + (comment.version === undefined ? '' : ' · version ' + comment.version)
+      + (typeof comment.updated_at === 'string' && typeof comment.updated_by === 'string'
+        ? ' · edited ' + visibleText(comment.updated_at, false) + ' by ' + visibleText(comment.updated_by, false) : ''),
     );
     lines.push(indentedLines(comment.body, 4));
   }
