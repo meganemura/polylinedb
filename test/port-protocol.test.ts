@@ -17,9 +17,15 @@ const protocolDefects: readonly ProtocolDefect[] = [
     failure: /Safety A violated/,
     through: /(reopen|make task) i\d+ seq \d+ admitted \(authority first\)/,
   },
+  {
+    defect: 'an abort row releases the reservation in any state',
+    rules: { afterAbort: () => ({ state: 'released' }) },
+    failure: /Safety B violated[^\n]*claim request c\d/,
+    through: /reservation c\d (bound to i\d+|opened by another nonce) -> released/,
+  },
 ];
 
-test('property: a split store keeps every port answer as strict as its issue authority', () => {
+test('property: a split store keeps every port answer as strict as its issue authority and one receipt per request ID', () => {
   const tally = explore(protocolRules, options);
   assert.equal(tally.get('resolve-unknown') ?? 0, 0, 'an age-out met a sequence its authority never admitted');
 });
