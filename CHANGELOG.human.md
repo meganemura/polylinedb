@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The stale-write scenario now runs on nukadoko 0.18.0. The scenario itself does not change. Nothing changes for pd users.
+
 The stale-write scenario now runs on nukadoko 0.17.0 and uses its built-in temporary directories and command runner, so the scenario code is shorter and its records list each `pd` command it ran. Nothing changes for pd users.
 
 pd now refuses to run under Bun or Deno, or on a Node build whose SQLite is older than 3.53.4, and says which of these it found. Before, Bun got a message about its Node version only, and nothing checked the SQLite of a Node build. `pd --help` and `pd --version` still answer everywhere. Use an official Node.js 24.20 or later in the 24.x line, or 26.7 or later.
