@@ -23,6 +23,14 @@ const protocolDefects: readonly ProtocolDefect[] = [
     failure: /Safety B violated[^\n]*claim request c\d/,
     through: /reservation c\d (bound to i\d+|opened by another nonce) -> released/,
   },
+  {
+    defect: 'a blocker reopens while a dependent holds the answer that it is closed',
+    rules: { holdsAnswer: () => false },
+    // The answer reliance lasts from the dependent's admission until its row, which comes after its close commits,
+    // so Safety A fires when the blocker reopens, at least one step before the close witness can.
+    failure: /Safety A violated[^\n]*\(answer to i\d+ at seq \d+\)/,
+    through: /reopen i\d+ seq \d+ admitted|edge i\d+ -> i\d+ added/,
+  },
 ];
 
 test('property: a split store keeps every port answer as strict as its issue authority and one receipt per request ID', () => {

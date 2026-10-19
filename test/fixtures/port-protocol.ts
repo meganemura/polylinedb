@@ -67,6 +67,7 @@ export type Message =
 
 export type RequestKey = `claim ${ClaimRequest}` | `create ${CreationRequest}`;
 export type Issued = { uid: ReceiptUid; by: string; step: number };
+export type Close = { issue: IssueId; by: ObjectName; seq: number; step: number };
 export type World = {
   step: number;
   current: Incarnation;
@@ -76,8 +77,10 @@ export type World = {
   sent: number;
   nonces: number;
   uids: number;
-  // Ghost record for Safety B. A commit or a creation appends; a replay appends nothing. The protocol never reads it.
+  // Ghost records for the checks; the protocol never reads them. A commit or a creation appends a receipt,
+  // and a replay appends nothing. Each committed close appends to closes.
   issued: Map<RequestKey, Issued[]>;
+  closes: Close[];
 };
 
 export type Ask = { kind: 'flip'; fact: Fact } | { kind: 'acquire'; request: ClaimRequest };
@@ -97,7 +100,7 @@ export type ActionKind = Action['kind'];
 
 export const eventTags = [
   'idle', 'requested', 'replayed', 'refused-busy', 'aborted-after-reset',
-  'admitted', 'readmitted', 'refused-blocked', 'refused-children', 'refused-reserved', 'refused-unknown',
+  'admitted', 'readmitted', 'refused-blocked', 'refused-pinned', 'refused-children', 'refused-reserved', 'refused-unknown',
   'answer-dropped', 'lost',
   'committed', 'aborted-refused', 'aborted-lost-reply', 'dropped', 'reset',
   'row-applied', 'row-stale', 'row-below-floor', 'reservation-bound', 'reservation-released', 'reservation-kept',
@@ -112,12 +115,16 @@ export type Rules = {
   // Mechanism 1, rules 1-4: a restrictive change takes effect in the port before its authority commits it;
   // a permissive change takes effect in the port only from the authority's row.
   order(change: FactChange): 'port-first' | 'authority-first';
+  // The pin, which the seven rules do not state: an open close admission holds the answer that the
+  // dependent's blockers are closed, so none of them may reopen and no open blocker may join.
+  holdsAnswer(port: Port, dependent: IssueId): boolean;
   // Mechanism 2, rule 5: what an abort row does to the reservation of its claim request ID.
   afterAbort(reservation: Reservation, abort: Row): Reservation;
 };
 
 export const protocolRules: Rules = {
   order: change => restrictive(change) ? 'port-first' : 'authority-first',
+  holdsAnswer: (port, dependent) => port.admissions.some(admission => admission.issue === dependent && admission.guarded),
   afterAbort: (reservation, abort) => reservation.state === 'open' && reservation.nonce === abort.nonce ? { state: 'released' } : reservation,
 };
 
@@ -145,11 +152,12 @@ export function initialWorld(): World {
   };
   const world: World = {
     step: 0, current: 's0', ports: new Map([['s0', port]]), objects: new Map(), network: [], sent: 0, nonces: 0,
-    uids: 0, issued: new Map(),
+    uids: 0, issued: new Map(), closes: [],
   };
   for (const action of seedScript) step(world, action, protocolRules);
   world.step = 0;
   for (const receipts of world.issued.values()) for (const receipt of receipts) receipt.step = 0;
+  for (const close of world.closes) close.step = 0;
   return world;
 }
 
@@ -194,7 +202,7 @@ export function step(world: World, action: Action, rules: Rules): Event[] {
     case 'reset': object(world, action.object).volatile.handler = null; return [event('reset', 'the handler is lost; the marker stays')];
     case 'age-out': return ageOut(world, action);
     case 'create': return create(world, action);
-    case 'add-edge': return addEdge(world, action);
+    case 'add-edge': return addEdge(world, action, rules);
   }
 }
 
@@ -275,6 +283,10 @@ function admit(port: Port, issue: IssueId, marker: Marker, rules: Rules): Answer
     const open = [...port.blockers.get(issue) ?? []].find(blocker => !port.mirror.get(blocker)?.facts.closed);
     if (open) return { verdict: 'refused', tag: 'refused-blocked', detail: `${name} refused, blocker ${open} is not closed` };
   }
+  if (change.fact === 'closed' && !change.to) {
+    const holder = [...port.blockers].find(([dependent, blockers]) => blockers.has(issue) && rules.holdsAnswer(port, dependent))?.[0];
+    if (holder) return { verdict: 'refused', tag: 'refused-pinned', detail: `${name} refused, ${issue} is pinned by the open close admission of ${holder}` };
+  }
   if (change.fact === 'epic' && !change.to) {
     const child = [...port.parent].find(([, parent]) => parent === issue)?.[0];
     if (child) return { verdict: 'refused', tag: 'refused-children', detail: `${name} refused, ${child} is its child` };
@@ -326,6 +338,7 @@ function endSequence(world: World, authority: Authority, end: Row['end']): Row {
   const marker = durable.marker!;
   const { change } = marker;
   if (end === 'commit' && change.kind === 'fact') durable.facts[change.fact] = change.to;
+  if (end === 'commit' && guarded(change)) world.closes.push({ issue: issueOf(authority.name), by: authority.name, seq: marker.seq, step: world.step });
   if (end === 'commit' && change.kind === 'claim') {
     const uid = ++world.uids;
     durable.claims.set(change.request, uid);
@@ -422,11 +435,14 @@ function init(world: World, port: Port, issue: IssueId, delivery: 'delivered' | 
   return 'refused' in touched ? [touched.refused] : touched.events;
 }
 
-function addEdge(world: World, action: Extract<Action, { kind: 'add-edge' }>): Event[] {
+function addEdge(world: World, action: Extract<Action, { kind: 'add-edge' }>, rules: Rules): Event[] {
   const port = currentPort(world);
   if (reaches(port, action.blocker, action.dependent)) return [event('edge-refused', `${action.blocker} already depends on ${action.dependent}`)];
+  if (!port.mirror.get(action.blocker)?.facts.closed && rules.holdsAnswer(port, action.dependent)) {
+    return [event('refused-pinned', `edge refused, ${action.dependent} holds an open close admission and ${action.blocker} is not closed`)];
+  }
   port.blockers.set(action.dependent, new Set([...port.blockers.get(action.dependent) ?? [], action.blocker]));
-  return [event('edge-added', `${action.dependent} depends on ${action.blocker}`)];
+  return [event('edge-added', `edge ${action.dependent} -> ${action.blocker} added`)];
 }
 
 function reaches(port: Port, from: IssueId, to: IssueId): boolean {

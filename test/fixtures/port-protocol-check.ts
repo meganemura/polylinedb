@@ -4,12 +4,16 @@ import { AssertionError } from 'node:assert/strict';
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
 import { enabled, initialWorld, sequenceName, step } from './port-protocol.ts';
-import type { Action, ActionKind, Authority, EventTag, Fact, Incarnation, IssueId, Issued, Message, ObjectName, RequestKey, Rules, World } from './port-protocol.ts';
+import type { Action, ActionKind, Authority, Close, EventTag, Fact, Incarnation, IssueId, Issued, Message, ObjectName, RequestKey, Rules, World } from './port-protocol.ts';
 
-export type Reliance = { kind: 'mirror'; seq: number } | { kind: 'child'; child: IssueId };
+export type Reliance =
+  | { kind: 'mirror'; seq: number }
+  | { kind: 'answer'; dependent: IssueId; seq: number }
+  | { kind: 'child'; child: IssueId };
 export type Violation =
   | { invariant: 'A'; port: Incarnation; issue: IssueId; fact: Fact; reliance: Reliance; authority: ObjectName; seq: number }
-  | { invariant: 'B'; request: RequestKey; receipts: Issued[] };
+  | { invariant: 'B'; request: RequestKey; receipts: Issued[] }
+  | { invariant: 'close witness'; close: Close; blocker: IssueId; authority: ObjectName | null; seq: number };
 
 // Before its first touch, an issue's authority still lives in an older incarnation.
 export function authorityOf(world: World, issue: IssueId): Authority | null {
@@ -29,6 +33,10 @@ export function violations(world: World): Violation[] {
     if (!authority) continue;
     const relied: { fact: Fact; reliance: Reliance }[] = [];
     if (mirror.facts.closed) relied.push({ fact: 'closed', reliance: { kind: 'mirror', seq: mirror.seq } });
+    // An answer the port gave and has not seen end is a fact it still relies on: the dependent may commit its close on it.
+    for (const admission of port.admissions) {
+      if (admission.guarded && port.blockers.get(admission.issue)?.has(issue)) relied.push({ fact: 'closed', reliance: { kind: 'answer', dependent: admission.issue, seq: admission.seq } });
+    }
     if (mirror.facts.epic) relied.push({ fact: 'epic', reliance: { kind: 'mirror', seq: mirror.seq } });
     for (const [child, parent] of port.parent) if (parent === issue) relied.push({ fact: 'epic', reliance: { kind: 'child', child } });
     for (const { fact, reliance } of relied) {
@@ -39,16 +47,31 @@ export function violations(world: World): Violation[] {
   for (const [request, receipts] of world.issued) {
     if (new Set(receipts.map(({ uid }) => uid)).size > 1) found.push({ invariant: 'B', request, receipts });
   }
+  // The close witness: a close committed in this step finds every blocker closed at its authority of record.
+  for (const close of world.closes.filter(({ step }) => step === world.step)) {
+    for (const blocker of port.blockers.get(close.issue) ?? []) {
+      const authority = authorityOf(world, blocker);
+      if (!authority?.durable.facts.closed) found.push({ invariant: 'close witness', close, blocker, authority: authority?.name ?? null, seq: authority?.durable.seq ?? 0 });
+    }
+  }
   return found;
 }
 
 function headline(step: number, violation: Violation): string {
+  if (violation.invariant === 'close witness') {
+    const { close, blocker, authority, seq } = violation;
+    const truth = authority ? `has closed false at authority ${authority} seq ${seq}` : 'has no authority';
+    return `Close witness violated after step ${step}: ${close.by} committed close ${close.issue} seq ${close.seq}, but blocker ${blocker} ${truth}`;
+  }
   if (violation.invariant === 'B') {
     const [kind, request] = violation.request.split(' ');
     const receipts = violation.receipts.map(({ by, step: at }) => `${by} (step ${at})`).join(', ');
     return `Safety B violated after step ${step}: ${kind === 'claim' ? 'claim' : 'creation'} request ${request} has ${violation.receipts.length} receipts: ${receipts}`;
   }
-  const reliance = violation.reliance.kind === 'mirror' ? `mirror at seq ${violation.reliance.seq}` : `child ${violation.reliance.child}`;
+  const { reliance: relied } = violation;
+  const reliance = relied.kind === 'mirror' ? `mirror at seq ${relied.seq}`
+    : relied.kind === 'answer' ? `answer to ${relied.dependent} at seq ${relied.seq}`
+    : `child ${relied.child}`;
   return `Safety A violated after step ${step}: port ${violation.port} relies on ${violation.issue} ${violation.fact} (${reliance}), but authority ${violation.authority} has ${violation.fact} false at seq ${violation.seq}`;
 }
 
