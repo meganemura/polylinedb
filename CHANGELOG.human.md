@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The plan to split the store into one object per issue now has an executable model of how those objects and the shared port work together. It tries many random orders of requests, lost and repeated messages, restarts, and moves to a new store copy, and it fails on each of five known mistakes. It also found one more rule that a split needs. Nothing changes for pd users, and the split stays on hold until real traffic shows that one store is not enough.
+
 The stale-write scenario now runs on nukadoko 0.18.0. The scenario itself does not change. Nothing changes for pd users.
 
 The stale-write scenario now runs on nukadoko 0.17.0 and uses its built-in temporary directories and command runner, so the scenario code is shorter and its records list each `pd` command it ran. Nothing changes for pd users.

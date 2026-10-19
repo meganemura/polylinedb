@@ -427,8 +427,9 @@ The defects came from four mechanisms:
 - The routing to per-issue objects named by the incarnation.
 - The creation of an issue authority from its creation receipt.
 
-The review proposed these rules for a split.
-Nobody has verified them yet:
+The review proposed rules 1 to 7 for a split.
+The interleaving model in `test/port-protocol.test.ts` found rule 8.
+The model passes with the eight rules under its abstractions:
 
 1. Before the port call, the issue authority writes a durable pending marker with the admitted sequence and a nonce.
 2. Each admitted sequence ends as exactly one outbox row, either the commit or an abort row with the full row and the nonce. After a reset, the next request on the object writes the abort row first.
@@ -437,11 +438,33 @@ Nobody has verified them yet:
 5. A claim request ID reservation has the states open with a nonce, bound, and released. An accepted receipt binds the reservation, and bound is final. An abort releases only an open reservation with the same nonce.
 6. A rotation stops port admissions for the old incarnation before the copy starts.
 7. Migration and reconciliation write the current incarnation into each creation receipt that they create or repair.
+8. Found by the model: while a dependent has an open close admission, the port refuses a reopen of each blocker of the dependent.
+   It also refuses an edge from that dependent to a blocker that is not closed.
+
+The model needed these readings of rules 1, 2, and 7:
+
+- Rule 1: an issue authority has one marker at a time.
+  It refuses a request while a handler waits for the answer of the port.
+- Rule 2: a sequence commits only while its marker stands.
+  An age-out or a pull that ended the marker wins over a late answer.
+- Rule 7: a creation receipt names the incarnation that holds the issue authority.
+  Creation writes it, and the first touch in a new incarnation repairs it.
+  An empty object builds its issue authority from the receipt only when the receipt names the incarnation of the object.
+  Otherwise, the object pulls the issue authority from the named incarnation.
+  The pull ends the open marker there as an abort row and retires the old object.
+  If the port copy writes the new incarnation into each receipt that it copies, the model fails.
 
 Start the split only after both gates pass:
 
 - A measured request rate shows that the store Durable Object cannot serve the store.
-- An executable interleaving model of the port protocol passes. With Node built-ins, the model is a `node:test` test that runs random interleavings of admissions, commits, aborts, lost responses, resets, and reordered or repeated signals. It checks after every step that each mirror fact is as strict as the authority or stricter, and that no request ID has two receipts.
+- An executable interleaving model of the port protocol passes.
+  `test/port-protocol.test.ts` is that model.
+  It uses Node built-ins and runs random interleavings of admissions, commits, aborts, lost responses, resets, rotations, and reordered or repeated signals.
+  It checks after every step that each mirror fact is as strict as the authority or stricter, and that no request ID has two receipts.
+  The model now passes with the eight rules under its abstractions.
+
+The first gate still holds the split back, because no measured request rate shows that the store Durable Object cannot serve the store.
+`docs/verification.md` lists what the model abstracts and the defects that it catches.
 
 The module boundaries below already separate the per-issue write from the cross-issue port, so the split changes where the parts run and leaves their responsibilities unchanged.
 

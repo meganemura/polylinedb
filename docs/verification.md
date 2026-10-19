@@ -45,6 +45,7 @@ Hegel uses fixed seeds and 100 cases per property by default.
 The properties cover numeric ID ordering and uniqueness, independent field versions, stale writes, creation retries, and snapshot round trips.
 They also reject duplicate snapshot IDs and unsupported snapshot versions.
 The operation sequences run against real SQLite stores.
+The port protocol property runs against a model of a split store, which [Interleaving model](#interleaving-model) describes.
 The D1 fixtures check the shared behavior separately with workerd.
 Lease properties use 30 generated TTL pairs against real SQLite and verify immutable acquisition replay after renewal.
 The D1 suite also checks concurrent claim admission, status fencing, receipt replay, rollback, and incarnation changes.
@@ -206,10 +207,11 @@ The injections wrap the store executor. The production writer stays unchanged.
 | --- | --- | --- | --- |
 | Change feed contract | The store deletes the first committed event | `test/change-feed-defects.test.ts` (SQLite), `test/changes-d1.integration.ts` (D1) | Fails as expected |
 | Change feed contract | The store records an event for a rejected `request_conflict` create | `test/change-feed-defects.test.ts` (SQLite), `test/changes-d1.integration.ts` (D1) | Fails as expected |
-| Interleaving model | The order of restrictive and permissive changes between an issue authority and the port | None | Pending: the model does not exist |
-| Interleaving model | The release of claim request ID reservations | None | Pending: the model does not exist |
-| Interleaving model | Routing to objects named by the incarnation | None | Pending: the model does not exist |
-| Interleaving model | Creation of an issue authority from its creation receipt | None | Pending: the model does not exist |
+| Interleaving model | A restrictive change commits at its issue authority before the port admits it | `test/port-protocol.test.ts` | Fails as expected |
+| Interleaving model | An abort row releases a claim request ID reservation in any state | `test/port-protocol.test.ts` | Fails as expected |
+| Interleaving model | A rotated port still admits what a stale Worker instance routes to it | `test/port-protocol.test.ts` | Fails as expected |
+| Interleaving model | An empty object builds its issue authority from a creation receipt that names another incarnation | `test/port-protocol.test.ts` | Fails as expected |
+| Interleaving model | A blocker reopens or joins open while a dependent holds the answer that its blockers are closed | `test/port-protocol.test.ts` | Fails as expected |
 | Cold reconciliation | A projection that still shows a released claim | None | Pending: reconciliation does not exist |
 
 No check has found a defect that stays unfixed, so CI pins no expected failure.
@@ -245,9 +247,106 @@ The injection tests therefore depend on the defect, not on an unrelated failure.
 
 ### Interleaving model
 
-`docs/issue-authority.md` requires a `node:test` that interleaves port admissions, commits, aborts, lost responses, resets, and reordered or repeated signals before a per-issue or per-project split.
-The repository has no such test.
-When the model exists, inject each of the four mechanisms in the table and confirm that the model fails on each one.
+```sh
+node --import ./scripts/test-node-runtime.mjs --test test/port-protocol.test.ts
+PD_HEGEL_CASES=10000 node --import ./scripts/test-node-runtime.mjs --test --test-name-pattern='^property:' test/port-protocol.test.ts
+```
+
+`docs/issue-authority.md` requires this model before a per-issue or per-project split.
+`test/fixtures/port-protocol.ts` models a split store.
+It has one issue authority for each issue and incarnation, one port for each incarnation, and the network between them.
+It imports nothing from `src/`, because the split does not exist.
+Each Hegel case starts from one seed world and runs 60 steps.
+In the seed world, `i1` is a closed task that holds claim request ID `c1`.
+`i2` and `i3` depend on `i1`, and `i3` is an epic.
+The init of `i2` was lost, so its first touch makes its issue authority.
+
+Each step does one of these actions:
+
+- A client request through the current routing, or through a Worker instance that still routes by the previous incarnation.
+- The delivery, repetition, or loss of a message.
+- The delivery of an outbox row, with or without its acknowledgement.
+- A timeout of the handler that waits for an answer.
+- A reset that loses the handler and keeps the durable state.
+- An age-out of an open admission.
+- A creation, with or without its init.
+- A new dependency edge.
+- A rotation of the port, the end of stale routing, or a first touch by a background sweep.
+
+The admission request and the answer of the port are messages.
+The network can lose, repeat, or delay each message, so an admission can reach the port after its own abort row.
+An outbox row stays in the outbox until the port acknowledges it.
+The network can repeat or delay a row, but it cannot lose a row.
+
+A schedule uses two bytes for each step.
+The first byte selects the action kind by weight, and the second byte selects one enabled action of that kind.
+A kind with no enabled action does nothing, so a byte selects the same kind in every world.
+Then shrinking can remove a step and keep the kinds of the steps after it.
+
+`test/fixtures/port-protocol-check.ts` reads the world after each step and checks three invariants:
+
+- Safety A: each fact that the current port relies on is true at the issue authority of record.
+  The port relies on a closed fact in its mirror and on an epic fact in its mirror or in a child.
+  It also relies on the blockers of each dependent whose close it admitted and whose row it has not applied.
+- Safety B: no claim request ID or creation request ID has two receipts in any incarnation.
+- Close witness: when a close commits, each blocker of the closing issue is closed at its issue authority of record.
+
+The issue authority of record is the newest object for the issue that is not retired.
+The property also requires each event in `mustReach` at least once.
+It requires that no age-out finds a sequence that its authority did not admit.
+Each injection replaces one rule in `protocolRules`.
+An injection passes only when the report names the expected invariant and a trace step that shows the mechanism.
+Each test keeps its stored examples in its own directory under the ignored `.hegel/port-protocol/` directory.
+
+The model needs these readings in addition to the seven proposed rules:
+
+- The pin: an open close admission holds the answer that the blockers of the dependent are closed.
+  While the admission is open, the port refuses a reopen of a blocker and an edge to a blocker that is not closed.
+  The fifth injection removes the pin.
+- One marker for each issue authority: the authority refuses a request while a handler waits for an answer.
+  Rule 2 and the floors of rule 3 assume that sequences end in order.
+- A commit needs its marker: a sequence commits only while its marker stands.
+  An age-out or a pull that ended the marker wins over a late answer.
+- A pull ends the open marker of the source as an abort row, copies the durable state, and retires the source.
+  A source that was not made becomes a retired tombstone, so a late init cannot make the issue in the old incarnation.
+- Rule 7: a creation receipt names the incarnation that holds the issue authority.
+  Creation and a pull write that incarnation.
+  An empty object builds its issue authority from the receipt only when the receipt names its own incarnation.
+  Otherwise, the object pulls the issue authority from the named incarnation.
+
+The literal reading of rule 7 fails.
+In that reading, the port copy writes the new incarnation into each receipt that it copies.
+Then a first touch builds the closed `i1` from its creation receipt, which says open.
+A scratch copy of the model with that reading reported Safety A after two steps: a rotation, then a request for `i1`.
+
+Safety A and the close witness both catch a missing pin.
+Safety A fires first, because the answer reliance starts at the admission and the close commits before its row ends the admission.
+The fifth injection therefore matches the Safety A message for the answer reliance.
+A rotated port that admits can fail each of the three invariants, so the third injection matches only the trace step `by a rotated port`.
+
+On 2026-10-19, Node 24.20.0 on a machine with 4 vCPUs measured these results at seed 20261019.
+The whole file took 1.35 to 1.46 seconds in three runs with no stored examples.
+The property took 131 to 173 milliseconds at 100 cases.
+It took 0.73 seconds at 1,000 cases and 5.9 seconds at 10,000 cases.
+At 100 cases, the least frequent `mustReach` events were `refused-children` (3), `refused-pinned` (9), and `row-below-floor` (17).
+At 10,000 cases, the same events occurred 481, 889, and 1,201 times.
+
+A throwaway loop ran each injection at seeds 1 to 20 with 100 cases and no stored examples.
+Each injection failed at all 20 seeds.
+A trace step count excludes the steps that do nothing.
+
+| Injection | Cases to first failure, median (maximum) | Shrunk trace steps, median (range) | Seed 20261019: cases, steps |
+| --- | --- | --- | --- |
+| Restrictive change at the authority first | 3 (11) | 3 (3 to 3) | 3, 3 |
+| Abort releases any reservation | 15 (56) | 9 (7 to 16) | 37, 14 |
+| Rotated port admits | 11 (41) | 4 (4 to 17) | 8, 3 |
+| Receipt from another incarnation | 3 (6) | 2 (2 to 2) | 2, 2 |
+| Pin removed | 13 (57) | 6 (3 to 11) | 2, 3 |
+
+The shortest possible traces are 3, 6, 3, 2, and 3 steps.
+Over the 20 seeds, the rotated port injection failed 17 times through Safety A, 2 times through Safety B, and once through the close witness.
+The model checks the protocol under its abstractions only.
+It does not run a Durable Object, D1, or a real network.
 
 ### Cold reconciliation
 
