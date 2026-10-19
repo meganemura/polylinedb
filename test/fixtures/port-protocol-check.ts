@@ -87,16 +87,17 @@ export type Tally = Map<EventTag, number>;
 // Weights pick the action kind; every action of that kind is then equally likely. idle comes first in the
 // weighted list, so choice 0 means idle and Hegel shrinks an unneeded step to a line the report does not print.
 export const weights: Record<ActionKind, number> = {
-  idle: 1, request: 8, deliver: 20, finish: 2, reset: 1, 'age-out': 1, create: 1, 'add-edge': 1,
+  idle: 1, request: 8, deliver: 22, finish: 2, reset: 1, 'age-out': 1, create: 1, 'add-edge': 1,
   rotate: 1, 'settle-routing': 1, materialize: 1,
 };
+const kinds = Object.entries(weights).flatMap(([kind, weight]) => Array<ActionKind>(weight).fill(kind as ActionKind));
 
+// A kind with nothing enabled idles instead of falling through to another kind. Then a byte names the same kind
+// in every world, so a step that shrinking removes does not change the kind of the steps after it.
 export function schedule(world: World, choice: readonly [number, number]): Action {
-  const actions = enabled(world);
-  const kinds = [...new Set(actions.map(action => action.kind))].flatMap(kind => Array<ActionKind>(weights[kind]).fill(kind));
   const kind = kinds[choice[0] % kinds.length];
-  const ofKind = actions.filter(action => action.kind === kind);
-  return ofKind[choice[1] % ofKind.length]!;
+  const ofKind = enabled(world).filter(action => action.kind === kind);
+  return ofKind[choice[1] % ofKind.length] ?? { kind: 'idle' };
 }
 
 export function explore(rules: Rules, options: ExploreOptions): Tally {
