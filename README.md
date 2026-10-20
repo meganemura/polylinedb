@@ -224,3 +224,7 @@ See [verification](docs/verification.md) for seeded properties, bounded mutation
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+[Japanese](README.ja.md)
