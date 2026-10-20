@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The Bun notes now include a check on Linux. There, Bun 1.4.3 uses the same SQLite build as Node and gives the same answers in every test we ran, so only the explicit "Bun is not supported" rule still stops it. pd still asks you to run it with Node.
+
 The README now has a Japanese translation, `README.ja.md`, and the English README links to it at the end. Nothing changes for pd users.
 
 You can now fix a comment you wrote. Run `pd show` to see the comment's version, then `pd comment edit ISSUE COMMENT_ID --expected VERSION --body TEXT`. Only the person or agent who wrote a comment can edit it, and an edit fails if someone else changed the comment after you read it. pd does not keep the old text, so search no longer finds it, but snapshots and backups made before the edit still have it. `pd show --human` and the issue page in `/ui` mark an edited comment. Upgrade a local store with `pd upgrade`; the shared database needs its migration before the server update.

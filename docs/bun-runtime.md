@@ -4,7 +4,7 @@ polylinedb 0.4.0 does not run under Bun.
 Every command exits with `unsupported_runtime`, `--help` included.
 A later change lets help and `--version` print on any runtime; every other command still exits with `unsupported_runtime`.
 This page records the measurements behind that result, the reason the version checks are correct to refuse Bun, and the experiments that come next.
-It records the state on October 8, 2026, and declares no Bun support.
+It records the state on October 8, 2026, adds Linux measurements from October 20, 2026, and declares no Bun support.
 polylinedb now adopts solarsql 0.8.0, which refuses Bun by name; [the runtime check since solarsql 0.8.0](#the-runtime-check-since-solarsql-080) describes the current rule.
 
 ## Package manager and runtime are separate choices
@@ -120,10 +120,13 @@ The order follows the dependency between them.
    Bun 1.4.2 exposes `Database.setCustomSQLite` in `bun:sqlite`.
    Its effect on `node:sqlite` is not measured.
    If a matching library loads, compare `sqlite_source_id()` and run the value probes that solarsql uses for Miniflare, because a version string alone is not enough.
-   Measure Bun on Linux separately. Its SQLite source is not measured.
+   On Linux x86_64, Bun 1.4.3 already runs that build; see [Linux measurements](#linux-measurements).
+   macOS and Linux arm64 on Bun 1.4.3 are not measured.
 2. Agree with solarsql on how a runtime proves its SQLite build.
    solarsql 0.8.0 checks the SQLite version itself, and polylinedb's bootstrap follows it.
    It still refuses Bun by name, so a Bun adapter needs a further change in solarsql first.
+   solarsql's ADR 0145 names that change: a CI job that runs the node adapter's tests on Bun with SQLite 3.53.4 or later, and a new ADR that admits a range of Bun releases.
+   The Linux measurements show that such a job can run on Bun 1.4.3.
    A version string is weaker evidence than `sqlite_source_id()` and the value probes in step 1.
 3. Compare a store on `bun:sqlite` only after step 1 gives a matching SQLite build.
    Keep issue operations, ID allocation, field-version conflicts, and the snapshot format shared, and keep runtime differences inside the database boundary.
@@ -169,6 +172,45 @@ Bun 1.4.2 on macOS, measured above, now gets this message instead of the Node ve
 This output comes from a simulated Bun in the test suite, not from a Bun run; Bun was not rerun for this change.
 A Bun release that reports Node 26.7 and links SQLite 3.53.4 is still refused, because solarsql refuses Bun by name.
 A caller that opens a store through `openStore` without the bootstrap gets the solarsql refusal as `unsupported_runtime` with `details.solarsql_code` set to `UNSUPPORTED_RUNTIME`, instead of `internal_error`.
+
+## Linux measurements
+
+Environment: Ubuntu 24.04.5 on x86_64, measured on October 20, 2026.
+Bun 1.4.2 came from the machine's install. Bun 1.4.3 came from the `@oven/bun-linux-x64@1.4.3` npm package, released on October 10, 2026.
+Node 24.20.0 came from the official Linux x64 tarball.
+The system library is SQLite 3.45.1, and no runtime below loads it.
+
+| Runtime | `process.versions.node` | SQLite from `node:sqlite` | `sqlite_source_id()` |
+| --- | --- | --- | --- |
+| Node 24.20.0 | 24.20.0 | 3.53.4 | `2026-07-24 19:02:57 bf7c7f30…` |
+| Bun 1.4.3 | 26.3.0 | 3.53.4 | `2026-07-24 19:02:57 bf7c7f30…` |
+| Bun 1.4.2 | 26.3.0 | 3.53.2 | `2026-06-03 19:12:13 d6e03d8c…` |
+
+The Bun binary links only libc, libpthread, libdl, and libm, so its SQLite is compiled in.
+`bun:sqlite` reports the same version and source id as `node:sqlite` in each Bun release.
+Bun 1.4.3 and Node 24.20.0 report the full 64-character source id with the same value.
+
+solarsql's runtime contract probe, `spike/16-runtime-contract.ts` in the solarsql repository, prints the answers that ADR 0145 compares.
+Run from a solarsql checkout after `npm ci`, it gave the same answer on Bun 1.4.3 and Node 24.20.0 for every probe:
+text with an embedded NUL, an integer beyond the safe range, a named parameter followed by a positional one, a savepoint rollback, REAL text through `json_array(0.1 + 0.2)`, the error codes of a constraint failure (1555) and of a trigger's `RAISE(ABORT)` (1811), and the plan and full-scan report of an `EXISTS` query.
+Bun 1.4.2 on Linux gave the same answers as well, except for its SQLite version.
+This differs from Bun 1.4.2 on macOS, whose system SQLite 3.51.0 changed the REAL text and the full-scan report.
+
+```sh
+node spike/16-runtime-contract.ts
+bun spike/16-runtime-contract.ts
+```
+
+The pd 0.5.2 CLI, built from this repository, still refuses Bun 1.4.3 by name, as the rule since solarsql 0.8.0 requires.
+This is a real Bun run, not the simulated one in the test suite:
+
+```json
+{"error":{"code":"unsupported_runtime","message":"Unsupported runtime Bun 1.4.3, which reports Node 26.3.0 and whose node:sqlite runs SQLite 3.53.4. polylinedb requires Node ^24.20.0 || >=26.7.0 with node:sqlite on SQLite 3.53.4 or later. Run pd with Node.","details":{"actual_node":"26.3.0","required_node":"^24.20.0 || >=26.7.0","package_version":"0.5.2","runtime":"bun","runtime_version":"1.4.3","actual_sqlite":"3.53.4","required_sqlite":"3.53.4"}}}
+```
+
+On Linux x86_64, the SQLite build no longer separates Bun 1.4.3 from Node.
+The refusal by name is now the only rule that refuses it.
+These probes do not cover the polylinedb store: no issue operation, concurrency case, snapshot round trip, or Git child process ran on Bun.
 
 ## Non-goals
 
