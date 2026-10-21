@@ -31,7 +31,9 @@ const projectIssueLimit = 101;
 const shownProjectIssues = 100;
 const closedLimit = 50;
 
-const viewerOf = (caller: UiCaller, labels: ReadonlyMap<string, string>): Viewer => ({ ...caller, labels, now: Math.floor(Date.now() / 1000) });
+// The page clock stops at the minute: every time it shows is minute-resolution, and a seconds clock would change the
+// ETag on every request, so a revalidation within the same minute could never answer 304.
+const viewerOf = (caller: UiCaller, labels: ReadonlyMap<string, string>): Viewer => ({ ...caller, labels, now: Math.floor(Date.now() / 60_000) * 60 });
 
 async function sha256(text: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
