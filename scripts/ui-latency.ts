@@ -168,7 +168,7 @@ try {
   const largest = projects[0];
   const projectPath = `/ui/p/${largest[0]}/${largest[1]}`;
   const pages: Record<string, string> = {
-    home: '/ui', inbox: '/ui/inbox', working: '/ui/working', blocked: '/ui/blocked', recent: '/ui/recent', activity: '/ui/activity',
+    home: '/ui', agents: '/ui/agents', landing: '/ui/landing', stuck: '/ui/stuck', projects: '/ui/projects', activity: '/ui/activity',
     project: projectPath, 'project open': `${projectPath}?status=open`, 'project ready': `${projectPath}?label=ready`,
     'issue (epic)': `/ui/i/${epics[0]}`, 'issue (leaf)': `/ui/i/${issues.find(issue => issue.status === 'closed')!.id}`,
     'search words': '/ui/search?q=lease%20worker', 'search id': `/ui/search?q=${issues[500]!.id}`,
@@ -350,9 +350,10 @@ async function scenario(cdp: Cdp, base: string, projectPath: string, dwell: numb
   await cdp.send('Page.navigate', { url: `${base}/ui` }, sessionId);
   await measure('first load: home', `${base}/ui`);
   await sleep(500);
-  await follow('home -> project', `a[href="${projectPath}"]`);
-  await follow('project -> open filter', 'nav[aria-label="State"] a[href$="?status=open"]');
-  await follow('filter -> issue', '.quiet-list a[href^="/ui/i/"]');
+  await follow('home -> projects', '.tabs a[href="/ui/projects"]');
+  await follow('projects -> project', `a[href="${projectPath}"]`);
+  await follow('project -> open filter', '[aria-label="State"] a[href$="?status=open"]');
+  await follow('filter -> issue', '.rows a.title[href^="/ui/i/"]');
   await cdp.send('Page.enable', {}, sessionId);
   const skipped = new Promise<string | undefined>(resolve => {
     const done = cdp.on(message => {
@@ -366,9 +367,9 @@ async function scenario(cdp: Cdp, base: string, projectPath: string, dwell: numb
   await measure('issue -> back', `${base}${projectPath}?status=open`, Number(result.value));
   const reasons = await skipped;
   if (reasons !== undefined) rows.at(-1)!.bfcacheSkipped = reasons;
-  await follow('back -> inbox', '.views a[href="/ui/inbox"]');
-  await follow('inbox -> issue', '.quiet-list a[href^="/ui/i/"]');
-  await follow('issue -> home', '.views a[href="/ui"]');
+  await follow('back -> stuck', '.tabs a[href="/ui/stuck"]');
+  await follow('stuck -> issue', '.rows a.title[href^="/ui/i/"]');
+  await follow('issue -> today', '.tabs a[href="/ui"]');
   stop();
   await cdp.send('Target.disposeBrowserContext', { browserContextId });
   return rows;

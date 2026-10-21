@@ -23,7 +23,7 @@ type DispatchEnv = DispatchSettings & { DB: D1DatabaseLike };
 
 export type Dispatcher = {
   control(env: DispatchSettings, caller: Caller): DispatchControl;
-  press(request: Request, env: DispatchEnv, caller: Caller, issueId: string): Promise<DispatchOutcome>;
+  press(form: URLSearchParams | 'invalid', env: DispatchEnv, caller: Caller, issueId: string): Promise<DispatchOutcome>;
 };
 
 export type DispatcherOptions = {
@@ -36,7 +36,6 @@ export type DispatcherOptions = {
 
 const windowMs = 60_000;
 const defaultTimeoutMs = 10_000;
-const formLimitBytes = 16 * 1024;
 const notesLimitBytes = 4096;
 const eventIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -91,46 +90,12 @@ function normalizeNotes(value: string): string | undefined | 'invalid' {
   return normalized;
 }
 
-async function readBody(request: Request): Promise<Uint8Array | 'invalid'> {
-  const declared = request.headers.get('content-length');
-  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > formLimitBytes) return 'invalid';
-  if (request.body === null) return new Uint8Array();
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > formLimitBytes) {
-        await reader.cancel();
-        return 'invalid';
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return bytes;
-}
-
-async function readPressForm(request: Request): Promise<{ notes: string | undefined } | 'invalid'> {
-  const bytes = await readBody(request);
-  if (bytes === 'invalid') return 'invalid';
-  if (bytes.byteLength === 0) return { notes: undefined };
-  const media = request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-  if (media !== 'application/x-www-form-urlencoded') return 'invalid';
-  let text: string;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-  catch { return 'invalid'; }
-  const params = new URLSearchParams(text);
-  const names = [...params.keys()];
-  if (new Set(names).size !== names.length || names.some(name => name !== 'notes')) return 'invalid';
-  const raw = params.get('notes');
+function pressNotes(form: URLSearchParams | 'invalid'): { notes: string | undefined } | 'invalid' {
+  if (form === 'invalid') return 'invalid';
+  const names = [...form.keys()];
+  // The /ui pages send a return path beside the notes; the dispatcher ignores it.
+  if (new Set(names).size !== names.length || names.some(name => name !== 'notes' && name !== 'return')) return 'invalid';
+  const raw = form.get('notes');
   if (raw === null) return { notes: undefined };
   const notes = normalizeNotes(raw);
   if (notes === 'invalid') return 'invalid';
@@ -210,11 +175,11 @@ export function createDispatcher(options: DispatcherOptions = {}): Dispatcher {
   const mintEventId = options.newEventId ?? (() => crypto.randomUUID());
   return {
     control: controlFor,
-    async press(request, env, caller, issueId) {
+    async press(input, env, caller, issueId) {
       if (!mayPress(caller)) return { kind: 'not_permitted' };
       const webhook = webhookFrom(env);
       if (webhook === undefined) return { kind: 'unavailable' };
-      const form = await readPressForm(request);
+      const form = pressNotes(input);
       if (form === 'invalid') return { kind: 'invalid_form' };
       const scope = await readScope(env.DB, issueId);
       if (scope === null) return { kind: 'not_found' };

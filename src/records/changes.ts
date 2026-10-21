@@ -155,6 +155,15 @@ export async function activityAfter(db: SqlExecutor, since: number, incarnation:
   return { ...head, events: events.slice(0, limit), more: events.length > limit };
 }
 
+/** Event counts per actor and kind over the last `seconds` by the store clock, most events first. Retention may have removed older events. */
+export type ActivityCount = { actor: string; kind: string; events: number };
+export async function activitySince(db: SqlExecutor, seconds: number): Promise<ActivityCount[]> {
+  return (await db.reads.all(issueQueries.activitySince, { seconds })).map(row => {
+    if (typeof row.actor !== 'string' || typeof row.kind !== 'string' || typeof row.events !== 'number') throw new PolylinedbError('invalid_store', 'Stored change count is invalid', 500);
+    return { actor: row.actor, kind: row.kind, events: row.events };
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => { setTimeout(resolve, ms); });
 }

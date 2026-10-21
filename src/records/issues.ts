@@ -528,16 +528,44 @@ export async function issueDispatchScope(db: SqlExecutor, issueId: string): Prom
   return { tool: row.tool, project: row.project };
 }
 
-export type BlockedIssue = { issue: Issue; openBlockers: number };
-export async function blockedIssues(db: SqlExecutor, limit: number): Promise<BlockedIssue[]> {
-  return (await db.reads.all(issueQueries.blockedIssues, { limit })).map(row => ({ issue: issueRow(row), openBlockers: storedCount(row.open_blockers) }));
+/** `blockerIds` are the active blockers in issue order; `dependencyRevision` is the revision dependency_add and dependency_remove expect. */
+export type BlockedIssue = { issue: Issue; openBlockers: number; blockerIds: string[]; dependencyRevision: number };
+/** `total` counts every blocked issue, including those past the limit. */
+export async function blockedIssues(db: SqlExecutor, limit: number): Promise<{ rows: BlockedIssue[]; total: number }> {
+  const rows = await db.reads.all(issueQueries.blockedIssues, { limit });
+  return { total: rows[0] === undefined ? 0 : storedCount(rows[0].total), rows: rows.map(row => {
+    const ids: unknown = typeof row.blocker_ids === 'string' ? JSON.parse(row.blocker_ids) : row.blocker_ids;
+    if (!Array.isArray(ids)) throw new PolylinedbError('invalid_store', 'Stored blocker list is invalid', 500);
+    return { issue: issueRow(row), openBlockers: storedCount(row.open_blockers), blockerIds: ids.map(value => id(value)),
+      dependencyRevision: integer(row.dependency_revision, 'dependency_revision', 1, Number.MAX_SAFE_INTEGER) };
+  }) };
 }
 
-export async function startedWithoutClaim(db: SqlExecutor, limit: number): Promise<Issue[]> {
-  return (await db.reads.all(issueQueries.startedWithoutClaim, { limit })).map(issueRow);
+/** In-progress issues other than epics with no active claim. Expired claims come first, then the least recently updated. */
+export type StartedIssue = { issue: Issue; claim: ClaimDisplay };
+export async function startedWithoutClaim(db: SqlExecutor, limit: number): Promise<{ rows: StartedIssue[]; total: number; expired: number }> {
+  const rows = await db.reads.all(issueQueries.startedWithoutClaim, { limit });
+  const head = rows[0];
+  return {
+    total: head === undefined ? 0 : storedCount(head.total),
+    expired: head === undefined ? 0 : storedCount(head.expired_total),
+    rows: rows.map(row => ({ issue: issueRow(row), claim: displayedClaim(row) })),
+  };
 }
 
-export type ActiveClaimIssue = { issue: Issue; actor: string; agentLabel: string | null; expiresAt: number };
+function displayedClaim(row: Record<string, unknown>): ClaimDisplay {
+  if (row.claim_generation === null) return { state: 'never_claimed' };
+  const lease = claimRow({ issue_id: row.id, incarnation: row.claim_incarnation, actor: row.claim_actor, session_id: row.claim_session_id,
+    agent_label: row.claim_agent_label, generation: row.claim_generation, revision: row.claim_revision, acquired_at: row.claim_acquired_at,
+    changed_at: row.claim_changed_at, expires_at: row.claim_expires_at, released_at: row.claim_released_at });
+  const state = claimState(lease, parseIncarnation(row.store_incarnation), clock(row.observed_at as number | null));
+  if (state === 'never_claimed') return { state };
+  return { state, actor: lease.actor, agentLabel: lease.agent_label, expiresAt: lease.expires_at, releasedAt: lease.released_at };
+}
+
+/** `lastNote` is the holder's newest comment since the lease began, when one exists. */
+export type ActiveClaimIssue = { issue: Issue; actor: string; agentLabel: string | null; acquiredAt: number; expiresAt: number;
+  lastNote: { body: string; at: string } | null };
 export async function activeClaimIssues(db: SqlExecutor, limit: number): Promise<ActiveClaimIssue[]> {
   const rows = await db.reads.all(issueQueries.activeClaims, { limit });
   return rows.flatMap(row => {
@@ -548,7 +576,8 @@ export async function activeClaimIssues(db: SqlExecutor, limit: number): Promise
       changed_at: row.claim_changed_at, expires_at: row.claim_expires_at, released_at: row.claim_released_at });
     const state = claimState(lease, parseIncarnation(row.store_incarnation), clock(row.observed_at));
     if (state !== 'active') return [];
-    return [{ issue, actor: lease.actor, agentLabel: lease.agent_label, expiresAt: lease.expires_at }];
+    const lastNote = typeof row.note_body === 'string' && typeof row.note_created_at === 'string' ? { body: row.note_body, at: row.note_created_at } : null;
+    return [{ issue, actor: lease.actor, agentLabel: lease.agent_label, acquiredAt: lease.acquired_at, expiresAt: lease.expires_at, lastNote }];
   });
 }
 

@@ -2,7 +2,8 @@
 import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { createDispatcher, dispatchSecretNames, type Dispatcher } from "./dispatch.ts";
-import { dispatchResponse, uiNotFoundResponse, uiResponse, type ActivityCursor, type UiRoute } from "./ui.ts";
+import { issueActions, uiNotFoundResponse, uiResponse, uiWriteResponse, type ActivityCursor, type IssueAction, type UiCaller, type UiRoute, type WriteRoute } from "./ui.ts";
+import { formLimitBytes, readForm } from "./form.ts";
 import { issueFieldsFor } from "./released-issues.ts";
 import { PolylinedbError } from "../records/index.ts";
 import { executeOperation, mcpAnnotationsFor, operationAccess, operationSchemas, parseIssueId, parseOperation, parseRequestId } from "../records/index.ts";
@@ -122,8 +123,8 @@ async function readJson(request: Request): Promise<unknown> {
 
 function checkOrigin(request: Request, env: Environment, target: { kind: string }): void {
   const origin = request.headers.get('origin');
-  // Dispatch accepts only a missing Origin or this request's own origin. ALLOWED_ORIGINS stays out of that decision.
-  if (target.kind === 'dispatch') {
+  // A /ui write accepts only a missing Origin or this request's own origin. ALLOWED_ORIGINS stays out of that decision.
+  if (target.kind === 'write') {
     if (origin === null || origin === new URL(request.url).origin) return;
     throw new PolylinedbError('forbidden_origin', 'Origin is not allowed.', 403);
   }
@@ -275,19 +276,29 @@ function projectRoute(pathname: string): UiRoute | null {
   return { page: 'project', tool, project: decoded.slice(1).join('/') };
 }
 
-function issueTarget(pathname: string): { kind: 'ui'; route: UiRoute } | { kind: 'dispatch'; issueId: string } | { kind: 'missing' } {
+type Target = { kind: 'mcp' } | { kind: 'operations' } | { kind: 'version' } | { kind: 'ui'; route: UiRoute } | { kind: 'write'; route: WriteRoute }
+  | { kind: 'redirect'; location: string } | { kind: 'missing' };
+
+function issueTarget(pathname: string): Target {
   const rest = pathname.slice('/ui/i/'.length);
   const slash = rest.indexOf('/');
   const idPart = slash === -1 ? rest : rest.slice(0, slash);
-  const tail = slash === -1 ? '' : rest.slice(slash);
-  if (idPart.length === 0 || (tail !== '' && tail !== '/dispatch')) return { kind: 'missing' };
+  const action = slash === -1 ? '' : rest.slice(slash + 1);
+  if (idPart.length === 0 || (action !== '' && !issueActions.includes(action as IssueAction))) return { kind: 'missing' };
   let value: string;
   try { value = decodeURIComponent(idPart); } catch { return { kind: 'missing' }; }
   try {
     const id = parseIssueId(value);
-    return tail === '/dispatch' ? { kind: 'dispatch', issueId: id } : { kind: 'ui', route: { page: 'issue', id } };
+    return action === '' ? { kind: 'ui', route: { page: 'issue', id } } : { kind: 'write', route: { kind: 'issue', id, action: action as IssueAction } };
   } catch { return { kind: 'missing' }; }
 }
+
+// The views of the earlier /ui keep working as links: each moved permanently to the page that now shows the same thing.
+const movedViews: Readonly<Record<string, string>> = { '/ui/inbox': '/ui', '/ui/working': '/ui/agents', '/ui/blocked': '/ui/stuck', '/ui/recent': '/ui/activity' };
+const pages: Readonly<Record<string, UiRoute>> = {
+  '/ui': { page: 'today' }, '/ui/agents': { page: 'agents' }, '/ui/activity': { page: 'activity' }, '/ui/landing': { page: 'landing' }, '/ui/stuck': { page: 'stuck' },
+  '/ui/projects': { page: 'projects' }, '/ui/search': { page: 'search', query: '' }, '/ui/new': { page: 'new' },
+};
 
 // An after link carries the feed cursor and its store incarnation. Without `after` the page shows the newest events.
 function activityCursor(url: URL): { after?: ActivityCursor | 'invalid' } {
@@ -299,23 +310,31 @@ function activityCursor(url: URL): { after?: ActivityCursor | 'invalid' } {
   return { after: { since, incarnation } };
 }
 
-function requestTarget(pathname: string): { kind: 'mcp' } | { kind: 'operations' } | { kind: 'version' } | { kind: 'ui'; route: UiRoute } | { kind: 'dispatch'; issueId: string } | { kind: 'missing' } {
+function requestTarget(pathname: string, method: string): Target {
   if (pathname === '/mcp') return { kind: 'mcp' };
   if (pathname === '/v1/operations') return { kind: 'operations' };
   if (pathname === '/v1/version') return { kind: 'version' };
-  if (pathname === '/ui') return { kind: 'ui', route: { page: 'home' } };
-  if (pathname === '/ui/inbox') return { kind: 'ui', route: { page: 'inbox' } };
-  if (pathname === '/ui/search') return { kind: 'ui', route: { page: 'search', query: '' } };
-  if (pathname === '/ui/working') return { kind: 'ui', route: { page: 'working' } };
-  if (pathname === '/ui/blocked') return { kind: 'ui', route: { page: 'blocked' } };
-  if (pathname === '/ui/recent') return { kind: 'ui', route: { page: 'recent' } };
-  if (pathname === '/ui/activity') return { kind: 'ui', route: { page: 'activity' } };
+  const moved = movedViews[pathname];
+  if (moved !== undefined) return { kind: 'redirect', location: moved };
+  if (pathname === '/ui/new' && method === 'POST') return { kind: 'write', route: { kind: 'new' } };
+  if (pathname === '/ui/landing/landed') return { kind: 'write', route: { kind: 'landed' } };
+  const page = Object.hasOwn(pages, pathname) ? pages[pathname] : undefined;
+  if (page !== undefined) return { kind: 'ui', route: page };
   if (pathname.startsWith('/ui/p/')) {
     const route = projectRoute(pathname);
     return route === null ? { kind: 'missing' } : { kind: 'ui', route };
   }
   if (pathname.startsWith('/ui/i/')) return issueTarget(pathname);
   return { kind: 'missing' };
+}
+
+// Only an explicit application/json asks for JSON. A browser form post sends */* too, and it gets the redirect or the page.
+function wantsJson(request: Request): boolean {
+  return (request.headers.get('accept') ?? '').split(',').some(entry => entry.split(';')[0]?.trim().toLowerCase() === 'application/json');
+}
+
+function uiCaller(caller: Caller, dispatcher: Dispatcher, env: Environment): UiCaller {
+  return { actor: caller.actor, role: caller.access === 'read' ? 'reader' : caller.actor.kind === 'agent' ? 'agent' : 'human', dispatch: dispatcher.control(env, caller) };
 }
 
 export async function handleRequest(
@@ -326,29 +345,38 @@ export async function handleRequest(
 ): Promise<Response> {
   const started = performance.now();
   try {
-    const target = requestTarget(new URL(request.url).pathname);
+    const url = new URL(request.url);
+    const target = requestTarget(url.pathname, request.method);
     if (target.kind === 'missing') return json({ error: { code: 'not_found', message: 'Route not found.' } }, 404);
+    if (target.kind === 'redirect') return new Response(null, { status: 301, headers: { location: target.location, 'cache-control': 'no-store' } });
     checkOrigin(request, env, target);
     const caller = await authenticate(request, env);
     if (target.kind === 'version') {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
       return json(await readServerInfo(env.DB));
     }
-    if (target.kind === 'dispatch') {
+    if (target.kind === 'write') {
       if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.' } }, 405, { allow: 'POST' });
-      return dispatchResponse(await dispatcher.press(request, env, caller, target.issueId), target.issueId);
+      // Dispatch keeps its own smaller limit: its only field is a 4096-character note.
+      const dispatch = target.route.kind === 'issue' && target.route.action === 'dispatch';
+      const form = await readForm(request, dispatch ? 16 * 1024 : formLimitBytes);
+      const answer = await uiWriteResponse(d1Executor(env.DB), actorLabels(env), target.route, uiCaller(caller, dispatcher, env), form, wantsJson(request),
+        (issueId, posted) => dispatcher.press(posted, env, caller, issueId));
+      answer.headers.set('server-timing', `worker;dur=${(performance.now() - started).toFixed(1)}`);
+      return answer;
     }
     if (target.kind === 'ui') {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.' } }, 405, { allow: 'GET' });
       let route = target.route;
+      const viewer = uiCaller(caller, dispatcher, env);
       if (route.page === 'project') {
-        const filters = projectFilters(new URL(request.url));
-        if (filters === 'invalid') return uiNotFoundResponse();
+        const filters = projectFilters(url);
+        if (filters === 'invalid') return uiNotFoundResponse(viewer, actorLabels(env));
         route = { ...route, ...filters };
       }
-      if (route.page === 'activity') route = { page: 'activity', ...activityCursor(new URL(request.url)) };
-      if (route.page === 'search') route = { page: 'search', query: new URL(request.url).searchParams.get('q') ?? '' };
-      const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, { actor: caller.actor, dispatch: dispatcher.control(env, caller) }, request.headers.get('if-none-match'));
+      if (route.page === 'activity') route = { page: 'activity', ...activityCursor(url) };
+      if (route.page === 'search') route = { page: 'search', query: url.searchParams.get('q') ?? '' };
+      const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, viewer, url, request.headers.get('if-none-match'));
       // Workers advance this clock only across I/O, so the duration is the time spent waiting on Access keys and D1.
       page.headers.set('server-timing', `worker;dur=${(performance.now() - started).toFixed(1)}`);
       return page;

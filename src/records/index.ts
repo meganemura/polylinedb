@@ -3,7 +3,7 @@ export { executeOperation, parseOperation, operationSchemas } from './operations
 export { recentlyClosedIssues, projectSummaries, projectIssues, projectClosedIssues, activeClaimIssues, startedWithoutClaim, blockedIssues, recentUpdates, issueParent, issueChildren, issueDispatchScope } from './issues.ts';
 export { attentionIssues } from './attention.ts';
 export type { Attention, AttentionIssue, AttentionLabel, OpenIssue, OwnerGroup, OwnerLabel, OwnerQueue } from './attention.ts';
-export type { ProjectSummary, ProjectIssue, ActiveClaimIssue, BlockedIssue, IssueLink } from './issues.ts';
+export type { ProjectSummary, ProjectIssue, ActiveClaimIssue, BlockedIssue, StartedIssue, IssueLink } from './issues.ts';
 export { claimDisplay } from './claims.ts';
 export type { ClaimDisplay } from './claims.ts';
 export { mcpAnnotationsFor, operationAccess, requiresExplicitLocalActor } from './operation-policy.ts';
@@ -28,5 +28,5 @@ export type { Claim, ClaimOperation, ClaimReceipt, ClaimRequest, ClaimInspection
 export type { ClaimHandoff, HandoffParts } from './claim-handoff.ts';
 export type { ClaimProof, ClaimMutation } from './claims-sql.ts';
 export type { ChangesOperation, ChangesResult, ChangeEvent, ChangeKind, WaitOperation } from './changes.ts';
-export { activityAfter, activityNewest, waitPageLimit } from './changes.ts';
-export type { ActivityEvent, ActivityPage } from './changes.ts';
+export { activityAfter, activityNewest, activitySince, waitPageLimit } from './changes.ts';
+export type { ActivityCount, ActivityEvent, ActivityPage } from './changes.ts';
