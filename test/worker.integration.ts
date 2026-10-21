@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare';
 import { SCHEMA_STATEMENTS, SCHEMA_VERSION } from "../src/records/schema.ts";
-import { dispatchScript } from "../src/service/ui.ts";
+import { pageScript } from "../src/service/ui.ts";
 
 const bundleUrl = new URL('../.cloudflare/output/v0/workers/default/bundle/index.js', import.meta.url);
 const bundle = await readFile(bundleUrl, 'utf8');
@@ -315,17 +315,18 @@ try {
   assert.match(etag ?? '', /^"[0-9a-f]{32}"$/);
   const html = await page.text();
   const rulesBody = html.match(/<script type="speculationrules">([\s\S]*?)<\/script>/)?.[1];
-  assert.equal(html.match(/<script\b/g)?.length, 1);
+  assert.equal(html.match(/<script\b/g)?.length, 2);
   assert.equal(typeof rulesBody, 'string');
   assert.deepEqual(JSON.parse(rulesBody ?? ''), {
     prefetch: [{ source: 'document', where: { or: [{ href_matches: '/ui' }, { href_matches: '/ui/*' }] }, eagerness: 'moderate', referrer_policy: 'no-referrer' }],
   });
   const rulesHash = createHash('sha256').update(rulesBody ?? '').digest('base64');
-  // The policy also allows the fixed Dispatch script that an issue page carries when Dispatch is ready.
-  const dispatchHash = createHash('sha256').update(dispatchScript).digest('base64');
-  assert.equal(page.headers.get('content-security-policy'), `default-src 'none'; script-src 'sha256-${rulesHash}' 'sha256-${dispatchHash}'; connect-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
+  // The policy also allows the one fixed page script, which every /ui page carries.
+  const scriptHash = createHash('sha256').update(pageScript).digest('base64');
+  assert.ok(html.includes(`<script>${pageScript}</script>`));
+  assert.equal(page.headers.get('content-security-policy'), `default-src 'none'; script-src 'sha256-${rulesHash}' 'sha256-${scriptHash}'; connect-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
   assert.equal(page.headers.get('cache-control')?.includes('public'), false);
-  assert.match(html, /@media \(prefers-reduced-motion: no-preference\) \{\s*@view-transition \{ navigation: auto; \}/);
+  assert.match(html, /@media \(prefers-reduced-motion:no-preference\)\{\s*@view-transition\{navigation:auto\}/);
   const revalidated = await runtime.dispatchFetch('http://polylinedb.test/ui', { headers: { 'cf-access-jwt-assertion': viewer, 'if-none-match': `W/${etag}` } });
   assert.equal(revalidated.status, 304);
   assert.equal(await revalidated.text(), '');
@@ -337,22 +338,24 @@ try {
   const anonymousBody = await anonymousRevalidation.text();
   assert.equal(anonymousBody.includes(`${draftIssue.id}`), false);
   assert.equal(anonymousBody.includes('speculationrules'), false);
-  assert.ok(html.includes(`${draftIssue.id} · Last updated`));
-  const waitingOnYou = html.split('<h2>').find(part => part.startsWith('Waiting on you</h2>'));
-  assert.ok(waitingOnYou);
-  assert.ok(waitingOnYou.includes(`${id}`));
-  assert.match(waitingOnYou, /<time datetime="[^"]+">waiting under an hour<\/time>/);
+  const lane = (heading: string) => html.slice(html.indexOf(`>${heading}</h2>`), html.indexOf('</section>', html.indexOf(`>${heading}</h2>`)));
+  assert.ok(lane('Landing').includes(`href="/ui/i/${draftIssue.id}"`));
+  assert.ok(lane('You').includes(`href="/ui/i/${id}"`));
+  assert.match(lane('You'), /waiting under 1 min/);
   assert.ok(!html.includes('Recently closed'));
-  assert.ok(!html.includes('Ready work'));
+  // The issue Codex holds is on the Agents lane with the holder's latest note quoted.
+  assert.ok(lane('Agents').includes(`href="/ui/i/${readyIssue.id}"`));
+  assert.ok(lane('Agents').includes('<b>Codex</b>'));
+  assert.ok(lane('Agents').includes('“Started, with a plan”'));
   const gatedPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/gated', { headers: { 'cf-access-jwt-assertion': viewer } });
   assert.equal(gatedPage.status, 200);
   const gatedHtml = await gatedPage.text();
   assert.ok(gatedHtml.includes('Recently closed'));
-  assert.ok(gatedHtml.includes(`<span class="secondary">${readyIssue.id} · Last updated <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">Codex</span>`));
-  assert.ok(html.includes('<h2>Projects</h2>'));
-  for (const project of ['parser', 'other', 'gated']) assert.ok(html.includes(`href="/ui/p/compiler/${project}"`), project);
-  assert.deepEqual([...html.matchAll(/href="(\/ui\/p\/[^"]+)"/g)].map(match => match[1]), ['/ui/p/compiler/gated', '/ui/p/compiler/other', '/ui/p/compiler/parser']);
-  assert.ok(html.includes('Updated <time datetime="2026-10-04T00:00:00.000Z">2026-10-04 09:00 JST</time>'));
+  assert.ok(gatedHtml.includes(`href="/ui/i/${readyIssue.id}"`));
+  assert.ok(gatedHtml.includes('updated <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time> by Codex'));
+  const projectsHtml = await (await runtime.dispatchFetch('http://polylinedb.test/ui/projects', { headers: { 'cf-access-jwt-assertion': viewer } })).text();
+  assert.deepEqual([...projectsHtml.matchAll(/href="(\/ui\/p\/[^"]+)"/g)].map(match => match[1]), ['/ui/p/compiler/gated', '/ui/p/compiler/other', '/ui/p/compiler/parser']);
+  assert.ok(projectsHtml.includes('Updated <time datetime="2026-10-04T00:00:00.000Z">2026-10-04 09:00 JST</time>'));
   const projectPage = await runtime.dispatchFetch('http://polylinedb.test/ui/p/compiler/parser', { headers: { 'cf-access-jwt-assertion': viewer } });
   assert.equal(projectPage.status, 200);
   const projectHtml = await projectPage.text();

@@ -20,15 +20,16 @@ test('the current /ui pages meet the latency budget', async () => {
   assert.deepEqual(report.verdicts, passing);
   assert.deepEqual(report.pages.map(page => [page.path, page.cacheControl, page.facts]), [
     ['/ui', 'private, no-cache', facts],
+    ['/ui/agents', 'private, no-cache', facts],
+    ['/ui/activity', 'private, no-cache', facts],
+    ['/ui/landing', 'private, no-cache', facts],
+    ['/ui/stuck', 'private, no-cache', facts],
+    ['/ui/projects', 'private, no-cache', facts],
     ['/ui/p/compiler/parser', 'private, no-cache', facts],
     ['/ui/p/compiler/parser?status=open', 'private, no-cache', facts],
     [`/ui/i/${report.issueId}`, 'private, no-cache', facts],
-    ['/ui/inbox', 'private, no-cache', facts],
-    ['/ui/working', 'private, no-cache', facts],
-    ['/ui/blocked', 'private, no-cache', facts],
-    ['/ui/recent', 'private, no-cache', facts],
-    ['/ui/activity', 'private, no-cache', facts],
     ['/ui/search?q=lease', 'private, no-cache', facts],
+    ['/ui/new', 'private, no-cache', facts],
   ]);
 });
 

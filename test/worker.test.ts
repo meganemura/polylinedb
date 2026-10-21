@@ -8,7 +8,9 @@ import { createAccessVerifier } from "../src/service/access.ts";
 import { createDispatcher, dispatchSecretNames } from "../src/service/dispatch.ts";
 import * as dispatchModule from "../src/service/dispatch.ts";
 import { handleRequest } from "../src/service/index.ts";
-import { dispatchResponse, dispatchScript } from "../src/service/ui.ts";
+import { pageScript, speculationRules } from "../src/service/ui.ts";
+import { composeLanes, stuckCount } from "../src/service/ui-today.ts";
+import type { Issue } from "../src/records/index.ts";
 import { SCHEMA_SQL } from "../src/records/schema.ts";
 import { statements } from "../src/records/solarsql.generated.ts";
 import { issueSortKey } from "../src/records/issue-id.ts";
@@ -672,76 +674,591 @@ async function seedIssue(env: ReturnType<typeof fixture>['env'], token: string, 
   return (await response.json()).issue.id;
 }
 
-function viewUi(env: ReturnType<typeof fixture>['env'], headers: Record<string, string> = {}, method = 'GET') {
-  return handleRequest(new Request('https://issues.example/ui', { method, headers }), env, authenticate);
-}
-
-function uiSection(html: string, heading: string): string {
-  const part = html.split('<h2>').find(candidate => candidate.startsWith(`${heading}</h2>`));
-  assert.ok(part, heading);
-  return part;
-}
-
-// A page carries the speculation rules and, on an issue page where Dispatch is ready, the fixed Dispatch script.
-function speculationRules(html: string): string {
-  const all = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];
-  const scripts = all.filter(script => script[1] !== '' || script[2] !== dispatchScript);
-  assert.ok(all.length - scripts.length <= 1);
-  assert.equal(scripts.length, 1);
-  assert.equal(scripts[0][1], ' type="speculationrules"');
-  const body = scripts[0][2] ?? '';
-  assert.deepEqual(JSON.parse(body), {
-    prefetch: [{
-      source: 'document',
-      where: { or: [{ href_matches: '/ui' }, { href_matches: '/ui/*' }] },
-      eagerness: 'moderate',
-      referrer_policy: 'no-referrer',
-    }],
-  });
-  return body;
-}
-
-const notesField = '<textarea id="dispatch-notes" name="notes" maxlength="4096" rows="4" placeholder="What should the agent do or watch for?"></textarea>';
-const notesLabel = '<label for="dispatch-notes">Notes for the agent (optional)</label>';
-const freshSummary = '<p class="secondary">not ready · no blockers · not claimed · will not start now</p>';
-
-function assertNoApplicationControls(html: string): void {
-  const forms = [...html.matchAll(/<form\b[^>]*>[\s\S]*?<\/form>/g)].map(match => match[0]);
-  if (forms.length === 0) {
-    assert.equal(/<(form|input|button|textarea)\b/.test(html), false);
-  } else {
-    assert.equal(forms.length, 1);
-    const form = forms[0] ?? '';
-    assert.match(form, /^<form method="post" action="\/ui\/i\/[a-z][a-z0-9]{0,15}-[1-9][0-9]*(?:\.[1-9][0-9]*){0,7}\/dispatch" class="dispatch">/);
-    assert.equal(/<input\b/.test(html), false);
-    assert.deepEqual([...html.matchAll(/<textarea\b[^>]*>[\s\S]*?<\/textarea>/g)].map(match => match[0]), [notesField]);
-    const button = form.includes('disabled')
-      ? '<button type="submit" disabled>Dispatch</button>'
-      : '<button type="submit">Dispatch</button>';
-    assert.deepEqual([...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]), [button]);
-    if (form.includes('disabled')) assert.ok(form.includes('Dispatch is not set up.'));
-    else assert.equal(form.includes('Dispatch is not set up.'), false);
-  }
-  speculationRules(html);
-}
-
-function uiPolicy(html: string): string {
-  const hash = createHash('sha256').update(speculationRules(html)).digest('base64');
-  const dispatch = createHash('sha256').update(dispatchScript).digest('base64');
-  return `default-src 'none'; script-src 'sha256-${hash}' 'sha256-${dispatch}'; connect-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
-}
-
-function projectPath(tool: string, project: string): string {
-  return `/ui/p/${encodeURIComponent(tool)}/${project.split('/').map(segment => encodeURIComponent(segment)).join('/')}`;
-}
-
-function viewProject(env: ReturnType<typeof fixture>['env'], tool: string, project: string, headers: Record<string, string> = {}, method = 'GET', query = '') {
-  return handleRequest(new Request(`https://issues.example${projectPath(tool, project)}${query}`, { method, headers }), env, authenticate);
+function viewUi(env: ReturnType<typeof fixture>['env'], headers: Record<string, string> = {}, method = 'GET', path = '/ui') {
+  return handleRequest(new Request(`https://issues.example${path}`, { method, headers }), env, authenticate);
 }
 
 function viewIssue(env: ReturnType<typeof fixture>['env'], id: string, headers: Record<string, string> = {}, method = 'GET') {
   return handleRequest(new Request(`https://issues.example/ui/i/${id}`, { method, headers }), env, authenticate);
 }
+
+/** A same-origin form post, as the browser sends it, optionally asking for the JSON the fixed script reads. */
+function postUi(env: ReturnType<typeof fixture>['env'], path: string, token: string, fields: readonly (readonly [string, string | number])[],
+  init: { json?: boolean; origin?: string | null; dispatcher?: ReturnType<typeof createDispatcher> } = {}) {
+  const headers: Record<string, string> = { 'cf-access-jwt-assertion': token, 'content-type': 'application/x-www-form-urlencoded' };
+  if (init.origin !== null) headers.origin = init.origin ?? 'https://issues.example';
+  if (init.json === true) headers.accept = 'application/json';
+  const body = new URLSearchParams(fields.map(([name, value]) => [name, String(value)])).toString();
+  return handleRequest(new Request(`https://issues.example${path}`, { method: 'POST', headers, body }), env, authenticate, init.dispatcher);
+}
+
+async function operation(env: ReturnType<typeof fixture>['env'], token: string, body: Record<string, unknown>) {
+  const response = await handleRequest(new Request('https://issues.example/v1/operations', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
+  }), env, authenticate);
+  assert.equal(response.status, 200, await response.clone().text());
+  return response.json();
+}
+
+async function createIssue(env: ReturnType<typeof fixture>['env'], token: string, fields: Record<string, unknown>): Promise<string> {
+  const started = fields.status === 'in_progress' && fields.type !== 'epic';
+  const { id } = (await operation(env, token, { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), ...fields, ...(started ? { status: 'open' } : {}) })).issue;
+  if (!started) return id;
+  const { store_incarnation } = (await operation(env, token, { op: 'claim_show', issue_id: id })).claim;
+  const session_id = crypto.randomUUID();
+  const { claim_receipt } = await operation(env, token, { op: 'claim_acquire', issue_id: id, incarnation: store_incarnation, session_id, request_id: crypto.randomUUID() });
+  const claim_proof = { issue_id: id, incarnation: claim_receipt.incarnation, session_id, generation: claim_receipt.generation };
+  await operation(env, token, { op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof });
+  return id;
+}
+
+/** The text of a page with tags removed, for sentence assertions that do not pin markup. */
+function textOf(html: string): string {
+  return html.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '').replace(/<svg[\s\S]*?<\/svg>/g, '')
+    .replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/\s+/g, ' ').replace(/ ([,.:;)])/g, '$1').replace(/\( /g, '(');
+}
+
+/** The section of a page that a lane panel or card heading opens. */
+function panel(html: string, heading: string): string {
+  const start = html.indexOf(`>${heading}</h2>`);
+  assert.ok(start >= 0, heading);
+  const end = html.indexOf('</section>', start);
+  return html.slice(start, end);
+}
+
+function uiPolicy(): string {
+  const rules = createHash('sha256').update(speculationRules).digest('base64');
+  const script = createHash('sha256').update(pageScript).digest('base64');
+  return `default-src 'none'; script-src 'sha256-${rules}' 'sha256-${script}'; connect-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+}
+
+// Every page carries the speculation rules and the one fixed script, and nothing else runs.
+function assertPageScripts(html: string): void {
+  const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];
+  assert.deepEqual(scripts.map(script => script[1]), [' type="speculationrules"', '']);
+  assert.equal(scripts[0]?.[2], speculationRules);
+  assert.equal(scripts[1]?.[2], pageScript);
+  assert.deepEqual(JSON.parse(speculationRules), {
+    prefetch: [{ source: 'document', where: { or: [{ href_matches: '/ui' }, { href_matches: '/ui/*' }] }, eagerness: 'moderate', referrer_policy: 'no-referrer' }],
+  });
+  assert.equal(/\sstyle="/.test(html), false, 'no inline style attribute');
+  assert.equal(/\son[a-z]+="/.test(html), false, 'no inline event handler');
+}
+
+const uiPages = ['/ui', '/ui/agents', '/ui/activity', '/ui/landing', '/ui/stuck', '/ui/projects', '/ui/p/compiler/parser', '/ui/search?q=Lane', '/ui/new'];
+
+test('ui: every page answers under the hashed policy with one fixed script, Server-Timing, and an ETag', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Lane title' });
+    for (const path of [...uiPages, `/ui/i/${id}`]) {
+      const response = await viewUi(env, auth, 'GET', path);
+      assert.equal(response.status, 200, path);
+      assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
+      assert.equal(response.headers.get('cache-control'), 'private, no-cache');
+      assert.equal(response.headers.get('referrer-policy'), 'same-origin');
+      assert.equal(response.headers.get('content-security-policy'), uiPolicy(), path);
+      assert.match(response.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/, path);
+      assert.match(response.headers.get('etag') ?? '', /^"[0-9a-f]{32}"$/, path);
+      const html = await response.text();
+      assertPageScripts(html);
+      assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'), path);
+    }
+    const missing = await viewUi(env, auth, 'GET', '/ui/i/pd-999');
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/);
+    assertPageScripts(await missing.text());
+    const rejected = await viewUi(env, {});
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.headers.get('server-timing'), null);
+  } finally { sqlite.close(); }
+});
+
+test('ui: the views of the earlier /ui move permanently, and unknown paths stay JSON 404s', async () => {
+  const { sqlite, env } = fixture();
+  const reads: string[] = [];
+  const watched = { ...env, DB: { ...env.DB, prepare: (sql: string) => { reads.push(sql); return env.DB.prepare(sql); } } };
+  try {
+    for (const [from, to] of [['/ui/inbox', '/ui'], ['/ui/working', '/ui/agents'], ['/ui/blocked', '/ui/stuck'], ['/ui/recent', '/ui/activity']]) {
+      const moved = await viewUi(watched, {}, 'GET', from);
+      assert.equal(moved.status, 301, from);
+      assert.equal(moved.headers.get('location'), to);
+      assert.equal(await moved.text(), '');
+    }
+    assert.deepEqual(reads, []);
+    for (const path of ['/ui/nowhere', '/ui/i/pd-1/unknown', '/ui/i/not-an-id']) {
+      const missing = await viewUi(env, { 'cf-access-jwt-assertion': await assertion() }, 'GET', path);
+      assert.equal(missing.status, 404, path);
+      assert.deepEqual(await missing.json(), { error: { code: 'not_found', message: 'Route not found.' } });
+    }
+  } finally { sqlite.close(); }
+});
+
+test('ui: a page revalidates with its ETag only after Access accepts the caller, and a 304 carries no page data', async () => {
+  const { sqlite, env } = fixture('["access:owner","access:peer",{"actor":"access:viewer","role":"reader"}]');
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const reads: string[] = [];
+  const watched = { ...env, DB: { ...env.DB, prepare: (sql: string) => { reads.push(sql); return env.DB.prepare(sql); } } };
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Cached title' });
+    const issueRequest = (headers: Record<string, string>, target = env) => handleRequest(new Request(`https://issues.example/ui/i/${id}`, { headers }), target, authenticate);
+    const first = await issueRequest(auth);
+    assert.equal(first.status, 200);
+    const etag = first.headers.get('etag') ?? '';
+    const html = await first.text();
+    assert.equal(etag, `"${createHash('sha256').update(html).digest('hex').slice(0, 32)}"`);
+    for (const ifNoneMatch of [etag, `W/${etag}`, `"other", W/${etag}`, '*']) {
+      const again = await issueRequest({ ...auth, 'if-none-match': ifNoneMatch });
+      assert.equal(again.status, 304, ifNoneMatch);
+      assert.equal(await again.text(), '');
+      assert.equal(again.headers.get('etag'), etag);
+      assert.equal(again.headers.get('content-security-policy'), uiPolicy());
+      assert.equal(again.headers.get('content-type'), null);
+    }
+    // The page names its reader and the reader sees no write control, so the same issue is a different page for each role.
+    const reader = await issueRequest({ 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }), 'if-none-match': etag });
+    assert.equal(reader.status, 200);
+    assert.equal((await reader.text()).includes('method="post"'), false);
+    assert.equal((await issueRequest({ ...auth, 'if-none-match': '"0123456789abcdef0123456789abcdef"' })).status, 200);
+    const rejections: Record<string, string>[] = [{}, { 'cf-access-jwt-assertion': `${token.slice(0, -4)}AAAA` }, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) }];
+    for (const headers of rejections) {
+      const denied = await issueRequest({ ...headers, 'if-none-match': etag }, watched);
+      assert.ok(denied.status === 401 || denied.status === 403);
+      assert.equal(denied.headers.get('etag'), null);
+      assert.ok(!(await denied.text()).includes('Cached title'));
+    }
+    assert.deepEqual(reads, []);
+    sqlite.prepare("UPDATE issues SET body = 'Changed title', updated_at = '2026-10-10T00:00:00.000Z' WHERE id = ?").run(id);
+    const changed = await issueRequest({ ...auth, 'if-none-match': etag });
+    assert.equal(changed.status, 200);
+    assert.ok((await changed.text()).includes('Changed title'));
+  } finally { sqlite.close(); }
+});
+
+test('ui: Access gates every page and write before any read, and the roster role decides the controls', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"},{"actor":"service:robot","role":"agent"}]');
+  const token = await assertion();
+  const reads: string[] = [];
+  const watched = { ...env, DB: { ...env.DB, prepare: (sql: string) => { reads.push(sql); return env.DB.prepare(sql); } } };
+  try {
+    const decide = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Pick the wire format', labels: ['owner-decision'] });
+    const ready = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Ready parcel', labels: ['ready'] });
+    for (const misconfigured of [{ ACCESS_TEAM_DOMAIN: '' }, { ACCESS_AUD: '' }, { ACCESS_ACTORS: '[]' }]) {
+      assert.equal((await viewUi({ ...watched, ...misconfigured }, { 'cf-access-jwt-assertion': token })).status, 503);
+    }
+    assert.equal((await viewUi(watched)).status, 401);
+    assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) })).status, 403);
+    assert.equal((await postUi(watched, `/ui/i/${decide}/decide`, await assertion({ sub: 'stranger' }), [['outcome', 'approve']])).status, 403);
+    assert.deepEqual(reads, []);
+
+    const configured = withWebhook(env);
+    const owner = await (await viewUi(configured, { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(owner.includes(`action="/ui/i/${decide}/decide"`));
+    assert.ok(owner.includes(`action="/ui/i/${ready}/dispatch"`));
+    assert.ok(owner.includes('href="/ui/new"'));
+    assert.ok(textOf(owner).includes('One thing waits on you.'));
+    assert.ok(textOf(owner).includes(`Start with ${decide}, a decision at P2: Pick the wire format.`));
+
+    const agent = await (await viewUi(configured, { 'cf-access-jwt-assertion': await assertion({ sub: '', common_name: 'robot' }) })).text();
+    assert.ok(agent.includes(`action="/ui/i/${decide}/decide"`));
+    assert.equal(agent.includes('/dispatch"'), false);
+    assert.ok(textOf(agent).includes('One thing waits on the owner.'));
+    assert.ok(textOf(agent).includes(`The first is ${decide}`));
+
+    const reader = await (await viewUi(configured, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) })).text();
+    assert.equal(reader.includes('method="post"'), false);
+    assert.equal(reader.includes('href="/ui/new"'), false);
+    assert.ok(textOf(reader).includes('One thing waits on the owner.'));
+    const readerIssue = await (await viewIssue(configured, decide, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) })).text();
+    assert.equal(readerIssue.includes('method="post"'), false);
+    assert.ok(textOf(readerIssue).includes('Signed in as a reader. This page has no controls.'));
+
+    const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all());
+    const refused = await postUi(env, `/ui/i/${decide}/decide`, await assertion({ sub: 'viewer' }), [['outcome', 'approve'], ['v.labels', 1], ['seen.labels', '["owner-decision"]']], { json: true });
+    assert.equal(refused.status, 403);
+    assert.deepEqual(await refused.json(), { ok: false, message: 'Signed in as a reader. Writes wait on the owner.' });
+    assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all()), before);
+    for (const method of ['POST', 'PUT', 'DELETE']) {
+      const write = await viewUi(env, { 'cf-access-jwt-assertion': token }, method);
+      assert.equal(write.status, 405, method);
+      assert.equal(write.headers.get('allow'), 'GET');
+    }
+    assert.equal((await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', `/ui/i/${decide}/decide`)).status, 405);
+  } finally { sqlite.close(); }
+});
+
+test('ui: a write accepts only its own origin or none, and answers 303 to a /ui return path it validated', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Origin parcel' });
+    for (const origin of ['https://client.example', 'null', 'https://evil.example']) {
+      const cross = await postUi(env, `/ui/i/${id}/comment`, token, [['body', 'x']], { origin });
+      assert.equal(cross.status, 403, origin);
+      assert.equal((await cross.json()).error.code, 'forbidden_origin');
+    }
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments').get()?.count, 0);
+    const none = await postUi(env, `/ui/i/${id}/comment`, token, [['body', 'no origin'], ['return', '/ui/stuck']], { origin: null });
+    assert.equal(none.status, 303);
+    assert.equal(none.headers.get('location'), '/ui/stuck#comments');
+    for (const unsafe of ['https://evil.example/ui', '//evil.example/ui', '/ui\\evil', '/uix', '/elsewhere', '/ui//x']) {
+      const answer = await postUi(env, `/ui/i/${id}/comment`, token, [['body', 'kept'], ['return', unsafe]]);
+      assert.equal(answer.status, 303, unsafe);
+      assert.equal(answer.headers.get('location'), `/ui/i/${id}#comments`, unsafe);
+    }
+    const json = await postUi(env, `/ui/i/${id}/comment`, token, [['body', 'in place']], { json: true });
+    assert.equal(json.status, 200);
+    assert.deepEqual(await json.json(), { ok: true, message: 'Comment saved.' });
+    const empty = await postUi(env, `/ui/i/${id}/comment`, token, [['body', '  ']], { json: true });
+    assert.equal(empty.status, 400);
+    assert.deepEqual(await empty.json(), { ok: false, message: 'The comment is empty. Nothing changed.' });
+    const unreadable = await handleRequest(new Request(`https://issues.example/ui/i/${id}/comment`, { method: 'POST',
+      headers: { 'cf-access-jwt-assertion': token, 'content-type': 'text/plain', accept: 'application/json' }, body: 'body=x' }), env, authenticate);
+    assert.equal(unreadable.status, 400);
+    assert.equal((await unreadable.json()).ok, false);
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments').get()?.count, 8);
+  } finally { sqlite.close(); }
+});
+
+test('ui: Today composes the lanes by rule, and the dedupe rules keep each issue in one work lane', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const make = (body: string, labels: string[], extra: Record<string, unknown> = {}) => createIssue(env, token, { tool: 'compiler', project: 'acme/parser', body, labels, ...extra });
+    // An owner item that also carries ready stays on You and never shows as Ready.
+    const decide = await make('Choose the error format', ['owner-decision', 'ready'], { priority: 1 });
+    const act = await make('Rotate the deploy key', ['owner-action']);
+    const parked = await make('Parked decision', ['owner-decision']);
+    sqlite.prepare("UPDATE issues SET status = 'deferred' WHERE id = ?").run(parked);
+    const ready = await make('Add a fuzz target', ['ready']);
+    const claimedReady = await make('Claimed and ready', ['ready']);
+    const lock = await make('main-lock: acme/parser', ['main-lock', 'ready'], { type: 'chore' });
+    const first = await make('Report the column', ['main-wait']);
+    const second = await make('Keep comments', ['main-wait']);
+    const waiting = await make('Release notes', []);
+    await operation(env, token, { op: 'dependency_add', dependent_id: waiting, blocker_id: act, expected_revision: 1, request_id: crypto.randomUUID() });
+    await operation(env, token, { op: 'dependency_add', dependent_id: act, blocker_id: decide, expected_revision: 1, request_id: crypto.randomUUID() });
+    await operation(env, token, { op: 'land_order_add', later_id: first, earlier_id: second, expected_revision: 1, request_id: crypto.randomUUID() });
+    const { store_incarnation } = (await operation(env, token, { op: 'claim_show', issue_id: lock })).claim;
+    for (const id of [lock, claimedReady]) {
+      await operation(env, token, { op: 'claim_acquire', issue_id: id, incarnation: store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), ttl: 900, agent_label: 'lane-a' });
+    }
+    await operation(env, token, { op: 'comment', id: claimedReady, body: 'Halfway through the fixtures.' });
+
+    const html = await (await viewUi(env, auth)).text();
+    const text = textOf(html);
+    assert.ok(text.includes('Two things wait on you.'), text);
+    assert.ok(text.includes('1 to decide, 1 to do; the oldest has waited'));
+    assert.ok(text.includes(`Start with ${decide}, a decision at P1: Choose the error format. It has waited under 1 min. ${act} waits for it.`));
+    assert.ok(text.includes('lane-a holds the main lock for parser until'));
+    assert.ok(text.includes('so a push to main is under way.'));
+    assert.ok(text.includes(`2 issues are on queue and not on main. ${second} lands first.`));
+    assert.ok(text.includes('Composed by rule from the store at'));
+    assert.ok(text.includes('Reload for a new one.'));
+
+    const you = panel(html, 'You');
+    assert.ok(you.indexOf(`/ui/i/${decide}"`) < you.indexOf(`/ui/i/${act}"`), 'a decision comes before an action');
+    assert.ok(textOf(you).includes(`Starts after ${decide} is done.`), textOf(you));
+    assert.equal(you.includes(`/ui/i/${parked}"`), false);
+    const agents = panel(html, 'Agents');
+    assert.ok(agents.includes(`/ui/i/${ready}"`));
+    assert.ok(agents.includes(`/ui/i/${claimedReady}"`));
+    assert.ok(textOf(agents).includes('“Halfway through the fixtures.”'), textOf(agents));
+    for (const hidden of [decide, lock]) assert.equal(agents.includes(`/ui/i/${hidden}"`), false, hidden);
+    assert.equal(html.includes(`class="title" href="/ui/i/${lock}"`), false, 'a lock is never a work row');
+    const landing = panel(html, 'Landing');
+    assert.ok(landing.indexOf(`/ui/i/${second}"`) < landing.indexOf(`/ui/i/${first}"`), 'land order puts the earlier issue first');
+    const stuck = panel(html, 'Stuck');
+    assert.ok(stuck.includes(`/ui/i/${waiting}"`));
+    assert.ok(stuck.includes(`/ui/i/${act}"`), 'a blocked You item still shows as blocked');
+    assert.match(html, /aria-label="Today, 2"/);
+    assert.match(html, /aria-label="Stuck, 2"/);
+    assert.match(html, /aria-label="Agents"/);
+  } finally { sqlite.close(); }
+});
+
+test('ui: composeLanes drops You items from Ready, Expired, and Stale, and counts what the page cap hides', () => {
+  const issue = (id: string, labels: string[], status: Issue['status'] = 'open'): Issue => ({ id, tool: 't', project: 'o/p', body: id, status, type: 'task', priority: 2, labels,
+    parent_id: null, created_at: '2026-10-01T00:00:00.000Z', created_by: 'a', updated_at: '2026-10-01T00:00:00.000Z', updated_by: 'a',
+    versions: { body: 1, status: 1, type: 1, priority: 1, labels: 1 } } as unknown as Issue);
+  const expired = (id: string, labels: string[] = []) => ({ issue: issue(id, labels, 'in_progress'), claim: { state: 'expired' as const, actor: 'a', agentLabel: null, expiresAt: 10, releasedAt: null } });
+  const stale = (id: string, labels: string[] = []) => ({ issue: issue(id, labels, 'in_progress'), claim: { state: 'released' as const, actor: 'a', agentLabel: null, expiresAt: 10, releasedAt: 5 } });
+  const owner = issue('t-1', ['owner-action']);
+  const lanes = composeLanes({
+    attention: { issues: [{ issue: owner, labels: owner.labels, waitingSeconds: 60 }, { issue: issue('t-9', ['owner-decision'], 'closed'), labels: ['owner-decision'], waitingSeconds: 1 }] } as never,
+    claims: [], blocked: { rows: [], total: 0 }, queue: [], locks: [], since: [],
+    started: { rows: [expired('t-1', ['owner-action']), expired('t-2'), stale('t-3'), stale('t-4', ['main-lock']), stale('t-1')], total: 120, expired: 2 },
+    ready: [issue('t-1', ['ready', 'owner-action']), issue('t-5', ['ready'])],
+  });
+  assert.deepEqual(lanes.you.map(item => item.issue.id), ['t-1']);
+  assert.deepEqual(lanes.ready.map(row => row.id), ['t-5']);
+  assert.deepEqual(lanes.expired.map(row => row.issue.id), ['t-2']);
+  assert.deepEqual(lanes.stale.map(row => row.issue.id), ['t-3']);
+  // 120 started and 2 expired leave 118; the 2 unexpired rows a rule hides are not counted.
+  assert.equal(lanes.staleTotal, 116);
+  assert.equal(stuckCount(lanes), 1);
+});
+
+test('ui: decide approves, declines, or defers, saves the note after the change, and names the next item', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const make = (body: string) => createIssue(env, token, { tool: 'compiler', project: 'parser', body, labels: ['owner-decision', 'urgent'] });
+    const [approve, decline, defer] = [await make('Approve me'), await make('Decline me'), await make('Defer me')];
+    const fields = (outcome: string, note: string) => [['return', '/ui'], ['v.labels', 1], ['v.status', 1], ['seen.labels', '["owner-decision","urgent"]'], ['seen.status', 'open'], ['note', note], ['outcome', outcome]] as const;
+    const approved = await postUi(env, `/ui/i/${approve}/decide`, token, fields('approve', 'Ship JSON lines.'));
+    assert.equal(approved.status, 303);
+    assert.equal(approved.headers.get('location'), `/ui?done=approved:${approve}`);
+    const shown = await operation(env, token, { op: 'show', id: approve });
+    assert.deepEqual(shown.issue.labels, ['ready', 'urgent']);
+    assert.equal(shown.issue.status, 'open');
+    assert.deepEqual(shown.comments.map((comment: { body: string }) => comment.body), ['Approved. Ship JSON lines.']);
+
+    const flash = textOf(await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', `/ui?done=approved:${approve}`)).text());
+    assert.ok(flash.includes(`Decision recorded on ${approve}. Approved: owner-decision cleared and ready added. It now shows under Agents as ready.`), flash);
+    assert.ok(flash.includes(`Next: ${decline}, Decline me.`));
+
+    const declined = await postUi(env, `/ui/i/${decline}/decide`, token, fields('decline', ''), { json: true });
+    assert.equal(declined.status, 200);
+    assert.deepEqual(await declined.json(), { ok: true, message: `Decision recorded on ${decline}. Declined and closed.` });
+    assert.equal((await operation(env, token, { op: 'show', id: decline })).issue.status, 'closed');
+    assert.equal((await operation(env, token, { op: 'show', id: decline })).comments.length, 0);
+    const deferred = await postUi(env, `/ui/i/${defer}/decide`, token, fields('defer', 'After the release.'));
+    assert.equal(deferred.headers.get('location'), `/ui?done=deferred:${defer}`);
+    const parked = await operation(env, token, { op: 'show', id: defer });
+    assert.equal(parked.issue.status, 'deferred');
+    assert.deepEqual(parked.issue.labels, ['owner-decision', 'urgent']);
+    assert.deepEqual(parked.comments.map((comment: { body: string }) => comment.body), ['Deferred. After the release.']);
+    const closedFlash = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', `/ui?done=declined:${decline}`)).text();
+    assert.ok(closedFlash.includes(`action="/ui/i/${decline}/status"`), 'a closed issue offers Reopen');
+    const bogus = textOf(await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui?done=hacked:<b>')).text());
+    assert.equal(bogus.includes('hacked'), false);
+    const bad = await postUi(env, `/ui/i/${approve}/decide`, token, [['outcome', 'maybe']], { json: true });
+    assert.equal(bad.status, 400);
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments').get()?.count, 2);
+  } finally { sqlite.close(); }
+});
+
+test('ui: done closes with the note, hands back to agents, and writes status under a 30-second lease of its own', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const finish = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Rotate the key', labels: ['owner-action'] });
+    const back = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Hand this back', labels: ['owner-action'] });
+    // A claim that ended leaves a claim row, so the store wants a proof for this status write even from a person.
+    const { store_incarnation } = (await operation(env, token, { op: 'claim_show', issue_id: finish })).claim;
+    const session_id = crypto.randomUUID();
+    const { claim_receipt } = await operation(env, token, { op: 'claim_acquire', issue_id: finish, incarnation: store_incarnation, session_id, request_id: crypto.randomUUID() });
+    await operation(env, token, { op: 'claim_release', claim_proof: { issue_id: finish, incarnation: claim_receipt.incarnation, session_id, generation: claim_receipt.generation },
+      expected_revision: claim_receipt.revision, request_id: crypto.randomUUID() });
+    const fields = (outcome: string, note: string) => [['return', '/ui'], ['v.labels', 1], ['v.status', 1], ['seen.labels', '["owner-action"]'], ['seen.status', 'open'], ['note', note], ['outcome', outcome]] as const;
+    const done = await postUi(env, `/ui/i/${finish}/done`, token, fields('done', 'Rotated at 09:10.'));
+    assert.equal(done.status, 303);
+    assert.equal(done.headers.get('location'), `/ui?done=done:${finish}`);
+    const closed = await operation(env, token, { op: 'show', id: finish });
+    assert.equal(closed.issue.status, 'closed');
+    assert.deepEqual(closed.comments.map((comment: { body: string }) => comment.body), ['Rotated at 09:10.']);
+    assert.equal(closed.claim.state, 'released');
+    assert.equal(closed.claim.lease.agent_label, 'pd ui');
+    assert.equal(closed.claim.lease.expires_at - closed.claim.lease.acquired_at, 30);
+
+    const handed = await postUi(env, `/ui/i/${back}/done`, token, fields('handback', ''), { json: true });
+    assert.deepEqual(await handed.json(), { ok: true, message: `${back} is back with the agents, labeled ready.` });
+    assert.deepEqual((await operation(env, token, { op: 'show', id: back })).issue.labels, ['ready']);
+
+    // A live claim of someone else is a refusal, never something the page takes over.
+    const held = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Held', status: 'in_progress' });
+    const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues WHERE id = ?').get(held));
+    const refused = await postUi(env, `/ui/i/${held}/status`, token, [['v.status', 2], ['seen.status', 'in_progress'], ['status', 'open']], { json: true });
+    assert.equal(refused.status, 422);
+    assert.match((await refused.json()).message, /holds a claim on pd-\d+ until .* JST\. Change its status after the claim ends, or ask the holder\. Nothing changed\.$/);
+    assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues WHERE id = ?').get(held)), before);
+    const progress = await postUi(env, `/ui/i/${back}/status`, token, [['v.status', 1], ['status', 'in_progress']], { json: true });
+    assert.equal(progress.status, 400);
+  } finally { sqlite.close(); }
+});
+
+test('ui: a stale version answers 409 with the four-row diff and the note kept; a disjoint label change merges', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Contested decision', labels: ['owner-decision'] });
+    const fields = [['return', '/ui'], ['v.labels', 1], ['v.status', 1], ['seen.labels', '["owner-decision"]'], ['seen.status', 'open'], ['note', 'My <reason>'], ['outcome', 'approve']] as const;
+    // Someone else adds a label the decision does not touch: the approval still applies to the current list.
+    await operation(env, token, { op: 'update', id, changes: [{ field: 'labels', value: ['owner-decision', 'docs'], expected: 1 }] });
+    const merged = await postUi(env, `/ui/i/${id}/decide`, token, fields);
+    assert.equal(merged.status, 303);
+    assert.deepEqual((await operation(env, token, { op: 'show', id })).issue.labels, ['docs', 'ready']);
+
+    const other = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Second contest', labels: ['owner-decision'] });
+    await operation(env, token, { op: 'update', id: other, changes: [{ field: 'labels', value: ['owner-action'], expected: 1 }] });
+    const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues WHERE id = ?').get(other));
+    const stale = await postUi(env, `/ui/i/${other}/decide`, token, fields);
+    assert.equal(stale.status, 409);
+    assert.equal(stale.headers.get('content-security-policy'), uiPolicy());
+    const html = await stale.text();
+    assertPageScripts(html);
+    const conflict = html.slice(html.indexOf('<section class="conflict"'), html.indexOf('</section>', html.indexOf('<section class="conflict"')));
+    assert.ok(textOf(conflict).includes('Someone changed this after you opened it'));
+    assert.ok(textOf(conflict).includes('Nothing was saved. The last change was by access:owner at'));
+    assert.ok(conflict.includes('<span class="lbl">You saw</span>owner-decision</div>'));
+    assert.ok(conflict.includes('<span class="lbl">Now</span>owner-action</div>'));
+    assert.ok(conflict.includes('<span class="lbl">Your change</span>add ready and remove owner-decision</div>'));
+    assert.ok(conflict.includes('<span class="lbl">Result if applied now</span>owner-action, ready.</div>'));
+    assert.ok(conflict.includes('<textarea id="cf-note" name="note" rows="3">My &lt;reason&gt;</textarea>'));
+    assert.ok(conflict.includes('<input type="hidden" name="v.labels" value="2">'));
+    assert.ok(conflict.includes('<input type="hidden" name="seen.labels" value="[&quot;owner-action&quot;]">'));
+    assert.ok(conflict.includes('<button class="btn">Approve on the current version</button>'));
+    assert.ok(conflict.includes('<a class="btn ghost" href="/ui">Discard my change</a>'));
+    assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues WHERE id = ?').get(other)), before);
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments WHERE issue_id = ?').get(other)?.count, 0);
+    const json = await postUi(env, `/ui/i/${other}/decide`, token, fields, { json: true });
+    assert.equal(json.status, 409);
+    assert.deepEqual(await json.json(), { ok: false, message: 'Someone changed this after you opened it. Nothing was saved.' });
+
+    const priority = await postUi(env, `/ui/i/${other}/priority`, token, [['v.priority', 1], ['seen.priority', 2], ['priority', 0]]);
+    assert.equal(priority.status, 303);
+    const stalePriority = await postUi(env, `/ui/i/${other}/priority`, token, [['v.priority', 1], ['seen.priority', 2], ['priority', 4]]);
+    assert.equal(stalePriority.status, 409);
+    const priorityConflict = await stalePriority.text();
+    assert.ok(priorityConflict.includes('<span class="lbl">You saw</span>P2</div>'));
+    assert.ok(priorityConflict.includes('<span class="lbl">Now</span>P0</div>'));
+    assert.ok(priorityConflict.includes('<span class="lbl">Result if applied now</span>P4.</div>'));
+    assert.ok(priorityConflict.includes('<input type="hidden" name="priority" value="4">'));
+  } finally { sqlite.close(); }
+});
+
+test('ui: Mark landed removes main-wait and comments per ticked issue, and the landing page says what happened', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const make = (body: string, labels: string[]) => createIssue(env, token, { tool: 'compiler', project: 'parser', body, labels });
+    const first = await make('First to land', ['main-wait', 'docs']);
+    const second = await make('Second to land', ['main-wait']);
+    const gone = await make('Already landed', []);
+    const page = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/landing')).text();
+    assert.ok(page.includes('git fetch origin queue &amp;&amp; git push origin origin/queue:refs/heads/main'));
+    assert.ok(page.includes(`name="landed" value="${first}"`));
+    const answer = await postUi(env, '/ui/landing/landed', token, [['return', '/ui/landing'], ['landed', first], ['v.labels.' + first, 1], ['landed', second], ['landed', gone]]);
+    assert.equal(answer.status, 303);
+    assert.equal(answer.headers.get('location'), `/ui/landing?landed=${first},${second}&gone=${gone}`);
+    for (const id of [first, second]) {
+      const shown = await operation(env, token, { op: 'show', id });
+      assert.equal(shown.issue.labels.includes('main-wait'), false);
+      assert.deepEqual(shown.comments.map((comment: { body: string }) => comment.body), ['Landed on main.']);
+    }
+    assert.deepEqual((await operation(env, token, { op: 'show', id: first })).issue.labels, ['docs']);
+    assert.equal((await operation(env, token, { op: 'show', id: gone })).comments.length, 0);
+    const result = textOf(await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', answer.headers.get('location') ?? '')).text());
+    assert.ok(result.includes(`Marked landed: ${first}, ${second}. Each lost main-wait and got the comment “Landed on main.” Already off the queue: ${gone}.`), result);
+    const none = await postUi(env, '/ui/landing/landed', token, [['return', '/ui/landing']], { json: true });
+    assert.equal(none.status, 400);
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments').get()?.count, 2);
+  } finally { sqlite.close(); }
+});
+
+test('ui: the issue page edits fields, blockers, land order, and text through version-carrying forms', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Edit me\n\nBody' });
+    const blocker = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Blocker' });
+    const html = await (await viewIssue(env, id, { 'cf-access-jwt-assertion': token })).text();
+    for (const action of ['status', 'priority', 'type', 'labels', 'body', 'comment', 'blockers/add']) assert.ok(html.includes(`action="/ui/i/${id}/${action}"`), action);
+    assert.equal(html.includes('value="in_progress"'), false, 'agents set in progress');
+    const steps: [string, (readonly [string, string | number])[], string][] = [
+      ['type', [['v.type', 1], ['seen.type', 'task'], ['type', 'bug']], `${id} is now a bug.`],
+      ['labels', [['v.labels', 1], ['seen.labels', '[]'], ['labels', 'ready'], ['labels.new', 'docs  infra']], `Labels of ${id}: ready, docs, infra.`],
+      ['body', [['v.body', 1], ['body', 'Edited title\n\nNew body']], `The text of ${id} is saved.`],
+      ['blockers/add', [['v.blockers', 1], ['blocker', blocker]], `${id} now waits on ${blocker}.`],
+      ['blockers/remove', [['v.blockers', 2], ['blocker', blocker]], `${blocker} no longer blocks ${id}.`],
+      ['land-order', [['v.land', 1], ['op', 'set'], ['after', blocker]], `${id} now lands after ${blocker}.`],
+      ['land-order', [['v.land', 2], ['op', 'clear'], ['after', blocker]], `${id} no longer waits for ${blocker} to land.`],
+      ['status', [['v.status', 1], ['seen.status', 'open'], ['status', 'deferred']], `${id} is deferred. It leaves You until it is reopened.`],
+    ];
+    for (const [action, fields, message] of steps) {
+      const answer = await postUi(env, `/ui/i/${id}/${action}`, token, fields, { json: true });
+      assert.deepEqual(await answer.json(), { ok: true, message }, action);
+    }
+    const shown = await operation(env, token, { op: 'show', id });
+    assert.equal(shown.issue.type, 'bug');
+    assert.equal(shown.issue.status, 'deferred');
+    assert.equal(shown.issue.body, 'Edited title\n\nNew body');
+    assert.deepEqual(shown.issue.labels, ['docs', 'infra', 'ready']);
+    const cycle = await postUi(env, `/ui/i/${blocker}/blockers/add`, token, [['v.blockers', 1], ['blocker', blocker]], { json: true });
+    assert.equal(cycle.status, 422);
+    const notId = await postUi(env, `/ui/i/${id}/blockers/add`, token, [['v.blockers', 3], ['blocker', 'next week']], { json: true });
+    assert.deepEqual(await notId.json(), { ok: false, message: 'The blocker “next week” is not an issue id, such as pd-65.' });
+    const staleBlocker = await postUi(env, `/ui/i/${id}/blockers/add`, token, [['v.blockers', 1], ['blocker', blocker]]);
+    assert.equal(staleBlocker.status, 409);
+    assert.ok((await staleBlocker.text()).includes('<span class="lbl">Result if applied now</span>Blocked by pd-2.</div>'));
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM dependencies').get()?.count, 0);
+  } finally { sqlite.close(); }
+});
+
+test('ui: New issue creates with the project prefix and opens it, and a refusal keeps the typed text', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+  const token = await assertion();
+  try {
+    await createIssue(env, token, { tool: 'compiler', project: 'acme/parser', body: 'Seed', prefix: 'ps' });
+    const form = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', `/ui/new?project=${encodeURIComponent('compiler\nacme/parser')}`)).text();
+    assert.ok(form.includes('<option value="compiler&#10;acme/parser" selected>') || form.includes('<option value="compiler\nacme/parser" selected>'), form.match(/<select[\s\S]*?<\/select>/)?.[0]);
+    const created = await postUi(env, '/ui/new', token, [['project', 'compiler\nacme/parser'], ['body', 'Made in the page\n\nWith a body'], ['type', 'bug'], ['priority', '1'], ['labels', 'ready']]);
+    assert.equal(created.status, 303);
+    assert.equal(created.headers.get('location'), '/ui/i/ps-2?done=created:ps-2');
+    const shown = await operation(env, token, { op: 'show', id: 'ps-2' });
+    assert.deepEqual([shown.issue.type, shown.issue.priority, shown.issue.labels], ['bug', 1, ['ready']]);
+    const opened = textOf(await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/i/ps-2?done=created:ps-2')).text());
+    assert.ok(opened.includes('ps-2 is created.'));
+    const refused = await postUi(env, '/ui/new', token, [['project', 'compiler\nacme/parser'], ['body', 'Keep <this> text'], ['labels', 'main-wait']]);
+    assert.equal(refused.status, 400);
+    assert.ok((await refused.text()).includes('>Keep &lt;this&gt; text</textarea>'));
+    const unknown = await postUi(env, '/ui/new', token, [['project', 'compiler\nnowhere'], ['body', 'Lost project']], { json: true });
+    assert.equal(unknown.status, 404);
+    const reader = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) }, 'GET', '/ui/new')).text();
+    assert.equal(reader.includes('method="post"'), false);
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM issues').get()?.count, 2);
+  } finally { sqlite.close(); }
+});
+
+test('ui: the issue page and an ID search start their independent reads together', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel epic', type: 'epic' });
+    const child = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel child', parent: epic });
+    const blocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel blocker' });
+    await operation(env, token, { op: 'dependency_add', dependent_id: child, blocker_id: blocker, expected_revision: 1, request_id: crypto.randomUUID() });
+    const counted = roundTrips(env);
+    const detail = await counted.count(handleRequest(new Request(`https://issues.example/ui/i/${child}`, { headers: auth }), counted.env, authenticate));
+    assert.equal(detail.response.status, 200);
+    const html = await detail.response.text();
+    assert.ok(html.includes(`href="/ui/i/${epic}"`));
+    assert.ok(panel(html, 'Blockers').includes(`href="/ui/i/${blocker}"`));
+    assert.ok(detail.rounds <= 3, `${detail.rounds} rounds`);
+    const search = await counted.count(handleRequest(new Request(`https://issues.example/ui/search?q=${child}`, { headers: auth }), counted.env, authenticate));
+    assert.ok((await search.response.text()).includes(`href="/ui/i/${child}"`));
+    assert.ok(search.rounds <= 3, `${search.rounds} rounds`);
+  } finally { sqlite.close(); }
+});
+
+test('ui: taps are at least 44 px, fields are 16 px, and night colors follow the phone', async () => {
+  const { sqlite, env } = fixture();
+  try {
+    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
+    const styles = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
+    assert.match(styles, /@media \(prefers-color-scheme:\s*dark\)/);
+    assert.match(styles, /@view-transition\{navigation:auto\}/);
+    assert.match(styles, /prefers-reduced-motion:no-preference/);
+    assert.match(styles, /min-height:44px/);
+    assert.match(styles, /font-size:16px/);
+  } finally { sqlite.close(); }
+});
 
 // Holds each D1 call until the current wave is released, so a page's sequential database round trips can be counted.
 function roundTrips(env: ReturnType<typeof fixture>['env']) {
@@ -767,1385 +1284,6 @@ function roundTrips(env: ReturnType<typeof fixture>['env']) {
     },
   };
 }
-
-test('ui: the issue page and an ID search start their independent reads together', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel epic', type: 'epic' });
-    const child = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel child', parent: epic });
-    const blocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parallel blocker' });
-    await handleRequest(new Request('https://issues.example/v1/operations', { method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ op: 'dependency_add', dependent_id: child, blocker_id: blocker, expected_revision: 1, request_id: crypto.randomUUID() }) }), env, authenticate);
-    const counted = roundTrips(env);
-
-    const detail = await counted.count(handleRequest(new Request(`https://issues.example/ui/i/${child}`, { headers: auth }), counted.env, authenticate));
-    assert.equal(detail.response.status, 200);
-    const html = await detail.response.text();
-    assert.ok(html.includes(`Parent <a href="/ui/i/${epic}">Parallel epic</a>`));
-    assert.ok(uiSection(html, 'Active blockers').includes(`href="/ui/i/${blocker}"`));
-    assert.equal(detail.rounds, 2);
-
-    const missing = await counted.count(handleRequest(new Request('https://issues.example/ui/i/pd-999', { headers: auth }), counted.env, authenticate));
-    assert.equal(missing.response.status, 404);
-    assert.ok((await missing.response.text()).includes('Issue was not found.'));
-
-    const search = await counted.count(handleRequest(new Request(`https://issues.example/ui/search?q=${child}`, { headers: auth }), counted.env, authenticate));
-    assert.equal(search.response.status, 200);
-    assert.ok((await search.response.text()).includes(`href="/ui/i/${child}"`));
-    assert.equal(search.rounds, 2);
-  } finally { sqlite.close(); }
-});
-
-test('ui: every page reports the Worker time in Server-Timing, and a rejected caller gets none', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Timed title' });
-    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/activity', '/ui/search?q=Timed', '/ui/p/polylinedb/meganemura/polylinedb', `/ui/i/${id}`, '/ui/i/pd-999']) {
-      const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
-      assert.match(response.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/, path);
-    }
-    const rejections: Record<string, string>[] = [{}, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) }];
-    for (const headers of rejections) {
-      const rejected = await viewUi(env, headers);
-      assert.ok(rejected.status === 401 || rejected.status === 403);
-      assert.equal(rejected.headers.get('server-timing'), null);
-      assert.ok(!(await rejected.text()).includes('Timed title'));
-    }
-  } finally { sqlite.close(); }
-});
-
-test('MCP initialize, tools/list, and tools/call report the Worker time in Server-Timing', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const rpc = (body: Record<string, unknown>, headers: Record<string, string> = { 'cf-access-jwt-assertion': token }) => handleRequest(new Request('https://issues.example/mcp', {
-    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers }, body: JSON.stringify(body),
-  }), env, authenticate);
-  try {
-    const calls = [
-      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'timing', version: '1' } } },
-      { jsonrpc: '2.0', method: 'notifications/initialized' },
-      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
-      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'actor', arguments: {} } },
-    ];
-    for (const call of calls) {
-      const response = await rpc(call);
-      assert.ok(response.status === 200 || response.status === 202, call.method);
-      assert.match(response.headers.get('server-timing') ?? '', /^worker;dur=\d+\.\d$/, call.method);
-    }
-    const rejected = await rpc(calls[0]!, {});
-    assert.equal(rejected.status, 401);
-    assert.equal(rejected.headers.get('server-timing'), null);
-  } finally { sqlite.close(); }
-});
-
-function favicon(html: string): string {
-  const links = [...html.matchAll(/<link\b[^>]*\brel="icon"[^>]*>/g)].map(match => match[0]);
-  assert.equal(links.length, 1);
-  const match = /^<link rel="icon" type="image\/svg\+xml" href="data:image\/svg\+xml,([^"]*)">$/.exec(links[0] ?? '');
-  assert.ok(match, links[0]);
-  assert.equal(/[\s#<>%"&]/.test((match[1] ?? '').replace(/%[0-9A-F]{2}/g, '')), false);
-  return decodeURIComponent(match[1] ?? '');
-}
-
-test('ui: every page, including not found and a dispatch result, carries the same inline SVG favicon', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Icon title' });
-    const pages: string[] = [];
-    for (const path of ['/ui', '/ui/inbox', '/ui/working', '/ui/blocked', '/ui/recent', '/ui/activity', '/ui/search', '/ui/search?q=Icon', '/ui/p/polylinedb/meganemura/polylinedb', '/ui/p/polylinedb/meganemura/polylinedb?status=open', `/ui/i/${id}`, '/ui/i/pd-999']) {
-      const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
-      assert.match(response.headers.get('content-security-policy') ?? '', /; img-src data:;/, path);
-      pages.push(await response.text());
-    }
-    pages.push(await dispatchResponse({ kind: 'not_sent' }, id).text());
-    const icons = new Set(pages.map(favicon));
-    assert.equal(icons.size, 1);
-    const [svg] = icons;
-    assert.match(svg ?? '', /^<svg xmlns='http:\/\/www\.w3\.org\/2000\/svg' viewBox='0 0 32 32'>[\s\S]*<\/svg>$/);
-    assert.ok(svg?.includes('<path d='));
-    assert.ok(svg?.includes('#9a3412') && svg.includes('#f0a07a'));
-    assert.ok(svg?.includes('@media (prefers-color-scheme:dark)'));
-    assert.equal(/\b(href|src)=|url\(|<script/.test(svg ?? ''), false);
-  } finally { sqlite.close(); }
-});
-
-test('ui: a page revalidates with its ETag only after Access accepts the caller, and a 304 carries no page data', async () => {
-  const { sqlite, env } = fixture('["access:owner","access:peer",{"actor":"access:viewer","role":"reader"}]');
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const reads: string[] = [];
-  const watched = { ...env, DB: { ...env.DB, prepare: (sql: string) => { reads.push(sql); return env.DB.prepare(sql); } } };
-  try {
-    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Cached title' });
-    const issueRequest = (headers: Record<string, string>, target = env) => handleRequest(new Request(`https://issues.example/ui/i/${id}`, { headers }), target, authenticate);
-    const first = await issueRequest(auth);
-    assert.equal(first.status, 200);
-    assert.equal(first.headers.get('cache-control'), 'private, no-cache');
-    // no-referrer would make the same-origin Dispatch POST carry Origin: null, which dispatch rejects.
-    assert.equal(first.headers.get('referrer-policy'), 'same-origin');
-    const etag = first.headers.get('etag') ?? '';
-    assert.match(etag, /^"[0-9a-f]{32}"$/);
-    const html = await first.text();
-    assert.equal(etag, `"${createHash('sha256').update(html).digest('hex').slice(0, 32)}"`);
-
-    for (const ifNoneMatch of [etag, `W/${etag}`, `"other", W/${etag}`, '*']) {
-      const again = await issueRequest({ ...auth, 'if-none-match': ifNoneMatch });
-      assert.equal(again.status, 304, ifNoneMatch);
-      assert.equal(await again.text(), '');
-      assert.equal(again.headers.get('etag'), etag);
-      assert.equal(again.headers.get('cache-control'), 'private, no-cache');
-      assert.equal(again.headers.get('content-security-policy'), first.headers.get('content-security-policy'));
-      assert.equal(again.headers.get('x-content-type-options'), 'nosniff');
-      assert.equal(again.headers.get('referrer-policy'), 'same-origin');
-      assert.equal(again.headers.get('content-type'), null);
-    }
-    const reader = await issueRequest({ 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }), 'if-none-match': etag });
-    assert.equal(reader.status, 200);
-    const readerHtml = await reader.text();
-    assert.equal(/<(form|button)\b/.test(readerHtml), false);
-    assert.ok(readerHtml.includes('Cached title'));
-    const peer = await issueRequest({ 'cf-access-jwt-assertion': await assertion({ sub: 'peer' }), 'if-none-match': etag });
-    assert.equal(peer.status, 304);
-    const stale = await issueRequest({ ...auth, 'if-none-match': '"0123456789abcdef0123456789abcdef"' });
-    assert.equal(stale.status, 200);
-    assert.ok((await stale.text()).includes('Cached title'));
-
-    for (const ifNoneMatch of [etag, '*']) {
-      const rejections: Record<string, string>[] = [{}, { 'cf-access-jwt-assertion': `${token.slice(0, -4)}AAAA` }, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) }];
-      for (const headers of rejections) {
-        const denied = await issueRequest({ ...headers, 'if-none-match': ifNoneMatch }, watched);
-        assert.ok(denied.status === 401 || denied.status === 403, `${denied.status}`);
-        assert.equal(denied.headers.get('etag'), null);
-        assert.equal(denied.headers.get('cache-control'), 'no-store');
-        assert.equal(denied.headers.get('content-type'), 'application/json');
-        assert.ok(!(await denied.text()).includes('Cached title'));
-      }
-      const misconfigured = await issueRequest({ ...auth, 'if-none-match': ifNoneMatch }, { ...watched, ACCESS_ACTORS: '[]' });
-      assert.equal(misconfigured.status, 503);
-      assert.equal(misconfigured.headers.get('etag'), null);
-    }
-    assert.deepEqual(reads, []);
-
-    sqlite.prepare("UPDATE issues SET body = 'Changed title', updated_at = '2026-10-10T00:00:00.000Z' WHERE id = ?").run(id);
-    const changed = await issueRequest({ ...auth, 'if-none-match': etag });
-    assert.equal(changed.status, 200);
-    assert.notEqual(changed.headers.get('etag'), etag);
-    assert.ok((await changed.text()).includes('Changed title'));
-
-    const missing = await handleRequest(new Request('https://issues.example/ui/i/pd-999', { headers: { ...auth, 'if-none-match': '*' } }), env, authenticate);
-    assert.equal(missing.status, 404);
-    assert.equal(missing.headers.get('etag'), null);
-    assert.ok((await missing.text()).includes('Issue was not found.'));
-    const home = await viewUi(env, auth);
-    const homeTag = home.headers.get('etag') ?? '';
-    assert.notEqual(homeTag, etag);
-    assert.equal((await viewUi(env, { ...auth, 'if-none-match': homeTag })).status, 304);
-  } finally { sqlite.close(); }
-});
-
-test('ui: speculation rules prefetch only /ui links under a CSP hash, and a private 304 still hides the page', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Prefetch title' });
-    const first = await viewUi(env, auth);
-    assert.equal(first.status, 200);
-    const html = await first.text();
-    const policy = uiPolicy(html);
-    assert.equal(first.headers.get('content-security-policy'), policy);
-    assert.match(policy, /script-src 'sha256-[A-Za-z0-9+/]+=' 'sha256-[A-Za-z0-9+/]+=';/);
-    assert.equal(/script-src[^;]*unsafe-inline/.test(policy), false);
-    assert.equal(policy.includes('inline-speculation-rules'), false);
-    assert.equal(first.headers.get('cache-control'), 'private, no-cache');
-    assert.equal(first.headers.get('cache-control')?.includes('public'), false);
-    assert.equal(html.includes('prerender'), false);
-    assert.equal(html.includes(id), false);
-    const etag = first.headers.get('etag') ?? '';
-    const again = await viewUi(env, { ...auth, 'if-none-match': etag });
-    assert.equal(again.status, 304);
-    assert.equal(await again.text(), '');
-    assert.equal(again.headers.get('content-security-policy'), policy);
-    assert.equal(again.headers.get('cache-control'), 'private, no-cache');
-    assert.equal(again.headers.get('etag'), etag);
-    const denied = await viewUi(env, { 'if-none-match': etag });
-    assert.equal(denied.status, 401);
-    assert.equal(denied.headers.get('etag'), null);
-    assert.equal(denied.headers.get('cache-control'), 'no-store');
-    const deniedBody = await denied.text();
-    assert.equal(deniedBody.includes('speculationrules'), false);
-    assert.equal(deniedBody.includes('Prefetch title'), false);
-  } finally { sqlite.close(); }
-});
-
-test('/ui lists main-wait issues and closed issues by last update, with escaped titles and actors', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  try {
-    const older = await seedIssue(env, token, '# Older close\n\ndetails');
-    const newest = await seedIssue(env, token, '\n## Newest close');
-    const hostile = await seedIssue(env, token, '<img src=x onerror=alert(1)>&');
-    const waiting = await seedIssue(env, token, '# Merged locally');
-    const plainOpen = await seedIssue(env, token, '# Still open');
-    const closedWaiting = await seedIssue(env, token, '# Closed with a stale label');
-    const set = sqlite.prepare("UPDATE issues SET status = ?, labels_json = ?, updated_at = ?, updated_by = ? WHERE id = ?");
-    set.run('closed', '[]', '2026-10-01T00:00:00.000Z', 'access:alice', older);
-    set.run('closed', '[]', '2026-10-03T10:30:00.000Z', 'service:agent-7', newest);
-    set.run('closed', '[]', '2026-10-02T00:00:00.000Z', 'access:<b>"x"', hostile);
-    set.run('open', '["main-wait"]', '2026-10-04T00:00:00.000Z', 'access:alice', waiting);
-    set.run('open', '[]', '2026-10-05T00:00:00.000Z', 'access:alice', plainOpen);
-    set.run('closed', '["main-wait"]', '2026-09-30T00:00:00.000Z', 'access:alice', closedWaiting);
-
-    const response = await viewUi(env, { 'cf-access-jwt-assertion': token });
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
-    assert.equal(response.headers.get('cache-control'), 'private, no-cache');
-    const html = await response.text();
-    const waitingPart = uiSection(html, 'Waiting for main');
-    const ids = (part: string) => [...part.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
-    assert.match(waitingPart, /^Waiting for main<\/h2>/);
-    assert.deepEqual(ids(waitingPart), [waiting]);
-    assert.equal(html.indexOf('<h2>Recently closed</h2>'), -1);
-    assert.ok(!html.includes('Newest close'));
-    assertNoApplicationControls(html);
-    assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
-    const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': token })).text();
-    const closedPart = uiSection(project, 'Recently closed');
-    assert.match(closedPart, /^Recently closed<\/h2>/);
-    assert.deepEqual(ids(closedPart), [newest, hostile, older, closedWaiting]);
-    assert.ok(project.includes(`<span class="primary">Newest close</span>\n<span class="secondary">${newest} · Last updated <time datetime="2026-10-03T10:30:00.000Z">2026-10-03 19:30 JST</time></span>\n<span class="secondary">service:agent-7</span>`));
-    assert.ok(project.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;&amp;</span>'));
-    assert.ok(project.includes('<span class="secondary">access:&lt;b&gt;&quot;x&quot;</span>'));
-    assert.ok(!project.includes('<img'));
-    assertNoApplicationControls(project);
-  } finally { sqlite.close(); }
-});
-
-test('/ui orders recently closed by close time, and a later edit does not move a recorded close', async () => {
-  const { sqlite, env } = fixture(JSON.stringify(['access:owner', { actor: 'service:closer', role: 'agent', label: 'Closer' }]));
-  const token = await assertion();
-  try {
-    const legacy = await seedIssue(env, token, '# Legacy close');
-    const edited = await seedIssue(env, token, '# Edited after close');
-    const tied = await seedIssue(env, token, '# Same close, older edit');
-    const latest = await seedIssue(env, token, '# Latest close');
-    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ?, updated_by = ?, closed_at = ?, closed_by = ? WHERE id = ?');
-    stamp.run('closed', '2026-10-08T00:00:00.000Z', 'access:owner', null, null, legacy);
-    stamp.run('closed', '2026-10-09T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'service:closer', edited);
-    stamp.run('closed', '2026-10-03T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner', tied);
-    stamp.run('closed', '2026-10-02T00:00:00.000Z', 'access:owner', '2026-10-05T00:00:00.000Z', 'service:closer', latest);
-
-    const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': token })).text();
-    const closedPart = uiSection(project, 'Recently closed');
-    const ids = [...closedPart.matchAll(/<span class="secondary">(pd-\d+) · /g)].map(match => match[1]);
-    assert.deepEqual(ids, [latest, edited, tied, legacy]);
-    assert.match(closedPart, /^Recently closed<\/h2><p class="section-note">Ordered by close time\. A row without a close record shows its last update, which is not the close time\.<\/p>/);
-    assert.ok(closedPart.includes(`<span class="primary">Latest close</span>\n<span class="secondary">${latest} · Closed <time datetime="2026-10-05T00:00:00.000Z">2026-10-05 09:00 JST</time></span>\n<span class="secondary">Closer</span>`));
-    assert.ok(closedPart.includes(`<span class="primary">Edited after close</span>\n<span class="secondary">${edited} · Closed <time datetime="2026-10-01T00:00:00.000Z">2026-10-01 09:00 JST</time></span>\n<span class="secondary">Closer</span>`));
-    assert.ok(closedPart.includes(`<span class="primary">Legacy close</span>\n<span class="secondary">${legacy} · Last updated <time datetime="2026-10-08T00:00:00.000Z">2026-10-08 09:00 JST</time></span>\n<span class="secondary">access:owner</span>`));
-    assert.equal(closedPart.includes(`${legacy} · Closed`), false);
-    const globalIds = sqlite.prepare(statements.recentlyClosed).all({ limit: 10 }).map(row => String(row.id));
-    assert.deepEqual(globalIds, [latest, edited, tied, legacy]);
-  } finally { sqlite.close(); }
-});
-
-test('/ui names the last updater by its roster label, and by the raw actor ID without one', async () => {
-  const { sqlite, env } = fixture(JSON.stringify(['access:owner', { actor: 'service:claude-token', role: 'agent', label: 'Claude' },
-    { actor: 'service:hostile-token', role: 'agent', label: `<b>"Codex"&'` }, { actor: 'service:cursor-token', role: 'agent' }]));
-  const token = await assertion();
-  try {
-    const updaters = ['service:claude-token', 'service:hostile-token', 'service:cursor-token', 'access:departed'];
-    const ids: string[] = [];
-    for (const updater of updaters) ids.push(await seedIssue(env, token, `# Closed by ${updater}`));
-    const set = sqlite.prepare("UPDATE issues SET status = 'closed', updated_at = ?, updated_by = ? WHERE id = ?");
-    updaters.forEach((updater, index) => set.run(`2026-10-0${4 - index}T00:00:00.000Z`, updater, ids[index]));
-    const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all());
-
-    const html = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': token })).text();
-    const updatedBy = [...html.matchAll(/<\/time><\/span>\n<span class="secondary">([^<]*)<\/span>/g)].map(match => match[1]);
-    assert.deepEqual(updatedBy, ['Claude', '&lt;b&gt;&quot;Codex&quot;&amp;&#39;', 'service:cursor-token', 'access:departed']);
-    assert.ok(!html.includes('<b>'));
-    assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all()), before);
-  } finally { sqlite.close(); }
-});
-
-test('/ui shows quiet notes when nothing waits for main and nothing has closed', async () => {
-  const { sqlite, env } = fixture();
-  try {
-    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
-    assert.ok(html.includes('<p class="quiet-note">Nothing is waiting for main.</p>'));
-    assert.ok(html.includes('<p class="quiet-note">Nothing is waiting on you.</p>'));
-    const project = await (await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': await assertion() })).text();
-    assert.ok(project.includes('<p class="quiet-note">Nothing has closed yet.</p>'));
-  } finally { sqlite.close(); }
-});
-
-test('/ui requires the Access assertion and the roster, lets owner, agent, and reader view it, and accepts no writes', async () => {
-  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"},{"actor":"service:robot","role":"agent"}]');
-  const token = await assertion();
-  try {
-    const id = await seedIssue(env, token, '# Secret title');
-    sqlite.prepare("UPDATE issues SET status = 'closed' WHERE id = ?").run(id);
-    const before = JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all());
-
-    const anonymous = await viewUi(env);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Secret title'));
-    const forged = await viewUi(env, { 'cf-access-jwt-assertion': `${token.slice(0, -4)}AAAA` });
-    assert.equal(forged.status, 401);
-    assert.ok(!(await forged.text()).includes('Secret title'));
-    const stranger = await viewUi(env, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) });
-    assert.equal(stranger.status, 403);
-    assert.ok(!(await stranger.text()).includes('Secret title'));
-
-    const roles = { owner: token, reader: await assertion({ sub: 'viewer' }), agent: await assertion({ sub: '', common_name: 'robot' }) };
-    for (const [role, roleToken] of Object.entries(roles)) {
-      const view = await viewUi(env, { 'cf-access-jwt-assertion': roleToken });
-      assert.equal(view.status, 200, role);
-      const project = await viewProject(env, 'compiler', 'parser', { 'cf-access-jwt-assertion': roleToken });
-      assert.equal(project.status, 200, role);
-      assert.ok((await project.text()).includes('<span class="primary">Secret title</span>'), role);
-      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-        const write = await handleRequest(new Request('https://issues.example/ui', { method,
-          headers: { 'cf-access-jwt-assertion': roleToken, 'content-type': 'application/json' },
-          body: JSON.stringify({ op: 'reopen', id, expected: 1 }) }), env, authenticate);
-        assert.equal(write.status, 405, `${role} ${method}`);
-        assert.equal(write.headers.get('allow'), 'GET');
-      }
-    }
-    for (const operation of [{ op: 'reopen', id, expected: 1 }, { op: 'comment', id, body: 'From a reader' },
-      { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'compiler', project: 'parser', body: 'From a reader' }]) {
-      const write = await handleRequest(new Request('https://issues.example/v1/operations', { method: 'POST',
-        headers: { 'cf-access-jwt-assertion': roles.reader, 'content-type': 'application/json' },
-        body: JSON.stringify(operation) }), env, authenticate);
-      assert.equal(write.status, 403, operation.op);
-      assert.equal((await write.json()).error.code, 'read_only_actor');
-    }
-    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments').get()?.count, 0);
-    assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM issues ORDER BY id').all()), before);
-    assert.equal((await viewUi(env, {})).headers.get('content-type'), 'application/json');
-  } finally { sqlite.close(); }
-});
-
-test('/ui reads no issue before Access accepts the caller, and a misconfigured Access returns 503', async () => {
-  const { sqlite, env } = fixture();
-  const reads: string[] = [];
-  const watched = { ...env, DB: { ...env.DB, prepare: (sql: string) => { reads.push(sql); return env.DB.prepare(sql); } } };
-  try {
-    const token = await assertion();
-    const misconfigured = [{ ACCESS_TEAM_DOMAIN: '' }, { ACCESS_AUD: '' }, { ACCESS_ACTORS: '[]' }];
-    for (const override of misconfigured) {
-      const response = await handleRequest(new Request('https://issues.example/ui', { headers: { 'cf-access-jwt-assertion': token } }),
-        { ...watched, ...override }, authenticate);
-      assert.equal(response.status, 503, JSON.stringify(override));
-      assert.deepEqual(await response.json(), { error: { code: 'invalid_access_configuration', message: 'Authentication unavailable' } });
-    }
-    assert.equal((await viewUi(watched)).status, 401);
-    assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': await assertion({ sub: 'stranger' }) })).status, 403);
-    assert.deepEqual(reads, []);
-    assert.equal((await viewUi(watched, { 'cf-access-jwt-assertion': token })).status, 200);
-    assert.equal(reads.length, 2);
-  } finally { sqlite.close(); }
-});
-
-async function createIssue(env: ReturnType<typeof fixture>['env'], token: string, fields: Record<string, unknown>): Promise<string> {
-  const operate = async (body: Record<string, unknown>) => {
-    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
-    }), env, authenticate);
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  const started = fields.status === 'in_progress' && fields.type !== 'epic';
-  const { id } = (await operate({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), ...fields, ...(started ? { status: 'open' } : {}) })).issue;
-  if (!started) return id;
-  const { store_incarnation } = (await operate({ op: 'claim_show', issue_id: id })).claim;
-  const session_id = crypto.randomUUID();
-  const { claim_receipt } = await operate({ op: 'claim_acquire', issue_id: id, incarnation: store_incarnation, session_id, request_id: crypto.randomUUID() });
-  const claim_proof = { issue_id: id, incarnation: claim_receipt.incarnation, session_id, generation: claim_receipt.generation };
-  await operate({ op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof });
-  return id;
-}
-
-test('pd-134: /ui lists projects and a project view shows unfinished issues in that project', async () => {
-  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
-  const token = await assertion();
-  try {
-    const hold = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Hold', status: 'deferred', priority: 0 });
-    const started = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Started', status: 'in_progress', priority: 0, type: 'bug', labels: ['dogfooding', 'ready'] });
-    const later = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Later', status: 'open', priority: 2, type: 'feature' });
-    const hostile = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: '<img src=x onerror=alert(1)>&', status: 'in_progress', priority: 1 });
-    const closed = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Done nukadoko', status: 'closed' });
-    const polyline = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Polyline work', labels: ['main-wait'] });
-    const slashed = await createIssue(env, token, { tool: 'a/b', project: 'c', body: 'Slashed tool' });
-    const marked = await createIssue(env, token, { tool: 'poly', project: 'q<b>&', body: 'Marked project' });
-
-    const home = await viewUi(env, { 'cf-access-jwt-assertion': token });
-    assert.equal(home.status, 200);
-    const html = await home.text();
-    const projectsAt = html.indexOf('<h2>Projects</h2>');
-    const waitingAt = html.indexOf('<h2>Waiting for main</h2>');
-    assert.ok(projectsAt !== -1 && projectsAt < waitingAt);
-    assert.equal(html.indexOf('<h2>Recently closed</h2>'), -1);
-    assert.ok(!html.includes('Done nukadoko'));
-    assert.ok(html.includes('href="/ui/p/nukadoko/meganemura/nukadoko"'));
-    assert.ok(html.includes('href="/ui/p/polylinedb/meganemura/polylinedb"'));
-    assert.ok(html.includes('nukadoko'));
-    assert.ok(html.includes('meganemura/polylinedb'));
-    const nukadokoRow = html.split('<li class="quiet-row">').find(part => part.includes('meganemura/nukadoko'));
-    assert.ok(nukadokoRow);
-    assert.ok(nukadokoRow.includes('open 1'));
-    assert.ok(nukadokoRow.includes('in_progress 2'));
-    assert.ok(nukadokoRow.includes('deferred 1'));
-    assert.ok(nukadokoRow.includes('closed 1'));
-    const slashedRow = html.split('<li class="quiet-row">').find(part => part.includes('Slashed') || part.includes('href="/ui/p/a%2Fb/c"'));
-    assert.ok(slashedRow);
-    assert.ok(slashedRow.includes('href="/ui/p/a%2Fb/c"'));
-    assert.ok(slashedRow.includes('in_progress 0'));
-    assert.ok(html.includes('href="/ui/p/poly/q%3Cb%3E%26"'));
-    assert.ok(html.includes('q&lt;b&gt;&amp;'));
-    assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
-    assertNoApplicationControls(html);
-    const waitingPart = uiSection(html, 'Waiting for main');
-    assert.match(waitingPart, /^Waiting for main<\/h2>/);
-    assert.ok(waitingPart.includes(polyline));
-
-    const anonymous = await viewProject(env, 'nukadoko', 'meganemura/nukadoko');
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Started'));
-    const missing = await handleRequest(new Request('https://issues.example/ui/'), env, authenticate);
-    assert.equal(missing.status, 404);
-    assert.deepEqual(await missing.json(), { error: { code: 'not_found', message: 'Route not found.' } });
-    const bareProject = await handleRequest(new Request('https://issues.example/ui/p'), env, authenticate);
-    assert.equal(bareProject.status, 404);
-    assert.equal(bareProject.headers.get('content-type'), 'application/json');
-
-    const reader = await viewProject(env, 'nukadoko', 'meganemura/nukadoko', { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
-    assert.equal(reader.status, 200);
-    const page = await reader.text();
-    assert.equal(reader.headers.get('content-security-policy'), uiPolicy(page));
-    assert.equal(reader.headers.get('cache-control'), 'private, no-cache');
-    assert.equal(reader.headers.get('cache-control')?.includes('public'), false);
-    assert.ok(page.indexOf('Started') < page.indexOf('Hold'));
-    assert.ok(page.indexOf('Hold') < page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;'));
-    assert.ok(page.indexOf('&lt;img src=x onerror=alert(1)&gt;&amp;') < page.indexOf('Later'));
-    assert.ok(page.includes('<span class="secondary">in_progress</span>'));
-    assert.ok(page.includes('<span class="secondary">deferred</span>'));
-    assert.ok(page.includes('ready'));
-    assert.ok(!page.includes('dogfooding'));
-    assert.ok(!page.includes('<img'));
-    const openList = page.split('<h2>Recently closed</h2>')[0] ?? '';
-    assert.ok(!openList.includes(closed));
-    assert.ok(!openList.includes('Done nukadoko'));
-    const closedPart = uiSection(page, 'Recently closed');
-    assert.ok(closedPart.includes(closed));
-    assert.ok(closedPart.includes('Done nukadoko'));
-    assert.ok(!page.includes(polyline));
-    assert.ok(!page.includes(slashed));
-    assert.ok(!page.includes(marked));
-    assert.ok(page.includes(started));
-    assert.ok(page.includes(hold));
-    assert.ok(page.includes(later));
-    assert.ok(page.includes(hostile));
-    assert.ok(page.includes('<span class="secondary">priority 0</span>'));
-    assert.ok(page.includes('<span class="secondary">bug</span>'));
-    assertNoApplicationControls(page);
-    const encoded = await handleRequest(new Request('https://issues.example/ui/p/polylinedb/meganemura%2Fpolylinedb', { headers: { 'cf-access-jwt-assertion': token } }), env, authenticate);
-    assert.equal(encoded.status, 200);
-    assert.ok((await encoded.text()).includes(polyline));
-    const empty = await viewProject(env, 'nukadoko', 'nobody/home', { 'cf-access-jwt-assertion': token });
-    assert.equal(empty.status, 200);
-    const emptyHtml = await empty.text();
-    assert.ok(emptyHtml.includes('Nothing is open.'));
-    assert.ok(!emptyHtml.includes('Started'));
-    const write = await viewProject(env, 'nukadoko', 'meganemura/nukadoko', { 'cf-access-jwt-assertion': token }, 'POST');
-    assert.equal(write.status, 405);
-    assert.equal(write.headers.get('allow'), 'GET');
-  } finally { sqlite.close(); }
-});
-
-test('pd-134: project and issue lists say when the cap hides further rows', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  try {
-    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`);
-    for (let number = 1; number <= 101; number += 1) {
-      const id = `pd-${number}`;
-      insert.run(id, issueSortKey(id), 'cap', 'issues', `Issue ${number}`);
-    }
-    for (let number = 0; number <= 200; number += 1) {
-      const id = `zz-${number + 1}`;
-      insert.run(id, `zz-${String(number).padStart(16, '0')}`, 'cap', `p${String(number).padStart(3, '0')}`, `Project ${number}`);
-    }
-    const home = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
-    assert.ok(home.includes('More projects are not shown.'));
-    assert.ok(home.includes('p000'));
-    assert.ok(!home.includes('p200'));
-    const page = await (await viewProject(env, 'cap', 'issues', { 'cf-access-jwt-assertion': token })).text();
-    assert.ok(page.includes('More issues are not shown.'));
-    assert.ok(page.includes('pd-1'));
-    assert.ok(page.includes('pd-100'));
-    assert.ok(!page.includes('pd-101'));
-  } finally { sqlite.close(); }
-});
-
-test('pd-135: project rows link to an issue detail page that escapes body and comments', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const post = (body: unknown) => handleRequest(new Request('https://issues.example/v1/operations', {
-    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
-  }), env, authenticate);
-  try {
-    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Parent epic', type: 'epic' });
-    const child = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Child line\n\nFollow <b>up</b>\nhttps://example.com', parent: epic, type: 'task', priority: 1, labels: ['dogfooding', 'ready', '<x>'] });
-    const sibling = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Secret sibling' });
-    const commented = await post({ op: 'comment', id: child, body: 'See <img src=x onerror=alert(1)>' });
-    assert.equal(commented.status, 200);
-    const inspection = await post({ op: 'claim_show', issue_id: child });
-    assert.equal(inspection.status, 200);
-    const incarnation = (await inspection.json()).claim.store_incarnation;
-    const session = crypto.randomUUID();
-    const acquired = await post({ op: 'claim_acquire', issue_id: child, incarnation, session_id: session, request_id: crypto.randomUUID(), agent_label: 'Codex' });
-    assert.equal(acquired.status, 200);
-    sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, 'polylinedb', 'meganemura/polylinedb', 'Dotted child', 'open', 'task', 2, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`)
-      .run('pd-51.6', issueSortKey('pd-51.6'));
-
-    const list = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', { 'cf-access-jwt-assertion': token })).text();
-    assert.ok(list.includes(`href="/ui/i/${child}"`));
-    assert.ok(list.includes('href="/ui/i/pd-51.6"'));
-    assert.ok(!list.includes('dogfooding'));
-
-    const anonymous = await viewIssue(env, child);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Child line'));
-    const grammar = await handleRequest(new Request('https://issues.example/ui/i/not-an-id'), env, authenticate);
-    assert.equal(grammar.status, 404);
-    assert.equal(grammar.headers.get('content-type'), 'application/json');
-    assert.deepEqual(await grammar.json(), { error: { code: 'not_found', message: 'Route not found.' } });
-    const nested = await handleRequest(new Request('https://issues.example/ui/i/pd-1/extra', { headers: { 'cf-access-jwt-assertion': token } }), env, authenticate);
-    assert.equal(nested.status, 404);
-    assert.equal(nested.headers.get('content-type'), 'application/json');
-
-    const missing = await viewIssue(env, 'pd-999', { 'cf-access-jwt-assertion': token });
-    assert.equal(missing.status, 404);
-    assert.equal(missing.headers.get('content-type'), 'text/html; charset=utf-8');
-    const missingHtml = await missing.text();
-    assert.ok(!missingHtml.includes('Secret sibling'));
-    assert.ok(!missingHtml.includes('Child line'));
-    assert.equal(missing.headers.get('cache-control'), 'private, no-cache');
-
-    const detail = await viewIssue(env, child, { 'cf-access-jwt-assertion': token });
-    assert.equal(detail.status, 200);
-    const html = await detail.text();
-    assert.ok(html.includes('href="/ui/p/polylinedb/meganemura/polylinedb"'));
-    assert.ok(html.includes('Child line'));
-    assert.ok(html.includes(child));
-    assert.ok(html.includes('<span class="secondary">open</span>'));
-    assert.ok(html.includes('<span class="secondary">task</span>'));
-    assert.ok(html.includes('<span class="secondary">priority 1</span>'));
-    assert.ok(html.includes('polylinedb'));
-    assert.ok(html.includes('meganemura/polylinedb'));
-    assert.ok(html.includes('dogfooding'));
-    assert.ok(html.includes('ready'));
-    assert.ok(html.includes('&lt;x&gt;'));
-    assert.ok(html.includes('Follow &lt;b&gt;up&lt;/b&gt;'));
-    assert.ok(html.includes('https://example.com'));
-    assert.ok(!html.includes('href="https://example.com"'));
-    assert.ok(html.includes('See &lt;img src=x onerror=alert(1)&gt;'));
-    assert.ok(!html.includes('<img'));
-    assert.ok(!html.includes('<b>'));
-    assert.ok(!html.includes(session));
-    assert.ok(!html.includes(incarnation));
-    assert.ok(html.includes('white-space: pre-wrap'));
-    assertNoApplicationControls(html);
-    const dotted = await viewIssue(env, 'pd-51.6', { 'cf-access-jwt-assertion': token });
-    assert.equal(dotted.status, 200);
-    const dottedHtml = await dotted.text();
-    assert.ok(dottedHtml.includes('Dotted child'));
-    assert.ok(dottedHtml.includes('href="/ui/p/polylinedb/meganemura/polylinedb"'));
-    assert.ok(!dottedHtml.includes('Secret sibling'));
-  } finally { sqlite.close(); }
-});
-
-test('pd-136: project rows show active claims and open blocker counts, and detail splits blockers', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const post = async (body: unknown) => {
-    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
-    }), env, authenticate);
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  const claim = async (issueId: string, agentLabel: string) => {
-    const shown = await post({ op: 'claim_show', issue_id: issueId });
-    const session = crypto.randomUUID();
-    const receipt = (await post({ op: 'claim_acquire', issue_id: issueId, incarnation: shown.claim.store_incarnation, session_id: session, request_id: crypto.randomUUID(), agent_label: agentLabel })).claim_receipt;
-    return { session, incarnation: shown.claim.store_incarnation, receipt };
-  };
-  try {
-    const active = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Active work' });
-    const released = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Released work' });
-    const expired = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Expired work' });
-    const one = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'One block' });
-    const mixed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Mixed blocks' });
-    const clear = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Only closed' });
-    const openBlocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Open prerequisite' });
-    const deferredBlocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Deferred prerequisite' });
-    const closedBlocker = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Closed prerequisite' });
-    const otherClosed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/claims', body: 'Finished prerequisite' });
-    await post({ op: 'update', id: deferredBlocker, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
-    await post({ op: 'close', id: closedBlocker, expected: 1 });
-    await post({ op: 'close', id: otherClosed, expected: 1 });
-    await post({ op: 'dependency_add', dependent_id: one, blocker_id: openBlocker, expected_revision: 1, request_id: crypto.randomUUID() });
-    await post({ op: 'dependency_add', dependent_id: mixed, blocker_id: deferredBlocker, expected_revision: 1, request_id: crypto.randomUUID() });
-    await post({ op: 'dependency_add', dependent_id: mixed, blocker_id: closedBlocker, expected_revision: 2, request_id: crypto.randomUUID() });
-    await post({ op: 'dependency_add', dependent_id: clear, blocker_id: otherClosed, expected_revision: 1, request_id: crypto.randomUUID() });
-    const activeClaim = await claim(active, 'Lane agent');
-    const releasedClaim = await claim(released, 'Gone agent');
-    const expiredClaim = await claim(expired, 'Stale agent');
-    await post({ op: 'claim_release', claim_proof: { issue_id: released, incarnation: releasedClaim.receipt.incarnation, session_id: releasedClaim.receipt.session_id, generation: releasedClaim.receipt.generation }, expected_revision: releasedClaim.receipt.revision, request_id: crypto.randomUUID() });
-    const activeUntil = Math.floor(Date.parse('2027-01-01T00:00:00.000Z') / 1000);
-    sqlite.prepare('UPDATE issue_claims SET expires_at = ? WHERE issue_id = ?').run(activeUntil, active);
-    sqlite.prepare('UPDATE issue_claims SET acquired_at = ?, changed_at = ?, expires_at = ? WHERE issue_id = ?').run(1_000, 1_000, 1_001, expired);
-
-    const anonymous = await viewProject(env, 'polylinedb', 'meganemura/claims');
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Active work'));
-    const list = await (await viewProject(env, 'polylinedb', 'meganemura/claims', { 'cf-access-jwt-assertion': token })).text();
-    const row = (title: string) => {
-      const found = list.split('<li class="quiet-row">').find(part => part.includes(title));
-      assert.ok(found, title);
-      return found;
-    };
-    const activeRow = row('Active work');
-    assert.ok(activeRow.includes('Lane agent'));
-    assert.ok(activeRow.includes('2027-01-01 09:00 JST'));
-    assert.ok(!list.includes(activeClaim.session));
-    assert.ok(!list.includes(activeClaim.incarnation));
-    assert.ok(!list.includes(releasedClaim.session));
-    assert.ok(!list.includes(expiredClaim.session));
-    assert.ok(!row('Released work').includes('Gone agent'));
-    assert.ok(!row('Expired work').includes('Stale agent'));
-    assert.ok(row('One block').includes('blocked 1'));
-    assert.ok(!row('Only closed').includes('blocked'));
-
-    const detail = await (await viewIssue(env, mixed, { 'cf-access-jwt-assertion': token })).text();
-    const openPart = uiSection(detail, 'Active blockers');
-    const closedPart = uiSection(detail, 'Closed blockers');
-    assert.ok(openPart.includes(`href="/ui/i/${deferredBlocker}"`));
-    assert.ok(openPart.includes('deferred'));
-    assert.ok(!openPart.includes(closedBlocker));
-    assert.ok(closedPart.includes(closedBlocker));
-    assert.ok(closedPart.includes('closed'));
-    assert.ok(!closedPart.includes(deferredBlocker));
-    const single = await (await viewIssue(env, one, { 'cf-access-jwt-assertion': token })).text();
-    const singleOpen = uiSection(single, 'Active blockers');
-    assert.ok(singleOpen.includes(`href="/ui/i/${openBlocker}"`));
-    assert.ok(singleOpen.includes('open'));
-    assert.ok(!single.includes(activeClaim.session));
-    assert.ok(!single.includes(activeClaim.incarnation));
-  } finally { sqlite.close(); }
-});
-
-test('pd-137: project filters and a project-scoped closed section replace the store-wide list', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const first = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'First priority', priority: 0, labels: ['ready'] });
-    const second = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Second priority', priority: 2, status: 'open' });
-    const plain = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Plain open' });
-    const older = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Older close' });
-    const newest = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Newest close' });
-    const foreign = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/other', body: 'Foreign close' });
-    const waiting = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: 'Waiting for main', labels: ['main-wait'] });
-    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?');
-    stamp.run('closed', '2026-10-01T00:00:00.000Z', older);
-    stamp.run('closed', '2026-10-03T08:00:00.000Z', newest);
-    stamp.run('closed', '2026-10-04T00:00:00.000Z', foreign);
-
-    const home = await (await viewUi(env, auth)).text();
-    assert.ok(home.includes('<h1>Projects</h1>'));
-    assert.ok(uiSection(home, 'Waiting for main').includes(waiting));
-    assert.ok(!home.includes('Foreign close'));
-    assert.ok(!home.includes('Newest close'));
-
-    const openPage = await (await viewProject(env, 'polylinedb', 'meganemura/filters', auth)).text();
-    const openList = openPage.split('<h2>Recently closed</h2>')[0] ?? '';
-    const closedPart = uiSection(openPage, 'Recently closed');
-    assert.ok(openList.includes(first));
-    assert.ok(openList.includes('Second priority'));
-    assert.ok(openList.indexOf('First priority') < openList.indexOf('Second priority'));
-    assert.ok(!openList.includes(older));
-    assert.ok(!openList.includes('Newest close'));
-    assert.ok(closedPart.includes(newest));
-    assert.ok(closedPart.includes(older));
-    assert.ok(closedPart.indexOf('Newest close') < closedPart.indexOf('Older close'));
-    assert.ok(closedPart.includes('Last updated'));
-    assert.ok(!closedPart.includes('Foreign close'));
-    assert.ok(!openPage.includes('Foreign close'));
-
-    const closedFilter = await (await viewProject(env, 'polylinedb', 'meganemura/filters', auth, 'GET', '?status=closed')).text();
-    const closedMain = closedFilter.split('<h2>Recently closed</h2>')[0] ?? '';
-    assert.ok(closedMain.includes('Newest close'));
-    assert.ok(closedMain.includes('Older close'));
-    assert.ok(closedMain.indexOf('Newest close') < closedMain.indexOf('Older close'));
-    assert.ok(!closedMain.includes('Plain open'));
-    assert.ok(!closedMain.includes(plain));
-
-    const ready = await (await viewProject(env, 'polylinedb', 'meganemura/filters', auth, 'GET', '?label=ready')).text();
-    const readyMain = ready.split('<h2>Recently closed</h2>')[0] ?? '';
-    assert.ok(readyMain.includes('First priority'));
-    assert.ok(!readyMain.includes('Plain open'));
-    assert.ok(!readyMain.includes('Second priority'));
-
-    const invalid = await viewProject(env, 'polylinedb', 'meganemura/filters', auth, 'GET', '?status=nope');
-    assert.equal(invalid.status, 404);
-    assert.ok(!(await invalid.text()).includes('First priority'));
-    const anonymous = await viewProject(env, 'polylinedb', 'meganemura/filters', {}, 'GET', '?status=nope');
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('First priority'));
-  } finally { sqlite.close(); }
-});
-
-test('ui: owner inbox lists owner-decision, owner-action, and main-wait across projects', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const openInbox = () => handleRequest(new Request('https://issues.example/ui/inbox', { headers: auth }), env, authenticate);
-  try {
-    const decision = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Needs a decision', labels: ['owner-decision'] });
-    const action = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Needs an action', status: 'deferred', labels: ['owner-action'] });
-    const waiting = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/filters', body: '<img inbox>', labels: ['main-wait', 'ready'] });
-    const readyOnly = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Ready only', labels: ['ready'] });
-    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Closed decision', labels: ['owner-decision'] });
-    await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', ...auth },
-      body: JSON.stringify({ op: 'close', id: closed, expected: 1 }),
-    }), env, authenticate);
-
-    const anonymous = await handleRequest(new Request('https://issues.example/ui/inbox'), env, authenticate);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Needs a decision'));
-    const home = await (await viewUi(env, auth)).text();
-    assert.ok(home.includes('href="/ui/inbox"'));
-    const page = await openInbox();
-    assert.equal(page.status, 200);
-    assert.equal(page.headers.get('cache-control'), 'private, no-cache');
-    const html = await page.text();
-    assert.ok(html.includes('Needs a decision'));
-    assert.ok(html.includes('Needs an action'));
-    assert.ok(html.includes('&lt;img inbox&gt;'));
-    assert.ok(!html.includes('<img'));
-    assert.ok(html.includes(`href="/ui/i/${decision}"`));
-    assert.ok(html.includes(`href="/ui/i/${action}"`));
-    assert.ok(html.includes(waiting));
-    assert.ok(html.includes('owner-decision'));
-    assert.ok(html.includes('owner-action'));
-    assert.ok(html.includes('main-wait'));
-    assert.ok(html.includes('meganemura/nukadoko'));
-    assert.ok(!html.includes('Ready only'));
-    assert.ok(!html.includes(readyOnly));
-    assert.ok(!html.includes('Closed decision'));
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('ui: an owner issue whose first line is only a marker shows its next line as the title', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const action = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '要対応（owner-action）\nChoose which hosts connect\nDetails follow', labels: ['owner-action'] });
-    const decision = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '# 判断待ち(owner-decision)\n\nPick a cache policy', labels: ['owner-decision'] });
-    const part = uiSection(await (await viewUi(env, auth)).text(), 'Waiting on you');
-    assert.ok(part.includes(`<a href="/ui/i/${action}">\n<span class="primary">Choose which hosts connect</span>`));
-    assert.ok(part.includes(`<a href="/ui/i/${decision}">\n<span class="primary">Pick a cache policy</span>`));
-    assert.equal(part.includes('<span class="primary">要対応（owner-action）</span>'), false);
-    const page = await (await viewIssue(env, action, auth)).text();
-    assert.ok(page.includes('<h1>Choose which hosts connect</h1>'));
-    assert.ok(page.includes('<title>Choose which hosts connect'));
-    assert.ok(page.includes('要対応（owner-action）\nDetails follow'));
-  } finally { sqlite.close(); }
-});
-
-test('ui: home lists what waits on the owner above the projects', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const decision = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '判断待ちの件', labels: ['owner-decision'], priority: 2 });
-    const hours = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Needs an action', labels: ['owner-action'], priority: 1 });
-    const fresh = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '<img src=x onerror=alert(1)>', labels: ['owner-action'], priority: 2 });
-    const deferred = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Deferred owner work', status: 'deferred', labels: ['owner-decision'] });
-    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Closed owner work', labels: ['owner-decision'] });
-    const ready = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Ready only work', labels: ['ready'] });
-    const main = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Only waiting for main', labels: ['main-wait'] });
-    const now = Date.now();
-    const decisionAt = new Date(now - 3.5 * 86400_000).toISOString();
-    const hoursAt = new Date(now - 5.5 * 3600_000).toISOString();
-    const freshAt = new Date(now).toISOString();
-    const stamp = sqlite.prepare('UPDATE issues SET created_at = ?, status = ? WHERE id = ?');
-    stamp.run(decisionAt, 'open', decision);
-    stamp.run(hoursAt, 'open', hours);
-    stamp.run(freshAt, 'open', fresh);
-    sqlite.prepare("UPDATE issues SET status = 'closed' WHERE id = ?").run(closed);
-
-    const html = await (await viewUi(env, auth)).text();
-    const heading = html.indexOf('<h1>Projects</h1>');
-    const waitingOnYou = html.indexOf('<h2>Waiting on you</h2>');
-    const projects = html.indexOf('<h2>Projects</h2>');
-    const waitingForMain = html.indexOf('<h2>Waiting for main</h2>');
-    assert.ok(heading !== -1 && heading < waitingOnYou && waitingOnYou < projects && projects < waitingForMain);
-    const part = uiSection(html, 'Waiting on you');
-    assert.ok(part.includes('<span class="count">3</span> issues · 1 to decide · 2 to do'));
-    assert.equal(part.includes('<span class="count">3+</span>'), false);
-    assert.equal(part.includes('More issues are not shown.'), false);
-    assert.ok(part.indexOf('<h3>To decide</h3>') < part.indexOf('<h3>To do</h3>'));
-    assert.deepEqual([...part.matchAll(/href="\/ui\/i\/(pd-\d+)"/g)].map(match => match[1]), [decision, hours, fresh]);
-    assert.ok(part.includes(`<a href="/ui/i/${decision}">\n<span class="primary">判断待ちの件</span>\n<span class="secondary">${decision} · meganemura/polylinedb · <time datetime="${decisionAt}">waiting 3 days</time></span>\n</a>`));
-    assert.ok(part.includes('waiting 5 hours'));
-    assert.ok(part.includes('waiting under an hour'));
-    assert.ok(part.includes('<span class="primary">&lt;img src=x onerror=alert(1)&gt;</span>'));
-    assert.equal(part.includes('<img'), false);
-    assert.equal(part.includes(deferred), false);
-    assert.equal(part.includes('Deferred owner work'), false);
-    assert.equal(part.includes(closed), false);
-    assert.equal(part.includes('Closed owner work'), false);
-    assert.equal(part.includes(ready), false);
-    assert.equal(part.includes('Ready only work'), false);
-    assert.equal(part.includes(main), false);
-    assert.equal(part.includes('Only waiting for main'), false);
-    assert.ok(part.includes('<a href="/ui/inbox">Inbox</a> also lists 1 more that is deferred or in progress.'));
-    speculationRules(html);
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('ui: home marks the owner tally as a lower bound when Attention is capped', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  try {
-    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, 'polylinedb', 'meganemura/polylinedb', ?, 'open', 'task', ?, '["owner-action"]', ?, 'access:owner', ?, 'access:owner')`);
-    insert.run('pd-1', issueSortKey('pd-1'), 'Oldest priority zero', 0, '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z');
-    for (let number = 2; number <= 101; number += 1) {
-      const id = `pd-${number}`;
-      insert.run(id, issueSortKey(id), `Shown ${number}`, 2, '2026-10-10T00:00:00.000Z', '2026-10-11T00:00:00.000Z');
-    }
-    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
-    const part = uiSection(html, 'Waiting on you');
-    assert.ok(part.includes('<span class="count">100+</span> issues · 0 to decide · 100 to do'));
-    assert.ok(part.includes('More issues are not shown.'));
-    assert.equal(part.includes('Oldest priority zero'), false);
-    assert.equal(part.includes('href="/ui/i/pd-1"'), false);
-  } finally { sqlite.close(); }
-});
-
-test('ui: search finds an issue by id or by words in the text', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const search = (query: string, headers: Record<string, string> = auth) => handleRequest(new Request(`https://issues.example/ui/search?q=${encodeURIComponent(query)}`, { headers }), env, authenticate);
-  try {
-    const lantern = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Unique lantern phrase' });
-    const other = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Other project work' });
-    sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, 'polylinedb', 'meganemura/polylinedb', 'Dotted search child', 'open', 'task', 2, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`)
-      .run('pd-51.6', issueSortKey('pd-51.6'));
-
-    const anonymous = await search('lantern', {});
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Unique lantern phrase'));
-    const home = await (await viewUi(env, auth)).text();
-    assert.ok(home.includes('href="/ui/search"'));
-    const blank = await (await handleRequest(new Request('https://issues.example/ui/search', { headers: auth }), env, authenticate)).text();
-    assert.ok(blank.includes('Type an issue id or words from the text.'));
-    assert.ok(blank.includes('<form method="get" action="/ui/search">'));
-    assert.ok(!blank.includes('method="post"'));
-    speculationRules(blank);
-
-    const byWords = await (await search('lantern')).text();
-    assert.ok(byWords.includes('Unique lantern phrase'));
-    assert.ok(byWords.includes(`href="/ui/i/${lantern}"`));
-    assert.ok(!byWords.includes('Other project work'));
-    assert.ok(!byWords.includes(other));
-    const byId = await (await search('pd-51.6')).text();
-    assert.ok(byId.includes('Dotted search child'));
-    assert.ok(byId.includes('href="/ui/i/pd-51.6"'));
-    const hostile = await (await search('<img src=x>')).text();
-    assert.ok(hostile.includes('&lt;img src=x&gt;'));
-    assert.ok(!hostile.includes('<img'));
-    const missing = await (await search('pd-999')).text();
-    assert.ok(missing.includes('Nothing matches.'));
-    assert.ok(!missing.includes('Unique lantern phrase'));
-  } finally { sqlite.close(); }
-});
-
-test('ui: working now lists active claims and hides released ones', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const post = async (body: unknown) => {
-    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
-    }), env, authenticate);
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  try {
-    const active = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Lane is here' });
-    const released = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Gone from the list' });
-    const claim = async (issueId: string, agentLabel: string) => {
-      const shown = await post({ op: 'claim_show', issue_id: issueId });
-      const session = crypto.randomUUID();
-      const receipt = (await post({ op: 'claim_acquire', issue_id: issueId, incarnation: shown.claim.store_incarnation, session_id: session, request_id: crypto.randomUUID(), agent_label: agentLabel })).claim_receipt;
-      return { session, incarnation: shown.claim.store_incarnation, receipt };
-    };
-    const activeClaim = await claim(active, 'Lane agent');
-    const releasedClaim = await claim(released, 'Gone agent');
-    await post({ op: 'claim_release', claim_proof: { issue_id: released, incarnation: releasedClaim.receipt.incarnation, session_id: releasedClaim.receipt.session_id, generation: releasedClaim.receipt.generation }, expected_revision: releasedClaim.receipt.revision, request_id: crypto.randomUUID() });
-    const until = Math.floor(Date.parse('2027-01-01T00:00:00.000Z') / 1000);
-    sqlite.prepare('UPDATE issue_claims SET expires_at = ? WHERE issue_id = ?').run(until, active);
-
-    const anonymous = await handleRequest(new Request('https://issues.example/ui/working'), env, authenticate);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Lane is here'));
-    const home = await (await viewUi(env, auth)).text();
-    assert.ok(home.includes('href="/ui/working"'));
-    const html = await (await handleRequest(new Request('https://issues.example/ui/working', { headers: auth }), env, authenticate)).text();
-    assert.ok(html.includes('Lane is here'));
-    assert.ok(html.includes('Lane agent'));
-    assert.ok(html.includes('2027-01-01 09:00 JST'));
-    assert.ok(html.includes(`href="/ui/i/${active}"`));
-    assert.ok(!html.includes('Gone agent'));
-    assert.ok(!html.includes('Gone from the list'));
-    assert.ok(!html.includes(activeClaim.session));
-    assert.ok(!html.includes(activeClaim.incarnation));
-    assert.ok(!html.includes(releasedClaim.session));
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('ui: working now lists started non-epic issues without an active claim in their own section', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const post = async (body: unknown) => {
-    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
-    }), env, authenticate);
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  const working = async () => (await handleRequest(new Request('https://issues.example/ui/working', { headers: auth }), env, authenticate)).text();
-  try {
-    assert.ok(uiSection(await working(), 'Started without an active claim').includes('<p class="quiet-note">Every started issue has an active claim.</p>'));
-    const start = async (body: string) => {
-      const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body });
-      const shown = await post({ op: 'claim_show', issue_id: id });
-      const session_id = crypto.randomUUID();
-      const receipt = (await post({ op: 'claim_acquire', issue_id: id, incarnation: shown.claim.store_incarnation, session_id, request_id: crypto.randomUUID() })).claim_receipt;
-      const claim_proof = { issue_id: id, incarnation: receipt.incarnation, session_id, generation: receipt.generation };
-      await post({ op: 'update', id, changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof });
-      return { id, claim_proof };
-    };
-    const held = await start('Still held');
-    const released = await start('Released lane');
-    await post({ op: 'claim_release', claim_proof: released.claim_proof, expected_revision: 1, request_id: crypto.randomUUID() });
-    const expired = await start('Expired lane');
-    sqlite.prepare('UPDATE issue_claims SET acquired_at = acquired_at - 1000, changed_at = changed_at - 1000, expires_at = acquired_at - 999 WHERE issue_id = ?').run(expired.id);
-    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Epic in progress', type: 'epic', status: 'in_progress' });
-    const open = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Never started' });
-
-    const html = await working();
-    const stale = uiSection(html, 'Started without an active claim');
-    assert.ok(stale.startsWith('Started without an active claim</h2>\n<p class="section-note">Issues in progress, other than epics, whose claim was released, expired, or never acquired.</p>'));
-    assert.deepEqual([...stale.matchAll(/href="\/ui\/i\/([^"]+)"/g)].map(match => match[1]), [released.id, expired.id]);
-    assert.ok(stale.includes(`<span class="primary">Released lane</span>\n<span class="secondary">${released.id}</span>\n<span class="secondary">in_progress</span>\n<span class="secondary">meganemura/polylinedb</span>`));
-    for (const absent of [held.id, epic, open]) assert.ok(!stale.includes(`href="/ui/i/${absent}"`), absent);
-    assert.ok(html.split('<h2>')[0]?.includes(`href="/ui/i/${held.id}"`));
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('ui: blocked lists unfinished issues that still have an open blocker', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const post = async (body: unknown) => {
-    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
-    }), env, authenticate);
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  try {
-    const stuck = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Stuck on two' });
-    const deferredOnly = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Stuck on a deferral' });
-    const clear = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Only a closed blocker' });
-    const openA = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Open blocker A' });
-    const openB = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Open blocker B' });
-    const deferred = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Deferred blocker' });
-    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Finished blocker' });
-    await post({ op: 'update', id: deferred, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
-    await post({ op: 'close', id: closed, expected: 1 });
-    await post({ op: 'dependency_add', dependent_id: stuck, blocker_id: openA, expected_revision: 1, request_id: crypto.randomUUID() });
-    await post({ op: 'dependency_add', dependent_id: stuck, blocker_id: openB, expected_revision: 2, request_id: crypto.randomUUID() });
-    await post({ op: 'dependency_add', dependent_id: deferredOnly, blocker_id: deferred, expected_revision: 1, request_id: crypto.randomUUID() });
-    await post({ op: 'dependency_add', dependent_id: clear, blocker_id: closed, expected_revision: 1, request_id: crypto.randomUUID() });
-
-    const anonymous = await handleRequest(new Request('https://issues.example/ui/blocked'), env, authenticate);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Stuck on two'));
-    const home = await (await viewUi(env, auth)).text();
-    assert.ok(home.includes('href="/ui/blocked"'));
-    const html = await (await handleRequest(new Request('https://issues.example/ui/blocked', { headers: auth }), env, authenticate)).text();
-    assert.ok(html.includes('Stuck on two'));
-    assert.ok(html.includes('blocked 2'));
-    assert.ok(html.includes('Stuck on a deferral'));
-    assert.ok(html.includes('blocked 1'));
-    assert.ok(html.includes(`href="/ui/i/${stuck}"`));
-    assert.ok(!html.includes('Only a closed blocker'));
-    assert.ok(html.indexOf('Stuck on two') < html.indexOf('Stuck on a deferral'));
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('ui: recent updates lists the newest changes, open and closed', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const older = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Older update' });
-    const newest = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/nukadoko', body: 'Newest update' });
-    const closed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/other', body: 'Closed update' });
-    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?');
-    stamp.run('open', '2026-10-01T00:00:00.000Z', older);
-    stamp.run('closed', '2026-10-02T00:00:00.000Z', closed);
-    stamp.run('open', '2026-10-03T01:00:00.000Z', newest);
-    const anonymous = await handleRequest(new Request('https://issues.example/ui/recent'), env, authenticate);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Newest update'));
-    const home = await (await viewUi(env, auth)).text();
-    assert.ok(home.includes('href="/ui/recent"'));
-    const html = await (await handleRequest(new Request('https://issues.example/ui/recent', { headers: auth }), env, authenticate)).text();
-    assert.ok(html.includes('Newest update'));
-    assert.ok(html.includes('Closed update'));
-    assert.ok(html.includes('Older update'));
-    assert.ok(html.indexOf('Newest update') < html.indexOf('Closed update'));
-    assert.ok(html.indexOf('Closed update') < html.indexOf('Older update'));
-    assert.ok(html.includes('2026-10-03 10:00 JST'));
-    assert.ok(html.includes('<span class="secondary">closed</span>'));
-    assert.ok(html.includes('meganemura/nukadoko'));
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('ui: activity lists comments, claims, and status changes newest first, and an after link lists only later events', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const operate = async (body: Record<string, unknown>) => {
-    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
-    }), env, authenticate);
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  const page = async (path: string) => {
-    const response = await handleRequest(new Request(`https://issues.example${path}`, { headers: auth }), env, authenticate);
-    assert.equal(response.status, 200, path);
-    assert.equal(response.headers.get('cache-control'), 'private, no-cache');
-    return response.text();
-  };
-  const rows = (html: string) => [...html.matchAll(/<li class="quiet-row"><a href="\/ui\/i\/([^"]+)">\n<span class="primary">[^<]*<\/span>\n<span class="secondary">([^<]*) · /g)].map(match => `${match[2]} ${match[1]}`);
-  try {
-    const commented = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Commented work' });
-    const claimed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/other', body: 'Claimed work' });
-    const changed = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Changed work' });
-    const anonymous = await handleRequest(new Request('https://issues.example/ui/activity'), env, authenticate);
-    assert.equal(anonymous.status, 401);
-    const first = await page('/ui/activity');
-    const resume = first.match(/href="(\/ui\/activity\?after=\d+&amp;incarnation=[a-f0-9]{32})"/)?.[1]?.replace('&amp;', '&');
-    assert.ok(resume, first);
-    const before = sqlite.prepare('SELECT updated_at FROM issues WHERE id = ?').get(commented);
-    await operate({ op: 'comment', id: commented, body: 'tip: 1234567\nrest of the note' });
-    assert.deepEqual(sqlite.prepare('SELECT updated_at FROM issues WHERE id = ?').get(commented), before);
-    const incarnation = (await operate({ op: 'claim_show', issue_id: claimed })).claim.store_incarnation;
-    const proof = { issue_id: claimed, incarnation, session_id: crypto.randomUUID(), generation: 1 };
-    await operate({ op: 'claim_acquire', issue_id: claimed, incarnation, session_id: proof.session_id, request_id: crypto.randomUUID(), agent_label: 'lane-a', ttl: 600 });
-    await operate({ op: 'claim_release', claim_proof: proof, expected_revision: 1, request_id: crypto.randomUUID() });
-    await operate({ op: 'update', id: changed, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
-
-    const html = await page('/ui/activity');
-    assert.ok((await viewUi(env, auth).then(response => response.text())).includes('href="/ui/activity"'));
-    assert.deepEqual(rows(html).slice(0, 7), [
-      `Status changed ${changed}`, `Released ${claimed}`, `Claimed ${claimed}`, `Commented ${commented}`,
-      `Created ${changed}`, `Created ${claimed}`, `Created ${commented}`,
-    ]);
-    assert.ok(html.includes(`<span class="primary">Commented work</span>\n<span class="secondary">Commented · ${commented}</span>\n<span class="secondary">meganemura/polylinedb</span>`));
-    assert.match(html, /<span class="secondary"><time datetime="[^"]+">\d{4}-\d{2}-\d{2} \d{2}:\d{2} JST<\/time><\/span>/);
-    assert.ok(html.includes('<span class="secondary">access:owner</span>'));
-    assertNoApplicationControls(html);
-
-    const later = await page(resume);
-    assert.deepEqual(rows(later), [`Commented ${commented}`, `Claimed ${claimed}`, `Released ${claimed}`, `Status changed ${changed}`]);
-    assertNoApplicationControls(later);
-
-    const foreign = await page(resume.replace(/incarnation=[a-f0-9]{32}/, `incarnation=${'0'.repeat(32)}`));
-    assert.ok(foreign.includes('<p class="quiet-note">This activity link is from another store. Start again from the latest activity.</p>'));
-    assert.ok(foreign.includes('<a href="/ui/activity">Latest activity</a>'));
-    sqlite.prepare('DELETE FROM change_events WHERE seq <= ?').run(Number(resume.match(/after=(\d+)/)?.[1]) + 1);
-    const stale = await page(resume);
-    assert.ok(stale.includes('<p class="quiet-note">Some events after this link were removed. Start again from the latest activity.</p>'));
-    const trimmed = await page('/ui/activity');
-    assert.deepEqual(rows(trimmed).slice(0, 2), [`Status changed ${changed}`, `Released ${claimed}`]);
-    for (const path of ['/ui/activity?after=x', '/ui/activity?after=1', '/ui/activity?after=999999&incarnation=' + incarnation]) {
-      const invalid = await page(path);
-      assert.ok(invalid.includes('<p class="quiet-note">This activity link is not valid. Start again from the latest activity.</p>'), path);
-    }
-  } finally { sqlite.close(); }
-});
-
-test('ui: projects are ordered by their latest issue update, newest first, with ties by project name', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const stale = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/alpha', body: 'Alpha stale' });
-    const fresh = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/alpha', body: 'Alpha fresh' });
-    const closed = await createIssue(env, token, { tool: 'nukadoko', project: 'meganemura/beta', body: 'Beta closed' });
-    const gamma = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/gamma', body: 'Gamma' });
-    const tieByTool = await createIssue(env, token, { tool: 'alpha', project: 'meganemura/tie-b', body: 'Tie by tool' });
-    const tieByProject = await createIssue(env, token, { tool: 'zeta', project: 'meganemura/tie-a', body: 'Tie by project' });
-    const stamp = sqlite.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?');
-    stamp.run('open', '2026-10-01T00:00:00.000Z', stale);
-    stamp.run('open', '2026-10-05T06:40:00.000Z', fresh);
-    stamp.run('closed', '2026-10-08T00:00:00.000Z', closed);
-    stamp.run('open', '2026-10-03T00:00:00.000Z', gamma);
-    stamp.run('open', '2026-10-02T00:00:00.000Z', tieByTool);
-    stamp.run('open', '2026-10-02T00:00:00.000Z', tieByProject);
-
-    const anonymous = await viewUi(env);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('meganemura/alpha'));
-    const projects = uiSection(await (await viewUi(env, auth)).text(), 'Projects');
-    assert.deepEqual([...projects.matchAll(/href="([^"]+)"/g)].map(match => match[1]), [
-      projectPath('nukadoko', 'meganemura/beta'),
-      projectPath('polylinedb', 'meganemura/alpha'),
-      projectPath('polylinedb', 'meganemura/gamma'),
-      projectPath('zeta', 'meganemura/tie-a'),
-      projectPath('alpha', 'meganemura/tie-b'),
-    ]);
-    const alphaRow = projects.split('<li class="quiet-row">').find(part => part.includes('meganemura/alpha'));
-    assert.ok(alphaRow);
-    assert.ok(alphaRow.includes('<span class="secondary">Updated <time datetime="2026-10-05T06:40:00.000Z">2026-10-05 15:40 JST</time></span>'));
-    assert.ok(projects.includes('Updated <time datetime="2026-10-08T00:00:00.000Z">2026-10-08 09:00 JST</time>'));
-    assert.ok(!/<(form|input|button|script)\b/.test(projects));
-  } finally { sqlite.close(); }
-});
-
-test('ui: project filter chips link to a status or a label', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Chip ready', labels: ['ready'], status: 'open' });
-    await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Chip started', status: 'in_progress' });
-    const path = projectPath('polylinedb', 'meganemura/polylinedb');
-    const open = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth)).text();
-    assert.ok(open.includes('class="filter-rail filter-state"'));
-    assert.ok(open.includes('class="filter-rail filter-mark"'));
-    assert.ok(open.includes('One status at a time'));
-    assert.ok(open.includes('A label, not a status'));
-    assert.ok(open.includes('aria-label="State"'));
-    assert.ok(open.includes('aria-label="Mark"'));
-    assert.ok(open.includes('<nav class="segment"'));
-    assert.ok(open.includes('<nav class="stamps"'));
-    assert.ok(open.includes(`href="${path}?status=open"`));
-    assert.ok(open.includes(`href="${path}?label=ready"`));
-    assert.ok(open.includes(`href="${path}" aria-current="page"`));
-    const started = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth, 'GET', '?status=in_progress')).text();
-    assert.ok(started.includes(`href="${path}?status=in_progress" aria-current="page"`));
-    assert.ok(started.includes('Chip started'));
-    assert.ok(!started.split('<h2>Recently closed</h2>')[0]?.includes('Chip ready'));
-    const ready = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth, 'GET', '?label=ready')).text();
-    assert.ok(ready.includes(`href="${path}?label=ready" aria-current="page"`));
-    assert.ok(ready.includes('Chip ready'));
-    assert.ok(!ready.split('<h2>Recently closed</h2>')[0]?.includes('Chip started'));
-    assertNoApplicationControls(ready);
-  } finally { sqlite.close(); }
-});
-
-test('ui: a cross-document view transition is css and stays off when motion is reduced', async () => {
-  const { sqlite, env } = fixture();
-  try {
-    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': await assertion() })).text();
-    assert.match(html, /@media \(prefers-reduced-motion: no-preference\) \{\s*@view-transition \{ navigation: auto; \}/);
-    assert.ok(html.includes('::view-transition-group(root)'));
-    assert.ok(html.includes('::view-transition-image-pair(root)'));
-    assert.ok(html.includes('animation-duration: 80ms'));
-    assert.equal(html.includes('pointer-events'), false);
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('ui: night theme follows the phone color scheme and the page widens on a desktop', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Night title', status: 'open' });
-    const anonymous = await handleRequest(new Request('https://issues.example/ui'), env, authenticate);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Night title'));
-    const html = await (await viewUi(env, auth)).text();
-    assert.ok(html.includes('@media (prefers-color-scheme: dark)'));
-    assert.ok(html.includes('color-scheme: dark'));
-    assert.ok(html.includes('--ink: #f3ece3'));
-    assert.ok(html.includes('--paper: #1c1916'));
-    assert.ok(html.includes('min(100%, 720px)'));
-    assert.ok(html.includes('@media (max-width: 420px)'));
-    assert.ok(html.includes('content="#1c1916" media="(prefers-color-scheme: dark)"'));
-    assert.ok(html.includes('<h1>Projects</h1>'));
-    assertNoApplicationControls(html);
-    const project = await (await viewProject(env, 'polylinedb', 'meganemura/polylinedb', auth)).text();
-    assert.ok(project.includes('Night title'));
-    assert.ok(project.includes('<span class="secondary">open</span>'));
-    assert.ok(project.includes('@media (prefers-color-scheme: dark)'));
-  } finally { sqlite.close(); }
-});
-
-test('ui: an epic lists its children and a child links back to the parent', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  try {
-    const epic = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Tree epic', type: 'epic' });
-    const first = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'First child', parent: epic, type: 'task' });
-    const hostile = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: '<img src=x onerror=alert(1)>', parent: epic, type: 'task' });
-    const leaf = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Unrelated leaf' });
-    sqlite.prepare('UPDATE issues SET status = ? WHERE id = ?').run('closed', first);
-    const fat = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Fat epic', type: 'epic' });
-    const insert = sqlite.prepare(`INSERT INTO issues(id, parent_id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, ?, 'polylinedb', 'meganemura/polylinedb', ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', '2026-10-01T00:00:00.000Z', 'access:owner')`);
-    for (let number = 1; number <= 101; number += 1) {
-      const id = `${fat}.${number}`;
-      insert.run(id, fat, issueSortKey(id), `Packed child ${number}`);
-    }
-
-    const anonymous = await viewIssue(env, epic);
-    assert.equal(anonymous.status, 401);
-    assert.ok(!(await anonymous.text()).includes('Tree epic'));
-
-    const epicHtml = await (await viewIssue(env, epic, auth)).text();
-    const children = uiSection(epicHtml, 'Children');
-    assert.ok(children.includes('First child'));
-    assert.ok(children.includes(`href="/ui/i/${first}"`));
-    assert.ok(children.includes('<span class="secondary">closed</span>'));
-    assert.ok(children.includes('&lt;img src=x onerror=alert(1)&gt;'));
-    assert.ok(children.includes(`href="/ui/i/${hostile}"`));
-    assert.ok(!children.includes('<img'));
-    assert.ok(children.indexOf('First child') < children.indexOf('&lt;img'));
-    assert.ok(!epicHtml.includes('>Parent <'));
-    assert.ok(!epicHtml.includes('Unrelated leaf'));
-    assertNoApplicationControls(epicHtml);
-
-    const childHtml = await (await viewIssue(env, first, auth)).text();
-    assert.ok(childHtml.includes(`Parent <a href="/ui/i/${epic}">Tree epic</a>`));
-    assert.ok(uiSection(childHtml, 'Children').includes('No children.'));
-    const leafHtml = await (await viewIssue(env, leaf, auth)).text();
-    assert.ok(!leafHtml.includes('>Parent <'));
-    assert.ok(uiSection(leafHtml, 'Children').includes('No children.'));
-
-    const fatHtml = await (await viewIssue(env, fat, auth)).text();
-    const packed = uiSection(fatHtml, 'Children');
-    assert.ok(packed.includes('More issues are not shown.'));
-    assert.ok(packed.includes('Packed child 1'));
-    assert.ok(packed.includes('Packed child 100'));
-    assert.ok(!packed.includes('Packed child 101'));
-    assert.ok(packed.indexOf('Packed child 1') < packed.indexOf('Packed child 2'));
-    assert.ok(packed.indexOf('Packed child 2') < packed.indexOf('Packed child 10'));
-  } finally { sqlite.close(); }
-});
-
-test('pd-144: /ui orders projects by their latest issue update', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  try {
-    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-09-01T00:00:00.000Z', 'access:owner', ?, 'access:owner')`);
-    insert.run('pd-1', issueSortKey('pd-1'), 'order', 'alpha', 'pd-1', '2026-10-09T03:00:00.000Z');
-    insert.run('pd-2', issueSortKey('pd-2'), 'order', 'alpha', 'pd-2', '2026-10-08T00:00:00.000Z');
-    insert.run('pd-3', issueSortKey('pd-3'), 'order', 'bravo', 'pd-3', '2026-10-10T06:40:00.000Z');
-    insert.run('pd-4', issueSortKey('pd-4'), 'order', 'charlie', 'pd-4', '2026-10-07T00:00:00.000Z');
-    insert.run('pd-6', issueSortKey('pd-6'), 'aa-tool', 'echo', 'pd-6', '2026-10-01T00:00:00.000Z');
-    insert.run('pd-5', issueSortKey('pd-5'), 'zz-tool', 'delta', 'pd-5', '2026-10-01T00:00:00.000Z');
-    insert.run('pd-7', issueSortKey('pd-7'), 'b-tool', 'shared', 'pd-7', '2026-09-30T00:00:00.000Z');
-    insert.run('pd-8', issueSortKey('pd-8'), 'a-tool', 'shared', 'pd-8', '2026-09-30T00:00:00.000Z');
-    const home = await viewUi(env, { 'cf-access-jwt-assertion': token });
-    assert.equal(home.status, 200);
-    const html = await home.text();
-    const projects = uiSection(html, 'Projects');
-    assert.deepEqual([...projects.matchAll(/href="\/ui\/p\/([^"]+)"/g)].map(match => match[1]), [
-      'order/bravo', 'order/alpha', 'order/charlie', 'zz-tool/delta', 'aa-tool/echo', 'a-tool/shared', 'b-tool/shared',
-    ]);
-    const bravo = projects.split('<li class="quiet-row">').find(part => part.includes('href="/ui/p/order/bravo"'));
-    assert.ok(bravo);
-    assert.ok(bravo.includes('Updated <time datetime="2026-10-10T06:40:00.000Z">2026-10-10 15:40 JST</time>'));
-    assert.ok(bravo.replace(/<[^>]+>/g, '').includes('Updated 2026-10-10 15:40 JST'));
-    const alpha = projects.split('<li class="quiet-row">').find(part => part.includes('href="/ui/p/order/alpha"'));
-    assert.ok(alpha);
-    assert.ok(alpha.includes('2026-10-09 12:00 JST'));
-    assert.ok(!alpha.includes('2026-10-08 09:00 JST'));
-    assertNoApplicationControls(html);
-  } finally { sqlite.close(); }
-});
-
-test('pd-144: the project cap keeps the most recently updated projects', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  try {
-    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', ?, 'access:owner')`);
-    for (let number = 0; number <= 200; number += 1) {
-      const id = `pd-${number + 1}`;
-      insert.run(id, issueSortKey(id), 'cap', `p${String(number).padStart(3, '0')}`, `Project ${number}`, '2026-10-01T00:00:00.000Z');
-    }
-    insert.run('pd-202', issueSortKey('pd-202'), 'cap', 'zzz', 'Newest', '2026-10-02T00:00:00.000Z');
-    const home = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
-    const projects = uiSection(home, 'Projects');
-    assert.ok(projects.includes('More projects are not shown.'));
-    assert.equal([...projects.matchAll(/href="\/ui\/p\/([^"]+)"/g)][0]?.[1], 'cap/zzz');
-    assert.ok(home.includes('p000'));
-    assert.ok(!home.includes('p199'));
-    assert.ok(!home.includes('p200'));
-  } finally { sqlite.close(); }
-});
-
-test('pd-144: a project update time is escaped', async () => {
-  const { sqlite, env } = fixture();
-  const token = await assertion();
-  try {
-    const updatedAt = '"><img';
-    sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-10-01T00:00:00.000Z', 'access:owner', ?, 'access:owner')`)
-      .run('pd-1', issueSortKey('pd-1'), 'wire', 'marked', 'Marked time', updatedAt);
-    const projects = uiSection(await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text(), 'Projects');
-    assert.ok(projects.includes('datetime="&quot;&gt;&lt;img"'));
-    assert.ok(!projects.includes('<img'));
-  } finally { sqlite.close(); }
-});
 
 const webhookUrl = 'https://fixture.invalid/dispatch';
 const webhookKey = 'test-sender-key';
@@ -2182,10 +1320,12 @@ function fixtureReceiver(replies: readonly (number | 'throw')[] = []) {
   return { fetch: fetchImpl, posts };
 }
 
+// The fixed page script asks for JSON; a press without it gets a 303 back to the page, or a page that says why not.
 function pressDispatch(env: ReturnType<typeof fixture>['env'], id: string, token: string | null, dispatcher: ReturnType<typeof createDispatcher>, init: {
-  origin?: string; body?: string; contentType?: string; method?: string;
+  origin?: string; body?: string; contentType?: string; method?: string; json?: boolean;
 } = {}) {
   const headers: Record<string, string> = {};
+  if (init.json !== false) headers.accept = 'application/json';
   if (token !== null) headers['cf-access-jwt-assertion'] = token;
   if (init.origin !== undefined) headers.origin = init.origin;
   if (init.contentType !== undefined) headers['content-type'] = init.contentType;
@@ -2204,19 +1344,12 @@ function storedIssue(sqlite: DatabaseSync, id: string) {
   return sqlite.prepare('SELECT * FROM issues WHERE id = ?').get(id);
 }
 
-async function assertOutcome(response: Response, status: number, sentence: string, id: string): Promise<string> {
-  assert.equal(response.status, status);
-  assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
-  assert.equal(response.headers.get('cache-control'), 'private, no-cache');
+async function assertOutcome(response: Response, status: number, sentence: string, id: string): Promise<void> {
+  assert.equal(response.status, status, id);
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal(response.headers.get('etag'), null);
-  assert.equal(response.headers.get('server-timing'), null);
-  const html = await response.text();
-  assert.ok(html.includes(`<p>${sentence}</p>`), html);
-  assert.ok(html.includes(`<a href="/ui/i/${id}">${id}</a>`));
-  assert.equal(html.includes('<button'), false);
-  assert.equal(/<input\b/.test(html), false);
-  assertNoApplicationControls(html);
-  return html;
+  assert.deepEqual(await response.json(), { ok: status === 200, message: sentence });
 }
 
 function assertWebhook(post: ReceivedPost, id: string, now: number, notes?: string): void {
@@ -2234,75 +1367,6 @@ function assertWebhook(post: ReceivedPost, id: string, now: number, notes?: stri
   assert.match(String(body.event_id), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   assert.equal(Number.isInteger(body.occurred_at), true);
 }
-
-test('ui: Waiting for main links, Working shows ids, and Dispatch has notes and a start summary', async () => {
-  const { env } = fixture();
-  const token = await assertion();
-  const auth = { 'cf-access-jwt-assertion': token };
-  const configured = withWebhook(env);
-  const operate = async (body: Record<string, unknown>) => {
-    const response = await handleRequest(new Request('https://issues.example/v1/operations', {
-      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body),
-    }), env, authenticate);
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  const make = (body: string, labels: string[]) => createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body, labels });
-  const waiting = await make('Landing soon', ['main-wait']);
-  const ready = await make('Ready work', ['ready']);
-  const blocker = await make('Blocker', []);
-  const blocked = await make('Blocked work', ['ready']);
-  const claimed = await make('Claimed work', ['ready']);
-  const owner = await make('Owner decision', ['owner-decision']);
-  await operate({ op: 'dependency_add', dependent_id: blocked, blocker_id: blocker, expected_revision: 1, request_id: crypto.randomUUID() });
-  const incarnation = (await operate({ op: 'claim_show', issue_id: claimed })).claim.store_incarnation;
-  await operate({ op: 'claim_acquire', issue_id: claimed, incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'lane-a', ttl: 3600 });
-
-  const home = uiSection(await (await viewUi(env, auth)).text(), 'Waiting for main');
-  assert.ok(home.includes(`<li class="quiet-row"><a href="/ui/i/${waiting}">\n<span class="primary">Landing soon</span>`));
-  const working = await (await handleRequest(new Request('https://issues.example/ui/working', { headers: auth }), env, authenticate)).text();
-  assert.ok(working.includes(`<span class="secondary">${claimed} · meganemura/polylinedb</span>`));
-
-  const summary = async (id: string) => {
-    const page = await (await viewIssue(configured, id, auth)).text();
-    const form = page.match(/<form method="post"[\s\S]*?<\/form>/)?.[0] ?? '';
-    assert.ok(form.includes('<label for="dispatch-notes">Notes for the agent (optional)</label>'), id);
-    assert.ok(form.includes(notesField), id);
-    return form.match(/<p class="secondary">([^<]*)<\/p>/)?.[1];
-  };
-  assert.equal(await summary(ready), 'ready · no blockers · not claimed · can start now');
-  assert.equal(await summary(blocked), 'ready · blocked 1 · not claimed · will not start now');
-  assert.match(await summary(claimed) ?? '', /^ready · no blockers · claimed by lane-a until \d{4}-\d{2}-\d{2} \d{2}:\d{2} JST · will not start now$/);
-  assert.equal(await summary(owner), 'owner wait, not agent work · not ready · no blockers · not claimed · will not start now');
-  // iOS zooms into a focused field under 16px, and Apple's touch target guidance is at least 44pt.
-  const styles = (await (await viewIssue(configured, ready, auth)).text()).match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
-  assert.match(styles, /\.dispatch textarea \{[^}]*\bfont-size: 16px;/);
-  assert.match(styles, /\.dispatch button \{[^}]*\bmin-height: 48px;/);
-  const hidden = await (await viewIssue(env, ready, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) })).text();
-  assert.equal(hidden.includes('name="notes"'), false);
-});
-
-test('ui: a ready Dispatch form carries the in-place script and a result area; unset, reader, and other pages do not', async () => {
-  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
-  const token = await assertion();
-  try {
-    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'In place' });
-    const ready = await viewIssue(withWebhook(env), id, { 'cf-access-jwt-assertion': token });
-    const html = await ready.text();
-    assert.ok(html.includes(`<output class="dispatch-result" role="status" aria-live="polite"></output></form>\n<script>${dispatchScript}</script>`));
-    const hash = createHash('sha256').update(dispatchScript).digest('base64');
-    assert.ok((ready.headers.get('content-security-policy') ?? '').includes(`'sha256-${hash}'; connect-src 'self';`));
-    assert.equal(ready.headers.get('content-security-policy'), uiPolicy(html));
-    for (const page of [
-      await (await viewIssue(env, id, { 'cf-access-jwt-assertion': token })).text(),
-      await (await viewIssue(withWebhook(env), id, { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) })).text(),
-      await (await viewUi(withWebhook(env), { 'cf-access-jwt-assertion': token })).text(),
-    ]) {
-      assert.equal(page.includes(dispatchScript), false);
-      assert.equal(page.includes('<output'), false);
-    }
-  } finally { sqlite.close(); }
-});
 
 test('dispatch module exports only the factory and the secret names', () => {
   assert.deepEqual(Object.keys(dispatchModule).sort(), ['createDispatcher', 'dispatchSecretNames']);
@@ -2331,9 +1395,9 @@ test('dispatch: no JWT, and actors who cannot press, get no webhook', async () =
       const page = await viewIssue(configured, id, { 'cf-access-jwt-assertion': token });
       assert.equal(page.status, 200, role);
       const html = await page.text();
-      assert.equal(html.includes('<form'), false, role);
-      assert.equal(html.includes('<button'), false, role);
-      assert.equal(html.includes('Dispatch'), false, role);
+      assert.equal(html.includes('/dispatch"'), false, role);
+      assert.equal(html.includes('name="notes"'), false, role);
+      assert.equal(html.includes('method="post"'), role !== 'reader', role);
       const response = await pressDispatch(configured, id, token, dispatcher, browserPress());
       await assertOutcome(response, 403, 'Dispatch is not available for this actor.', id);
     }
@@ -2364,8 +1428,9 @@ test('dispatch: unset or invalid secrets show a disabled button and do not fetch
       const target = withWebhook(env, secret);
       const page = await viewIssue(target, id, { 'cf-access-jwt-assertion': token });
       const html = await page.text();
-      assert.ok(html.includes(`<form method="post" action="/ui/i/${id}/dispatch" class="dispatch">\n${notesLabel}\n${notesField}\n<div class="dispatch-action"><button type="submit" disabled>Dispatch</button><p class="quiet-note">Dispatch is not set up.</p>${freshSummary}</div></form>`));
-      assert.equal(html.includes('<input'), false);
+      assert.ok(html.includes('<button class="btn" type="button" disabled>'));
+      assert.ok(html.includes('<p class="hint">Dispatch is not set up.</p>'));
+      assert.equal(html.includes(`action="/ui/i/${id}/dispatch"`), false);
       const response = await pressDispatch(target, id, token, dispatcher, browserPress());
       await assertOutcome(response, 503, 'Dispatch is not set up.', id);
       assert.deepEqual(storedIssue(sqlite, id), before);
@@ -2384,11 +1449,12 @@ test('dispatch: a press sends one envelope, and the next press inside the window
     const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parcel title' });
     const before = storedIssue(sqlite, id);
     const page = await (await viewIssue(configured, id, { 'cf-access-jwt-assertion': token })).text();
-    assert.ok(page.includes(`<form method="post" action="/ui/i/${id}/dispatch" class="dispatch">\n${notesLabel}\n${notesField}\n<div class="dispatch-action"><button type="submit">Dispatch</button>${freshSummary}</div>\n<output class="dispatch-result" role="status" aria-live="polite"></output></form>`));
-    assert.equal(page.includes('<input'), false);
+    const form = page.match(new RegExp(`<form method="post" action="/ui/i/${id}/dispatch" data-live>[\\s\\S]*?</form>`))?.[0] ?? '';
+    assert.ok(form.includes('<textarea id="dp-pd-1-main" name="notes" rows="3" maxlength="4096"'), form);
+    assert.ok(form.includes('<p class="live" role="status"></p>'));
+    assert.ok(page.includes('not ready · no blockers · not claimed · will not start now'));
     const sent = await pressDispatch(configured, id, token, dispatcher, browserPress());
-    const sentHtml = await assertOutcome(sent, 200, 'Sent.', id);
-    assert.equal(sentHtml.includes('<p>Already sent.</p>'), false);
+    await assertOutcome(sent, 200, 'Sent.', id);
     assert.equal(receiver.posts.length, 1);
     const post = receiver.posts[0];
     assert.ok(post);
@@ -2396,6 +1462,10 @@ test('dispatch: a press sends one envelope, and the next press inside the window
     assert.deepEqual(storedIssue(sqlite, id), before);
     const again = await pressDispatch(configured, id, token, dispatcher, browserPress());
     await assertOutcome(again, 200, 'Already sent.', id);
+    assert.equal(receiver.posts.length, 1);
+    const native = await pressDispatch(configured, id, token, dispatcher, { ...browserPress(), json: false, body: 'return=%2Fui%2Fagents' });
+    assert.equal(native.status, 303);
+    assert.equal(native.headers.get('location'), `/ui/agents?done=dispatched:${id}`);
     assert.equal(receiver.posts.length, 1);
     assert.deepEqual(storedIssue(sqlite, id), before);
   } finally { sqlite.close(); }
@@ -2505,7 +1575,7 @@ test('dispatch: changed notes conflict, and the same notes do not send again', a
     assertWebhook(post, id, dispatchOpenedAt, 'hello\nworld');
     assert.deepEqual(storedIssue(sqlite, id), before);
     const conflict = await pressDispatch(configured, id, token, dispatcher, { ...form, body: 'notes=other' });
-    await assertOutcome(conflict, 409, 'This dispatch conflicts with the send already open for this issue.', id);
+    await assertOutcome(conflict, 422, 'This dispatch conflicts with the send already open for this issue.', id);
     assert.equal(receiver.posts.length, 1);
     assert.deepEqual(storedIssue(sqlite, id), before);
     const same = await pressDispatch(configured, id, token, dispatcher, { ...form, body: 'notes=hello%0Aworld' });
@@ -2653,10 +1723,7 @@ test('dispatch: a bad form and a missing issue do not send, and a missing issue 
 
     const missing = await pressDispatch(configured, 'pd-999', token, dispatcher, browserPress());
     assert.equal(missing.status, 404);
-    assert.equal(missing.headers.get('content-type'), 'text/html; charset=utf-8');
-    const missingHtml = await missing.text();
-    assert.ok(missingHtml.includes('Issue was not found.'));
-    assertNoApplicationControls(missingHtml);
+    assert.deepEqual(await missing.json(), { ok: false, message: 'That issue does not exist. Nothing was sent.' });
     assert.equal(receiver.posts.length, 1);
 
     let reads = 0;
@@ -2679,8 +1746,8 @@ test('dispatch: a bad form and a missing issue do not send, and a missing issue 
   } finally { sqlite.close(); }
 });
 
-test('ui: the issue page marks an edited comment with its edit time and offers no edit control', async () => {
-  const { sqlite, env } = fixture();
+test('ui: the issue page marks an edited comment with its edit time and offers an edit form only on your own comments', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"service:robot","role":"agent"}]');
   const token = await assertion();
   const operate = async (body: Record<string, unknown>) => (await handleRequest(new Request('https://issues.example/v1/operations', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
@@ -2691,9 +1758,156 @@ test('ui: the issue page marks an edited comment with its edit time and offers n
     const changed = (await operate({ op: 'comment', id, body: 'retracted words' })).comment;
     const edited = (await operate({ op: 'comment_edit', id, comment_id: changed.id, body: 'corrected words', expected: 1 })).comment;
     const html = await (await viewIssue(env, id, { 'cf-access-jwt-assertion': token })).text();
-    assert.ok(html.includes(`edited <time datetime="${edited.updated_at}">`));
+    assert.ok(html.includes(`edited <time datetime="${edited.updated_at.slice(0, 19)}.000Z">`));
     assert.equal(html.split('>edited <time').length - 1, 1, `only the edited comment is marked: ${kept.id}`);
     assert.ok(html.includes('corrected words')); assert.equal(html.includes('retracted words'), false);
     assert.equal(html.includes('comment_edit'), false);
+    assert.equal(html.split(`action="/ui/i/${id}/comment-edit"`).length - 1, 2, 'both comments are the owner\'s own');
+    const agentView = await (await viewIssue(env, id, { 'cf-access-jwt-assertion': await assertion({ sub: '', common_name: 'robot' }) })).text();
+    assert.equal(agentView.includes('/comment-edit"'), false);
+    const edit = await postUi(env, `/ui/i/${id}/comment-edit`, token, [['comment', kept.id], ['v.comment', 1], ['body', 'kept, then edited']], { json: true });
+    assert.deepEqual(await edit.json(), { ok: true, message: 'Comment saved.' });
+    const stale = await postUi(env, `/ui/i/${id}/comment-edit`, token, [['comment', kept.id], ['v.comment', 1], ['body', 'late edit']]);
+    assert.equal(stale.status, 409);
+    assert.ok((await stale.text()).includes('<span class="lbl">Now</span>“kept, then edited”</div>'));
+  } finally { sqlite.close(); }
+});
+
+test('ui: Projects orders by the latest issue update, caps at 200 with a sentence, and shows the last path segment', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const insert = sqlite.prepare(`INSERT INTO issues(id, sort_key, tool, project, body, status, type, priority, labels_json, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 'open', 'task', 0, '[]', '2026-09-01T00:00:00.000Z', 'access:owner', ?, 'access:owner')`);
+    insert.run('pd-1', issueSortKey('pd-1'), 'order', 'owner/alpha', 'pd-1', '2026-10-09T03:00:00.000Z');
+    insert.run('pd-2', issueSortKey('pd-2'), 'order', 'owner/alpha', 'pd-2', '2026-10-08T00:00:00.000Z');
+    insert.run('pd-3', issueSortKey('pd-3'), 'order', 'bravo', 'pd-3', '2026-10-10T06:40:00.000Z');
+    insert.run('pd-4', issueSortKey('pd-4'), 'b-tool', 'shared', 'pd-4', '2026-09-30T00:00:00.000Z');
+    insert.run('pd-5', issueSortKey('pd-5'), 'a-tool', 'shared', 'pd-5', '2026-09-30T00:00:00.000Z');
+    insert.run('pd-6', issueSortKey('pd-6'), 'wire', 'marked', 'pd-6', '"><img');
+    const response = await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/projects');
+    const html = await response.text();
+    assert.equal(response.status, 200, html.slice(0, 300));
+    assert.deepEqual([...html.matchAll(/href="\/ui\/p\/([^"]+)"/g)].map(match => match[1]), ['order/bravo', 'order/owner/alpha', 'a-tool/shared', 'b-tool/shared', 'wire/marked']);
+    assert.ok(html.includes('<a class="title" href="/ui/p/order/owner/alpha">alpha</a>'));
+    assert.equal(textOf(html).includes('owner/alpha'), false, 'the owner segment stays out of the row');
+    assert.ok(html.includes('Updated <time datetime="2026-10-10T06:40:00.000Z">2026-10-10 15:40 JST</time>'));
+    assert.ok(html.includes('2026-10-09 12:00 JST') && !html.includes('2026-10-08 09:00 JST'));
+    assert.ok(html.includes('Updated <time>an unknown time</time>') && !html.includes('<img'), 'a stored time that does not parse is never markup');
+    assert.ok(textOf(html).includes('All 5 projects are shown, newest update first.'));
+    for (let number = 0; number <= 200; number += 1) insert.run(`cap-${number + 1}`, issueSortKey(`cap-${number + 1}`), 'cap', `p${String(number).padStart(3, '0')}`, 'x', '2026-08-01T00:00:00.000Z');
+    const capped = textOf(await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/projects')).text());
+    assert.ok(capped.includes('The 200 most recently updated projects are shown. More projects are not shown.'));
+  } finally { sqlite.close(); }
+});
+
+test('ui: a project page filters by state and label, lists recent closes, and refuses an unknown filter', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const open = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Open parcel', labels: ['ready'] });
+    const deferred = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Deferred parcel', status: 'deferred' });
+    const closed = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Closed parcel' });
+    await operation(env, token, { op: 'close', id: closed, expected: 1 });
+    await createIssue(env, token, { tool: 'compiler', project: 'other', body: 'Elsewhere' });
+    const page = async (query: string) => (await viewUi(env, auth, 'GET', `/ui/p/compiler/parser${query}`)).text();
+    const all = await page('');
+    assert.ok(panel(all, 'Unfinished').includes(`/ui/i/${open}"`) && panel(all, 'Unfinished').includes(`/ui/i/${deferred}"`));
+    assert.equal(panel(all, 'Unfinished').includes(`/ui/i/${closed}"`), false);
+    assert.ok(panel(all, 'Recently closed').includes(`/ui/i/${closed}"`));
+    assert.equal(all.includes('Elsewhere'), false);
+    assert.ok(all.includes('href="/ui/p/compiler/parser?status=deferred"'));
+    assert.ok(all.includes('href="/ui/p/compiler/parser?label=ready"'));
+    const filtered = await page('?status=deferred');
+    assert.ok(filtered.includes('href="/ui/p/compiler/parser?status=deferred" aria-current="page"'));
+    assert.ok(panel(filtered, 'Deferred').includes(`/ui/i/${deferred}"`) && !panel(filtered, 'Deferred').includes(`/ui/i/${open}"`));
+    const labelled = await page('?label=ready');
+    assert.ok(labelled.includes(`/ui/i/${open}"`) && !panel(labelled, 'Unfinished').includes(`/ui/i/${deferred}"`));
+    for (const query of ['?status=bogus', `?label=${encodeURIComponent('a\u0001b')}`]) assert.equal((await viewUi(env, auth, 'GET', `/ui/p/compiler/parser${query}`)).status, 404, query);
+  } finally { sqlite.close(); }
+});
+
+test('ui: issue and owner text is escaped everywhere, and an owner marker line gives way to the next line as the title', async () => {
+  const { sqlite, env } = fixture('[{"actor":"access:owner","role":"human","label":"<b>Owner</b>"}]');
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: '要対応（owner-action）\n<script>alert(1)</script> & "quotes"\n\nBody <img src=x>', labels: ['owner-action'] });
+    await operation(env, token, { op: 'comment', id, body: '<iframe>note</iframe>' });
+    for (const path of ['/ui', `/ui/i/${id}`, '/ui/p/compiler/parser', `/ui/search?q=${encodeURIComponent('<script>')}`, '/ui/activity']) {
+      const html = await (await viewUi(env, auth, 'GET', path)).text();
+      assert.equal(html.includes('<script>alert'), false, path);
+      assert.equal(html.includes('<img src=x>'), false, path);
+      assert.equal(html.includes('<iframe>'), false, path);
+      assert.equal(html.includes('<b>Owner</b>'), false, path);
+      assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quotes&quot;'), path);
+    }
+    const issue = await (await viewIssue(env, id, auth)).text();
+    assert.ok(issue.includes('<h1 class="issue-title">&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quotes&quot;</h1>'));
+    assert.ok(issue.includes('<div class="prose" lang="ja">要対応（owner-action）'));
+    assert.ok(issue.includes('&lt;b&gt;Owner&lt;/b&gt;'));
+  } finally { sqlite.close(); }
+});
+
+test('ui: an epic lists its children and a child links back to its parent', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const epic = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Parser epic', type: 'epic' });
+    const child = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Child task', parent: epic });
+    const parent = await (await viewIssue(env, epic, { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(panel(parent, 'Family').includes(`href="/ui/i/${child}"`));
+    const kid = await (await viewIssue(env, child, { 'cf-access-jwt-assertion': token })).text();
+    assert.ok(kid.includes(`<a href="/ui/i/${epic}">`));
+    assert.ok(panel(kid, 'Family').includes(`href="/ui/i/${epic}"`));
+  } finally { sqlite.close(); }
+});
+
+test('ui: search finds an issue by id or by words, and says when a search is empty, too long, or capped', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const lease = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Lease worker timing' });
+    const other = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Unrelated' });
+    const search = async (query: string) => textOf(await (await viewUi(env, auth, 'GET', `/ui/search?q=${encodeURIComponent(query)}`)).text());
+    assert.ok((await search('')).includes('Type an issue id or words from the text.'));
+    const words = await search('worker');
+    assert.ok(words.includes(`${lease}`) && !words.includes('Unrelated'));
+    assert.ok(words.includes('1 match.'));
+    const byId = await (await viewUi(env, auth, 'GET', `/ui/search?q=${other}`)).text();
+    assert.ok(byId.includes(`href="/ui/i/${other}"`));
+    assert.ok((await search('nothing like this')).includes('No matches. Try a shorter word.'));
+    assert.ok((await search(`a${'b'.repeat(70000)}`)).includes('That search is too long or contains a null character.'));
+    for (let number = 0; number < 51; number += 1) await createIssue(env, token, { tool: 'compiler', project: 'parser', body: `Bulk lease ${number}` });
+    assert.ok((await search('lease')).includes('Showing 50 matches. More exist; add a word to narrow them.'));
+  } finally { sqlite.close(); }
+});
+
+test('ui: the agent feed lists events newest first, a kept link lists only later events, and a bad link says why', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const page = async (path: string) => {
+    const response = await viewUi(env, auth, 'GET', path);
+    assert.equal(response.status, 200, path);
+    return response.text();
+  };
+  const rows = (html: string) => [...html.matchAll(/<span class="chip[^"]*"><svg[^>]*><use href="#i-[a-z]+"\/><\/svg>([^<]+)<\/span><span class="mono">([^<]+)<\/span>/g)].map(match => `${match[1]} ${match[2]}`);
+  try {
+    const commented = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Commented work' });
+    const changed = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Changed work' });
+    const first = await page('/ui/activity');
+    const resume = first.match(/href="(\/ui\/activity\?after=\d+&amp;incarnation=[a-f0-9]{32})"/)?.[1]?.replace('&amp;', '&');
+    assert.ok(resume, first);
+    await operation(env, token, { op: 'comment', id: commented, body: 'A note' });
+    await operation(env, token, { op: 'update', id: changed, changes: [{ field: 'status', value: 'deferred', expected: 1 }] });
+    assert.deepEqual(rows(await page('/ui/activity')), [`Status changed ${changed}`, `Commented ${commented}`, `Created ${changed}`, `Created ${commented}`]);
+    assert.deepEqual(rows(await page(resume)), [`Commented ${commented}`, `Status changed ${changed}`]);
+    const foreign = textOf(await page(resume.replace(/incarnation=[a-f0-9]{32}/, `incarnation=${'0'.repeat(32)}`)));
+    assert.ok(foreign.includes('This activity link is from another store. Start again from the latest activity.'));
+    for (const path of ['/ui/activity?after=x', '/ui/activity?after=1']) assert.ok(textOf(await page(path)).includes('This activity link is not valid.'), path);
+    assert.equal((await page('/ui/activity')).includes('method="post"'), false);
   } finally { sqlite.close(); }
 });

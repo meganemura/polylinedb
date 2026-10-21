@@ -120,26 +120,28 @@ test('Dispatch sends in place: the page stays, the button waits, success clears 
     cdp = await connect(targets.find(target => target.type === 'page')!.webSocketDebuggerUrl);
     const evaluate = async (expression: string) => ((await cdp!.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result as { value: unknown }).value;
     await cdp.send('Page.navigate', { url: page });
-    await until(() => evaluate("document.readyState === 'complete' && !!document.querySelector('form.dispatch output')"), Boolean, 'the issue page');
-    const state = () => evaluate(`(() => { const f = document.querySelector('form.dispatch'); const b = f.querySelector('button'); const o = f.querySelector('output');
-      return { href: location.href, disabled: b.disabled, label: b.textContent, notes: f.querySelector('textarea').value, result: o.textContent, state: o.dataset.state ?? '' }; })()`) as Promise<Record<string, unknown>>;
+    const form = "document.querySelector('form[action$=\\'/dispatch\\']')";
+    await until(() => evaluate(`document.readyState === 'complete' && !!${form}?.querySelector('[role=status]')`), Boolean, 'the issue page');
+    const state = () => evaluate(`(() => { const f = ${form}; const b = f.querySelector('button'); const o = f.querySelector('[role=status]');
+      return { href: location.href, disabled: b.disabled, label: b.textContent, icon: !!b.querySelector('svg'), notes: f.querySelector('textarea').value, result: o.textContent, state: o.dataset.state ?? '' }; })()`) as Promise<Record<string, unknown>>;
 
-    await evaluate("document.querySelector('textarea').value = 'Check the landing order'; document.querySelector('form.dispatch button').click()");
+    await evaluate(`${form}.querySelector('textarea').value = 'Check the landing order'; ${form}.querySelector('button').click()`);
     const sending = await until(state, value => value.disabled === true, 'the sending state');
     assert.deepEqual({ label: sending.label, href: sending.href }, { label: 'Sending…', href: page });
-    await evaluate("document.querySelector('form.dispatch button').click()");
+    await evaluate(`${form}.querySelector('button').click()`);
     await until(async () => received.length, count => count === 1, 'the webhook post');
     reply(200);
     const sent = await until(state, value => value.state === 'ok', 'the success message');
-    assert.match(String(sent.result), /^Sent\. \S/);
-    assert.deepEqual({ href: sent.href, notes: sent.notes, disabled: sent.disabled, label: sent.label }, { href: page, notes: '', disabled: false, label: 'Dispatch' });
+    assert.equal(sent.result, 'Sent.');
+    // The button gets its icon back with its label, so a send leaves the control as it was.
+    assert.deepEqual({ href: sent.href, notes: sent.notes, disabled: sent.disabled, label: sent.label, icon: sent.icon }, { href: page, notes: '', disabled: false, label: 'Dispatch', icon: true });
     assert.equal(JSON.parse(received[0]!).notes, 'Check the landing order');
     assert.equal(received.length, 1);
 
-    await evaluate("document.querySelector('textarea').value = 'Second try'; document.querySelector('form.dispatch button').click()");
+    await evaluate(`${form}.querySelector('textarea').value = 'Second try'; ${form}.querySelector('button').click()`);
     const repeated = await until(state, value => value.state === 'error' || value.state === 'ok', 'the repeat result');
     assert.equal(repeated.state, 'error');
-    assert.match(String(repeated.result), /conflicts with the send already open for this issue\. Your notes are kept\.$/);
+    assert.equal(repeated.result, 'This dispatch conflicts with the send already open for this issue.');
     assert.deepEqual({ href: repeated.href, notes: repeated.notes }, { href: page, notes: 'Second try' });
     assert.equal(received.length, 1);
   } finally {
