@@ -600,7 +600,7 @@ The `agent_label` of a claim stays display text.
 
 ### Label an actor for the `/ui` page
 
-The `label` names the actor on the [`/ui` pages](#read-issues-in-a-browser), such as `Claude` or `owner`.
+The `label` names the actor on the [`/ui` pages](#read-and-act-on-issues-in-a-browser), such as `Claude` or `owner`.
 Only the operator sets it, in the roster.
 The Worker never takes a label from an email address or an assertion claim.
 
@@ -620,285 +620,165 @@ The label is display text for `/ui` only.
 The store keeps the actor ID in `created_by`, `updated_by`, and claim leases, and every operation response and MCP result returns the actor ID.
 A change to a label therefore changes `/ui` for past updates too.
 
-## Read issues in a browser
+## Read and act on issues in a browser
 
-The Worker serves HTML pages under `/ui` for a phone browser.
-The pages do not change the store.
-Every page carries the prefetch hint described under [Speed](#speed).
-The only application JavaScript is a small fixed script on an issue page where Dispatch is ready; see the Dispatch notes below.
-Every page accepts only `GET`, except `POST /ui/i/<id>/dispatch`.
-The same Access check as the operation endpoints runs before any page is returned.
+The Worker serves HTML pages under `/ui` for a phone and a desktop browser.
+A page read never changes the store.
+The write forms post to the routes in [Write from a page](#write-from-a-page).
+The same Access check as the operation endpoints runs before any page or write.
 A bad Access configuration returns `503 invalid_access_configuration`.
 A missing or invalid assertion returns `401`.
 An actor outside the roster returns `403`.
-Each roster role can read the pages.
+Each roster role can read every page.
 
-Every page starts with the same links.
+### Pages
 
-- **Projects** opens `/ui`.
-- **Inbox** opens `/ui/inbox`.
-- **Working** opens `/ui/working`.
-- **Blocked** opens `/ui/blocked`.
-- **Recent** opens `/ui/recent`.
-- **Activity** opens `/ui/activity`.
-- **Search** opens `/ui/search`.
+Each page has the same top bar: the tabs, a search field, the signed-in name and role, and **+** for a new issue.
+Only **Today** and **Stuck** show a count on their tab.
 
-An actor name is the roster [label](#label-an-actor-for-the-ui-page).
-When that actor has no label, the page shows the actor ID.
+| Path | Page |
+| --- | --- |
+| `/ui` | **Today**: the brief, then the four lanes You, Agents, Landing, and Stuck, then **Since yesterday**. |
+| `/ui/agents` | Active claims with lease bars and the last agent note, then the ready issues no agent holds (`#ready`). |
+| `/ui/activity` | The agent feed: every change event, newest first, at most 50. An `after` link lists only later events. |
+| `/ui/landing` | Issues labeled `main-wait`, per project, in land order, with the lock state and the push command. |
+| `/ui/stuck` | Expired claims, issues behind an active blocker, and started issues with no live claim. |
+| `/ui/projects` | Projects, newest issue update first, at most 200. |
+| `/ui/p/<tool>/<project>` | One project's unfinished issues, at most 100, and its last 50 closed issues. `status` and `label` filter it. |
+| `/ui/search?q=` | An issue id, then literal text matches in bodies and comments, at most 50. |
+| `/ui/new` | The new-issue form. `?project=<tool>%0A<project>` selects a project. |
+| `/ui/i/<id>` | One issue with its decision or action card, text, agent card, blockers, family, comments, and the Change card. |
+
+The earlier views answer `301` to their new place: `/ui/inbox` to `/ui`, `/ui/working` to `/ui/agents`, `/ui/blocked` to `/ui/stuck`, and `/ui/recent` to `/ui/activity`.
+Any other path under `/ui` returns the JSON `404 not_found`.
+
+### How Today is composed
+
+One function composes the lanes from one parallel wave of reads.
+No model runs at request time.
+The footer says so: "Composed by rule from the store at HH:MM JST. Reload for a new one."
+
+- **You** lists open, not deferred issues labeled `owner-decision` or `owner-action`. Decisions come first, then priority, then the longest wait. A deferred owner item leaves You until it is reopened.
+- **Agents** lists active claims, then ready issues. A ready issue that a claim holds, or that is on You, is not repeated there.
+- **Landing** lists open issues labeled `main-wait` in land order.
+- **Stuck** lists expired claims and issues behind an active blocker. An item on You does not repeat as an expired claim, but it does show as blocked.
+- An issue labeled `main-lock` is never a work row. Its live claim is one sentence on the Agents line: "NAME holds the main lock for PROJECT until HH:MM, so a push to main is under way."
+
+The brief heading counts the You items ("Two things wait on you."), and the sub line gives the split and the oldest wait ("2 to decide, 3 to do; the oldest has waited 13 days.").
+The You line names the first item that waits on no blocker, and the issues that wait for it.
+When exactly one ready issue exists, the Agents button is the Dispatch form itself, behind a second tap; with more, it opens the ready list.
+Each lane shows at most 50 rows and says how many more exist.
+A project shows only the last segment of its path.
+
+### Roles
+
+- `human` sees every control.
+- `agent` sees the write forms but no Dispatch. The store still requires its own active claim for each issue write.
+- `reader` sees no write form and no **+**. Sentences say "the owner" where a person sees "you".
+
+### Write from a page
+
+Every write is `POST` with `application/x-www-form-urlencoded`, at most 256 KiB (Dispatch keeps 16 KiB).
+Only a missing `Origin` or the request's own origin is accepted; `ALLOWED_ORIGINS` does not apply.
+A reader gets `403`.
+Each form carries the field versions it saw, as `v.status`, `v.labels`, `v.priority`, `v.type`, `v.body`, `v.blockers`, `v.land`, or `v.comment`, and the values it saw as `seen.<field>`.
+
+| Route | Fields | Store writes |
+| --- | --- | --- |
+| `/ui/i/<id>/decide` | `outcome` (`approve`, `decline`, `defer`), `note`, `dispatch=1` | approve: remove `owner-decision`, add `ready`; decline: `closed`; defer: `deferred`. Then the note as a comment "Approved. NOTE". |
+| `/ui/i/<id>/done` | `outcome` (`done`, `defer`, `handback`), `note` | done: `closed`; defer: `deferred`; handback: remove `owner-action`, add `ready`. Then the note. |
+| `/ui/i/<id>/dispatch` | `notes` | The Dispatch press described below. |
+| `/ui/i/<id>/comment` | `body` | `comment`. |
+| `/ui/i/<id>/comment-edit` | `comment`, `body`, `v.comment` | `comment_edit`. Only the author's own comments show the form. |
+| `/ui/i/<id>/status` | `status` (`open`, `deferred`, `closed`) | `update` of `status`. `in_progress` needs an agent's claim, so the page does not offer it. |
+| `/ui/i/<id>/priority`, `/type`, `/body` | `priority`, `type`, `body` | `update` of that field. |
+| `/ui/i/<id>/labels` | `labels` (repeated), `labels.new` (space separated) | `update` of `labels` to the checked set plus the new ones. |
+| `/ui/i/<id>/blockers/add`, `/blockers/remove` | `blocker` | `dependency_add` or `dependency_remove`. |
+| `/ui/i/<id>/land-order` | `op` (`set`, `clear`), `after` | `land_order_add` or `land_order_remove`. |
+| `/ui/new` | `project` (`<tool>\n<project>`), `body`, `type`, `priority`, `labels`, `parent`, `then=dispatch` | `create` with the prefix of the project's existing issues. |
+| `/ui/landing/landed` | `landed` (repeated issue ids) | Per issue: remove `main-wait`, then comment "Landed on main." |
+
+The update comes first and the note second, so a note never claims a change that did not happen.
+When the note fails after the update, the answer is `500` and the page keeps the note in a comment form.
+
+A status write on an issue that was ever claimed needs a claim proof, even from a person.
+The handler then acquires a 30-second lease labeled `pd ui`, writes under it, and releases it, so the claim history and the feed show that lease.
+When another actor holds a live claim, the handler refuses with `422` and changes nothing.
+
+The store compares a label list by one version.
+When the list is stale but the other change touched none of the labels this change adds or removes, the change applies to the current list.
+Every other stale version answers `409`.
+
+Answers:
+
+- Success answers `303` to the form's `return` path. `return` must start with `/ui` and contain no `//`, no backslash, and no control character; otherwise the issue page is used. Decide, done, status, and Dispatch add `?done=<kind>:<id>`, and Today and the issue page show what happened, a Reopen button after a close, and the next You item.
+- A stale version answers `409` with the issue page and a conflict card: **You saw**, **Now**, **Your change**, and **Result if applied now**, the last change's author and time (from `updated_by` and `updated_at`), the note kept, a button that resends the change with the current versions, and **Discard my change**. Nothing is written.
+- Any other refusal answers `400`, `403`, `404`, or `422` with a page that says why. `409` means only a stale version.
+- With `Accept: application/json` the answer is `{ "ok": boolean, "message": string }` with the same status. The page script uses this; on `409` it sends the form again without JSON to get the conflict page.
+
+### Dispatch
+
+The **Agent** card on an issue page shows whether the ready worklist would offer the issue now, for example `ready · no blockers · not claimed · can start now`.
+It shows Dispatch only when the Dispatch webhook is set up and the caller may press it, and a disabled button with "Dispatch is not set up." when the webhook is not set.
+The press and its results are the ones in [Set the dispatch webhook](#set-the-dispatch-webhook).
+The result sentences are: "Sent.", "Already sending.", "Already sent.", "Sent on retry.", "Not sent. Press Dispatch again to retry." (`502`), "This dispatch conflicts with the send already open for this issue." (`422`), "Dispatch is not set up." (`503`), "Dispatch is not available for this actor." (`403`), and "Dispatch could not read that form." (`400`).
+
+### Text rules
+
+An actor name is the roster [label](#label-an-actor-for-the-ui-page), or the actor ID without one.
 An issue's title is the first non-empty line of its body, without leading `#` heading markers.
-When that line is only an owner marker, such as `要対応（owner-action）` or `判断待ち(owner-decision)`, and another non-empty line follows, the title is that next line.
-The issue page then shows the marker as the first line of the body text.
-The rows, the issue page `<h1>`, and the browser title all use this title.
+When that line is only an owner marker, such as `要対応（owner-action）` or `判断待ち(owner-decision)`, and another non-empty line follows, the title is that next line, and the issue page shows the marker as the first line of the body text.
 Times use Japan Standard Time.
-The store does not record when an issue closed.
-A shown update time is `updated_at`.
-A comment does not change `updated_at`.
-On **Working now**, the time is when the claim expires.
-On **Waiting on you**, the time is how long since the issue was created.
+A stored time that does not parse shows as an unknown time.
 
-### Projects
+### Palette
 
-**Waiting on you** comes first, above the project list.
-It lists open issues labeled `owner-decision` or `owner-action`, across all projects, and says how many there are.
-`owner-decision` issues are under **To decide**, and `owner-action` issues are under **To do**. An issue with both labels is under **To decide** only.
-Each group lists higher priority first, then the issue that has waited longest.
-Each row shows the title, the issue ID, the project, and how long the issue has waited, and opens the issue.
-The waiting time counts from `created_at`, by the store clock, in whole hours or days. The store does not record when a label was added.
-The section reads the same Attention rule as the [Inbox](#inbox). It lists only the `open` issues, and it counts the deferred and in-progress owner issues and links to the Inbox for them.
-The rule is read at most 100 issues at a time; when more exist, the section says so.
+The lane colors carry meaning: violet is the owner, teal the agents, green landing, red-orange stuck.
+The page follows the browser color scheme and has no theme control.
+Contrast ratios (WCAG 2) of the main pairs:
 
-`/ui` lists projects.
-Each row names the tool and the project.
-It counts issues in `open`, `in_progress`, `deferred`, and `closed`.
-Each row shows the newest issue `updated_at` in that project, as `Updated 2026-10-10 15:40 JST`.
-The list is ordered by that time, newest first.
-Projects with the same time are ordered by project name, then by tool name.
-It shows at most 200 projects.
-Those 200 are the most recently updated.
-When more exist, the page says that more projects are not shown.
-The projects left out are the ones updated longest ago.
-A row opens `/ui/p/<tool>/<project>`.
-A slash in the project name is its own path segment.
+| Pair | Light | Dark |
+| --- | --- | --- |
+| Text `ink` on page `bg` | 16.20 (#0F1220 on #EDEFF5) | 16.91 (#EDEFF7 on #0B0D14) |
+| Text `ink` on card `surface` | 18.62 | 15.40 |
+| Secondary text `ink2` on card | 9.44 | 8.16 |
+| Control border `edge` on card | 4.45 | 3.78 |
+| You, Agents, Landing, Stuck text on card | 7.00, 5.80, 5.58, 5.46 | 6.46, 9.03, 9.74, 8.05 |
+| Lane text on its wash | 5.94, 5.03, 4.82, 4.69 | 5.61, 7.54, 7.99, 6.81 |
+| Button text on a lane button | 7.00, 5.80, 5.58, 5.46 | 7.09, 9.92, 10.69, 8.84 |
+| Brief text on the brief | 17.19 | 15.47 |
+| Brief lane text on the brief | 6.28, 8.79, 9.47, 7.83 | 5.65, 7.90, 8.52, 7.04 |
 
-**Waiting for main** sits under the project list.
-It lists open issues with the label `main-wait`, newest update first, at most 50.
-That label marks work that is enqueued on the `queue` branch and is not yet on the remote main branch.
-Each row links to the issue.
-It shows the title, the issue ID, the last update, and the actor of that update.
+In dark mode the brief (#1C2147) is lighter than the page and has a 1 px edge (#3A4280, 2.10 against the page).
+Taps are at least 44 px high and wide, and fields use 16 px text, so a phone does not zoom on focus.
 
-### Project view
+### Speed and the page policy
 
-The project page title is the tool.
-The line under the title is the project name.
-
-Two filters sit on the project page, and they are not the same kind of choice.
-**State** is one status at a time. The choices are joined into one bar.
-They are **Unfinished**, `open`, `in_progress`, `deferred`, and `closed`.
-**Unfinished** is selected when the address has no `status`.
-It lists every status except `closed`.
-Lower priority numbers come first, then `in_progress`, then `open`, then `deferred`.
-The `open`, `in_progress`, and `deferred` choices use that same order.
-The `closed` choice lists closed issues, newest update first.
-**Mark** is a label on the issue. It does not change the status.
-The choices are separate tickets, not segments of the state bar.
-They are **Any label**, `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action`.
-**Any label** is selected when the address has no `label`.
-A mark keeps issues that carry that label.
-The selected state is filled with the page ink. The selected mark is filled with a different color.
-A `status` other than those four values returns the not-found page.
-A `label` that is empty, longer than 256 UTF-8 bytes, or that contains a control character returns the not-found page.
-
-Each issue row links to that issue.
-The row shows the title, the status, the priority, the type, and the issue ID.
-The row also lists each of `ready`, `ready-for-land-queue`, `main-wait`, `main-lock`, `owner-decision`, and `owner-action` that the issue carries.
-An active claim adds the claim's agent label when one is set, the actor, and the expiry time.
-When blockers are not closed, the row shows how many.
-A deferred blocker counts.
-The list shows at most 100 issues.
-It says when more match.
-
-**Recently closed** stays under the filtered list for every chip.
-It lists this project's closed issues, newest close first, at most 50.
-A recorded close shows `closed_at` and `closed_by`.
-An issue with no close record sorts after the recorded closes and shows its last update, which is not the close time.
-An edit after the close does not move a recorded close.
-Each row links to the issue, like the rows in **Waiting for main**.
-Choosing the `closed` chip shows those issues in the filtered list as well, still ordered by last update.
-
-### Issue detail
-
-`/ui/i/<id>` shows one issue.
-The title is the first non-empty line of the body, without leading hash marks.
-The page shows the issue ID, status, type, priority, tool, and project, then the labels.
-An issue with no labels says so.
-The rest of the body follows.
-A link named **Project** returns to that issue's project page.
-
-The claim line shows the claim state.
-When a claim exists, the line also shows the agent label if one is set, the actor, and a time.
-An active claim and an expired claim show the expiry time.
-A released claim shows the release time when the store has one, and the expiry time otherwise.
-An issue that was never claimed shows `never_claimed`.
-
-When the issue has a parent, the page links to the parent and shows the parent's status.
-**Children** lists issues that name this issue as their parent, in creation order, at most 100.
-Each child links to its page and shows its title, ID, and status.
-The page says when more children exist.
-It says when there are none.
-
-**Comments** lists each comment with its time and author.
-**Active blockers** lists active blockers, and each one links to that issue.
-**Closed blockers** lists the blockers that are closed.
-A missing issue returns the not-found page.
-
-The issue page can show one Dispatch button.
-An Access human who can write sees it.
-When dispatch is not set up, the button is disabled and the page says `Dispatch is not set up.`
-A reader, an agent, or a service actor sees no button.
-The button posts to `/ui/i/<id>/dispatch`.
-The form has one optional field, `Notes for the agent`, sent as `notes` in the dispatch envelope.
-The field hints at 4096 characters; the server refuses notes above 4096 UTF-8 bytes.
-A reader, an agent, or a service actor sees no notes field.
-The form reads as one block between rules: a small label, a full-width notes box with a placeholder, then the button with one line beside it.
-The notes box uses 16px text so iOS Safari does not zoom in on focus, and the button is at least 48px tall; on a phone-width screen it spans the full width and the line sits below it.
-That line sums up whether the ready worklist would offer the issue to an agent now.
-It names an owner wait (`owner-decision` or `owner-action`) first, as not agent work.
-It then shows the status when it is not `open`, `ready` or `not ready`, `main-lock` when present, the active-blocker count or `no blockers`, and the active claim's holder and expiry or `not claimed`.
-It ends with `can start now` only when the issue is open, has `ready`, has no `main-lock` or owner-wait label, has no active blocker, and has no active claim; otherwise it ends with `will not start now`.
-The line informs only.
-It does not disable the button; the dispatcher decides.
-When the button is ready, the issue page also carries a fixed inline script and an empty `role="status"` result line inside the form.
-The script sends the same form as a same-origin `fetch` POST, so the page does not move.
-While it sends, the button is disabled and reads `Sending…`, so a second tap does nothing.
-On success the line shows the result sentence, such as `Sent.`, with the local time, and the notes box is cleared.
-On an error it shows the sentence the server returned, or that the server could not be reached, and keeps the notes.
-If Access sends the request to sign in again, the line asks you to reload the page; the notes stay.
-The browser still sends the page origin, so the `Origin` rules above apply unchanged.
-Without JavaScript the form posts and opens the result page as before.
-Pressing Dispatch does not change the issue, so nothing else on the page needs to refresh.
-
-### Inbox
-
-`/ui/inbox` lists everything the Attention rule selects: issues that are not closed and that carry `owner-decision`, `owner-action`, or `main-wait`.
-**Waiting on you** lists the open owner subset of that rule.
-Rows are newest first.
-The page shows at most 50.
-Each row links to the issue.
-It shows the title, ID, status, tool, project, the matching labels, and the last update.
-
-### Search
-
-`/ui/search` sends a `GET` form.
-The issue page has the only `POST` form, Dispatch.
-The query is `q`.
-An empty box asks for an issue ID or words from the text.
-Words match the issue body or a comment.
-A query that is an issue ID lists that issue first when it exists.
-The page shows at most 50 search matches.
-It says when further matches exist.
-It does not load a next page.
-A query longer than 65536 UTF-8 bytes, or a query that contains a null character, is rejected.
-Each hit links to the issue and shows the title, ID, status, and project.
-
-### Working now
-
-`/ui/working` lists issues with an active claim.
-The page lists active claims only.
-The soonest expiry comes first.
-The page shows at most 50 claims.
-Each row links to the issue.
-It shows the title, the issue ID and project, the agent label when the claim has one, the actor, and the expiry time.
-
-The section **Started without an active claim** lists `in_progress` issues, other than epics, whose claim was released, expired, invalidated, or never acquired.
-Release and expiry do not reset the status, so these issues stay `in_progress` until someone sets them back.
-The section uses issue order and shows at most 50 issues.
-Each row links to the issue and shows the title, ID, status, and project.
-
-### Blocked
-
-`/ui/blocked` lists issues that are not closed and that have at least one active blocker.
-A deferred blocker counts.
-The most active blockers come first, then the lower priority numbers.
-The page shows at most 50 issues.
-Each row links to the issue and shows the title, status, project, and the active-blocker count.
-
-### Recent updates
-
-`/ui/recent` lists issues of every status, newest update first, at most 50.
-Each row links to the issue.
-It shows the title, ID, status, project, last update, and the actor of that update.
-The time is the last update.
-A comment does not change the last update, so a comment alone does not move an issue here; see **Activity**.
-
-### Activity
-
-`/ui/activity` reads the change feed, newest event first, at most 50.
-It lists created issues, field updates, status changes, comments, claim acquisitions and releases, added and removed blockers, and issues that became ready.
-Each row links to the issue.
-It shows the issue title, the event in words with the issue ID (for example `Commented · pd-12` or `Updated body, labels · pd-12`), the project, the actor, and the event time.
-A comment row does not show the comment text, because a feed event does not name its comment.
-The page reads the events and their issues in one query.
-
-The page ends with the newest event number and a link to `/ui/activity?after=<seq>&incarnation=<store incarnation>`.
-Keep that link to come back to the same point.
-It lists only the events after that number, oldest first, at most 50 per page, and links to the next page while more remain.
-On the last page it offers a new link from the newest event shown.
-The page stores no last-visit marker.
-When retention removed events after the link, when the link belongs to another store incarnation, or when the link is malformed or ahead of the feed, the page says so and links back to `/ui/activity`.
-
-### Night theme
-
-The pages follow the browser color scheme.
-When the browser asks for a dark scheme, the background is `#1c1916`.
-The text is `#f3ece3`.
-The browser theme color uses that same background.
-The page has no theme control of its own.
-
-### Speed
-
-Each page carries a `Server-Timing` header with one entry named `worker`.
-Its duration is the time in milliseconds that the Worker waited on the Access keys and D1 for that page.
+Each page carries a `Server-Timing` header with one entry named `worker`: the milliseconds the Worker waited on the Access keys and D1.
 A rejected caller gets no `Server-Timing` header.
 
-A page is sent with `Cache-Control: private, no-cache` and an `ETag`.
-The browser may keep the page, but it asks the Worker before showing it again, and no shared cache keeps it.
-The `ETag` is a hash of the HTML.
+A page is sent with `Cache-Control: private, no-cache` and an `ETag`, a hash of the HTML.
 When the browser sends that tag in `If-None-Match`, the Worker answers `304 Not Modified` with no body.
-The Access check runs first, so a caller that Access rejects gets `401`, `403`, or `503` as before, never `304`.
-The Worker still reads D1 to build the page before it compares the tag, so a `304` saves only the transfer of the HTML.
-A browser may also restore a page from its back-forward cache without asking the Worker.
-The not-found page has no `ETag`.
+The Access check runs first, so a rejected caller gets `401`, `403`, or `503`, never `304`.
+The Worker still reads D1 to build the page, so a `304` saves only the transfer.
+A write answer is `no-store`.
 
-Each page also carries a fixed `<script type="speculationrules">` block.
-The block is JSON, not a program.
-It asks the browser to prefetch a link to `/ui` or to a page under `/ui/`.
-The eagerness is `moderate`.
-On a desktop, Chrome starts that prefetch after the pointer has rested on the link for about 200 ms, or on pointer down if that comes first.
-On a phone, Chrome's moderate heuristic prefetches a small number of likely links after scrolling stops, and it keeps at most two of those prefetches.
-The prefetch is an ordinary `GET`.
-Access runs first, so a rejected caller still receives `401`, `403`, or `503` and no HTML.
-The rules set `referrer_policy` to `no-referrer`, and they do not prerender a page.
-`Content-Security-Policy` names the SHA-256 hash of that JSON in `script-src`, and the hash of the fixed Dispatch script.
-No other script is allowed, and `script-src` does not use `'unsafe-inline'`.
-`connect-src 'self'` lets that script post Dispatch to the same origin and nowhere else.
-The pages do not use `<link rel="prefetch">`.
-A speculation-rules prefetch stays in the document's memory and still applies when the response is `private, no-cache`.
+Each page carries a fixed `<script type="speculationrules">` block, JSON that asks the browser to prefetch links to `/ui` and `/ui/*` with `moderate` eagerness and `no-referrer`, without prerender.
+Each page also carries one fixed script, the same text on every page.
+It asks for a second tap on a button with `data-confirm` ("Tap again to close"), and it sends a `data-live` form in place, shows the answer's `message`, and keeps typed text on a failure.
+`Content-Security-Policy` names the SHA-256 hashes of those two texts in `script-src`, and `script-src` does not use `'unsafe-inline'`.
+The page writes no inline `style` attribute and no inline event handler; `style-src 'unsafe-inline'` stays for the one `<style>` block.
+`connect-src 'self'` and `form-action 'self'` keep posts on the same origin.
+`Referrer-Policy: same-origin` keeps the `Origin` header on a same-origin post.
 
-A same-origin navigation uses a cross-document view transition.
-The style rule is `@view-transition { navigation: auto; }`.
-It applies only when the browser is not asking for reduced motion.
-The crossfade lasts 80 ms, including the transition group, so it does not keep the browser's longer default.
-A tap during that crossfade may not reach the new page.
-The transition does not skip Access and does not change the page the Worker returns.
-
+A same-origin navigation uses a cross-document view transition (`@view-transition { navigation: auto; }`) of 80 ms, only when the browser does not ask for reduced motion.
 [Measure `/ui` latency](ui-latency.md) sets the latency budget and describes how to measure it.
 
 Serve `/ui` and every file it needs from Worker code.
 If a later change adds static assets, set `run_worker_first` so that the Access check runs first.
 Do not add an Access bypass for local use.
-`test/worker.test.ts` renders these pages on Node with SQLite.
-`npm run test:worker` renders `/ui` and a project page in local workerd with D1.
-Both sign a test assertion and check the page content.
+`test/worker.test.ts` renders and posts these pages on Node with SQLite.
+`npm run test:worker` renders `/ui`, the projects page, and a project page in local workerd with D1.
 
 ## Use service tokens only from a local client
 

@@ -1,6 +1,6 @@
 # Measure `/ui` latency
 
-The [`/ui` pages](cloud.md#read-issues-in-a-browser) should feel like data already in hand.
+The [`/ui` pages](cloud.md#read-and-act-on-issues-in-a-browser) should feel like data already in hand.
 This page sets the latency budget and describes how to measure it.
 
 ## Budget
@@ -10,10 +10,10 @@ The budget counts from the input that starts a step to the first paint of the ne
 | Step | Budget |
 | --- | --- |
 | First load of any page | No budget. It needs a network round trip and the Access login. |
-| Follow a link to home, a project, a filter chip, an issue, or a view after the first load | 100 ms, ideally the next frame (16 ms) |
+| Follow a link to Today, a tab, a project, a filter chip, or an issue after the first load | 100 ms, ideally the next frame (16 ms) |
 | Go back or forward | Next frame |
 | Submit a search | No budget. A search is a query against the store. |
-| Press Dispatch | No budget. The press is a form submission. GET `/ui` is unchanged. |
+| Send a form (Approve, Done, a field, a comment, Dispatch, New issue) | No budget. A write is a form submission that answers `303` to the page it came from. GET `/ui` is unchanged. |
 
 A step that waits for the network cannot meet 100 ms on a phone link once the round trip and the Worker's D1 reads add up to more than that.
 Such a step meets the budget only when the browser already holds the next page.
@@ -84,7 +84,7 @@ Local D1 is a SQLite database inside workerd, so the times leave out the round t
 The script then starts headless Chrome with a 420 × 900 window.
 A local proxy adds the Access assertion to every request, as the Access edge does after its own login check.
 `--delay-ms` holds every request in the proxy to stand in for the phone link and the remote D1 reads.
-Each run follows the same path: home, the largest project, its `open` chip, an issue, back, **Inbox**, an inbox issue, and **Projects**.
+Each run follows the same path: **Today**, **Projects**, the largest project, its `open` chip, an issue, back, **Stuck**, a stuck issue, and **Today** again.
 It plays the path once with the pointer resting 300 ms on each link before the click, as a mouse does, and once with an immediate click.
 `--dwell-ms` changes the rest time.
 Before the pointer moves, the script waits until the page has no running animation, so a view-transition crossfade has finished and the click can reach the link.
@@ -102,6 +102,8 @@ Use `--skip-browser` to measure only the Worker.
 ## Results
 
 These numbers are from local workerd and headless Chrome 148, in a 420 × 900 window.
+They were measured before the lanes design replaced the views. **Inbox**, **Working**, **Blocked**, and **Recent** below are the earlier pages that now answer `301` to **Today**, **Agents**, **Stuck**, and **Activity**, and the earlier path went from home to a project and then to **Inbox**.
+The new pages have not been measured in Chrome yet; `npm run check:ui-latency` checks their budget bound.
 The store is the script's fixed synthetic dataset: 10 projects, 1,000 issues, 1,958 comments, 243 prerequisites, and 24 active claims.
 The largest project has 320 issues.
 Each Worker figure is the median of 10 requests after 3 warm-up requests.
