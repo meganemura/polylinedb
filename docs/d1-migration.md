@@ -1,7 +1,7 @@
 # Restore a local snapshot into D1
 
 These instructions describe schema 10 and snapshot 8.
-The release before comment edits uses schema 9 and snapshot 7. Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6, versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
+Version 0.6.0 uses schema 10 and snapshot 8. No release used schema 9 and snapshot 7, but a Worker built from main before comment edits did. Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6, versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
 
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.

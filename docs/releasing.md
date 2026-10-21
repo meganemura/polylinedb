@@ -19,6 +19,7 @@ Version `0.5.0` adds the change feed, `pd wait`, owner waits, claim keepalive, a
 Version `0.5.0` was prepared on main but never published to npm.
 Version `0.5.1` is the first release from the automatic workflow and carries the changes of `0.5.0`.
 Version `0.5.1` reached npm, but its `release` job failed, so it has no tag and no GitHub Release. Version `0.5.2` fixes that job and has the same CLI and Worker as `0.5.1`.
+Version `0.6.0` adds comment edits, external resources, land order, `claim_handoff`, and the `/ui` write forms, with schema 10 and snapshot 8.
 
 ## Cut a release
 

@@ -9,6 +9,10 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+## 0.6.0 (2026-10-22)
+
+Version 0.6.0 is the next `pd` release on npm. It brings everything below: `/ui` as a place to act, comment edits, external resources on an issue, land order, one-step handoffs to the landing queue, and the rule that work in progress needs a held claim. Moving from 0.5.2 means running `pd upgrade` on your local store, converting an older snapshot with `pd snapshot convert --from 6`, and upgrading the shared database before the server update.
+
 Some development tools were updated so the security audit in the release workflow passes. Nothing changes for pd users.
 
 `/ui` is now a place to act, not only to read. **Today** opens with a short brief of what waits on you, then four lanes: You, Agents, Landing, and Stuck, and a list of what changed since yesterday. From an issue page you can approve, decline, or defer a decision, mark an action done or hand it back, change the status, priority, type, labels, body, blockers, or land order, comment, and edit your own comments. **+** writes a new issue, **Landing** can mark issues landed, and **Agents**, **Stuck**, **Activity**, and **Projects** have their own tabs. The old Inbox, Working, Blocked, and Recent links still work and take you to the new pages. If someone changed the issue after you opened it, nothing is written: the page shows what you saw, what is there now, and your change, and lets you send it again or drop it. Changing the status of an issue an agent once held takes a 30-second claim named `pd ui`, which you will see in its history. Readers see the pages without any buttons. Nothing to upgrade.
