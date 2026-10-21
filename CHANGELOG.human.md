@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+Some development tools were updated so the security audit in the release workflow passes. Nothing changes for pd users.
+
 `/ui` is now a place to act, not only to read. **Today** opens with a short brief of what waits on you, then four lanes: You, Agents, Landing, and Stuck, and a list of what changed since yesterday. From an issue page you can approve, decline, or defer a decision, mark an action done or hand it back, change the status, priority, type, labels, body, blockers, or land order, comment, and edit your own comments. **+** writes a new issue, **Landing** can mark issues landed, and **Agents**, **Stuck**, **Activity**, and **Projects** have their own tabs. The old Inbox, Working, Blocked, and Recent links still work and take you to the new pages. If someone changed the issue after you opened it, nothing is written: the page shows what you saw, what is there now, and your change, and lets you send it again or drop it. Changing the status of an issue an agent once held takes a 30-second claim named `pd ui`, which you will see in its history. Readers see the pages without any buttons. Nothing to upgrade.
 
 The Bun notes now include a check on Linux. There, Bun 1.4.3 uses the same SQLite build as Node and gives the same answers in every test we ran, so only the explicit "Bun is not supported" rule still stops it. pd still asks you to run it with Node.

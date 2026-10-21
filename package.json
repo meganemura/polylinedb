@@ -39,14 +39,15 @@
     "nukadoko": "0.18.0",
     "stryker-agent-reporter": "0.2.0",
     "typescript": "7.0.2",
-    "vite": "8.3.1"
+    "vite": "8.3.4"
   },
   "overrides": {
     "undici": "7.30.0",
     "qs": "6.16.0",
     "source-map-js": "1.2.2",
     "sharp": "0.35.5",
-    "@modelcontextprotocol/sdk": "1.31.0"
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "hono": "4.13.13"
   },
   "license": "MIT",
   "files": [
