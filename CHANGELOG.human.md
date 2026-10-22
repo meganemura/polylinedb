@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The dependency page now lists the vite version this repository installs, and the two overrides that replaced the versions npm audit flagged. The older override note stays so you can see what it replaced.
+
 The upgrade, cutover, and claim guides now match the current `pd`. `pd upgrade` takes an older local store all the way to the current schema. A converted snapshot is the current snapshot, and `pd import` accepts that file. The cutover steps require the same current schema on the server and on both stores. The commands themselves are unchanged.
 
 ## 0.6.0 (2026-10-22)

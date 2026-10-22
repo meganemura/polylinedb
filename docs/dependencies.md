@@ -9,13 +9,14 @@ Direct dependencies use exact versions, and `package-lock.json` fixes the resolv
 | --- | --- | --- | --- |
 | `solarsql` | `0.8.0` | Analyze existing SQL and execute generated reads on SQLite and D1 | 2026-10-16 |
 | `@cloudflare/vite-plugin` | `1.60.2` | Build the Worker with `cf`; provide the local workerd and D1 runtime | 2026-09-25 |
-| `vite` | `8.3.1` | Run the Cloudflare build plugin | 2026-09-24 |
+| `vite` | `8.3.4` | Run the Cloudflare build plugin | 2026-10-08 |
 | `typescript` | `7.0.2` | Check source and test types; emit JavaScript for the npm CLI | 2026-07-08 |
 | `@types/node` | `24.19.0` | Describe Node APIs used by the CLI and tests | 2026-09-25 |
 | `undici` override | `7.30.0` | Replace the vulnerable HTTP dependency selected by the development runtime | 2026-09-25 |
 
-The version dates were checked through the npm registry on October 3, 2026, and the solarsql 0.8.0 date on October 16, 2026.
-The development dependency versions had been available for at least seven days.
+The version dates were checked through the npm registry on October 3, 2026, the solarsql 0.8.0 date on October 16, 2026, and the vite 8.3.4 date on October 22, 2026.
+The development dependency versions other than vite had been available for at least seven days on October 3, 2026.
+vite 8.3.4 was published on October 8, 2026, and the pin landed after that release had been available for at least seven days.
 The owner approved a release-age exception for solarsql 0.7.1 to fix analysis of correlated table-valued functions.
 solarsql 0.8.0 was adopted on its release date, October 16, 2026, as a release-age exception the owner approved, because it carries the runtime check this CLI now follows.
 It has no runtime package dependencies.
@@ -39,6 +40,17 @@ archstrict selected @modelcontextprotocol/sdk 1.30.0; the exact override selects
 Versions 0.35.5 and 1.31.0 were published on September 27 and September 28, 2026, and had been available for at least seven days.
 The CLI runtime dependency list remains unchanged.
 The subsequent audit reported zero known vulnerabilities on October 9, 2026.
+
+A later audit found three high advisories and one moderate advisory in development dependencies.
+npm audit named vite 8.3.1, @modelcontextprotocol/sdk 1.31.0 selected by archstrict, and hono 4.13.9 selected by the SDK.
+The direct pin is now vite 8.3.4.
+The override selects @modelcontextprotocol/sdk 1.32.1.
+The override selects hono 4.13.13.
+npm view on October 22, 2026 reported vite 8.3.4 published on October 8, 2026, @modelcontextprotocol/sdk 1.32.1 published on October 5, 2026, and hono 4.13.13 published on October 4, 2026.
+Each had been available for at least seven days.
+The CLI runtime dependency list remains unchanged.
+npm ci on October 22, 2026 reported zero known vulnerabilities.
+The Publish workflow runs npm audit, so a vulnerable development dependency stops publication.
 
 Install with `npm ci --ignore-scripts`, then run the checks in the README.
 Review registry release dates and current advisories before changing versions.

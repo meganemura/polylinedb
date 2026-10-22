@@ -320,6 +320,7 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+- Docs only: `docs/dependencies.md` lists vite 8.3.4, published 2026-10-08, and records the current overrides `@modelcontextprotocol/sdk` 1.32.1 and hono 4.13.13. The October 9 selection of SDK 1.31.0 stays as history. `test/dependency-record.test.ts` fails when the vite row or either current override sentence disagrees with `package.json`. No CLI, MCP, Worker, or schema change. No migration.
 - Docs only: `docs/memory.md` now says `pd upgrade` takes a canonical schema 2, 3, 4, 5, 6, 7, 8, or 9 store to schema 10 in one transaction, and that `pd snapshot convert` writes snapshot 8, which is the only snapshot `pd import` accepts. `docs/local-cloud-cutover.md` requires canonical schema 10 on the Worker and both stores, which is the schema `scripts/d1-cutover.ts` checks. `docs/claims.md` names the current source as schema 10 and snapshot 8. Sentences about schema 8 and snapshot 6 stay, and they name versions 0.5.0 through 0.5.2. `test/operator-docs.test.ts` fails if the upgrade page again stops at schema 5, the cutover page again requires canonical schema 8, or the claim page again calls schema 8 current. The number it expects is `SCHEMA_VERSION`. No CLI, MCP, Worker, or schema change. No migration.
 
 ## 0.6.0 (2026-10-22)
