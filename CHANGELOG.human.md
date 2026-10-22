@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+GitHub checks and the release build now run on Node releases that fix two serious bugs, one in compressed-data handling and one in TLS hostname checks. The oldest Node the package still accepts is the same.
+
 The dependency page now lists the vite version this repository installs, and the two overrides that replaced the versions npm audit flagged. The older override note stays so you can see what it replaced.
 
 The upgrade, cutover, and claim guides now match the current `pd`. `pd upgrade` takes an older local store all the way to the current schema. A converted snapshot is the current snapshot, and `pd import` accepts that file. The cutover steps require the same current schema on the server and on both stores. The commands themselves are unchanged.

@@ -21,7 +21,7 @@ Version managers can switch Node when a repository selects another runtime. To k
 
 ```sh
 #!/bin/sh
-exec /opt/example/node-24.20.0/bin/node \
+exec /opt/example/node-24.22.1/bin/node \
   /opt/example/npm-global/lib/node_modules/polylinedb/dist/cli.js "$@"
 ```
 

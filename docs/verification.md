@@ -19,7 +19,7 @@ The package check installs the tarball into a temporary prefix and executes its 
 
 ## CI runtime and operating systems
 
-CI runs every required check on Ubuntu 24.04 and Ubuntu 26.04 with Node 24.20.0 and Node 26.7.0.
+CI runs every required check on Ubuntu 24.04 and Ubuntu 26.04 with Node 24.22.1 and Node 26.12.1.
 The four jobs verify generated SQL, types, architecture boundaries, unit tests, the `/ui` latency budget, D1, the Worker, and the installed package.
 Explicit operating-system labels keep the verification conditions stable when GitHub changes `ubuntu-latest`.
 

@@ -117,7 +117,11 @@ test('Check runs on every push except to main, where only checked queue tips arr
 
 test('Check runs every check once per OS and Node pair, split into parallel suites', () => {
   const check = readFileSync(new URL('.github/workflows/check.yml', root), 'utf8');
-  assert.match(check, /^        os: \[ubuntu-24\.04, ubuntu-26\.04\]\n        node: \['24\.20\.0', '26\.7\.0'\]\n        suite: \[static, unit, d1, package\]$/m);
+  assert.match(check, /^        os: \[ubuntu-24\.04, ubuntu-26\.04\]\n        node: \['24\.22\.1', '26\.12\.1'\]\n        suite: \[static, unit, d1, package\]$/m);
+  assert.deepEqual([...check.matchAll(/node-version: '([^']+)'/g)].map(match => match[1]), ['24.22.1']);
+  assert.deepEqual([...publish.matchAll(/node-version: '([^']+)'/g)].map(match => match[1]), ['24.22.1', '24.22.1', '24.22.1']);
+  const verification = readFileSync(new URL('docs/verification.md', root), 'utf8');
+  assert.match(verification, /with Node 24\.22\.1 and Node 26\.12\.1\./);
   const steps = [...check.matchAll(/^      - if: matrix\.suite == '([a-z0-9]+)'\n        run: (.+)$/gm)].map(match => `${match[1]}: ${match[2]}`);
   assert.deepEqual(steps, [
     'static: npm run typecheck',
