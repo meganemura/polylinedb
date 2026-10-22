@@ -186,4 +186,6 @@ test('renewal is due a third of the TTL before the deadline and a slow call shor
   assert.equal(renewalDelayMs({ observedAt: 1000, expiresAt: 1030, ttl: 30, elapsedMs: 25000 }), 0);
   assert.equal(renewalDelayMs({ observedAt: 1000, expiresAt: 1031, ttl: 31, elapsedMs: 0 }), 20000);
   assert.equal(renewalDelayMs({ observedAt: 1000, expiresAt: 1005, ttl: 30, elapsedMs: 0 }), 0);
+  assert.equal(renewalDelayMs({ observedAt: 1000, expiresAt: 1030, ttl: 30, elapsedMs: -100000 }), 20000);
+  assert.equal(renewalDelayMs({ observedAt: 1000, expiresAt: 10000, ttl: 30, elapsedMs: 0 }), 20000);
 });

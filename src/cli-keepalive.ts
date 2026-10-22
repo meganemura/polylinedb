@@ -27,7 +27,10 @@ export type KeepaliveOptions = {
 // observation. Time already spent in the call counts against the delay, so a slow call renews sooner.
 export function renewalDelayMs(input: { observedAt: number; expiresAt: number; ttl: number; elapsedMs: number }): number {
   const lead = Math.ceil(input.ttl / 3);
-  return Math.max(0, (input.expiresAt - input.observedAt - lead) * 1000 - input.elapsedMs);
+  const windowMs = Math.max(0, (input.expiresAt - input.observedAt - lead) * 1000);
+  const capMs = Math.max(0, (input.ttl - lead) * 1000);
+  const elapsed = Math.max(0, input.elapsedMs);
+  return Math.max(0, Math.min(windowMs, capMs) - elapsed);
 }
 
 function inspectionOf(result: OperationResult): ClaimInspection {
