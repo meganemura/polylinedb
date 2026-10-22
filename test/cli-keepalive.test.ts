@@ -81,7 +81,7 @@ describe('pd claim keepalive', { concurrency: true }, () => {
     assert.equal(after.lease.expires_at - after.lease.changed_at, 30);
   });
 
-  for (const kill of [false, true]) test(`stops with claim_lost when the claim is reacquired, ${kill ? 'killing' : 'sparing'} the command`, async (t: TestContext) => {
+  for (const kill of [false, true]) test(`stops with claim_lost when the claim is reacquired, ${kill ? 'killing' : 'sparing'} the command`, { timeout: 60_000 }, async (t: TestContext) => {
     const { root, acquire, keepalive, waitForRevision, reacquire, claim } = lane(t);
     const receipt = acquire('30');
     const pidFile = join(root, 'child.pid');
@@ -102,15 +102,21 @@ describe('pd claim keepalive', { concurrency: true }, () => {
     if (!kill) process.kill(pid, 'SIGKILL');
   });
 
-  test('stops with exit 0 when the claim is released', async (t: TestContext) => {
-    const { acquire, keepalive, waitForRevision, release, claim } = lane(t);
+  test('stops with exit 0 when the claim is released', { timeout: 60_000 }, async (t: TestContext) => {
+    const { root, acquire, keepalive, waitForRevision, release, claim } = lane(t);
     const receipt = acquire('30');
-    const running = keepalive(['--claim-proof', JSON.stringify(receipt), '--ttl', '30', '--', ...sleeper(60)]);
+    const pidFile = join(root, 'child.pid');
+    const running = keepalive(['--claim-proof', JSON.stringify(receipt), '--ttl', '30', '--',
+      'node', '-e', `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 90000)`]);
     await waitForRevision(2);
+    for (let attempt = 0; attempt < 100 && !existsSync(pidFile); attempt++) await delay(100);
+    const pid = Number(readFileSync(pidFile, 'utf8'));
     release(receipt);
     const finished = await running;
     assert.deepEqual(finished, { status: 0, error: undefined });
     assert.equal(claim().state, 'released');
+    assert.equal(alive(pid), true);
+    process.kill(pid, 'SIGKILL');
   });
 
   test('reports claim_lost at once for a proof from an older generation', async (t: TestContext) => {

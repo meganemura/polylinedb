@@ -49,12 +49,18 @@ function owns(inspection: ClaimInspection, proof: ClaimProofInput): boolean {
     && lease.session_id === proof.session_id && lease.generation === proof.generation;
 }
 
+function releasedByUs(inspection: ClaimInspection, proof: ClaimProofInput): boolean {
+  const lease = inspection.lease;
+  return inspection.state === 'released' && lease !== null && lease.session_id === proof.session_id && lease.generation === proof.generation;
+}
+
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
 export const killGraceMs = 5000;
+const releaseConfirmMs = 5000;
 
 // --kill-on-loss promises the command is gone when claim_lost is reported, and an unreaped child can
 // linger as a zombie once this process exits. So wait for the exit, escalating to SIGKILL after a grace period.
@@ -112,13 +118,30 @@ export async function runKeepalive(options: KeepaliveOptions): Promise<number> {
   }
   const watchdog = delay(options.maxDurationSeconds * 1000, undefined, { signal: controller.signal }).then((): Outcome => ({ kind: 'max_duration' }));
 
+  const watchRelease = async (): Promise<Outcome | undefined> => {
+    const started = Date.now();
+    for (;;) {
+      const inspection = inspectionOf(await execute({ op: 'claim_show', issue_id: proof.issue_id }));
+      if (!releasedByUs(inspection, proof)) {
+        if (!owns(inspection, proof) || inspection.lease === null) return { kind: 'lost', error: lostError(proof, inspection) };
+        return undefined;
+      }
+      if (Date.now() - started >= releaseConfirmMs) return { kind: 'released' };
+      await delay(250, undefined, { signal: controller.signal });
+    }
+  };
+
   const cycle = async (): Promise<Outcome> => {
     let failures = 0;
     for (;;) {
       const began = Date.now();
       try {
         const inspection = inspectionOf(await execute({ op: 'claim_show', issue_id: proof.issue_id }));
-        if (inspection.state === 'released' && inspection.lease?.session_id === proof.session_id && inspection.lease.generation === proof.generation) return { kind: 'released' };
+        if (releasedByUs(inspection, proof)) {
+          const watched = await watchRelease();
+          if (watched !== undefined) return watched;
+          continue;
+        }
         if (!owns(inspection, proof) || inspection.lease === null) {
           return { kind: 'lost', error: lostError(proof, inspection) };
         }
@@ -145,7 +168,10 @@ export async function runKeepalive(options: KeepaliveOptions): Promise<number> {
   exited.catch(() => undefined);
 
   if (outcome.kind === 'exited') return outcome.code;
-  if (outcome.kind === 'released') return 0;
+  if (outcome.kind === 'released') {
+    child?.unref();
+    return 0;
+  }
   if (options.killOnLoss && child !== undefined && child.exitCode === null && child.signalCode === null) {
     await terminate(child, exited);
   } else {

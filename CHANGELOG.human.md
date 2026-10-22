@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+`pd claim keepalive` exits when the claim is released, and the command you started keeps running. If someone else takes the claim in those moments, pd reports the loss instead.
+
 `pd claim keepalive` still renews on the same schedule. A clock step during a renew no longer makes it sleep until the command exits, so a lost claim is still reported while that command is running.
 
 The test generator is new enough that the GitHub checks can shrink failures on the newer Node 26 release. The package you install is unchanged.
