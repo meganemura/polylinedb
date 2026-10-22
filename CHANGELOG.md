@@ -320,6 +320,8 @@ The keys are `commits`, `surface`, `change`, `fields`, `errors`, `compatibility`
 
 ## Unreleased
 
+- Docs only: `docs/memory.md` now says `pd upgrade` takes a canonical schema 2, 3, 4, 5, 6, 7, 8, or 9 store to schema 10 in one transaction, and that `pd snapshot convert` writes snapshot 8, which is the only snapshot `pd import` accepts. `docs/local-cloud-cutover.md` requires canonical schema 10 on the Worker and both stores, which is the schema `scripts/d1-cutover.ts` checks. `docs/claims.md` names the current source as schema 10 and snapshot 8. Sentences about schema 8 and snapshot 6 stay, and they name versions 0.5.0 through 0.5.2. `test/operator-docs.test.ts` fails if the upgrade page again stops at schema 5, the cutover page again requires canonical schema 8, or the claim page again calls schema 8 current. The number it expects is `SCHEMA_VERSION`. No CLI, MCP, Worker, or schema change. No migration.
+
 ## 0.6.0 (2026-10-22)
 
 Version 0.6.0 adds comment edits, external resources on an issue, land order between issues, `claim_handoff`, `previous_lease` on `claim_acquire`, the rule that `in_progress` needs a held claim, the `/ui` lanes design with write forms, the Worker version read, the solarsql 0.8.0 runtime check, and development dependency updates so `npm audit` passes. It uses schema 10 and snapshot 8.

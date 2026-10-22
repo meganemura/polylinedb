@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The upgrade, cutover, and claim guides now match the current `pd`. `pd upgrade` takes an older local store all the way to the current schema. A converted snapshot is the current snapshot, and `pd import` accepts that file. The cutover steps require the same current schema on the server and on both stores. The commands themselves are unchanged.
+
 ## 0.6.0 (2026-10-22)
 
 Version 0.6.0 is the next `pd` release on npm. It brings everything below: `/ui` as a place to act, comment edits, external resources on an issue, land order, one-step handoffs to the landing queue, and the rule that work in progress needs a held claim. Moving from 0.5.2 means running `pd upgrade` on your local store, converting an older snapshot with `pd snapshot convert --from 6`, and upgrading the shared database before the server update.

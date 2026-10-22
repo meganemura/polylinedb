@@ -115,28 +115,29 @@ See [host lifecycle hooks](host-hooks.md) for event support, limitations, and re
 
 ## Existing stores and snapshots
 
-Schema 5 stores memory content, versions, attribution, issued counters, creation receipts, and operational memory revisions.
-Snapshot v4 retains those content fields and prerequisite aggregates. It excludes operational memory revisions and store identity.
-Stop writers and retain a private backup before upgrading an existing local store.
-Use the previous CLI to export schema 2 before replacing it, or copy the stopped SQLite database.
-Then run `pd --actor IDENTITY upgrade` with the selected local connection.
-The command checks canonical schema 2, 3, or 4 and upgrades it to schema 5 in one transaction.
-A repeated upgrade returns `already_current`. Ordinary reads refuse an old schema without migrating it.
-Repository configuration remains compatible with its existing versions.
+Schema 5 is the first schema that stores memory content, versions, attribution, issued counters, creation receipts, and operational memory revisions.
+Snapshot 4 is the first portable snapshot that keeps those content fields and the prerequisite aggregates. It leaves out operational memory revisions and store identity.
+The current CLI uses schema 10 and writes snapshot 8.
+Stop writers and keep a private backup before you upgrade a local store.
+Use the previous CLI to export a schema 2 store before you replace that CLI, or copy the stopped SQLite database.
+Then run `pd --actor IDENTITY upgrade` on the selected local connection.
+The command checks a canonical schema 2, 3, 4, 5, 6, 7, 8 or 9 store and upgrades it to schema 10 in one transaction.
+A store that is already schema 10 returns `already_current`. Reads refuse an old schema until you upgrade it.
+Repository configuration keeps its existing versions.
 
-Convert an old snapshot explicitly before importing it into a new schema 5 store.
+Convert an old snapshot before you import it. The conversion writes snapshot 8. `pd init` creates a schema 10 store, and `pd import` accepts snapshot 8 only.
 
 ```sh
-pd snapshot convert --from 2 --file snapshot-v2.json --output snapshot-v4.json
+pd snapshot convert --from 2 --file snapshot-v2.json --output snapshot-v8.json
 pd --data-dir /absolute/private/store --actor local:owner init
-pd --data-dir /absolute/private/store --actor local:owner import --file snapshot-v4.json
+pd --data-dir /absolute/private/store --actor local:owner import --file snapshot-v8.json
 ```
 
-Conversion validates v2 and adds empty memory and prerequisite collections with baseline issue revisions. It does not open a database.
-Use `--from 3` for a v3 snapshot with existing memory collections.
-The v4 digest differs from older digests. Use the converted digest for D1 transfer targets.
-Output files are private and existing files are refused.
-Follow the [D1 transfer procedure](d1-migration.md) for a cloud store.
+The conversion checks the source version and writes snapshot 8. It does not open a database.
+For a snapshot 3, 4, 5, 6, or 7 file, pass `--from 3`, `--from 4`, `--from 5`, `--from 6`, or `--from 7`.
+The snapshot 8 digest differs from older digests. Use the converted digest when a D1 transfer asks for one.
+Output files are private, and the command refuses to overwrite an existing file.
+The [D1 transfer procedure](d1-migration.md) covers a cloud store. [Operations](operations.md) lists what each upgrade keeps.
 
 ## Detect memory changes during a session
 

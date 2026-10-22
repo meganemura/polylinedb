@@ -1,6 +1,7 @@
 # Coordinate issue ownership
 
-This guide describes the current source with schema 8 and snapshot 6.
+This guide describes the current source with schema 10 and snapshot 8.
+Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6.
 Versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5.
 Version 0.2.0 uses schema 5 and does not provide claim commands.
 Check the installed `pd --help` or MCP tool schemas before using ownership operations.
