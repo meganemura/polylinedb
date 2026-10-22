@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The test generator is new enough that the GitHub checks can shrink failures on the newer Node 26 release. The package you install is unchanged.
+
 GitHub checks and the release build now run on Node releases that fix two serious bugs, one in compressed-data handling and one in TLS hostname checks. The oldest Node the package still accepts is the same.
 
 The dependency page now lists the vite version this repository installs, and the two overrides that replaced the versions npm audit flagged. The older override note stays so you can see what it replaced.

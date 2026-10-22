@@ -64,7 +64,7 @@ Their publication dates were checked through the npm registry on October 4, 2026
 | Package | Version | Purpose | Published |
 | --- | --- | --- | --- |
 | `archstrict` | `0.2.1` | Check the declared module boundaries | 2026-10-04 |
-| `@hegeldev/hegel` | `0.4.7` | Generate test cases and shrink failures | 2026-09-24 |
+| `@hegeldev/hegel` | `0.4.10` | Generate test cases and shrink failures | 2026-10-14 |
 | `@stryker-mutator/core` | `10.0.0` | Measure whether tests reject changed behavior | 2026-08-14 |
 | `@stryker-mutator/tap-runner` | `10.0.0` | Run mutations with the existing Node test runner | 2026-08-14 |
 | `stryker-agent-reporter` | `0.2.0` | Report mutant scope and survivors for agent review | 2026-10-03 |
@@ -72,5 +72,10 @@ Their publication dates were checked through the npm registry on October 4, 2026
 
 The owner approved release-age exceptions for archstrict 0.2.1 and stryker-agent-reporter 0.2.0.
 The other test packages had been available for at least seven days.
+Hegel 0.4.7 pins libhegel 0.42.4.
+On Node 26.12.1 that engine reports a shrunk port-protocol counterexample as flaky when the same bytes still fail the model.
+Hegel 0.4.9 pins libhegel 0.45.4, and 0.4.10 includes that bump.
+npm view on October 22, 2026 reported 0.4.10 published on October 14, 2026, so it had been available for eight days.
+The CLI runtime dependency list remains unchanged.
 Stryker's REST client selected qs 6.15.1, which npm audit reported as vulnerable.
 The owner approved the qs 6.16.0 override. The subsequent audit reported zero known vulnerabilities on October 4, 2026.
