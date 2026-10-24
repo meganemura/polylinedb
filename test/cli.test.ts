@@ -1117,7 +1117,7 @@ test('CLI posts with a handle and via, replies, stars and unstars, lists posts, 
   const first = run(['posts', '--project', 'parser', '--limit', '1']);
   assert.equal(first.next_cursor, first.posts[0].id);
   assert.equal(run(['posts', '--project', 'parser', '--limit', '1', '--after', first.next_cursor]).posts.length, 1);
-  assert.equal(run(['posts'], { status: 2 }).error.code, 'invalid_input', 'posts needs a project');
+  assert.deepEqual(run(['posts']).posts.map((entry: { id: string }) => entry.id).sort(), [post.id, reply.id].sort(), 'without a project, posts reads every project');
   assert.equal(run(['posts', '--project', 'parser', '--since', 'soon'], { status: 2 }).error.code, 'invalid_input');
 
   const human = run(['show', issue.id, '--human'], { raw: true });

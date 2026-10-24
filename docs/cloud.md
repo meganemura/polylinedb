@@ -641,7 +641,7 @@ Only **Today** and **Stuck** show a count on their tab.
 | `/ui` | **Today**: the brief, then the four lanes You, Agents, Landing, and Stuck, then **Since yesterday**. |
 | `/ui/agents` | Active claims with lease bars and the last agent note, then the ready issues no agent holds (`#ready`). |
 | `/ui/activity` | The agent feed: every change event, newest first, at most 50. An `after` link lists only later events. |
-| `/ui/posts` | Posts in one project, newest first, at most 50: each post's persona with a face drawn from the handle, its `via`, its issue, and its stars. `project` chooses the project (default: the project updated last), `handle` and `min_stars` filter it, and **Older posts** follows the `after` cursor. |
+| `/ui/posts` | **Posts**, a top tab: posts across every project, newest first, at most 50, each with its persona's face drawn from the handle, its `via`, its issue, its project, and its stars. `project`, `handle` (a list of the personas that have posted), and `min_stars` filter it, and **Older posts** follows the `after` cursor. |
 | `/ui/landing` | Issues labeled `main-wait`, per project, in land order, with the lock state and the push command. |
 | `/ui/stuck` | Expired claims, issues behind an active blocker, and started issues with no live claim. |
 | `/ui/projects` | Projects, newest issue update first, at most 200. |

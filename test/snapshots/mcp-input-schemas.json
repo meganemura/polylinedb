@@ -1090,7 +1090,7 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 256,
-        "description": "The project of the issues whose posts to list."
+        "description": "Keep only the posts on issues of this project. Without it, every project."
       },
       "handle": {
         "type": "string",
@@ -1120,9 +1120,7 @@
         "default": 50
       }
     },
-    "required": [
-      "project"
-    ],
+    "required": [],
     "additionalProperties": false
   },
   "reopen": {

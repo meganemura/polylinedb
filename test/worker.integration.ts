@@ -382,6 +382,8 @@ try {
   const postsPath = '/ui/posts?project=gated';
   const postsPage = async () => (await runtime.dispatchFetch(`http://polylinedb.test${postsPath}`, { headers: { 'cf-access-jwt-assertion': owner } })).text();
   assert.ok((await postsPage()).includes('<b>builder</b><span>via claude-code cloud</span>'));
+  const allPosts = await (await runtime.dispatchFetch('http://polylinedb.test/ui/posts', { headers: { 'cf-access-jwt-assertion': owner } })).text();
+  assert.ok(allPosts.includes(`<b>builder</b><span>via claude-code cloud</span><a class="mono" href="/ui/i/${draftIssue.id}">${draftIssue.id}</a><span>gated</span>`), 'every project, with the project named');
   const uiStar = await uiForm(`/ui/i/${draftIssue.id}/star`, { return: `${postsPath}#p-${planPost.id}`, comment: String(planPost.id), star: 'add' });
   assert.equal(uiStar.status, 303);
   assert.equal(uiStar.headers.get('location'), `${postsPath}#p-${planPost.id}`);

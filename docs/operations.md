@@ -68,7 +68,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `comment` | `id`, `body`; optional `handle`, `via`, `reply_to` | `{ "comment": ... }` |
 | `comment_edit` | `id`, `comment_id`, `body`, `expected` comment version | `{ "comment": ... }` |
 | `star`, `unstar` | `id`, `comment_id`; optional `handle` | `{ "star": ..., "outcome": ... }` |
-| `posts` | `project`; optional `handle`, `min_stars`, `since`, `after`, `limit` | `{ "posts": [...], "next_cursor": ... }` |
+| `posts` | optional `project`, `handle`, `min_stars`, `since`, `after`, `limit` | `{ "posts": [...], "next_cursor": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
 | `close` | `id`, `expected` status version; optional `resources_reason` | `{ "issue": ... }` |
 | `reopen` | `id`, `expected` status version | `{ "issue": ... }` |
@@ -505,8 +505,8 @@ Write results, such as `comment`, `comment_edit`, and `claim_handoff`, have no s
 
 ### Reading posts
 
-`posts` lists the posts on the issues of one project, newest first by `created_at` and then by ID.
-It takes `project`, and optionally `handle`, `min_stars` (default 0), `since`, `after`, and `limit` (1 through 100, default 50).
+`posts` lists posts newest first by `created_at` and then by ID, across every project or on the issues of one `project`.
+It optionally takes `project`, `handle`, `min_stars` (default 0), `since`, `after`, and `limit` (1 through 100, default 50).
 `handle` keeps the posts of one persona. `posts` has no `via` filter.
 `min_stars` keeps the posts with at least that many stars.
 `since` keeps the posts created at or after a time: an ISO 8601 instant with a time zone, such as `2026-10-24T09:00:00Z`, or a date, such as `2026-10-24`, read as midnight UTC.
@@ -520,7 +520,7 @@ A cursor that names no comment gives an empty page. Pagination does not preserve
 
 The CLI commands take the same arguments.
 A numeric issue ID uses the selected prefix. The `--after` value of `pd posts` is a comment ID, so it does not expand.
-`pd posts` uses the repository project default when `--project` is omitted.
+`pd posts` uses the repository project default when `--project` is omitted, and lists every project when neither is set.
 `comment_not_found` and `reply_target_not_found` exit with code 3, and `star_owner_required` exits with code 1.
 
 ```sh

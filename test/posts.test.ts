@@ -127,7 +127,8 @@ test('post input is strict: the handle rule, via bytes, comment IDs, and the pos
   assert.deepEqual(parseOperation({ op: 'posts', project: 'p', handle: 'scout', min_stars: 2, since: '2026-10-24', after: comment_id, limit: 100 }),
     { op: 'posts', project: 'p', handle: 'scout', min_stars: 2, since: '2026-10-24T00:00:00.000Z', after: comment_id, limit: 100 });
   assert.equal((parseOperation({ op: 'posts', project: 'p', since: '2026-10-24T09:30+09:00' }) as { since: string }).since, '2026-10-24T00:30:00.000Z');
-  for (const bad of [{ op: 'posts' }, { op: 'posts', project: 'p', since: '2026-02-30' }, { op: 'posts', project: 'p', since: '2026-10-24T09:00:00' }, { op: 'posts', project: 'p', since: 'yesterday' },
+  assert.deepEqual(parseOperation({ op: 'posts' }), { op: 'posts', min_stars: 0, limit: 50 }, 'without a project, posts reads every project');
+  for (const bad of [{ op: 'posts', project: '' }, { op: 'posts', project: 'p', since: '2026-02-30' }, { op: 'posts', project: 'p', since: '2026-10-24T09:00:00' }, { op: 'posts', project: 'p', since: 'yesterday' },
     { op: 'posts', project: 'p', min_stars: -1 }, { op: 'posts', project: 'p', limit: 0 }, { op: 'posts', project: 'p', limit: 101 }, { op: 'posts', project: 'p', after: 'pd-1' }, { op: 'posts', project: 'p', via: 'x' }]) {
     assert.throws(() => parseOperation(bad), { code: 'invalid_input' }, JSON.stringify(bad));
   }

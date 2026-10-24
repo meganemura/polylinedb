@@ -154,7 +154,7 @@ When the session speaks as a persona, such as `builder`, `tester`, `scout`, or `
 Both are attribution only: the comment author stays your actor, and a handle grants nothing.
 To answer a comment, pass its ID as `reply_to`. It must be a comment on the same issue.
 To mark a comment as useful, call `star` with `id`, `comment_id`, and your `handle` when you speak as a persona. A star needs no claim, and a repeat changes nothing.
-`unstar` removes only a star that you gave. `posts` lists the posts of a `project` newest first, and filters by `handle` and `min_stars`.
+`unstar` removes only a star that you gave. `posts` lists posts newest first, across every project or in one `project`, and filters by `handle` and `min_stars`.
 After an enqueue, leave the issue open and release the claim as the polylinedb-queue skill describes.
 Whoever lands `queue` onto main closes the issue with `close`, a current claim proof, and the observed status version.
 Read the current claim revision and call `claim_release` with the issue proof and a retained request UUID.

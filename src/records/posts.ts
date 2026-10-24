@@ -14,7 +14,7 @@ import type { Actor } from '../transition/index.ts';
 export type Star = { comment_id: string; starrer: string; handle: string | null; actor: string; created_at: string };
 type Starring = { id: string; comment_id: string; handle?: string };
 export type PostOperation = ({ op: 'star' } & Starring) | ({ op: 'unstar' } & Starring)
-  | { op: 'posts'; project: string; handle?: string; min_stars: number; since?: string; after?: string; limit: number };
+  | { op: 'posts'; project?: string; handle?: string; min_stars: number; since?: string; after?: string; limit: number };
 export type StarReceipt = { star: Star; outcome: 'added' | 'already_present' | 'removed' } | { star: null; outcome: 'already_absent' };
 export type PostPage = { posts: ShownComment[]; next_cursor: string | null };
 export type PostResult = StarReceipt | PostPage;
@@ -44,12 +44,12 @@ export const postSchemas = {
     handle: { ...handleSchema, description: 'Star as this persona instead of as your actor, such as tester. One persona or one actor stars a post once. It grants nothing.' } }, ['id', 'comment_id']),
   unstar: objectSchema({ id: idSchema, comment_id: commentIdSchema,
     handle: { ...handleSchema, description: 'Remove the star you gave as this persona; without it, the star you gave as your actor.' } }, ['id', 'comment_id']),
-  posts: objectSchema({ project: { type: 'string', minLength: 1, maxLength: 256, description: 'The project of the issues whose posts to list.' },
+  posts: objectSchema({ project: { type: 'string', minLength: 1, maxLength: 256, description: 'Keep only the posts on issues of this project. Without it, every project.' },
     handle: { ...handleSchema, description: 'Keep only the posts of this persona.' },
     min_stars: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0, description: 'Keep only posts with at least this many stars.' },
     since: { type: 'string', description: 'Keep only posts created at or after this time: an ISO 8601 instant with a time zone, or a date YYYY-MM-DD read as midnight UTC.' },
     after: { type: 'string', format: 'uuid', description: 'next_cursor from the previous page.' },
-    limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } }, ['project']),
+    limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } }, []),
 };
 
 function plain(value: unknown): Record<string, unknown> {
@@ -85,7 +85,7 @@ export function parsePostOperation(value: unknown): PostOperation {
   const schema = postSchemas[op];
   requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   const handle = input.handle === undefined ? {} : { handle: parseHandle(input.handle) };
-  if (op === 'posts') return { op, project: name(input.project, 'project'), ...handle,
+  if (op === 'posts') return { op, ...(input.project === undefined ? {} : { project: name(input.project, 'project') }), ...handle,
     min_stars: input.min_stars === undefined ? 0 : count(input.min_stars, 'min_stars', 0, Number.MAX_SAFE_INTEGER),
     ...(input.since === undefined ? {} : { since: parseSince(input.since) }),
     ...(input.after === undefined ? {} : { after: validated(() => parseRequestId(input.after, 'after')) }),
@@ -137,12 +137,28 @@ async function star(db: SqlExecutor, operation: Extract<PostOperation, { op: 'st
 
 // Newest first by (created_at, id), so a page boundary between two posts of the same millisecond still keeps each post on one page.
 async function posts(db: SqlExecutor, operation: Extract<PostOperation, { op: 'posts' }>): Promise<PostPage> {
-  const rows = await db.reads.all(issueQueries.posts, { project: operation.project, handle: operation.handle ?? null, since: operation.since ?? null,
+  const rows = await db.reads.all(issueQueries.posts, { project: operation.project ?? null, handle: operation.handle ?? null, since: operation.since ?? null,
     min_stars: operation.min_stars, after: operation.after ?? null, limit: operation.limit + 1 });
   const found = rows.map(row => shownCommentRow({ ...row, starrers: starrerNames(row.starrers_json) }));
   if (found.some(post => post.handle === null)) throw new PolylinedbError('invalid_store', 'Stored post is invalid', 500);
   const page = found.slice(0, operation.limit);
   return { posts: page, next_cursor: found.length > operation.limit ? page.at(-1)?.id ?? null : null };
+}
+
+export type PostHandle = { handle: string; posts: number };
+/** The personas that have posted, most posts first, so a reader can pick one instead of typing it. */
+export async function postHandles(db: SqlExecutor, limit: number): Promise<PostHandle[]> {
+  return (await db.reads.all(issueQueries.postHandles, { limit })).map(row => {
+    if (typeof row.posts !== 'number' || !Number.isSafeInteger(row.posts) || row.posts < 1) throw new PolylinedbError('invalid_store', 'Stored post count is invalid', 500);
+    return { handle: parseHandle(row.handle), posts: row.posts };
+  });
+}
+
+/** The project of each issue a page of posts names, read in one query so the all-projects list can label every post. */
+export async function postProjects(db: SqlExecutor, issueIds: readonly string[]): Promise<Map<string, string>> {
+  if (issueIds.length === 0) return new Map();
+  const rows = await db.reads.all(issueQueries.postProjects, { ids: [...new Set(issueIds)] });
+  return new Map(rows.map(row => [parseIssueId(row.id), name(row.project, 'project')]));
 }
 
 export async function executePostOperation(db: SqlExecutor, operation: PostOperation, by: string | Actor): Promise<PostResult> {

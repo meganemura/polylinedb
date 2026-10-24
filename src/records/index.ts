@@ -22,7 +22,8 @@ export type { DependencyOperation, DependencyMutation, DependencyResult, Depende
 export type { LandOrder, LandOrderNeighbor, LandOrderOperation, LandOrderMutation, LandOrderReceipt, LandOrderResult, LandOrderWarning, LandOrderOutcome, LandOrderEdge, LandOrderRevision, LandOrderRequest } from './land-order.ts';
 export type { Resource, ResourceEntry, ResourceOperation, ResourceAdd, ResourceUpdate, ResourceReceipt, ResourceOutcome, ResourceList, LiveResources, ResourceResult, ResourceRevision, ResourceRequest } from './resources.ts';
 export type { ResourceMark, ResourceState } from '../transition/index.ts';
-export type { Star, PostOperation, StarReceipt, PostPage, PostResult } from './posts.ts';
+export type { Star, PostOperation, StarReceipt, PostPage, PostResult, PostHandle } from './posts.ts';
+export { postHandles, postProjects } from './posts.ts';
 export { parseClaimProof, parseIncarnation } from './claims.ts';
 export { blockerIsActive } from './active-blocker.ts';
 export type { Claim, ClaimOperation, ClaimReceipt, ClaimRequest, ClaimInspection, ClaimState, ClaimResult } from './claims.ts';

@@ -97,7 +97,7 @@ Commands:
   memory delete ID --expected VERSION
   memory context [--after ID] [--limit 1..100] [--max-bytes 4096..65536] [--with-revision]
 
-Memory commands and posts require --project NAME or repository project defaults.
+Memory commands require --project NAME or repository project defaults. posts reads that project too, and every project when neither is set.
 A handle is 1 to 64 lowercase ASCII letters, digits, '.', '_' or '-', starting with a letter or digit.
 via is at most 128 UTF-8 bytes without control characters. Neither grants anything.
 Memory IDs use prefix-mN. Numbers and mN expand with the selected prefix.

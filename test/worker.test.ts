@@ -1809,7 +1809,7 @@ test('ui: the issue page shows the persona of a post and the star count of each 
   } finally { sqlite.close(); }
 });
 
-test('ui: Posts lists the posts of a project newest first, filters them, and stars one from a plain form', async () => {
+test('ui: Posts lists every project\'s posts newest first, filters by project and persona, and stars one from a plain form', async () => {
   const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
   const token = await assertion();
   const auth = { 'cf-access-jwt-assertion': token };
@@ -1821,7 +1821,7 @@ test('ui: Posts lists the posts of a project newest first, filters them, and sta
   const posts = (html: string) => [...html.matchAll(/<p class="says"[^>]*>([\s\S]*?)<\/p>/g)].map(match => textOf(match[1] ?? '').trim());
   try {
     const other = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Elsewhere' });
-    await operation(env, token, { op: 'comment', id: other, body: 'other project lesson', handle: 'builder' });
+    const elsewhere = (await operation(env, token, { op: 'comment', id: other, body: 'other project lesson', handle: 'builder' })).comment;
     const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Posts timeline' });
     const first = (await operation(env, token, { op: 'comment', id, body: 'first lesson\nwith a detail line', handle: 'builder', via: 'claude@cloud' })).comment;
     await operation(env, token, { op: 'comment', id, body: 'plain note' });
@@ -1829,17 +1829,24 @@ test('ui: Posts lists the posts of a project newest first, filters them, and sta
     // Comments written in one millisecond order by id, so the posts get distinct times to pin newest first.
     sqlite.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run('2026-10-24T09:00:00.000Z', first.id);
     sqlite.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run('2026-10-24T09:01:00.000Z', second.id);
+    sqlite.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run('2026-10-24T08:59:00.000Z', elsewhere.id);
 
-    // With no project chosen, the page shows the project updated last.
+    // With no project chosen, the page lists every project and names the project of each post.
     const html = await page('/ui/posts');
     assertPageScripts(html);
-    assert.ok(html.includes('<a href="/ui/posts" aria-current="page">Posts</a>'));
-    assert.ok(html.includes('<option value="meganemura/polylinedb" selected>'));
-    assert.deepEqual(posts(html), ['second lesson', 'first lesson More']);
+    assert.match(html, /<a href="\/ui\/posts" aria-current="page" aria-label="Posts">/);
+    assert.ok(html.includes('<option value="" selected>All projects</option>'));
+    assert.ok(html.includes('<select id="pf-handle" name="handle"><option value="" selected>Anyone</option><option value="builder">builder</option><option value="tester">tester</option></select>'));
+    assert.deepEqual(posts(html), ['second lesson', 'first lesson More', 'other project lesson']);
+    assert.ok(html.slice(html.indexOf(`id="p-${elsewhere.id}"`)).includes('<span>parser</span>'));
+    assert.ok(html.slice(html.indexOf(`id="p-${first.id}"`)).includes('<span>polylinedb</span>'));
+    assert.equal((await page('/ui/agents')).includes('href="/ui/posts" aria-current'), false);
     assert.ok(html.includes(`<a href="/ui/i/${id}#comments">More</a>`));
     assert.match(html, /<span class="who-dot av[0-7]" aria-hidden="true">B<\/span><b>builder<\/b><span>via claude@cloud<\/span>/);
     assert.ok(html.slice(html.indexOf(`id="p-${second.id}"`)).includes('<span>reply</span>'));
     assert.deepEqual(posts(await page('/ui/posts?project=parser')), ['other project lesson']);
+    assert.ok((await page('/ui/posts?project=parser')).includes('<option value="parser" selected>parser</option>'));
+    assert.deepEqual(posts(await page('/ui/posts?handle=builder')), ['first lesson More', 'other project lesson']);
     assert.deepEqual(posts(await page('/ui/posts?project=meganemura/polylinedb&handle=builder')), ['first lesson More']);
 
     const back = '/ui/posts?project=meganemura%2Fpolylinedb&handle=builder';
@@ -1855,7 +1862,7 @@ test('ui: Posts lists the posts of a project newest first, filters them, and sta
     assert.equal((await operation(env, token, { op: 'show', id })).comments.find((comment: { id: string }) => comment.id === first.id).stars, 1);
 
     const reader = await page('/ui/posts', { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
-    assert.deepEqual(posts(reader), ['second lesson', 'first lesson More']);
+    assert.deepEqual(posts(reader), ['second lesson', 'first lesson More', 'other project lesson']);
     assert.equal(reader.includes('/star"'), false);
     assert.equal((await postUi(env, `/ui/i/${id}/star`, await assertion({ sub: 'viewer' }), [['comment', first.id], ['star', 'remove']])).status, 403);
 

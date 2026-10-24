@@ -74,7 +74,7 @@ They are still writes: the role rules apply, so a `reader` actor gets `read_only
 
 ### Reading posts
 
-`posts` lists the comments with a handle on the issues of one project, newest first by creation time and ID.
+`posts` lists the comments with a handle, newest first by creation time and ID, across every project or on the issues of one project. It required a project at first; the `/ui` Posts page showed that one shared timeline reads better than one per project, so the project became a filter.
 It filters by `handle`, `min_stars`, and `since`, and pages with the ID of the last post as the cursor.
 Each post carries its star count and its oldest 20 starrers, as each comment in `show` does.
 A partial index on the creation time of the comments with a handle serves the order.

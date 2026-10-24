@@ -179,12 +179,13 @@ export function pageHead(heading: string, line = ''): string {
   return `<div class="page-head"><h1>${escape(heading)}</h1>${line === '' ? '' : `<p>${line}</p>`}</div>`;
 }
 
-export type Tab = 'today' | 'agents' | 'landing' | 'stuck' | 'projects';
+export type Tab = 'today' | 'agents' | 'posts' | 'landing' | 'stuck' | 'projects';
 /** Only Today and Stuck carry a number: items on you, and expired claims plus blocked issues. */
 export type TabCounts = { today: number; stuck: number };
 const tabs: readonly { key: Tab; href: string; label: string; icon: IconName; lane: Lane | null }[] = [
   { key: 'today', href: '/ui', label: 'Today', icon: 'today', lane: 'you' },
   { key: 'agents', href: '/ui/agents', label: 'Agents', icon: 'agents', lane: 'agents' },
+  { key: 'posts', href: '/ui/posts', label: 'Posts', icon: 'comment', lane: null },
   { key: 'landing', href: '/ui/landing', label: 'Landing', icon: 'land', lane: 'land' },
   { key: 'stuck', href: '/ui/stuck', label: 'Stuck', icon: 'stuck', lane: 'stuck' },
   { key: 'projects', href: '/ui/projects', label: 'Projects', icon: 'projects', lane: null },
