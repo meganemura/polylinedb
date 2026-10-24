@@ -9,18 +9,19 @@ import { SCHEMA_V6_STATEMENTS } from '../src/records/schema-v6.ts';
 import { SCHEMA_V7_STATEMENTS } from '../src/records/schema-v7.ts';
 import { SCHEMA_V8_STATEMENTS } from '../src/records/schema-v8.ts';
 import { SCHEMA_V9_STATEMENTS } from '../src/records/schema-v9.ts';
+import { SCHEMA_V10_STATEMENTS } from '../src/records/schema-v10.ts';
 import { withoutChangeWriter } from './fixtures/legacy-schema.ts';
 
 const runtime = new Miniflare({ host: '127.0.0.1', cf: false, telemetry: { enabled: false }, workers: [{ config: {
   name: 'freshness-test', compatibilityDate: '2026-09-25',
   manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: 'export default { fetch() { return new Response("ready"); } }' } } },
-  env: { DB2: { type: 'd1', name: 'freshness-v2' }, DB3: { type: 'd1', name: 'freshness-v3' }, DB4: { type: 'd1', name: 'freshness-v4' }, DB5: { type: 'd1', name: 'freshness-v5' }, DB6: { type: 'd1', name: 'freshness-v6' }, DB7: { type: 'd1', name: 'freshness-v7' }, DB8: { type: 'd1', name: 'freshness-v8' }, DB9: { type: 'd1', name: 'freshness-v9' } },
+  env: { DB2: { type: 'd1', name: 'freshness-v2' }, DB3: { type: 'd1', name: 'freshness-v3' }, DB4: { type: 'd1', name: 'freshness-v4' }, DB5: { type: 'd1', name: 'freshness-v5' }, DB6: { type: 'd1', name: 'freshness-v6' }, DB7: { type: 'd1', name: 'freshness-v7' }, DB8: { type: 'd1', name: 'freshness-v8' }, DB9: { type: 'd1', name: 'freshness-v9' }, DB10: { type: 'd1', name: 'freshness-v10' } },
 } }] });
 try {
-  for (const version of [2, 3, 4, 5, 6, 7, 8, 9] as const) {
+  for (const version of [2, 3, 4, 5, 6, 7, 8, 9, 10] as const) {
     const database = await runtime.getD1Database(`DB${version}`);
     const legacy = version === 2 ? SCHEMA_V2_SQL : SCHEMA_V3_SQL;
-    const statements = version === 9 ? SCHEMA_V9_STATEMENTS : version === 8 ? SCHEMA_V8_STATEMENTS : version === 7 ? SCHEMA_V7_STATEMENTS : version === 6 ? SCHEMA_V6_STATEMENTS : version === 5 ? SCHEMA_V5_STATEMENTS : version === 4 ? SCHEMA_V4_STATEMENTS : legacy.split(';').map(sql => sql.trim()).filter(Boolean);
+    const statements = version === 10 ? SCHEMA_V10_STATEMENTS : version === 9 ? SCHEMA_V9_STATEMENTS : version === 8 ? SCHEMA_V8_STATEMENTS : version === 7 ? SCHEMA_V7_STATEMENTS : version === 6 ? SCHEMA_V6_STATEMENTS : version === 5 ? SCHEMA_V5_STATEMENTS : version === 4 ? SCHEMA_V4_STATEMENTS : legacy.split(';').map(sql => sql.trim()).filter(Boolean);
     await database.batch(statements.map(sql => database.prepare(sql)));
     const db = d1Executor(database);
     const identity = { kind: 'cloud' as const, url: 'https://freshness-test.example' };
@@ -38,7 +39,7 @@ try {
     assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, version);
     assert.equal((await database.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name = 'memory_store_identity'").first())?.n, version >= 4 ? 1 : 0);
     await database.batch(schemaUpgradeStatements(version).map(sql => database.prepare(sql)));
-    assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, 10);
+    assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, 11);
     assert.deepEqual((await database.prepare('SELECT * FROM requests').all()).results, originalRequests);
     assert.deepEqual((await database.prepare('SELECT * FROM dependency_revisions').all()).results, [{ dependent_id: issue.issue.id, revision: 1 }, { dependent_id: closed.issue.id, revision: 1 }]);
     assert.deepEqual((await database.prepare('SELECT status, closed_at, closed_by FROM issues WHERE id = ?').bind(closed.issue.id).first()), { status: 'closed', closed_at: null, closed_by: null });
@@ -76,5 +77,5 @@ try {
     const plan = await database.prepare('EXPLAIN QUERY PLAN SELECT incarnation, CAST(COALESCE(revision,0) AS INTEGER) AS revision FROM memory_store_identity LEFT JOIN project_memory_revisions ON project_memory_revisions.project = ? WHERE singleton = 1').bind('demo').all();
     assert(plan.results.some((row: unknown) => row !== null && typeof row === 'object' && 'detail' in row && typeof row.detail === 'string' && /SEARCH project_memory_revisions USING INDEX/.test(row.detail)));
   }
-  process.stdout.write('PASS: local workerd D1 schema 2/3/4/5/6/7/8/9 upgrades, legacy closed issues without closure, request bytes, identity preservation, baseline graphs, rollback, memory observations and CAS\n');
+  process.stdout.write('PASS: local workerd D1 schema 2/3/4/5/6/7/8/9/10 upgrades, legacy closed issues without closure, request bytes, identity preservation, baseline graphs, rollback, memory observations and CAS\n');
 } finally { await runtime.dispose(); }

@@ -1,7 +1,8 @@
 // Owns the persistent schema for the shared issue vocabulary; runtime adapters own database access.
 import { CLAIM_STATEMENTS } from './claims-sql.ts';
-import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS, COMMENT_EDIT_CHANGE_STATEMENTS } from './changes-sql.ts';
+import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS, COMMENT_EDIT_CHANGE_STATEMENTS, STAR_KIND_REBUILD_STATEMENTS } from './changes-sql.ts';
 import { LAND_ORDER_STATEMENTS } from './land-order-sql.ts';
+import { POST_STATEMENTS, STAR_CHANGE_STATEMENTS } from './posts-sql.ts';
 import { RESOURCE_STATEMENTS } from './resources-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
 export { SCHEMA_V6_SQL } from './schema-v6.ts';
@@ -10,9 +11,10 @@ export { SCHEMA_V8_SQL } from './schema-v8.ts';
 export { SCHEMA_V9_SQL } from './schema-v9.ts';
 export { SCHEMA_V10_SQL } from './schema-v10.ts';
 import { SCHEMA_V9_STATEMENTS } from './schema-v9.ts';
+import { SCHEMA_V10_STATEMENTS } from './schema-v10.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
 export { statuses, issueTypes, fields };
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const MEMORY_SCHEMA_SQL = `
 CREATE TABLE memories (
@@ -168,18 +170,30 @@ export const COMMENT_EDIT_STATEMENTS = [
   `ALTER TABLE comments ADD COLUMN updated_by TEXT CONSTRAINT comment_edit CHECK((version = 1 AND updated_at IS NULL AND updated_by IS NULL)
     OR (version > 1 AND typeof(updated_at) = 'text' AND length(updated_at) > 0 AND typeof(updated_by) = 'text' AND length(updated_by) > 0))`,
 ];
-// The schema 9 triggers that write the feed, recreated with their exact text after the rebuild.
-const changeFeedTriggers = SCHEMA_V9_STATEMENTS.filter(sql => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql));
+// The triggers of a schema that write the feed, recreated with their exact text after a rebuild.
+// A rebuild drops and recreates triggers, so a schema creates some twice; the last creation is the one the schema keeps.
 const triggerName = (sql: string) => /^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? '';
+const changeFeedTriggers = (statements: readonly string[]) => statements.filter((sql, index) => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql)
+  && !statements.slice(index + 1).some(later => later.startsWith('CREATE TRIGGER ') && triggerName(later) === triggerName(sql)));
+const schemaV9FeedTriggers = changeFeedTriggers(SCHEMA_V9_STATEMENTS);
+const schemaV10FeedTriggers = changeFeedTriggers(SCHEMA_V10_STATEMENTS);
 // Schema 10 adds comment edits after the schema 9 objects, in the same order on a fresh store and an upgrade.
 export const SCHEMA_V10_ADDITIONS = [
   ...COMMENT_EDIT_STATEMENTS,
-  ...changeFeedTriggers.map(sql => `DROP TRIGGER ${triggerName(sql)}`),
+  ...schemaV9FeedTriggers.map(sql => `DROP TRIGGER ${triggerName(sql)}`),
   ...CHANGE_KIND_REBUILD_STATEMENTS,
-  ...changeFeedTriggers,
+  ...schemaV9FeedTriggers,
   ...COMMENT_EDIT_CHANGE_STATEMENTS,
 ];
-export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9): readonly string[] {
+// Schema 11 adds posts and stars after the schema 10 objects, in the same order on a fresh store and an upgrade.
+export const SCHEMA_V11_ADDITIONS = [
+  ...POST_STATEMENTS,
+  ...schemaV10FeedTriggers.map(sql => `DROP TRIGGER ${triggerName(sql)}`),
+  ...STAR_KIND_REBUILD_STATEMENTS,
+  ...schemaV10FeedTriggers,
+  ...STAR_CHANGE_STATEMENTS,
+];
+export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): readonly string[] {
   return [
     `INSERT INTO schema_version(version) SELECT 0 WHERE (SELECT count(*) FROM schema_version) <> 1 OR NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ${previous})`,
     ...(previous === 2 ? MEMORY_SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean) : []),
@@ -189,7 +203,8 @@ export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9)
     ...(previous < 7 ? CHANGE_STATEMENTS : []),
     ...(previous < 8 ? CLOSURE_STATEMENTS : []),
     ...(previous < 9 ? SCHEMA_V9_ADDITIONS : []),
-    ...SCHEMA_V10_ADDITIONS,
+    ...(previous < 10 ? SCHEMA_V10_ADDITIONS : []),
+    ...SCHEMA_V11_ADDITIONS,
     `UPDATE schema_version SET version = ${SCHEMA_VERSION} WHERE version = ${previous}`,
   ];
 }
@@ -203,5 +218,6 @@ export const SCHEMA_STATEMENTS = [
   ...CLOSURE_STATEMENTS,
   ...SCHEMA_V9_ADDITIONS,
   ...SCHEMA_V10_ADDITIONS,
+  ...SCHEMA_V11_ADDITIONS,
 ];
 export const SCHEMA_SQL = SCHEMA_STATEMENTS.join(';\n') + ';\n';

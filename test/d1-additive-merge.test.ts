@@ -60,6 +60,12 @@ async function makeSource(directory: string, prefix = 'src', includeLiveMemory =
     await executeOperation(fixture.store.db, parseOperation({ op: 'resource_add', issue_id: `${epic.id}.1`, kind: 'worker', name: `${prefix}-api`, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'resource_update', issue_id: `${epic.id}.1`, seq: 1, external_id: `${prefix}-api-1`, mark: 'created', expected_revision: 2, request_id: randomUUID() }), `${prefix}-author`);
     await addComment(fixture.store, epic.id, `${prefix} comment`, `${prefix}-commenter`);
+    // The reply sorts before its target by ID, so a merge that inserted comments in ID order would break the reply trigger.
+    const reply = `00000000${randomUUID().slice(8)}`;
+    await fixture.store.db.batch([
+      { sql: "INSERT INTO comments(id,issue_id,body,created_at,created_by,handle,via,reply_to) SELECT ?,issue_id,?,created_at,?,'builder','claude-code opus-5.5 cloud',id FROM comments WHERE issue_id = ?", params: [reply, `${prefix} reply`, `${prefix}-replier`, epic.id] },
+      { sql: "INSERT INTO stars(comment_id,starrer,handle,actor,created_at) VALUES (?,'tester','tester',?,'2026-01-01T00:00:00.000Z')", params: [reply, `${prefix}-starrer`] },
+    ]);
     const claim = await executeOperation(fixture.store.db, parseOperation({ op: 'claim_show', issue_id: epic.id }), `${prefix}-author`);
     assert.ok('claim' in claim);
     await executeOperation(fixture.store.db, parseOperation({ op: 'claim_acquire', issue_id: epic.id, incarnation: claim.claim.store_incarnation, session_id: randomUUID(), request_id: randomUUID(), agent_label: 'Codex' }), `${prefix}-author`);
@@ -148,7 +154,10 @@ test('additive merge keeps both canonical stores, versions, audit rows, and dele
     assert.equal(actual.issues.find(issue => issue.id === 'src-1')?.updated_by, 'src-editor');
     assert.equal(actual.issues.find(issue => issue.id === 'dst-1')?.status, 'closed');
     assert.equal(actual.issues.find(issue => issue.id === 'dst-1')?.updated_by, 'dst-closer');
-    assert.deepEqual(actual.comments.map(comment => comment.body).sort(), ['dst comment', 'src comment']);
+    assert.deepEqual(actual.comments.map(comment => comment.body).sort(), ['dst comment', 'src comment', 'src reply']);
+    const reply = actual.comments.find(comment => comment.body === 'src reply');
+    assert.deepEqual([reply?.handle, reply?.via, reply?.reply_to], ['builder', 'claude-code opus-5.5 cloud', actual.comments.find(comment => comment.body === 'src comment')?.id]);
+    assert.deepEqual(actual.stars.map(star => [star.comment_id, star.starrer, star.actor]), [[reply?.id, 'tester', 'src-starrer']]);
     assert.deepEqual(actual.memories.map(memory => memory.id), ['dst-m1']);
     assert.ok(actual.memory_requests.some(request => request.memory_id === 'src-m1'));
     assert.ok(actual.memory_requests.some(request => request.memory_id === 'dst-m1'));
@@ -291,7 +300,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
     for (const table of tables) {
       const key = table === 'issues' || table === 'comments' || table === 'memories' ? 'id'
         : table === 'counters' ? 'scope'
-          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : table === 'land_order' || table === 'land_order_revisions' ? 'later_id' : table === 'issue_claims' || table === 'issue_resources' || table === 'resource_revisions' ? 'issue_id' : table === 'memory_store_identity' ? 'singleton' : table === 'project_memory_revisions' ? 'project' : 'request_id';
+          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : table === 'land_order' || table === 'land_order_revisions' ? 'later_id' : table === 'issue_claims' || table === 'issue_resources' || table === 'resource_revisions' ? 'issue_id' : table === 'memory_store_identity' ? 'singleton' : table === 'project_memory_revisions' ? 'project' : table === 'stars' ? 'starrer' : 'request_id';
       const quotedTable = `"${table}"`;
       const quotedKey = `"${key}"`;
       assert.throws(() => database.prepare(`INSERT INTO ${quotedTable} SELECT * FROM ${quotedTable} LIMIT 1`).all(), /Use cloud connection archive/, `${table} insert`);

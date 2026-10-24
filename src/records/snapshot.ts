@@ -2,7 +2,7 @@
 import { commentRow, issueRow, parseClosure, parseOperation, storedCommentRow } from "./issues.ts";
 import { PolylinedbError } from './errors.ts';
 import { issueSortKey, parseIssueId, parsePrefix, parseRequestId } from "./issue-id.ts";
-import type { Comment, Issue, StoredComment, StoredIssue } from "./issues.ts";
+import type { Comment, CommentEdits, Issue, StoredComment, StoredIssue } from "./issues.ts";
 import { fields } from "./schema.ts";
 import { memoryRow, memorySortKey, parseMemoryId, parseMemoryOperation } from "./memories.ts";
 import type { Memory, MemoryCounter, MemoryRequest } from "./memories.ts";
@@ -14,6 +14,8 @@ import { parseLandOrderOperation } from './land-order.ts';
 import type { LandOrderEdge, LandOrderRequest, LandOrderRevision } from './land-order.ts';
 import { parseResourceOperation, resourceEntry } from './resources.ts';
 import type { ResourceEntry, ResourceRequest, ResourceRevision } from './resources.ts';
+import { starRow } from './posts.ts';
+import type { Star } from './posts.ts';
 
 export type Counter = { scope: string; last_number: number };
 export type CreateRequest = { request_id: string; actor: string; payload: string; issue_id: string };
@@ -25,9 +27,11 @@ type SnapshotV5 = Omit<SnapshotV4, 'version'> & { version: 5; issue_claims: read
 type SnapshotV6 = Omit<SnapshotV5, 'version' | 'issues'> & { version: 6; issues: readonly StoredIssue[] };
 type SnapshotV7 = Omit<SnapshotV6, 'version'> & { version: 7; land_order: readonly LandOrderEdge[]; land_order_revisions: readonly LandOrderRevision[]; land_order_requests: readonly LandOrderRequest[];
   issue_resources: readonly ResourceEntry[]; resource_revisions: readonly ResourceRevision[]; resource_requests: readonly ResourceRequest[] };
-export type Snapshot = Omit<SnapshotV7, 'version' | 'comments'> & { version: 8; comments: readonly StoredComment[] };
+type EditedComment = Pick<StoredComment, 'id' | 'issue_id' | 'body' | 'created_at' | 'created_by'> & CommentEdits;
+type SnapshotV8 = Omit<SnapshotV7, 'version' | 'comments'> & { version: 8; comments: readonly EditedComment[] };
+export type Snapshot = Omit<SnapshotV8, 'version' | 'comments'> & { version: 9; comments: readonly StoredComment[]; stars: readonly Star[] };
 export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number;
-  land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; sha256: string };
+  land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; stars: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Expected an object');
@@ -403,10 +407,10 @@ function parseResources(ids: ReadonlySet<string>, entries: unknown, revisions: u
 // Snapshot 7 predates comment edits, so every comment converts as never edited.
 export function convertSnapshotV7(input: unknown): Snapshot {
   const old = parseSnapshotV7(input);
-  return parseSnapshot({ ...old, version: 8, comments: old.comments.map(comment => ({ ...comment, version: 1, updated_at: null, updated_by: null })) });
+  return convertSnapshotV8({ ...old, version: 8, comments: old.comments.map(comment => ({ ...comment, version: 1, updated_at: null, updated_by: null })) });
 }
 const commentKeys = ['id', 'issue_id', 'body', 'created_at', 'created_by'];
-export function parseSnapshot(input: unknown): Snapshot {
+function parseSnapshotV8(input: unknown): SnapshotV8 {
   const source = record(input, snapshotV7Keys);
   if (source.version !== 8) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6 and 7 explicitly');
   if (!Array.isArray(source.comments)) return fail('Snapshot collections must be arrays');
@@ -419,11 +423,72 @@ export function parseSnapshot(input: unknown): Snapshot {
   });
   const old = parseSnapshotV7({ ...source, version: 7, comments });
   return { ...old, version: 8, comments: old.comments.map(comment => {
-    // storedCommentRow also refuses an editor other than the author, because only the author edits a comment.
-    try { return storedCommentRow({ ...comment, ...edits.get(comment.id) }); } catch { return fail('Invalid comment edit'); }
+    // commentRow also refuses an editor other than the author, because only the author edits a comment.
+    let edited: Comment;
+    try { edited = commentRow({ ...comment, ...edits.get(comment.id) }); } catch { return fail('Invalid comment edit'); }
+    const { version, updated_at, updated_by } = edited;
+    if (version === undefined || updated_at === undefined || updated_by === undefined) return fail('Invalid comment edit');
+    return { id: edited.id, issue_id: edited.issue_id, body: edited.body, created_at: edited.created_at, created_by: edited.created_by, version, updated_at, updated_by };
   }) };
 }
+// Snapshot 8 predates posts, so every comment converts with no handle, no via, and no reply, and no comment has a star.
+export function convertSnapshotV8(input: unknown): Snapshot {
+  const old = parseSnapshotV8(input);
+  return parseSnapshot({ ...old, version: 9, comments: old.comments.map(comment => ({ ...comment, handle: null, via: null, reply_to: null })), stars: [] });
+}
+/** Gives each comment its distance from the comment that starts its reply chain, refusing a missing target, a target on another issue, and a cycle. */
+function replyDepths(comments: readonly StoredComment[]): Map<string, number> {
+  const byId = new Map(comments.map(comment => [comment.id, comment]));
+  const depths = new Map<string, number>();
+  for (const comment of comments) {
+    const chain: StoredComment[] = []; const seen = new Set<string>();
+    let current = comment; let depth = -1;
+    for (;;) {
+      const known = depths.get(current.id);
+      if (known !== undefined) { depth = known; break; }
+      if (seen.has(current.id)) return fail('Replies form a cycle');
+      seen.add(current.id); chain.push(current);
+      if (current.reply_to === null) break;
+      const target = byId.get(current.reply_to);
+      if (!target || target.issue_id !== current.issue_id) return fail('A reply must name a comment on the same issue');
+      current = target;
+    }
+    for (const link of chain.reverse()) depths.set(link.id, ++depth);
+  }
+  return depths;
+}
+const starKeys = ['comment_id', 'starrer', 'handle', 'actor', 'created_at'];
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, [...snapshotV7Keys, 'stars']);
+  if (source.version !== 9) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6, 7 and 8 explicitly');
+  const { stars: starRows, ...rest } = source;
+  if (!Array.isArray(source.comments) || !Array.isArray(starRows)) return fail('Snapshot collections must be arrays');
+  const posts = new Map<unknown, Record<string, unknown>>();
+  const comments = source.comments.map(value => {
+    const { handle, via, reply_to, ...comment } = record(value, [...commentKeys, 'version', 'updated_at', 'updated_by', 'handle', 'via', 'reply_to']);
+    posts.set(comment.id, { handle, via, reply_to });
+    return comment;
+  });
+  const old = parseSnapshotV8({ ...rest, version: 8, comments });
+  const stored = old.comments.map(comment => {
+    try { return storedCommentRow({ ...comment, ...posts.get(comment.id) }); } catch { return fail('Invalid post fields'); }
+  });
+  const depths = replyDepths(stored);
+  const byId = new Set(stored.map(comment => comment.id));
+  const stars = starRows.map(value => {
+    const row = record(value, starKeys);
+    timestamp(row.created_at);
+    let star: Star;
+    try { star = starRow(row); } catch { return fail('Invalid star'); }
+    if (!byId.has(star.comment_id)) fail('Star comment does not exist');
+    return star;
+  }).sort((a, b) => compareText(a.comment_id, b.comment_id) || compareText(a.starrer, b.starrer));
+  if (new Set(stars.map(star => JSON.stringify([star.comment_id, star.starrer]))).size !== stars.length) fail('Duplicate star');
+  // A target sorts before its replies, so every importer can insert comments in snapshot order.
+  return { ...old, version: 9, comments: stored.sort((a, b) => (depths.get(a.id) ?? 0) - (depths.get(b.id) ?? 0) || compareId(a, b)), stars };
+}
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }
+export function canonicalSnapshotV8(input: unknown): string { return JSON.stringify(parseSnapshotV8(input)); }
 export function canonicalSnapshotV7(input: unknown): string { return JSON.stringify(parseSnapshotV7(input)); }
 export function canonicalSnapshotV5(input: unknown): string { return JSON.stringify(parseSnapshotV5(input)); }
 export function canonicalSnapshotV6(input: unknown): string { return JSON.stringify(parseSnapshotV6(input)); }

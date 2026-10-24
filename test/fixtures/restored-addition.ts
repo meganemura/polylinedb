@@ -19,7 +19,8 @@ export type Store = ReturnType<typeof openStore>;
 /** The release 0.1.0 operator's restore of one snapshot 3 input into schema 3, from record-release-0.1.0-restore.ts. */
 export const legacyRestore: { schema_sql: string; input: unknown; sha256: string; writes: Statement[] } = JSON.parse(readFileSync(new URL('release-0.1.0-restore.json', import.meta.url), 'utf8'));
 
-export async function populate(store: Store, prefix: string): Promise<void> {
+/** Without posts, the store holds only what a release before posts could write, so a snapshot 8 or 7 input can describe it. */
+export async function populate(store: Store, prefix: string, posts = true): Promise<void> {
   const run = (operation: unknown, actor = `${prefix}-author`) => executeOperation(store.db, parseOperation(operation), actor);
   const created = await run({ op: 'create', prefix, request_id: randomUUID(), tool: 'fixture', project: 'synthetic', body: `${prefix} epic 日本語`, type: 'epic' });
   assert.ok('issue' in created);
@@ -31,6 +32,11 @@ export async function populate(store: Store, prefix: string): Promise<void> {
   await run({ op: 'resource_add', issue_id: `${epic}.1`, kind: 'worker', name: `${prefix}-api`, expected_revision: 1, request_id: randomUUID() });
   await run({ op: 'resource_update', issue_id: `${epic}.1`, seq: 1, external_id: `${prefix}-api-1`, mark: 'created', expected_revision: 2, request_id: randomUUID() });
   await run({ op: 'comment', id: epic, body: `${prefix} comment` }, `${prefix}-commenter`);
+  // The reply sorts before its target by ID, so a restore that inserted comments in ID order would break the reply trigger.
+  if (posts) await store.db.batch([
+    { sql: "INSERT INTO comments(id,issue_id,body,created_at,created_by,handle,via,reply_to) SELECT ?,issue_id,?,created_at,?,'builder','claude-code opus-5.5 cloud',id FROM comments WHERE issue_id = ?", params: [`00000000${randomUUID().slice(8)}`, `${prefix} reply`, `${prefix}-replier`, epic] },
+    { sql: "INSERT INTO stars(comment_id,starrer,handle,actor,created_at) SELECT id,'tester','tester',?,'2026-01-01T00:00:00.000Z' FROM comments WHERE issue_id = ? AND reply_to IS NOT NULL", params: [`${prefix}-starrer`, epic] },
+  ]);
   const scope = await run({ op: 'claim_show', issue_id: epic });
   assert.ok('claim' in scope);
   const session = randomUUID();
@@ -43,18 +49,18 @@ export async function populate(store: Store, prefix: string): Promise<void> {
   await memory(`${prefix}live`);
 }
 
-export async function localStore(root: string, name: string, prefix?: string): Promise<{ path: string; store: Store }> {
+export async function localStore(root: string, name: string, prefix?: string, posts = true): Promise<{ path: string; store: Store }> {
   const location = { directory: join(root, name) };
   const { database_path: path } = initializeStore(location);
   const store = openStore(location);
-  if (prefix) await populate(store, prefix);
+  if (prefix) await populate(store, prefix, posts);
   return { path, store };
 }
 
 /** A null prefix writes an empty store. */
-export async function originalInput(root: string, prefix: string | null = 'dst'): Promise<{ path: string; snapshot: Snapshot }> {
+export async function originalInput(root: string, prefix: string | null = 'dst', posts = true): Promise<{ path: string; snapshot: Snapshot }> {
   const name = `original-${prefix ?? 'empty'}`;
-  const { store } = await localStore(root, name, prefix ?? undefined);
+  const { store } = await localStore(root, name, prefix ?? undefined, posts);
   try {
     const snapshot = store.exportSnapshot();
     const path = join(root, `${name}.json`);

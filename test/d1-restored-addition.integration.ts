@@ -56,7 +56,7 @@ try {
   const reset = async (statements: readonly string[] = SCHEMA_STATEMENTS) => {
     const existing = await query({ sql: objects, params: [] });
     for (const { type, name } of existing.filter(object => object.type === 'view')) await query({ sql: `DROP VIEW "${String(name)}"`, params: [] });
-    for (const table of ['polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive', 'polylinedb_snapshot_claim', 'extra', 'change_events', 'change_writer', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'land_order_requests', 'land_order', 'land_order_revisions', 'resource_requests', 'issue_resources', 'resource_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version']) {
+    for (const table of ['polylinedb_addition_receipt', 'polylinedb_snapshot_claim_archive', 'polylinedb_snapshot_claim', 'extra', 'stars', 'change_events', 'change_writer', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'land_order_requests', 'land_order', 'land_order_revisions', 'resource_requests', 'issue_resources', 'resource_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version']) {
       if (existing.some(object => object.type === 'table' && object.name === table)) await query({ sql: `DROP TABLE ${table}`, params: [] });
     }
     await database.batch(statements.map(sql => database.prepare(sql)));
@@ -220,7 +220,7 @@ try {
     assert.equal((await runLegacy()).outcome, 'routed', `release 0.1.0 write ${pause + 1}`);
   }
 
-const deletions = ["DELETE FROM dependencies WHERE dependent_id LIKE 'dst-%'", "DELETE FROM comments WHERE body = 'dst comment'"];
+const deletions = ["DELETE FROM dependencies WHERE dependent_id LIKE 'dst-%'", "DELETE FROM stars WHERE actor = 'dst-starrer'", "DELETE FROM comments WHERE body = 'dst reply'", "DELETE FROM comments WHERE body = 'dst comment'"];
 const replayAll = async () => { for (const statement of writes) await query(statement).catch(() => []); };
 await restore();
 for (const sql of deletions) await query({ sql, params: [] });
@@ -237,7 +237,7 @@ await restore();
 const migrated = journal();
 await assert.rejects(run(loseResponse(batch, isAddition), migrated), AdditionUnknown);
 await query({ sql: 'CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY)', params: [] });
-await assert.rejects(owner(batch, migrated).resume(), (error: unknown) => error instanceof AdditionRefused && /not canonical schema 10/.test(error.message));
+await assert.rejects(owner(batch, migrated).resume(), (error: unknown) => error instanceof AdditionRefused && /not canonical schema 11/.test(error.message));
 assert.deepEqual(readdirSync(migrated).sort(), ['committed.json', 'dispatch-1.json', 'operation.json', 'retired.json']);
 await query({ sql: 'DROP TABLE d1_migrations', params: [] });
 

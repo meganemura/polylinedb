@@ -1,9 +1,10 @@
-// Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7, 8 or 9 stores made from a current one.
+// Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7, 8, 9 or 10 stores made from a current one.
 import type { DatabaseSync } from 'node:sqlite';
-import { CHANGE_STATEMENTS } from '../../src/records/changes-sql.ts';
+import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_STATEMENTS } from '../../src/records/changes-sql.ts';
 import { SCHEMA_V9_ADDITIONS } from '../../src/records/schema.ts';
 import { SCHEMA_V8_STATEMENTS } from '../../src/records/schema-v8.ts';
 import { SCHEMA_V9_STATEMENTS } from '../../src/records/schema-v9.ts';
+import { SCHEMA_V10_STATEMENTS } from '../../src/records/schema-v10.ts';
 import type { SqlExecutor } from '../../src/records/persistence.ts';
 
 export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
@@ -18,8 +19,22 @@ export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
   };
 }
 
+// Schema 11 rebuilt change_events for the star kinds, so the downgrade drops the stars and every star event, then runs the schema 10 rebuild and recreates the schema 10 triggers that name the table.
+export function downgradeToSchema10(database: DatabaseSync): void {
+  const name = (sql: string) => /^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? '';
+  const triggers = SCHEMA_V10_STATEMENTS.filter((sql, index) => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql)
+    && !SCHEMA_V10_STATEMENTS.slice(index + 1).some(later => name(later) === name(sql)));
+  if (triggers.length === 0) throw new Error('Schema 10 has no change feed triggers');
+  database.exec("BEGIN; DROP TRIGGER stars_change_insert; DROP TRIGGER stars_change_delete; DROP TABLE stars; DELETE FROM change_events WHERE kind IN ('starred','unstarred')");
+  for (const sql of triggers) database.exec(`DROP TRIGGER ${name(sql)}`);
+  for (const sql of CHANGE_KIND_REBUILD_STATEMENTS) database.exec(sql);
+  for (const sql of triggers) database.exec(sql);
+  database.exec('DROP TRIGGER comments_reply_on_issue; DROP INDEX comments_posts; ALTER TABLE comments DROP COLUMN reply_to; ALTER TABLE comments DROP COLUMN via; ALTER TABLE comments DROP COLUMN handle; UPDATE schema_version SET version = 10; COMMIT');
+}
+
 // Schema 10 rebuilt change_events, so the downgrade runs the schema 9 statements of that table and of every trigger that names it, keeping each event row.
 export function downgradeToSchema9(database: DatabaseSync): void {
+  downgradeToSchema10(database);
   const named = (prefix: string) => SCHEMA_V9_STATEMENTS.filter(sql => sql.startsWith(prefix));
   const table = [...named('CREATE TABLE change_events '), ...named('ALTER TABLE change_events ')];
   const triggers = named('CREATE TRIGGER ').filter(sql => /\bchange_events\b/.test(sql));

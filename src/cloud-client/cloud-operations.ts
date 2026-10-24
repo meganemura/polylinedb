@@ -39,9 +39,10 @@ function issue(value: unknown): Issue {
   if (JSON.stringify(parsed.labels) !== JSON.stringify(row.labels)) return invalid();
   return parsed;
 }
-// A Worker from before comment edits sends none of the edit fields, and the comment then has none; commentRow refuses a partial set.
+// A Worker from before comment edits sends none of the edit fields, and one from before posts none of the post or star fields; the comment then has none.
+// commentRow refuses a partial group.
 function comment(value: unknown): Comment {
-  return commentRow(known(value, ['id', 'issue_id', 'body', 'created_at', 'created_by'], ['version', 'updated_at', 'updated_by']));
+  return commentRow(known(value, ['id', 'issue_id', 'body', 'created_at', 'created_by'], ['version', 'updated_at', 'updated_by', 'handle', 'via', 'reply_to', 'stars', 'starrers']));
 }
 function editedComment(value: unknown, operation: Operation): Comment & { version: number } {
   const current = comment(value);

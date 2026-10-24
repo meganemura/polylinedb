@@ -81,7 +81,7 @@ test('snapshot preserves memories, deletion receipts, and issued numbers', async
   await run({ op: 'memory_delete', project: 'project', id: 'pd-m1', expected: 1 });
   await run(creation({ title: 'Retain' }));
   await run({ op: 'memory_update', project: 'project', id: 'pd-m2', title: 'Retained', body: 'Confirmed', expected: 1 }, 'test:editor');
-  const snapshot = store.exportSnapshot(); assert.equal(snapshot.version, 8);
+  const snapshot = store.exportSnapshot(); assert.equal(snapshot.version, 9);
   const restoredLocation = { directory: join(root, 'restored'), cwd: join(root, 'work') };
   initializeStore(restoredLocation); const restored = openStore(restoredLocation);
   try {

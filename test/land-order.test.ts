@@ -100,19 +100,19 @@ test('a land-order snapshot round-trips, a snapshot 6 converts with empty land o
     snapshot = source.exportSnapshot();
   } finally { source.close(); }
   assert.deepEqual([snapshot.version, snapshot.land_order, snapshot.land_order_revisions, snapshot.land_order_requests.map(row => [row.later_id, row.earlier_id, row.result_revision, row.outcome])],
-    [8, [{ later_id: 'pd-1', earlier_id: 'pd-2' }], [{ later_id: 'pd-1', revision: 2 }], [['pd-1', 'pd-2', 2, 'added']]]);
+    [9, [{ later_id: 'pd-1', earlier_id: 'pd-2' }], [{ later_id: 'pd-1', revision: 2 }], [['pd-1', 'pd-2', 2, 'added']]]);
   const restored = localStore(t); const target = openStore(restored.location);
   try {
     assert.deepEqual(target.importSnapshot(snapshot), { result: 'imported', issues: 2, comments: 0, memories: 0, dependencies: 0, dependency_revisions: 2, dependency_requests: 0, issue_claims: 0, claim_requests: 0,
-      land_order: 1, land_order_requests: 1, issue_resources: 0, resource_requests: 0, sha256: target.importSnapshot(snapshot).sha256 });
+      land_order: 1, land_order_requests: 1, issue_resources: 0, resource_requests: 0, stars: 0, sha256: target.importSnapshot(snapshot).sha256 });
     assert.equal(canonicalSnapshot(target.exportSnapshot()), canonicalSnapshot(snapshot));
     assert.deepEqual(await executeOperation(target.db, parseOperation({ op: 'land_order_list', issue_id: 'pd-2' }), 'test:owner'),
       { issue_id: 'pd-2', revision: 1, after: [], before: [{ id: 'pd-1', project: 'snapshot', status: 'open' }] });
   } finally { target.close(); }
 
-  const { land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, ...rest } = snapshot;
+  const { land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, stars: _stars, ...rest } = snapshot;
   const converted = convertSnapshotV6({ ...rest, version: 6 });
-  assert.deepEqual([converted.version, converted.land_order, converted.land_order_revisions, converted.land_order_requests], [8, [], [], []]);
+  assert.deepEqual([converted.version, converted.land_order, converted.land_order_revisions, converted.land_order_requests], [9, [], [], []]);
   assert.throws(() => parseSnapshot({ ...rest, version: 6 }), { code: 'invalid_snapshot' });
 
   const refused = (change: Record<string, unknown>) => assert.throws(() => parseSnapshot({ ...snapshot, ...change }), { code: 'invalid_snapshot' }, JSON.stringify(change));
@@ -131,7 +131,7 @@ test('a schema 8 store upgrades to the canonical schema 9 DDL and then records l
   const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_V8_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(legacy.prepare(schema).all(), reference.prepare(schema).all()); } finally { legacy.close(); reference.close(); }
-  assert.equal(upgradeStore(location).version, 10);
+  assert.equal(upgradeStore(location).version, 11);
   const upgraded = new DatabaseSync(database_path, { readOnly: true }); const fresh = new DatabaseSync(':memory:'); fresh.exec(SCHEMA_SQL);
   try { assert.deepEqual(upgraded.prepare(schema).all(), fresh.prepare(schema).all()); } finally { upgraded.close(); fresh.close(); }
   const store = openStore(location);

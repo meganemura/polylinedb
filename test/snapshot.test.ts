@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { issueSortKey } from "../src/records/issue-id.ts";
-import { canonicalSnapshot, parseSnapshot } from "../src/records/snapshot.ts";
+import { canonicalSnapshot, convertSnapshotV8, parseSnapshot } from "../src/records/snapshot.ts";
 import type { Snapshot } from "../src/records/snapshot.ts";
 import { executeOperation, parseOperation } from "../src/records/issues.ts";
 
@@ -23,7 +23,7 @@ const parent = 'pd-9';
 const child = `${parent}.99`;
 function fixture(): Snapshot {
   const issue = { id: parent, tool: 'tool', project: 'project', body: 'original body', status: 'closed', type: 'epic', priority: 2, labels: ['z', 'a'], versions: { tool: 1, project: 2, body: 3, status: 4, type: 5, priority: 6, labels: 7 }, created_at: '2020-01-02T03:04:05Z', created_by: 'original:author', updated_at: '2021-02-03T04:05:06.123456+09:00', updated_by: 'original:editor', closed_at: '2021-02-03T04:05:06.123456+09:00', closed_by: 'original:closer' };
-  return parseSnapshot({ format: 'polylinedb.snapshot', version: 8, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [], dependencies: [], dependency_revisions: [{ dependent_id: parent, revision: 1 }, { dependent_id: child, revision: 1 }], dependency_requests: [], memories: [], memory_counters: [], memory_requests: [], issues: [{ ...issue, id: child, type: 'task', closed_at: null, closed_by: null }, issue], comments: [{ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', issue_id: child, body: 'original comment', created_at: '2021-02-03T04:05:06Z', created_by: 'original:commenter', version: 3, updated_at: '2021-03-04T05:06:07Z', updated_by: 'original:commenter' }], counters: [{ scope: 'pd', last_number: 20 }, { scope: parent, last_number: 99 }], requests: [] });
+  return parseSnapshot({ format: 'polylinedb.snapshot', version: 9, stars: [{ comment_id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', starrer: 'tester', handle: 'tester', actor: 'original:starrer', created_at: '2021-02-03T05:00:00Z' }], land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [], dependencies: [], dependency_revisions: [{ dependent_id: parent, revision: 1 }, { dependent_id: child, revision: 1 }], dependency_requests: [], memories: [], memory_counters: [], memory_requests: [], issues: [{ ...issue, id: child, type: 'task', closed_at: null, closed_by: null }, issue], comments: [{ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', issue_id: child, body: 'original comment', created_at: '2021-02-03T04:05:06Z', created_by: 'original:commenter', version: 3, updated_at: '2021-03-04T05:06:07Z', updated_by: 'original:commenter', handle: 'scout', via: 'claude-code opus-5.5 cloud', reply_to: null }], counters: [{ scope: 'pd', last_number: 20 }, { scope: parent, last_number: 99 }], requests: [] });
 }
 function local() {
   const root = mkdtempSync(join(tmpdir(), 'pd-snapshot-'));
@@ -85,6 +85,22 @@ test('validation rejects malformed shape, versions, dates, parents and comments'
     { ...base, comments: [{ ...base.comments[0], version: 0, updated_at: null, updated_by: null }] },
     { ...base, comments: [{ ...base.comments[0], updated_at: 'yesterday' }] },
     { ...base, comments: base.comments.map(({ version: _, ...comment }) => comment) },
+    { ...base, comments: base.comments.map(({ handle: _, ...comment }) => comment) },
+    { ...base, comments: [{ ...base.comments[0], handle: 'Scout' }] },
+    { ...base, comments: [{ ...base.comments[0], handle: '' }] },
+    { ...base, comments: [{ ...base.comments[0], via: 'x'.repeat(129) }] },
+    { ...base, comments: [{ ...base.comments[0], via: 'line\nbreak' }] },
+    { ...base, comments: [{ ...base.comments[0], reply_to: base.comments[0]?.id }] },
+    { ...base, comments: [{ ...base.comments[0], reply_to: 'dddddddd-dddd-dddd-dddd-dddddddddddd' }] },
+    { ...base, comments: [...base.comments, { ...base.comments[0], id: 'dddddddd-dddd-dddd-dddd-dddddddddddd', issue_id: parent, reply_to: base.comments[0]?.id }] },
+    { ...base, comments: [{ ...base.comments[0], reply_to: 'dddddddd-dddd-dddd-dddd-dddddddddddd' }, { ...base.comments[0], id: 'dddddddd-dddd-dddd-dddd-dddddddddddd', reply_to: base.comments[0]?.id }] },
+    { ...base, stars: [...base.stars, ...base.stars] },
+    { ...base, stars: [{ ...base.stars[0], comment_id: 'dddddddd-dddd-dddd-dddd-dddddddddddd' }] },
+    { ...base, stars: [{ ...base.stars[0], starrer: 'original:starrer' }] },
+    { ...base, stars: [{ ...base.stars[0], handle: null }] },
+    { ...base, stars: [{ ...base.stars[0], created_at: 'yesterday' }] },
+    { ...base, stars: [{ ...base.stars[0], via: 'claude-code' }] },
+    { ...base, stars: undefined },
     { ...base, counters: [] },
     { ...base, counters: [{ scope: 'pd', last_number: 8 }, { scope: parent, last_number: 99 }] },
     { ...base, counters: [...base.counters, ...base.counters] },
@@ -103,6 +119,23 @@ test('a snapshot orders issues by sort key and comments by id', () => {
   assert.deepEqual(ordered.issues.map(issue => issue.id), parsed.issues.map(issue => issue.id).sort(bySortKey));
   assert.deepEqual(ordered.comments.map(item => item.id), [low.id, mid.id, comment.id]);
 });
+test('a snapshot puts every reply after the comment it answers, and snapshot 8 converts with no posts and no stars', () => {
+  const parsed = fixture();
+  const target = parsed.comments[0];
+  assert.ok(target);
+  const reply = { ...target, id: '00000000-0000-4000-8000-000000000001', reply_to: target.id, handle: 'builder' };
+  const answer = { ...target, id: '00000000-0000-4000-8000-000000000002', reply_to: reply.id, handle: null, via: null };
+  const threaded = parseSnapshot({ ...parsed, comments: [answer, target, reply] });
+  assert.deepEqual(threaded.comments.map(item => item.id), [target.id, reply.id, answer.id]);
+  const { stars: _, ...rest } = parsed;
+  const old = { ...rest, version: 8, comments: parsed.comments.map(({ handle: _h, via: _v, reply_to: _r, ...comment }) => comment) };
+  const converted = convertSnapshotV8(old);
+  assert.equal(converted.version, 9);
+  assert.deepEqual(converted.stars, []);
+  assert.deepEqual(converted.comments, parsed.comments.map(comment => ({ ...comment, handle: null, via: null, reply_to: null })));
+  assert.throws(() => parseSnapshot(old), { code: 'invalid_snapshot' });
+  assert.throws(() => convertSnapshotV8({ ...old, stars: [] }), { code: 'invalid_snapshot' });
+});
 test('canonical form ignores array order and label set order but retains metadata', () => {
   const snapshot = fixture();
   assert.equal(canonicalSnapshot(snapshot), canonicalSnapshot({ ...snapshot, issues: [...snapshot.issues].reverse().map(issue => ({ ...issue, labels: ['z', 'a', 'z'] })) }));
@@ -111,7 +144,7 @@ test('canonical form ignores array order and label set order but retains metadat
 test('empty snapshots are repeatable and metadata-only differences reject restore', () => {
   const { store, cleanup } = local();
   try {
-    const empty = parseSnapshot({ format: 'polylinedb.snapshot', version: 8, land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [], memories: [], memory_counters: [], memory_requests: [], issues: [], comments: [], counters: [], requests: [] });
+    const empty = parseSnapshot({ format: 'polylinedb.snapshot', version: 9, stars: [], land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [], memories: [], memory_counters: [], memory_requests: [], issues: [], comments: [], counters: [], requests: [] });
     assert.equal(store.importSnapshot(empty).result, 'already_present');
     const snapshot = fixture(); store.importSnapshot(snapshot);
     assert.throws(() => store.importSnapshot({ ...snapshot, issues: snapshot.issues.map(issue => ({ ...issue, created_by: 'changed' })) }), { code: 'destination_not_empty' });

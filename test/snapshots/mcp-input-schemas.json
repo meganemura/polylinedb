@@ -52,11 +52,13 @@
             "dependency_added",
             "dependency_removed",
             "became_ready",
-            "comment_edited"
+            "comment_edited",
+            "starred",
+            "unstarred"
           ]
         },
         "minItems": 1,
-        "maxItems": 10,
+        "maxItems": 12,
         "uniqueItems": true
       },
       "limit": {
@@ -1684,11 +1686,13 @@
             "dependency_added",
             "dependency_removed",
             "became_ready",
-            "comment_edited"
+            "comment_edited",
+            "starred",
+            "unstarred"
           ]
         },
         "minItems": 1,
-        "maxItems": 10,
+        "maxItems": 12,
         "uniqueItems": true
       },
       "timeout": {

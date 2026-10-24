@@ -357,8 +357,8 @@ const issueShape = {
   versions: { tool: 'number', project: 'number', body: 'number', status: 'number', type: 'number', priority: 'number', labels: 'number' },
   created_at: 'string', created_by: 'string', updated_at: 'string', updated_by: 'string',
 };
-// A released client keeps only the first five comment keys and drops the edit fields, so adding them is safe for it.
-const commentShape = { id: 'string', issue_id: 'string', body: 'string', created_at: 'string', created_by: 'string', version: 'number', updated_at: 'string|null', updated_by: 'string|null' };
+// A released client keeps only the first five comment keys and drops the edit and post fields, so adding them is safe for it.
+const commentShape = { id: 'string', issue_id: 'string', body: 'string', created_at: 'string', created_by: 'string', version: 'number', updated_at: 'string|null', updated_by: 'string|null', handle: 'string|null', via: 'string|null', reply_to: 'string|null' };
 const claimShape = { issue_id: 'string', incarnation: 'string', session_id: 'string', generation: 'number', actor: 'string', agent_label: 'string|null', revision: 'number', acquired_at: 'number', changed_at: 'number', expires_at: 'number', released_at: 'number|null' };
 const inspectionShape = { issue_id: 'string', store_incarnation: 'string', observed_at: 'number', state: 'string', lease: claimShape };
 function assertShape(value: unknown, shape: unknown, path = 'response'): void {

@@ -6,7 +6,7 @@ import { activeBlockerStatusSql } from './active-blocker.ts';
 // Schemas 6 through 9 check exactly these kinds, so CHANGE_STATEMENTS keeps them; each later schema that adds a kind rebuilds the table for its own list.
 const schemaV6ChangeKinds = ['created', 'updated', 'status_changed', 'commented', 'claim_acquired', 'claim_released', 'dependency_added', 'dependency_removed', 'became_ready'] as const;
 const schemaV10ChangeKinds = [...schemaV6ChangeKinds, 'comment_edited'] as const;
-export const changeKinds = schemaV10ChangeKinds;
+export const changeKinds = [...schemaV10ChangeKinds, 'starred', 'unstarred'] as const;
 export type ChangeKind = typeof changeKinds[number];
 const kindCheck = (kinds: readonly string[]) => `kind TEXT NOT NULL CHECK(kind IN (${kinds.map(kind => `'${kind}'`).join(',')}))`;
 export const CHANGE_RETENTION = 10000;
@@ -92,6 +92,8 @@ const changeKindRebuild = (table: string, kinds: readonly string[]) => [
 ];
 // Schema 10 admits comment_edited.
 export const CHANGE_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v10', schemaV10ChangeKinds);
+// Schema 11 admits starred and unstarred.
+export const STAR_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v11', changeKinds);
 
 // Only a version change is an edit; the comment insert trigger keeps recording commented.
 export const COMMENT_EDIT_CHANGE_STATEMENTS = [

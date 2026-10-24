@@ -8,7 +8,7 @@ import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
 import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence.ts';
 import type { Snapshot } from '../src/records/persistence.ts';
 
-export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'memory_store_identity', 'project_memory_revisions'] as const;
+export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'memory_store_identity', 'project_memory_revisions'] as const;
 export type Table = typeof tables[number];
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;
@@ -23,10 +23,12 @@ const primaryKey: Record<Table, string> = {
   dependencies: 'dependent_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id',
   issue_claims: 'issue_id', claim_requests: 'request_id', memory_store_identity: 'singleton', project_memory_revisions: 'project',
   land_order: 'later_id', land_order_revisions: 'later_id', land_order_requests: 'request_id',
-  issue_resources: 'issue_id', resource_revisions: 'issue_id', resource_requests: 'request_id',
+  issue_resources: 'issue_id', resource_revisions: 'issue_id', resource_requests: 'request_id', stars: 'comment_id',
 };
 // An edge table has no single-column key, so its rows are keyed and ordered by both endpoints.
 const edgeColumns: Partial<Record<Table, readonly [string, string]>> = { dependencies: ['dependent_id', 'blocker_id'], land_order: ['later_id', 'earlier_id'] };
+// A star is keyed by its comment and its starrer, both text, so it is ordered by the pair as stored.
+const pairColumns: Partial<Record<Table, readonly [string, string]>> = { stars: ['comment_id', 'starrer'] };
 // A resource entry is keyed by its issue and a number, so it is ordered by the issue, then the number.
 const entryTable = 'issue_resources';
 function entryKey(row: Row): [string, number] {
@@ -65,6 +67,7 @@ function canonicalColumns(): Record<Table, string[]> {
       issue_claims: columnsFor(database, 'issue_claims'), claim_requests: columnsFor(database, 'claim_requests'),
       land_order: columnsFor(database, 'land_order'), land_order_revisions: columnsFor(database, 'land_order_revisions'), land_order_requests: columnsFor(database, 'land_order_requests'),
       issue_resources: columnsFor(database, 'issue_resources'), resource_revisions: columnsFor(database, 'resource_revisions'), resource_requests: columnsFor(database, 'resource_requests'),
+      stars: columnsFor(database, 'stars'),
       memory_store_identity: columnsFor(database, 'memory_store_identity'), project_memory_revisions: columnsFor(database, 'project_memory_revisions'),
     };
   } finally { database.close(); }
@@ -117,6 +120,7 @@ function parseRows(value: unknown): Rows {
     issue_claims: parseCollection(input.issue_claims, 'issue_claims'), claim_requests: parseCollection(input.claim_requests, 'claim_requests'),
     land_order: parseCollection(input.land_order, 'land_order'), land_order_revisions: parseCollection(input.land_order_revisions, 'land_order_revisions'), land_order_requests: parseCollection(input.land_order_requests, 'land_order_requests'),
     issue_resources: parseCollection(input.issue_resources, 'issue_resources'), resource_revisions: parseCollection(input.resource_revisions, 'resource_revisions'), resource_requests: parseCollection(input.resource_requests, 'resource_requests'),
+    stars: parseCollection(input.stars, 'stars'),
     memory_store_identity: parseCollection(input.memory_store_identity, 'memory_store_identity'), project_memory_revisions: parseCollection(input.project_memory_revisions, 'project_memory_revisions'),
   };
 }
@@ -166,14 +170,15 @@ function rowsFromSnapshot(snapshot: Snapshot, metadata: Pick<Rows, 'memory_store
     dependencies: snapshot.dependencies.map(row => ({ ...row })), dependency_revisions: snapshot.dependency_revisions.map(row => ({ ...row })), dependency_requests: snapshot.dependency_requests.map(row => ({ ...row })),
     issue_claims: snapshot.issue_claims.map(row => ({ ...row })), claim_requests: snapshot.claim_requests.map(row => ({ ...row })),
     land_order: snapshot.land_order.map(row => ({ ...row })), land_order_revisions: snapshot.land_order_revisions.map(row => ({ ...row })), land_order_requests: snapshot.land_order_requests.map(row => ({ ...row })),
-    issue_resources: snapshot.issue_resources.map(row => ({ ...row })), resource_revisions: snapshot.resource_revisions.map(row => ({ ...row })), resource_requests: snapshot.resource_requests.map(row => ({ ...row })), ...metadata,
+    issue_resources: snapshot.issue_resources.map(row => ({ ...row })), resource_revisions: snapshot.resource_revisions.map(row => ({ ...row })), resource_requests: snapshot.resource_requests.map(row => ({ ...row })),
+    stars: snapshot.stars.map(row => ({ ...row })), ...metadata,
   };
 }
 
 function rowKey(row: Row, table: Table): string {
   if (table === 'memory_store_identity') { if (row.singleton !== 1) return fail('Invalid store identity singleton'); return '1'; }
   if (table === entryTable) return JSON.stringify(entryKey(row));
-  const edge = edgeColumns[table];
+  const edge = edgeColumns[table] ?? pairColumns[table];
   if (edge) return JSON.stringify([textField(row, edge[0]), textField(row, edge[1])]);
   const value = row[primaryKey[table]];
   if (typeof value !== 'string') fail(`${table} primary key must be text`);
@@ -210,7 +215,7 @@ function snapshotFromRows(rows: Rows): Snapshot {
   for (const row of rows.memories) if (!projects.has(textField(row, 'project'))) fail('Memory project has no captured revision');
   const snapshot = parseSnapshot({
     format: 'polylinedb.snapshot',
-    version: 8,
+    version: 9,
     issues: rows.issues.map(issueRow),
     comments: rows.comments.map(storedCommentRow),
     counters: rows.counters,
@@ -222,6 +227,7 @@ function snapshotFromRows(rows: Rows): Snapshot {
     issue_claims: rows.issue_claims, claim_requests: rows.claim_requests,
     land_order: rows.land_order, land_order_revisions: rows.land_order_revisions, land_order_requests: rows.land_order_requests,
     issue_resources: rows.issue_resources, resource_revisions: rows.resource_revisions, resource_requests: rows.resource_requests,
+    stars: rows.stars,
   });
   assertCanonicalRows(rows, rowsFromSnapshot(snapshot, { memory_store_identity: rows.memory_store_identity, project_memory_revisions: rows.project_memory_revisions }));
   return snapshot;
@@ -259,6 +265,8 @@ function orderedRows(rows: readonly Row[], table: Table): Row[] {
   });
   const edge = edgeColumns[table];
   if (edge) return [...rows].sort((left, right) => compareBinaryText(issueSortKey(textField(left, edge[0])), issueSortKey(textField(right, edge[0]))) || compareBinaryText(issueSortKey(textField(left, edge[1])), issueSortKey(textField(right, edge[1]))));
+  const pair = pairColumns[table];
+  if (pair) return [...rows].sort((left, right) => compareBinaryText(textField(left, pair[0]), textField(right, pair[0])) || compareBinaryText(textField(left, pair[1]), textField(right, pair[1])));
   return [...rows].sort((left, right) => compareBinaryText(rowKey(left, table), rowKey(right, table)));
 }
 
@@ -310,16 +318,23 @@ function destinationGuard(table: Table, chunk: { rows: Row[]; json: string }, lo
   const fieldList = columns[table].map(quoteIdentifier).join(', ');
   const jsonFields = columns[table].map(column => `json_extract(entry.value, '$.${column}') AS ${quoteIdentifier(column)}`).join(', ');
   const edge = edgeColumns[table];
+  const pair = pairColumns[table];
   const entry = table === entryTable;
   const key = edge ? `((SELECT sort_key FROM issues WHERE id = ${edge[0]}),(SELECT sort_key FROM issues WHERE id = ${edge[1]}))`
+    : pair ? `(${quoteIdentifier(pair[0])},${quoteIdentifier(pair[1])})`
     : entry ? '((SELECT sort_key FROM issues WHERE id = issue_id),seq)' : quoteIdentifier(primaryKey[table]);
-  const placeholder = edge || entry ? '(?,?)' : '?';
+  const placeholder = edge || pair || entry ? '(?,?)' : '?';
   const conditions = [lower === undefined ? '' : ` AND ${key} > ${placeholder}`, upper === undefined ? '' : ` AND ${key} <= ${placeholder}`].join('');
   const predicates = [lower, upper].filter((value): value is string => value !== undefined).flatMap((value): SqlValue[] => {
     if (entry) {
       const tuple: unknown = JSON.parse(value);
       if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[0] !== 'string' || typeof tuple[1] !== 'number') return fail('Invalid captured resource entry key');
       return [issueSortKey(tuple[0]), tuple[1]];
+    }
+    if (pair) {
+      const tuple: unknown = JSON.parse(value);
+      if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[0] !== 'string' || typeof tuple[1] !== 'string') return fail('Invalid captured star key');
+      return [tuple[0], tuple[1]];
     }
     if (!edge) return [value];
     const tuple: unknown = JSON.parse(value);
@@ -363,11 +378,17 @@ function sourceInsert(table: Table, chunk: { rows: Row[]; json: string }): State
   });
 }
 
-function sourceInserts(rows: Rows): Statement[] {
+// The snapshot puts a reply after its target, and the reply trigger needs the target first, so comments go in that order.
+function commentInsertOrder(rows: readonly Row[], snapshot: Snapshot): Row[] {
+  const position = new Map(snapshot.comments.map((comment, index) => [comment.id, index]));
+  return [...rows].sort((left, right) => (position.get(rowKey(left, 'comments')) ?? 0) - (position.get(rowKey(right, 'comments')) ?? 0));
+}
+
+function sourceInserts(rows: Rows, snapshot: Snapshot): Statement[] {
   const statements: Statement[] = [];
   for (const table of tables) {
     if (table === 'memory_store_identity' || table === 'project_memory_revisions') continue;
-    const ordered = table === 'issues' ? issueInsertOrder(rows.issues) : orderedRows(rows[table], table);
+    const ordered = table === 'issues' ? issueInsertOrder(rows.issues) : table === 'comments' ? commentInsertOrder(rows.comments, snapshot) : orderedRows(rows[table], table);
     for (const chunk of serializedChunks(ordered)) statements.push(sourceInsert(table, chunk));
   }
   return statements;
@@ -386,6 +407,7 @@ function counts(rows: Rows): Record<Table, number> {
     issue_claims: rows.issue_claims.length, claim_requests: rows.claim_requests.length,
     land_order: rows.land_order.length, land_order_revisions: rows.land_order_revisions.length, land_order_requests: rows.land_order_requests.length,
     issue_resources: rows.issue_resources.length, resource_revisions: rows.resource_revisions.length, resource_requests: rows.resource_requests.length,
+    stars: rows.stars.length,
     memory_store_identity: rows.memory_store_identity.length, project_memory_revisions: rows.project_memory_revisions.length,
   };
 }
@@ -393,7 +415,7 @@ function counts(rows: Rows): Record<Table, number> {
 export function additiveMerge(input: { source: unknown; destination: unknown }): MergePlan {
   const source = parseRows(input.source);
   const destination = parseRows(input.destination);
-  snapshotFromRows(source);
+  const sourceSnapshot = snapshotFromRows(source);
   snapshotFromRows(destination);
   if (source.memory_store_identity[0]?.incarnation === destination.memory_store_identity[0]?.incarnation) fail('Source and destination store incarnations must differ');
   assertDisjoint(source, destination);
@@ -414,12 +436,13 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
     issue_claims: [...source.issue_claims, ...destination.issue_claims], claim_requests: [...source.claim_requests, ...destination.claim_requests],
     land_order: [...source.land_order, ...destination.land_order], land_order_revisions: [...source.land_order_revisions, ...destination.land_order_revisions], land_order_requests: [...source.land_order_requests, ...destination.land_order_requests],
     issue_resources: [...source.issue_resources, ...destination.issue_resources], resource_revisions: [...source.resource_revisions, ...destination.resource_revisions], resource_requests: [...source.resource_requests, ...destination.resource_requests],
+    stars: [...source.stars, ...destination.stars],
     memory_store_identity: destination.memory_store_identity,
     project_memory_revisions: [...memoryRevisions].map(([project, revision]) => ({ project, revision })),
   };
   const expectedSnapshot = snapshotFromRows(merged);
   const canonical = canonicalSnapshot(expectedSnapshot);
-  const statements = [schemaGuard(), ...destinationGuards(destination), ...sourceInserts(source)];
+  const statements = [schemaGuard(), ...destinationGuards(destination), ...sourceInserts(source, sourceSnapshot)];
   return {
     statements,
     expectedSnapshot,

@@ -113,7 +113,7 @@ export async function checkSchema9Upgrade(db: SqlExecutor, populated: { comment_
   const { run, sql, latest } = helpers(db);
   assert.equal(before.length, 4);
   assert.deepEqual(await readEvents(db), before, 'the rebuild keeps every event with its seq');
-  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 10 }]);
+  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 11 }]);
   assert.deepEqual(await sql('SELECT version, updated_at, updated_by FROM comments'), [{ version: 1, updated_at: null, updated_by: null }]);
   const last = await latest();
   assert.equal(last, Number(before.at(-1)?.seq));

@@ -16,7 +16,7 @@ import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } fr
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from "./workspace/index.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7 } from './records/persistence.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8 } from './records/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 import { help } from './cli-help.ts';
@@ -195,9 +195,9 @@ async function main(argv: readonly string[]): Promise<void> {
     let source: unknown;
     try { source = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
     catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
-    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6, '7': convertSnapshotV7 };
+    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6, '7': convertSnapshotV7, '8': convertSnapshotV8 };
     const from = one('from') ?? '2';
-    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5, 6 or 7');
+    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5, 6, 7 or 8');
     const converted = converters[from as keyof typeof converters](source);
     const content = canonicalSnapshot(converted) + '\n';
     const output = one('output') ?? '-';
