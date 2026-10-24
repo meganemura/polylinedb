@@ -1826,6 +1826,9 @@ test('ui: Posts lists the posts of a project newest first, filters them, and sta
     const first = (await operation(env, token, { op: 'comment', id, body: 'first lesson\nwith a detail line', handle: 'builder', via: 'claude@cloud' })).comment;
     await operation(env, token, { op: 'comment', id, body: 'plain note' });
     const second = (await operation(env, token, { op: 'comment', id, body: 'second lesson', handle: 'tester', reply_to: first.id })).comment;
+    // Comments written in one millisecond order by id, so the posts get distinct times to pin newest first.
+    sqlite.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run('2026-10-24T09:00:00.000Z', first.id);
+    sqlite.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run('2026-10-24T09:01:00.000Z', second.id);
 
     // With no project chosen, the page shows the project updated last.
     const html = await page('/ui/posts');
@@ -1873,12 +1876,15 @@ test('ui: Posts pages older posts through the cursor of the last post shown', as
   try {
     const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Many posts' });
     for (let index = 0; index < 51; index += 1) await operation(env, token, { op: 'comment', id, body: `lesson ${index}`, handle: 'builder' });
+    const says = (html: string) => [...html.matchAll(/<p class="says"[^>]*>([^<]+)/g)].map(match => match[1]);
     const html = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/posts?handle=builder')).text();
-    assert.equal(html.split('<p class="says"').length - 1, 50);
+    assert.equal(says(html).length, 50);
     const older = html.match(/href="(\/ui\/posts\?[^"]+)">Older posts</)?.[1]?.replaceAll('&amp;', '&');
     assert.ok(older?.includes('handle=builder') && older.includes('after='), older);
     const rest = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', older)).text();
-    assert.deepEqual([...rest.matchAll(/<p class="says"[^>]*>([^<]+)/g)].map(match => match[1]), ['lesson 0']);
+    assert.equal(says(rest).length, 1);
+    // Posts written in the same millisecond order by id, so the check is that the two pages hold every post once.
+    assert.deepEqual([...says(html), ...says(rest)].sort(), Array.from({ length: 51 }, (_, index) => `lesson ${index}`).sort());
     assert.equal(rest.includes('Older posts'), false);
   } finally { sqlite.close(); }
 });
