@@ -359,6 +359,8 @@ const issueShape = {
 };
 // A released client keeps only the first five comment keys and drops the edit and post fields, so adding them is safe for it.
 const commentShape = { id: 'string', issue_id: 'string', body: 'string', created_at: 'string', created_by: 'string', version: 'number', updated_at: 'string|null', updated_by: 'string|null', handle: 'string|null', via: 'string|null', reply_to: 'string|null' };
+// show adds the stars of each comment; a write result leaves them out.
+const shownCommentShape = { ...commentShape, stars: 'number', starrers: ['string'] };
 const claimShape = { issue_id: 'string', incarnation: 'string', session_id: 'string', generation: 'number', actor: 'string', agent_label: 'string|null', revision: 'number', acquired_at: 'number', changed_at: 'number', expires_at: 'number', released_at: 'number|null' };
 const inspectionShape = { issue_id: 'string', store_incarnation: 'string', observed_at: 'number', state: 'string', lease: claimShape };
 function assertShape(value: unknown, shape: unknown, path = 'response'): void {
@@ -390,7 +392,7 @@ test('existing operation responses keep the keys a released client decodes', asy
     const conflict = await wire({ op: 'update', id, changes: [{ field: 'body', expected: 1, value: 'Stale' }] });
     assertShape(conflict.body, { error: { code: 'string', message: 'string', details: { issue: issueShape, fields: [{ field: 'string', expected: 'number', actual: 'number', current: 'string' }] } } });
     const shown = await wire({ op: 'show', id });
-    assertShape(shown.body, { issue: issueShape, comments: [commentShape], claim: { ...inspectionShape, lease: null } });
+    assertShape(shown.body, { issue: issueShape, comments: [shownCommentShape], claim: { ...inspectionShape, lease: null } });
     assertShape((await wire({ op: 'list', project: 'compat' })).body, { issues: [issueShape], next_cursor: 'string|null' });
     assertShape((await wire({ op: 'search', query: 'Edited' })).body, { issues: [issueShape], next_cursor: 'string|null' });
     const matched = await wire({ op: 'search', query: 'Edited', with_matches: true });
@@ -412,7 +414,7 @@ test('existing operation responses keep the keys a released client decodes', asy
     assertShape(replay.body, { error: { code: 'string', message: 'string' } });
     assert.equal((replay.body.error as { code: string }).code, 'claim_request_conflict');
     const active = await wire({ op: 'show', id });
-    assertShape(active.body, { issue: issueShape, comments: [commentShape], claim: inspectionShape });
+    assertShape(active.body, { issue: issueShape, comments: [shownCommentShape], claim: inspectionShape });
     assertShape((await wire({ op: 'actor' })).body, { actor: 'string' });
     const memoryRequest = { op: 'memory_create', project: 'compat', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Fact', body: 'Confirmed' };
     assertShape((await wire(memoryRequest)).body, { memory: { id: 'string', project: 'string', title: 'string', body: 'string', version: 'number', created_at: 'string', created_by: 'string', updated_at: 'string', updated_by: 'string' } });
@@ -730,5 +732,107 @@ test('an older Worker that rejects comment_edit fails with a clear message and n
     await assert.rejects(decode(edit, older), { code: 'invalid_input', message: 'The cloud Worker does not support comment edits. Deploy a newer Worker to use them.' });
     assert.deepEqual(sent, [edit]);
     assert.equal(((await wire({ op: 'show', id })).body.comments as { body: string }[])[0]?.body, 'Kept');
+  } finally { sqlite.close(); }
+});
+
+test('posts and stars decode, each rejection names its comment, and damaged or mismatched bodies are refused', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Posts' })).body.issue as { id: string }).id;
+    const post = { op: 'comment', id, body: 'Plan', handle: 'builder', via: 'claude-code opus-5.5 cloud' };
+    const written = await decode(post, transport);
+    assert.ok('comment' in written);
+    assert.deepEqual([written.comment.handle, written.comment.via, written.comment.reply_to], ['builder', 'claude-code opus-5.5 cloud', null]);
+    const { handle: _h, via: _v, reply_to: _r, ...older } = written.comment;
+    for (const damaged of [{ ...written.comment, handle: 'tester' }, { ...written.comment, via: null }, { ...written.comment, reply_to: crypto.randomUUID() }, older]) {
+      await assert.rejects(decode(post, answer({ comment: damaged })), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+    const reply = { op: 'comment', id, body: 'Reply', handle: 'tester', reply_to: written.comment.id };
+    const replied = await decode(reply, transport);
+    assert.ok('comment' in replied);
+    assert.equal(replied.comment.reply_to, written.comment.id);
+    const nowhere = { op: 'comment', id, body: 'To nothing', reply_to: crypto.randomUUID() };
+    assert.deepEqual(await outcome(decode(nowhere, transport)), { error: { code: 'reply_target_not_found', status: 404, details: { id, reply_to: nowhere.reply_to } } });
+    await assert.rejects(decode(nowhere, answer({ error: { code: 'reply_target_not_found', message: 'Missing', details: { id, reply_to: written.comment.id } } }, 404)), { code: 'cloud_invalid_response' });
+
+    const star = { op: 'star', id, comment_id: written.comment.id, handle: 'scout' };
+    const starredBody = (await wire(star)).body;
+    assertShape(starredBody, { star: { comment_id: 'string', starrer: 'string', handle: 'string', actor: 'string', created_at: 'string' }, outcome: 'string' });
+    const starred = await decode(star, answer(starredBody));
+    assert.deepEqual(starred, { star: { comment_id: written.comment.id, starrer: 'scout', handle: 'scout', actor: 'access:owner', created_at: (starredBody.star as { created_at: string }).created_at }, outcome: 'added' });
+    assert.deepEqual(await decode(star, answer(future(starredBody))), starred);
+    assert.deepEqual(await decode(star, transport), { ...starred, outcome: 'already_present' });
+    const current = starredBody.star as Record<string, unknown>;
+    for (const damaged of [{ ...starredBody, outcome: 'removed' }, { ...starredBody, star: null }, { ...starredBody, star: { ...current, comment_id: crypto.randomUUID() } },
+      { ...starredBody, star: { ...current, handle: null, starrer: 'access:owner' } }, { ...starredBody, star: { ...current, starrer: 'tester' } }, { outcome: 'added' }]) {
+      await assert.rejects(decode(star, answer(damaged)), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+    const missing = { op: 'star', id, comment_id: crypto.randomUUID() };
+    assert.deepEqual(await outcome(decode(missing, transport)), { error: { code: 'comment_not_found', status: 404, details: { id, comment_id: missing.comment_id } } });
+    await assert.rejects(decode(missing, answer({ error: { code: 'comment_not_found', message: 'Missing', details: { id, comment_id: written.comment.id } } }, 404)), { code: 'cloud_invalid_response' });
+
+    // Another actor that speaks as the same persona reaches a star it cannot remove.
+    sqlite.prepare("INSERT INTO stars(comment_id,starrer,handle,actor,created_at) VALUES (?,'tester','tester','access:other','2021-01-01T00:00:00Z')").run(written.comment.id);
+    const foreign = { op: 'unstar', id, comment_id: written.comment.id, handle: 'tester' };
+    assert.deepEqual(await outcome(decode(foreign, transport)), { error: { code: 'star_owner_required', status: 403, details: { id, comment_id: written.comment.id, starrer: 'tester' } } });
+    assert.deepEqual(await outcome(decode(foreign, answer({ error: { code: 'star_owner_required', message: 'Owner', details: { id, comment_id: written.comment.id, starrer: 'scout' } } }, 403))),
+      { error: { code: 'denied', status: 403, details: undefined } });
+    const unstar = { op: 'unstar', id, comment_id: written.comment.id, handle: 'scout' };
+    assert.deepEqual(await decode(unstar, transport), { ...starred, outcome: 'removed' });
+    assert.deepEqual(await decode(unstar, transport), { star: null, outcome: 'already_absent' });
+    await assert.rejects(decode(unstar, answer({ star: current, outcome: 'already_absent' })), { code: 'cloud_invalid_response' });
+    await assert.rejects(decode(unstar, answer({ star: current, outcome: 'added' })), { code: 'cloud_invalid_response' });
+
+    // The reply is placed a second after the post, so newest first does not depend on two writes in one millisecond.
+    sqlite.prepare("UPDATE comments SET created_at = ? WHERE id = ?").run('2026-03-01T00:00:00.000Z', written.comment.id);
+    sqlite.prepare("UPDATE comments SET created_at = ? WHERE id = ?").run('2026-03-01T00:00:01.000Z', replied.comment.id);
+    const listing = { op: 'posts', project: 'compat' };
+    const listedBody = (await wire(listing)).body;
+    assertShape(listedBody, { posts: [shownCommentShape], next_cursor: 'string|null' });
+    const listed = await decode(listing, answer(listedBody));
+    assert.ok('posts' in listed);
+    assert.deepEqual(listed.posts.map(entry => [entry.id, entry.handle, entry.stars, entry.starrers]), [[replied.comment.id, 'tester', 0, []], [written.comment.id, 'builder', 1, ['tester']]]);
+    assert.deepEqual(await decode(listing, answer(future(listedBody))), listed);
+    const posts = listedBody.posts as Record<string, unknown>[];
+    const paged = { op: 'posts', project: 'compat', limit: 1 };
+    const pagedBody = (await wire(paged)).body;
+    assert.equal(pagedBody.next_cursor, (pagedBody.posts as { id: string }[])[0]?.id);
+    assert.deepEqual(await decode(paged, answer(pagedBody)), pagedBody);
+    for (const damaged of [{ posts: [...posts].reverse(), next_cursor: null }, { posts: [{ ...posts[0], handle: null }], next_cursor: null }, { posts: [{ ...posts[0], stars: undefined }], next_cursor: null },
+      { posts: posts.slice(0, 1), next_cursor: crypto.randomUUID() }]) {
+      await assert.rejects(decode(listing, answer(damaged)), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+    await assert.rejects(decode({ ...listing, handle: 'scout' }, answer(listedBody)), { code: 'cloud_invalid_response' }, 'a post of another persona');
+    await assert.rejects(decode({ ...listing, min_stars: 1 }, answer(listedBody)), { code: 'cloud_invalid_response' }, 'a post with fewer stars');
+    await assert.rejects(decode({ ...listing, since: '2999-01-01' }, answer(listedBody)), { code: 'cloud_invalid_response' }, 'a post before since');
+    await assert.rejects(decode(paged, answer(listedBody)), { code: 'cloud_invalid_response' }, 'more posts than the limit');
+  } finally { sqlite.close(); }
+});
+
+test('an older Worker that rejects posts, stars, a post field, or a star kind fails with a clear message and no retry', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Old Worker' })).body.issue as { id: string }).id;
+    const written = (await wire({ op: 'comment', id, body: 'Kept' })).body.comment as { id: string };
+    const sent: unknown[] = [];
+    const older: typeof fetch = async (_url, options) => {
+      const operation = JSON.parse(String(options?.body)); sent.push(operation);
+      if (['star', 'unstar', 'posts'].includes(operation.op)) return Response.json({ error: { code: 'invalid_input', message: 'op must be one of create, show, list, search, comment, comment_edit, update, close, reopen, actor' } }, { status: 400 });
+      if (operation.op === 'comment' && ('handle' in operation || 'via' in operation || 'reply_to' in operation)) {
+        const unexpected = ['handle', 'via', 'reply_to'].filter(key => key in operation);
+        return Response.json({ error: { code: 'invalid_input', message: `Unexpected field${unexpected.length === 1 ? '' : 's'}: ${unexpected.join(', ')}` } }, { status: 400 });
+      }
+      if (operation.op === 'changes' && operation.kinds?.includes('starred')) return Response.json({ error: { code: 'invalid_input', message: 'kinds entries must be one of created, updated, status_changed, commented, claim_acquired, claim_released, dependency_added, dependency_removed, became_ready, comment_edited' } }, { status: 400 });
+      return transport(_url, options);
+    };
+    const star = { op: 'star', id, comment_id: written.id };
+    await assert.rejects(decode(star, older), { code: 'invalid_input', message: 'The cloud Worker does not support posts and stars. Deploy a newer Worker to use them.' });
+    await assert.rejects(decode({ op: 'posts', project: 'compat' }, older), { code: 'invalid_input', message: 'The cloud Worker does not support posts and stars. Deploy a newer Worker to use them.' });
+    const voiced = { op: 'comment', id, body: 'Voiced', handle: 'builder', reply_to: written.id };
+    await assert.rejects(decode(voiced, older), { code: 'invalid_input', message: 'The cloud Worker does not support handle, via, or reply_to on comments. Deploy a newer Worker to use them.' });
+    const feed = { op: 'changes', since: 0, kinds: ['commented', 'starred'] };
+    await assert.rejects(decode(feed, older), { code: 'invalid_input', message: 'The cloud Worker does not record starred or unstarred events. Deploy a newer Worker to filter by them.' });
+    assert.deepEqual(sent, [star, { op: 'posts', project: 'compat', min_stars: 0, limit: 50 }, voiced, { ...feed, limit: 50 }]);
+    assert.deepEqual(((await wire({ op: 'show', id })).body.comments as { body: string }[]).map(comment => comment.body), ['Kept']);
   } finally { sqlite.close(); }
 });

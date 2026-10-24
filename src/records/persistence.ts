@@ -1,6 +1,6 @@
 // Exposes the storage contract and record decoding shared by adapters; command dispatch uses the command entry.
 export type { SqlExecutor, SqlStatement } from './issues.ts';
-export { issueRow, commentRow, storedCommentRow } from './issues.ts';
+export { issueRow, commentRow, storedCommentRow, shownCommentRow } from './issues.ts';
 export { starRow } from './posts.ts';
 export { memoryRow, memorySortKey } from './memories.ts';
 export { claimRow, claimRequestRow } from './claims.ts';

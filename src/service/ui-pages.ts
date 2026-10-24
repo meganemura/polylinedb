@@ -76,6 +76,7 @@ export function agentsPage(lanes: Lanes, viewer: Viewer): string {
 const eventWords: Record<string, string> = {
   created: 'Created', updated: 'Updated', status_changed: 'Status changed', commented: 'Commented', comment_edited: 'Comment edited', claim_acquired: 'Claimed',
   claim_released: 'Released', dependency_added: 'Blocker added', dependency_removed: 'Blocker removed', became_ready: 'Became ready',
+  starred: 'Starred', unstarred: 'Unstarred',
 };
 const eventLanes: Record<string, { lane: string; icon: 'plus' | 'check' | 'agents' | 'comment' | 'edit' | 'link' }> = {
   created: { lane: '', icon: 'plus' }, claim_acquired: { lane: 'agents', icon: 'agents' }, claim_released: { lane: 'agents', icon: 'agents' },

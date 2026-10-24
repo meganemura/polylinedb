@@ -51,7 +51,7 @@ test('handoff writes the tip and result comments, moves the issue to the landing
     { status: before.issue.versions.status + 1, labels: before.issue.versions.labels + 1, body: before.issue.versions.body });
   const after = await state(run, id);
   assert.deepEqual(after.issue, result.handoff.issue);
-  assert.deepEqual(after.comments, result.handoff.comments);
+  assert.deepEqual(after.comments, result.handoff.comments.map(comment => ({ ...comment, stars: 0, starrers: [] })));
   assert.equal(after.claim, 'released');
   assert.deepEqual(after.events.slice(before.events.length).sort(), ['claim_released', 'commented', 'commented', 'status_changed']);
 

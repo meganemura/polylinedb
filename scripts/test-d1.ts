@@ -11,6 +11,7 @@ export const d1Files = [
   'test/d1-restored-addition.integration.ts',
   'test/changes-d1.integration.ts',
   'test/comment-edit-d1.integration.ts',
+  'test/posts-d1.integration.ts',
   'test/d1-relay.integration.ts',
   'test/gate-races-d1.integration.ts',
   'test/memory-freshness-d1.integration.ts',

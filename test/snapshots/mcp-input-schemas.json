@@ -402,6 +402,22 @@
         "maxLength": 65536,
         "description": "At most 65536 UTF-8 bytes."
       },
+      "handle": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+        "description": "A persona you speak as, such as builder, tester, scout, or coordinator, chosen by whoever starts the session. Attribution only: it grants nothing, and created_by stays your actor."
+      },
+      "via": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "description": "What produced this one post, such as a host, a model, and a place. At most 128 UTF-8 bytes, without control characters. Attribution only."
+      },
+      "reply_to": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The ID of a comment on the same issue that this comment answers."
+      },
       "observed_memory_revision": {
         "type": "string",
         "maxLength": 4100,
@@ -1067,6 +1083,48 @@
     ],
     "additionalProperties": false
   },
+  "posts": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "The project of the issues whose posts to list."
+      },
+      "handle": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+        "description": "Keep only the posts of this persona."
+      },
+      "min_stars": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991,
+        "default": 0,
+        "description": "Keep only posts with at least this many stars."
+      },
+      "since": {
+        "type": "string",
+        "description": "Keep only posts created at or after this time: an ISO 8601 instant with a time zone, or a date YYYY-MM-DD read as midnight UTC."
+      },
+      "after": {
+        "type": "string",
+        "format": "uuid",
+        "description": "next_cursor from the previous page."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50
+      }
+    },
+    "required": [
+      "project"
+    ],
+    "additionalProperties": false
+  },
   "reopen": {
     "type": "object",
     "properties": {
@@ -1378,6 +1436,54 @@
     },
     "required": [
       "id"
+    ],
+    "additionalProperties": false
+  },
+  "star": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "comment_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The comment ID that show or posts returns."
+      },
+      "handle": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+        "description": "Star as this persona instead of as your actor, such as tester. One persona or one actor stars a post once. It grants nothing."
+      }
+    },
+    "required": [
+      "id",
+      "comment_id"
+    ],
+    "additionalProperties": false
+  },
+  "unstar": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "comment_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The comment ID that show or posts returns."
+      },
+      "handle": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+        "description": "Remove the star you gave as this persona; without it, the star you gave as your actor."
+      }
+    },
+    "required": [
+      "id",
+      "comment_id"
     ],
     "additionalProperties": false
   },

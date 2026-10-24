@@ -1074,7 +1074,7 @@ test('CLI comment edit replaces the body of the own comment, refuses a stale ver
   assert.match(run(['show', issue.id, '--human'], { raw: true }), / · version 1\n/);
   const edited = run(['comment', 'edit', issue.id, comment.id, '--expected', '1', '--body-file', '-'], { input: 'second words' }).comment;
   assert.deepEqual(edited, { ...comment, body: 'second words', version: 2, updated_at: edited.updated_at, updated_by: 'local:test' });
-  assert.deepEqual(run(['show', issue.id]).comments, [edited]);
+  assert.deepEqual(run(['show', issue.id]).comments, [{ ...edited, stars: 0, starrers: [] }]);
   const human = run(['show', issue.id, '--human'], { raw: true });
   assert.ok(human.includes(` · version 2 · edited ${edited.updated_at} by local:test\n`), human);
   assert.ok(human.includes('    second words'));

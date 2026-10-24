@@ -18,11 +18,13 @@ import { executeLandOrderOperation, landOrderSchemas, landOrderWarnings, parseLa
 import type { LandOrder, LandOrderOperation, LandOrderResult, LandOrderWarning } from './land-order.ts';
 import { executeResourceOperation, parseResourceOperation, resourceSchemas } from './resources.ts';
 import type { ResourceOperation, ResourceResult } from './resources.ts';
-export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation | ChangesOperation | WaitOperation | LandOrderOperation | ResourceOperation;
+import { executePostOperation, parsePostOperation, postSchemas } from './posts.ts';
+import type { PostOperation, PostResult } from './posts.ts';
+export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation | ChangesOperation | WaitOperation | LandOrderOperation | ResourceOperation | PostOperation;
 /** show and list add land_order only on request; list aligns it with issues. */
-export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness; land_order?: LandOrder | LandOrder[] }) | MemoryResult | DependencyResult | ClaimResult | (Extract<ClaimResult, { handoff: unknown }> & { land_order_warnings?: LandOrderWarning[] }) | ChangesResult | LandOrderResult | ResourceResult;
+export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness; land_order?: LandOrder | LandOrder[] }) | MemoryResult | DependencyResult | ClaimResult | (Extract<ClaimResult, { handoff: unknown }> & { land_order_warnings?: LandOrderWarning[] }) | ChangesResult | LandOrderResult | ResourceResult | PostResult;
 const observedSchema = { type: 'string', maxLength: 4100, description: 'Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search.' };
-export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas, ...changesSchemas, ...landOrderSchemas, ...resourceSchemas,
+export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas, ...changesSchemas, ...landOrderSchemas, ...resourceSchemas, ...postSchemas,
   ...Object.fromEntries(Object.entries(issueSchemas).filter(([key]) => key !== 'actor').map(([key, value]) => [key, { ...value, properties: { ...value.properties, observed_memory_revision: observedSchema } }])) };
 export function parseOperation(value: unknown): Operation {
   if (value && typeof value === 'object' && 'op' in value && (value.op === 'changes' || value.op === 'wait')) return value.op === 'wait' ? parseWaitOperation(value) : parseChangesOperation(value);
@@ -31,6 +33,7 @@ export function parseOperation(value: unknown): Operation {
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('land_order_')) return parseLandOrderOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('resource_')) return parseResourceOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('memory_')) return parseMemoryOperation(value);
+  if (value && typeof value === 'object' && 'op' in value && (value.op === 'star' || value.op === 'unstar' || value.op === 'posts')) return parsePostOperation(value);
   if (value && typeof value === 'object' && !Array.isArray(value) && 'observed_memory_revision' in value) {
     if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return parseIssue(value);
     const { observed_memory_revision, ...input } = value;
@@ -69,6 +72,8 @@ async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, sto
       return executeLandOrderOperation(db, operation, actor);
     case 'resource_add': case 'resource_update': case 'resource_list': case 'resource_live':
       return executeResourceOperation(db, operation, actor);
+    case 'star': case 'unstar': case 'posts':
+      return executePostOperation(db, operation, actor);
     case 'memory_create': case 'memory_show': case 'memory_list': case 'memory_search': case 'memory_update': case 'memory_delete': case 'memory_context':
       return executeMemoryOperation(db, operation, actor.id, store);
     default: {

@@ -2,9 +2,10 @@
 // Four older-Worker answers are the exceptions: a show without `claim` completes with one claim_show request,
 // and a search rejected for `with_matches`, a show or list rejected for `with_land_order`, or a release rejected for `expired_noop` runs once more without that field.
 // A list rejected for `claimed` is not retried, because a page without that filter would answer a different question.
+// A comment rejected for its handle, via, or reply_to is not retried either, because without them an older Worker would post without the attribution or the reply.
 // A close or update rejected for `resources_reason` is not retried either, because without it an older Worker would close with no recorded reason.
-import { PolylinedbError, type Comment, type Issue, type SearchMatch } from '../records/index.ts';
-import { issueRow, commentRow, issueSortKey } from '../records/persistence.ts';
+import { PolylinedbError, type Comment, type Issue, type SearchMatch, type ShownComment, type Star } from '../records/index.ts';
+import { issueRow, commentRow, shownCommentRow, starRow, issueSortKey } from '../records/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
 import { memoryRow } from '../records/persistence.ts';
 import { parseMemoryId, parseMemoryRevision, observedMemoryProject } from '../records/index.ts';
@@ -43,6 +44,15 @@ function issue(value: unknown): Issue {
 // commentRow refuses a partial group.
 function comment(value: unknown): Comment {
   return commentRow(known(value, ['id', 'issue_id', 'body', 'created_at', 'created_by'], ['version', 'updated_at', 'updated_by', 'handle', 'via', 'reply_to', 'stars', 'starrers']));
+}
+const commentKeys = ['id', 'issue_id', 'body', 'created_at', 'created_by', 'version', 'updated_at', 'updated_by', 'handle', 'via', 'reply_to', 'stars', 'starrers'];
+// A post comes from a Worker that knows posts, so it carries every group.
+function post(value: unknown): ShownComment { return shownCommentRow(known(value, commentKeys)); }
+function star(value: unknown, operation: Operation): Star {
+  const current = starRow(known(value, ['comment_id', 'starrer', 'handle', 'actor', 'created_at']));
+  // Without a handle the starrer is the caller's actor, which the client does not know, so only the handle is checked.
+  if ((operation.op !== 'star' && operation.op !== 'unstar') || current.comment_id !== operation.comment_id || current.handle !== (operation.handle ?? null)) return invalid();
+  return current;
 }
 function editedComment(value: unknown, operation: Operation): Comment & { version: number } {
   const current = comment(value);
@@ -358,7 +368,35 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       }
       return { issues, next_cursor };
     }
-    case 'comment': return { comment: comment(known(value, ['comment']).comment) };
+    case 'comment': {
+      const written = comment(known(value, ['comment']).comment);
+      // A Worker that accepted handle, via, or reply_to knows posts, so it echoes all three.
+      const voiced = operation.handle !== undefined || operation.via !== undefined || operation.reply_to !== undefined;
+      if (written.handle === undefined ? voiced
+        : written.handle !== (operation.handle ?? null) || written.via !== (operation.via ?? null) || written.reply_to !== (operation.reply_to ?? null)) return invalid();
+      return { comment: written };
+    }
+    case 'star': case 'unstar': {
+      const row = known(value, ['star', 'outcome']);
+      const outcome = (operation.op === 'star' ? ['added', 'already_present'] as const : ['removed', 'already_absent'] as const).find(outcome => outcome === row.outcome) ?? invalid();
+      if (outcome === 'already_absent') return row.star === null ? { star: null, outcome } : invalid();
+      return { star: star(row.star, operation), outcome };
+    }
+    case 'posts': {
+      const row = known(value, ['posts', 'next_cursor']);
+      if (!Array.isArray(row.posts) || row.posts.length > operation.limit) return invalid();
+      const posts = row.posts.map(post);
+      let previous: ShownComment | undefined;
+      for (const current of posts) {
+        if (current.handle === null || (operation.handle !== undefined && current.handle !== operation.handle) || current.stars < operation.min_stars
+          || (operation.since !== undefined && current.created_at < operation.since)) return invalid();
+        if (previous && !(current.created_at < previous.created_at || (current.created_at === previous.created_at && current.id < previous.id))) return invalid();
+        previous = current;
+      }
+      const next_cursor = row.next_cursor === null ? null : parseRequestId(row.next_cursor);
+      if (next_cursor !== null && (posts.length !== operation.limit || next_cursor !== posts.at(-1)?.id)) return invalid();
+      return { posts, next_cursor };
+    }
     case 'comment_edit': {
       const edited = comment(known(value, ['comment']).comment);
       if (edited.id !== operation.comment_id || edited.issue_id !== operation.id || edited.body !== operation.body
@@ -518,8 +556,20 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
     }
     case 'comment_not_found': case 'comment_author_required': {
       const row = known(value, ['id', 'comment_id']);
-      if (operation.op !== 'comment_edit' || row.id !== operation.id || row.comment_id !== operation.comment_id) return invalid();
-      return { id: operation.id, comment_id: operation.comment_id };
+      const named = operation.op === 'comment_edit' || (code === 'comment_not_found' && (operation.op === 'star' || operation.op === 'unstar')) ? operation : invalid();
+      if (row.id !== named.id || row.comment_id !== named.comment_id) return invalid();
+      return { id: named.id, comment_id: named.comment_id };
+    }
+    case 'reply_target_not_found': {
+      const row = known(value, ['id', 'reply_to']);
+      if (operation.op !== 'comment' || operation.reply_to === undefined || row.id !== operation.id || row.reply_to !== operation.reply_to) return invalid();
+      return { id: operation.id, reply_to: operation.reply_to };
+    }
+    case 'star_owner_required': {
+      // Only a shared persona reaches another actor's star, so the starrer is the handle the caller named.
+      const row = known(value, ['id', 'comment_id', 'starrer']);
+      if (operation.op !== 'unstar' || operation.handle === undefined || row.id !== operation.id || row.comment_id !== operation.comment_id || row.starrer !== operation.handle) return invalid();
+      return { id: operation.id, comment_id: operation.comment_id, starrer: operation.handle };
     }
     case 'comment_conflict': {
       const row = known(value, ['comment', 'expected']);
@@ -608,13 +658,16 @@ export async function executeCloudOperation(input: {
       // Access itself answers 403 without this envelope, so only the Worker's read-only rejection keeps its code.
       let readOnly = false;
       let notAuthor: unknown;
+      let notOwner: unknown;
       try {
         const error = known(known(await readResponse(response, controller.signal), ['error']).error, ['code', 'message', 'details']);
         readOnly = error.code === 'read_only_actor' && known(error.details, ['op']).op === input.operation.op;
         if (error.code === 'comment_author_required') notAuthor = errorDetails(input.operation, error.code, error.details);
+        if (error.code === 'star_owner_required') notOwner = errorDetails(input.operation, error.code, error.details);
       } catch { controller.signal.throwIfAborted(); }
       if (readOnly) throw new PolylinedbError('read_only_actor', 'This cloud actor can only read.', 403, { op: input.operation.op });
       if (notAuthor !== undefined) throw new PolylinedbError('comment_author_required', 'Only the author of a comment can edit it.', 403, notAuthor);
+      if (notOwner !== undefined) throw new PolylinedbError('star_owner_required', 'Only the actor that gave a star can remove it.', 403, notOwner);
       throw new PolylinedbError('denied', 'Cloud access was denied.', 403);
     }
     let value: unknown;
@@ -664,6 +717,16 @@ export async function executeCloudOperation(input: {
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'comment_edit' && /^op must be one of /.test(error.message) && !error.message.includes(input.operation.op)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support comment edits. Deploy a newer Worker to use them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'star' || input.operation.op === 'unstar' || input.operation.op === 'posts') && /^op must be one of /.test(error.message) && !error.message.includes(input.operation.op)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support posts and stars. Deploy a newer Worker to use them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'comment' && /^Unexpected fields?: /.test(error.message) && /\b(handle|via|reply_to)\b/.test(error.message)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support handle, via, or reply_to on comments. Deploy a newer Worker to use them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'changes' || input.operation.op === 'wait') && input.operation.kinds?.some(kind => kind === 'starred' || kind === 'unstarred')
+        && /^kinds/.test(error.message) && !error.message.includes('starred')) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not record starred or unstarred events. Deploy a newer Worker to filter by them.', 400);
       }
       throw new PolylinedbError(error.code, 'The cloud rejected the operation.', response.status, details);
     }

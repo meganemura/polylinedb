@@ -122,7 +122,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'posts', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'star', 'unstar', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -155,6 +155,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['memory_search', true, false, true, false],
       ['memory_show', true, false, true, false],
       ['memory_update', false, true, true, false],
+      ['posts', true, false, true, false],
       ['reopen', false, true, true, false],
       ['resource_add', false, false, true, false],
       ['resource_list', true, false, true, false],
@@ -163,6 +164,8 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['search', true, false, true, false],
       ['server_info', true, false, true, false],
       ['show', true, false, true, false],
+      ['star', false, false, true, false],
+      ['unstar', false, true, true, false],
       ['update', false, true, true, false],
       ['wait', true, false, true, false],
     ]);
@@ -215,7 +218,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     assert.equal(httpEditConflict.status, 409);
     assert.deepEqual((await httpEditConflict.json()).error.details, { comment: editedComment, expected: 1 });
     const afterEdit = await (await request('/v1/operations', { op: 'show', id: issue.id })).json();
-    assert.deepEqual(afterEdit.comments, [editedComment]); assert.deepEqual(afterEdit.issue.versions, shown.issue.versions); assert.equal(afterEdit.issue.updated_at, shown.issue.updated_at);
+    assert.deepEqual(afterEdit.comments, [{ ...editedComment, stars: 0, starrers: [] }]); assert.deepEqual(afterEdit.issue.versions, shown.issue.versions); assert.equal(afterEdit.issue.updated_at, shown.issue.updated_at);
     assert.deepEqual((await (await request('/v1/operations', { op: 'search', query: 'reproduced' })).json()).issues.map((hit: { id: string }) => hit.id), [issue.id]);
     assert.deepEqual((await (await request('/v1/operations', { op: 'search', query: 'confirmed' })).json()).issues, []);
     const edits = (await (await request('/v1/operations', { op: 'changes', since: 0, kinds: ['comment_edited'] })).json()).changes;
@@ -386,6 +389,14 @@ test('the roster keeps readers read-only and gates each service-token agent as i
     assert.equal((await operate('codex', { op: 'comment', id: ready.id, body: 'started' })).status, 200);
 
     assert.equal((await operate('claude', { op: 'comment', id: ready.id, body: 'mine' })).body.error.code, 'claim_required');
+    // A star changes no issue field, so an agent stars without a claim, while a reader cannot star at all.
+    const started = (await operate('viewer', { op: 'show', id: ready.id })).body.comments.find((comment: { body: string }) => comment.body === 'started');
+    assert.deepEqual(await operate('viewer', { op: 'star', id: ready.id, comment_id: started.id }),
+      { status: 403, body: { error: { code: 'read_only_actor', message: 'This actor can only read', details: { op: 'star' } } } });
+    assert.equal((await operate('viewer', { op: 'unstar', id: ready.id, comment_id: started.id })).body.error.code, 'read_only_actor');
+    assert.equal((await operate('viewer', { op: 'posts', project: 'parser' })).status, 200);
+    assert.equal((await operate('claude', { op: 'star', id: ready.id, comment_id: started.id })).body.outcome, 'added');
+    assert.equal((await operate('claude', { op: 'unstar', id: ready.id, comment_id: started.id })).body.outcome, 'removed');
     const proof = { issue_id: ready.id, incarnation: held.body.claim_receipt.incarnation, session_id: held.body.claim_receipt.session_id, generation: held.body.claim_receipt.generation };
     const foreignRelease = await operate('claude', { op: 'claim_release', claim_proof: proof, expected_revision: 1, request_id: crypto.randomUUID() });
     assert.equal(foreignRelease.status, 409);
@@ -450,6 +461,9 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     await append('comment', { id: issue.id, body: 'confirmed' });
     const noted = (await read('show', { id: issue.id })).comments[0];
     await repeat('comment_edit', { id: issue.id, comment_id: noted.id, body: 'reproduced', expected: noted.version });
+    await repeat('star', { id: issue.id, comment_id: noted.id, handle: 'tester' });
+    await read('posts', { project: 'parser' });
+    await repeat('unstar', { id: issue.id, comment_id: noted.id, handle: 'tester' });
     const memory = (await repeat('memory_create', { project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Parser constraint', body: 'Keep empty input valid.' })).memory;
     await read('memory_show', { project: 'parser', id: memory.id }); await read('memory_list', { project: 'parser' });
     await read('memory_search', { project: 'parser', query: 'empty' }); await read('memory_context', { project: 'parser' });

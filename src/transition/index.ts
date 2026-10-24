@@ -13,5 +13,7 @@ export { actorKinds, readyLabel, ownerWaitLabels, admitAgentWrite } from './agen
 export type { ActorKind, Actor, GatedWrite, GateObservation, GateDecision } from './agent-gate.ts';
 export { decideCommentEdit } from './comment-edit.ts';
 export type { ObservedComment, CommentEdit, CommentEditRejection, CommentEditDecision } from './comment-edit.ts';
+export { decideReply, decideStarring, starRowChanges } from './posts.ts';
+export type { ObservedReply, ReplyRejection, ReplyDecision, ObservedStarring, Starring, StarOutcome, StarRejection, StarDecision } from './posts.ts';
 export { resourceMarks, resourceState, resourceIsLive, nextResourceMarks, decideResourceAddition, decideResourceUpdate } from './resources.ts';
 export type { ResourceMark, ResourceState, ResourceTimes, ObservedResource, ResourceEdit, ResourceRejection, ResourceDecision } from './resources.ts';

@@ -7,7 +7,7 @@ import { expectedType, PolylinedbError, requireFields } from './errors.ts';
 import { claimProofSchema, claimRow, inspectClaim, parseClaimProof, parseIncarnation } from './claims.ts';
 import type { ClaimDisplay } from './claims.ts';
 import type { ClaimInspection } from './claims.ts';
-import { claimState, decideCommentEdit, decideCreation, decideIssueUpdate, decideReplay, startedWorkNeedsClaim } from '../transition/index.ts';
+import { claimState, decideCommentEdit, decideCreation, decideIssueUpdate, decideReply, decideReplay, startedWorkNeedsClaim } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 import { issueClaimGuard } from './claims-sql.ts';
@@ -26,13 +26,15 @@ export type Values = {
 export type Change = { [K in Field]: { field: K; value: Values[K]; expected: number } }[Field];
 type Filters = { tool?: string; project?: string; status?: Status; type?: IssueType;
   priority?: number; label?: string; after?: string; limit: number };
+// What a post declares about itself; each part is optional, and none of them authorizes anything.
+type Voice = { handle: string; via: string; reply_to: string };
 type StatusOverride = ({ force?: never; reason?: never } | { force: true; reason: string }) & { resources_reason?: string };
 export type Operation =
   | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
   | { op: 'show'; id: string; with_land_order?: true }
   | ({ op: 'list'; claimed?: boolean; with_land_order?: true } & Filters)
   | ({ op: 'search'; query: string; with_matches?: true } & Filters)
-  | { op: 'comment'; id: string; body: string }
+  | ({ op: 'comment'; id: string; body: string } & Partial<Voice>)
   | { op: 'comment_edit'; id: string; comment_id: string; body: string; expected: number }
   | ({ op: 'update'; id: string; changes: [Change, ...Change[]]; claim_proof?: ClaimProof } & StatusOverride)
   | ({ op: 'close'; id: string; expected: number; claim_proof?: ClaimProof } & StatusOverride)
@@ -130,6 +132,13 @@ const fieldRegistry = {
   priority: { column: 'priority', parse: (value: unknown) => integer(value, 'priority', 0, 4), schema: { type: 'integer', minimum: 0, maximum: 4 } },
   labels: { column: 'labels_json', parse: labels, schema: { type: 'array', maxItems: 64, items: nameSchema } },
 };
+export const handleSchema = { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}$',
+  description: 'A persona you speak as, such as builder, tester, scout, or coordinator, chosen by whoever starts the session. Attribution only: it grants nothing, and created_by stays your actor.' };
+const voiceSchemas = {
+  handle: handleSchema,
+  via: { type: 'string', minLength: 1, maxLength: 128, description: 'What produced this one post, such as a host, a model, and a place. At most 128 UTF-8 bytes, without control characters. Attribution only.' },
+  reply_to: { type: 'string', format: 'uuid', description: 'The ID of a comment on the same issue that this comment answers.' },
+};
 const withLandOrderSchema = { const: true, description: 'Also return land_order: which issues this one lands after and before. It never blocks work.' };
 const objectSchema = (properties: Record<string, unknown>, required: readonly string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const valueSchemas = Object.fromEntries(fields.map((field) => [field, fieldRegistry[field].schema]));
@@ -141,7 +150,7 @@ export const operationSchemas = {
   show: objectSchema({ id: idSchema, with_land_order: withLandOrderSchema }, ['id']),
   list: objectSchema({ ...filterSchemas, claimed: { type: 'boolean', description: 'true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated.' }, with_land_order: withLandOrderSchema }),
   search: objectSchema({ ...filterSchemas, query: bodySchema, with_matches: { const: true, description: 'Also return where each issue matched, with a short excerpt.' } }, ['query']),
-  comment: objectSchema({ id: idSchema, body: bodySchema }, ['id', 'body']),
+  comment: objectSchema({ id: idSchema, body: bodySchema, ...voiceSchemas }, ['id', 'body']),
   comment_edit: objectSchema({ id: idSchema, comment_id: { type: 'string', format: 'uuid', description: 'The comment ID that show returns.' }, body: bodySchema,
     expected: { ...versionSchema, description: 'The comment version that show returned.' } }, ['id', 'comment_id', 'body', 'expected']),
   update: objectSchema({ id: idSchema, changes: { type: 'array', minItems: 1, maxItems: 7, items: {
@@ -210,7 +219,9 @@ export function parseOperation(value: unknown): Operation {
       if (input.with_matches !== undefined && input.with_matches !== true) return invalid('with_matches must be true when present');
       return { op, ...parseFilters(input), query: text(input.query, 'query'), ...(input.with_matches === true ? { with_matches: true } : {}) };
     }
-    case 'comment': return { op, id: id(input.id), body: text(input.body, 'body') };
+    case 'comment': return { op, id: id(input.id), body: text(input.body, 'body'),
+      ...(input.handle === undefined ? {} : { handle: parseHandle(input.handle) }), ...(input.via === undefined ? {} : { via: parseVia(input.via) }),
+      ...(input.reply_to === undefined ? {} : { reply_to: validated(value => parseRequestId(value, 'reply_to'), input.reply_to) }) };
     case 'comment_edit': return { op, id: id(input.id), comment_id: validated(parseRequestId, input.comment_id), body: text(input.body, 'body'),
       expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER) };
     case 'close': return { op, id: id(input.id), expected: integer(input.expected, 'expected', 1, Number.MAX_SAFE_INTEGER), ...parseOverride(input), ...(input.claim_proof === undefined ? {} : { claim_proof: parseClaimProof(input.claim_proof, id(input.id)) }) };
@@ -301,6 +312,17 @@ export function commentRow(row: Record<string, unknown>): Comment {
     if ('updated_by' in edits && edits.updated_by !== null && edits.updated_by !== comment.created_by) return invalid('the editor is the author');
     return { ...comment, ...edits, ...(group(row, postKeys) ? commentPost(row, comment.id) : {}), ...(group(row, starKeys) ? commentStars(row) : {}) };
   } catch { throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500); }
+}
+/** Reads a comment as a read that shows comments returns it: every group, with its stars. */
+export function shownCommentRow(row: Record<string, unknown>): ShownComment {
+  const { stars, starrers } = commentRow(row);
+  if (stars === undefined || starrers === undefined) throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500);
+  return { ...storedCommentRow(row), stars, starrers };
+}
+/** Decodes the JSON array of starrer names that a read built with json_group_array. */
+export function starrerNames(value: unknown): unknown {
+  if (typeof value !== 'string') throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500);
+  try { return JSON.parse(value); } catch { throw new PolylinedbError('invalid_store', 'Stored comment is invalid', 500); }
 }
 /** Reads a comment row as the store holds it: with its edit and post fields, and without stars, which live in their own table. */
 export function storedCommentRow(row: Record<string, unknown>): StoredComment {
@@ -429,6 +451,30 @@ async function editComment(db: SqlExecutor, operation: Extract<Operation, { op: 
   throw new PolylinedbError('comment_version_exhausted', 'Comment version reached its limit', 409, { comment });
 }
 
+// The guard keeps a reply on the issue of its target in the same INSERT, so the reply trigger only backs up writes that skip operations.
+// A refusal names a missing issue first, then a missing reply target, then the agent claim gate, as decideReply orders them.
+async function writeComment(db: SqlExecutor, operation: Extract<Operation, { op: 'comment' }>, caller: Actor): Promise<OperationResult> {
+  const actor = caller.id;
+  const gate = agentHoldsClaim(operation.id, caller);
+  const replyTo = operation.reply_to ?? null;
+  const observe = caller.kind === 'agent' || replyTo !== null;
+  const result = await recordingChanges(db, actor).batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by, handle, via, reply_to)
+    SELECT ?, id, ?, ?, ?, ?, ?, ? FROM issues WHERE id = ? AND ${gate.sql}
+    AND (? IS NULL OR EXISTS(SELECT 1 FROM comments AS target WHERE target.id = ? AND target.issue_id = issues.id)) RETURNING *`,
+  params: [crypto.randomUUID(), operation.body, new Date().toISOString(), actor, operation.handle ?? null, operation.via ?? null, replyTo,
+    operation.id, ...gate.params, replyTo, replyTo] },
+  ...(observe ? [observation(operation.id), { sql: 'SELECT 1 AS found FROM comments WHERE id = ? AND issue_id = ?', params: [replyTo, operation.id] }] : []),
+  ...(caller.kind === 'agent' ? [heldClaimObservation(operation.id)] : [])]);
+  const row = rowsAt(result, 0)[0];
+  if (row) return { comment: storedCommentRow(row) };
+  const observed = observe ? rowsAt(result, 1)[0] : undefined;
+  const reply = decideReply({ issue: observed !== undefined, replyTarget: replyTo === null ? null : rowsAt(result, 2).length > 0 });
+  if (!reply.accepted && reply.code === 'not_found') return notFound(operation.id);
+  if (!reply.accepted) throw new PolylinedbError('reply_target_not_found', 'The reply target is not a comment on this issue', 404, { id: operation.id, reply_to: replyTo });
+  if (observed) rejectAgentWrite(caller, 'issue_write', operation.id, issueRow(observed).labels, rowsAt(result, 3)[0]);
+  throw new PolylinedbError('storage_error', 'The database rejected a comment without a matching condition', 503);
+}
+
 export async function executeOperation(db: SqlExecutor, operation: Operation, by: string | Actor): Promise<OperationResult> {
   const caller = asActor(by);
   const actor = caller.id;
@@ -478,27 +524,16 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
       const rows = await db.reads.all(issueQueries.show, { id: operation.id });
       const [row] = rows;
       if (!row) return notFound(operation.id);
-      return { issue: issueRow(row), comments: rows.filter(row => row.comment_id !== null).map(row => storedCommentRow({
+      return { issue: issueRow(row), comments: rows.filter(row => row.comment_id !== null).map(row => shownCommentRow({
         id: row.comment_id, issue_id: row.id, body: row.comment_body,
         created_at: row.comment_created_at, created_by: row.comment_created_by,
         version: row.comment_version, updated_at: row.comment_updated_at, updated_by: row.comment_updated_by,
         handle: row.comment_handle, via: row.comment_via, reply_to: row.comment_reply_to,
+        stars: row.comment_stars, starrers: starrerNames(row.comment_starrers_json),
       })), claim: await inspectClaim(db, operation.id) };
     }
     case 'comment_edit': return editComment(db, operation, caller);
-    case 'comment': {
-      const gate = agentHoldsClaim(operation.id, caller);
-      const result = await recordingChanges(db, actor).batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by)
-        SELECT ?, id, ?, ?, ? FROM issues WHERE id = ? AND ${gate.sql} RETURNING *`,
-        params: [crypto.randomUUID(), operation.body, new Date().toISOString(), actor, operation.id, ...gate.params] },
-        ...(caller.kind === 'agent' ? [observation(operation.id), heldClaimObservation(operation.id)] : [])]);
-      const row = rowsAt(result, 0)[0];
-      if (row) return { comment: commentRow(row) };
-      const observed = caller.kind === 'agent' ? rowsAt(result, 1)[0] : undefined;
-      if (!observed) return notFound(operation.id);
-      rejectAgentWrite(caller, 'issue_write', operation.id, issueRow(observed).labels, rowsAt(result, 2)[0]);
-      throw new PolylinedbError('storage_error', 'The database rejected a comment without a matching condition', 503);
-    }
+    case 'comment': return writeComment(db, operation, caller);
     case 'close': return update(db, operation.id, [{ field: 'status', value: 'closed', expected: operation.expected }], caller, operation, operation.claim_proof);
     case 'reopen': return update(db, operation.id, [{ field: 'status', value: 'open', expected: operation.expected }], caller, {}, operation.claim_proof);
     case 'update': return update(db, operation.id, operation.changes, caller, operation, operation.claim_proof);

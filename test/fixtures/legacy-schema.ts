@@ -7,6 +7,15 @@ import { SCHEMA_V9_STATEMENTS } from '../../src/records/schema-v9.ts';
 import { SCHEMA_V10_STATEMENTS } from '../../src/records/schema-v10.ts';
 import type { SqlExecutor } from '../../src/records/persistence.ts';
 
+/** Writes a comment as a release before posts did, so it runs on a schema that lacks the edit or post columns; recorded writes its event as a comment operation would. */
+export async function legacyComment(db: SqlExecutor, comment: { issue_id: string; body: string; actor: string; recorded?: boolean }): Promise<string> {
+  const id = crypto.randomUUID();
+  const insert = { sql: 'INSERT INTO comments(id,issue_id,body,created_at,created_by) VALUES (?,?,?,?,?)', params: [id, comment.issue_id, comment.body, new Date().toISOString(), comment.actor] };
+  await db.batch(comment.recorded === false ? [insert]
+    : [{ sql: 'INSERT INTO change_writer(singleton,actor) VALUES (1,?)', params: [comment.actor] }, insert, { sql: 'DELETE FROM change_writer', params: [] }]);
+  return id;
+}
+
 export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
   return {
     reads: db.reads,

@@ -4,6 +4,7 @@ import { executeOperation, parseOperation } from '../../src/records/index.ts';
 import { PolylinedbError } from '../../src/records/errors.ts';
 import type { Actor } from '../../src/records/index.ts';
 import type { SqlExecutor } from '../../src/records/persistence.ts';
+import { legacyComment } from './legacy-schema.ts';
 
 type Refusal = { code: string; status: number; details: unknown };
 type Row = Record<string, unknown>;
@@ -44,7 +45,7 @@ export async function runCommentEditFlow(db: SqlExecutor): Promise<void> {
   assert.deepEqual(edited, { ...written, body: 'second draft words', version: 2, updated_at: edited.updated_at, updated_by: 'alice' });
   assert.deepEqual(await edits(start), [{ issue_id: id, kind: 'comment_edited', fields: [], actor: 'alice' }]);
   const shown = await run({ op: 'show', id });
-  assert.deepEqual(shown.comments, [edited]);
+  assert.deepEqual(shown.comments, [{ ...edited, stars: 0, starrers: [] }], 'show adds the stars, which a write result leaves out');
   assert.deepEqual(shown.issue, issueBefore, 'an edit leaves the issue fields, versions and updated_at as they were');
   assert.deepEqual(((await run({ op: 'search', query: 'second' })).issues as Row[]).map(issue => issue.id), [id]);
   assert.deepEqual((await run({ op: 'search', query: 'first' })).issues, []);
@@ -58,7 +59,7 @@ export async function runCommentEditFlow(db: SqlExecutor): Promise<void> {
   assert.deepEqual(await refusal(run({ ...edit, id: 'ce-99', expected: 2 })), { code: 'not_found', status: 404, details: { id: 'ce-99' } });
   assert.deepEqual(await refusal(run({ ...edit, expected: 2 }, agent)), { code: 'comment_author_required', status: 403, details: { id, comment_id: written.id } }, 'authorship is checked before the claim');
   assert.equal(await latest(), afterEdit, 'a refused edit records no event');
-  assert.deepEqual((await run({ op: 'show', id })).comments, [edited]);
+  assert.deepEqual((await run({ op: 'show', id })).comments, [{ ...edited, stars: 0, starrers: [] }]);
 
   // An agent comment needs a claim to write, and so does its edit.
   const agentComment = crypto.randomUUID();
@@ -79,11 +80,12 @@ export async function runCommentEditFlow(db: SqlExecutor): Promise<void> {
   assert.equal((lost[0]?.reason as PolylinedbError).code, 'comment_conflict');
   const winner = (won[0]?.value as Row).comment as Row;
   const final = ((await run({ op: 'show', id })).comments as Row[]).find(comment => comment.id === raced.id);
-  assert.deepEqual(final, winner); assert.equal(winner.version, 2);
+  assert.deepEqual(final, { ...winner, stars: 0, starrers: [] }); assert.equal(winner.version, 2);
 
   // Writes outside an operation record no event, so the version can be placed at its limit.
   await sql("UPDATE comments SET version = ?, updated_at = '2021-01-02T00:00:00.000Z', updated_by = created_by WHERE id = ?", Number.MAX_SAFE_INTEGER, written.id);
-  const limit = (await run({ op: 'show', id }) as { comments: Row[] }).comments.find(comment => comment.id === written.id);
+  // A refusal names the comment as the store holds it, without the stars that show adds.
+  const { stars: _stars, starrers: _starrers, ...limit } = (await run({ op: 'show', id }) as { comments: Row[] }).comments.find(comment => comment.id === written.id) ?? {};
   assert.deepEqual(await refusal(run({ ...edit, expected: Number.MAX_SAFE_INTEGER })), { code: 'comment_version_exhausted', status: 409, details: { comment: limit } });
 
   assert.deepEqual(await edits(start), [
@@ -99,9 +101,9 @@ export async function populateSchema9(db: SqlExecutor): Promise<{ comment_id: st
   const first = await run({ op: 'create', prefix: 'up', request_id: crypto.randomUUID(), tool: 'test', project: 'upgrade', body: 'Before the upgrade' });
   const id = (first.issue as { id: string }).id;
   await run({ op: 'create', prefix: 'up', request_id: crypto.randomUUID(), tool: 'test', project: 'upgrade', body: 'Second issue' });
-  const comment = (await run({ op: 'comment', id, body: 'kept note' })).comment as { id: string };
+  const comment_id = await legacyComment(db, { issue_id: id, body: 'kept note', actor: 'alice' });
   await run({ op: 'update', id, changes: [{ field: 'priority', value: 1, expected: 1 }] });
-  return { comment_id: comment.id, id };
+  return { comment_id, id };
 }
 
 export async function readEvents(db: SqlExecutor): Promise<Row[]> {
