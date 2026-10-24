@@ -263,7 +263,11 @@ test('a release that asks for expired_noop gets a clear answer from an older Wor
     sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(issue_id);
     const release = { op: 'claim_release', claim_proof: expired.claim_proof, expected_revision: expired.revision, request_id: crypto.randomUUID(), expired_noop: true };
     const older = rejecting();
-    assert.deepEqual(await outcome(decode(release, older.fetch)), { error: { code: 'claim_conflict', status: 409, details: { current: (await wire({ op: 'claim_show', issue_id })).body.claim } } });
+    // observed_at is in seconds, so the conflict and the later claim_show can fall on either side of a second boundary.
+    const unobserved = (claim: unknown) => ({ ...(claim as Record<string, unknown>), observed_at: 0 });
+    const conflict = await outcome(decode(release, older.fetch)) as { error: { details: { current: unknown } } };
+    assert.deepEqual({ ...conflict, error: { ...conflict.error, details: { current: unobserved(conflict.error.details.current) } } },
+      { error: { code: 'claim_conflict', status: 409, details: { current: unobserved((await wire({ op: 'claim_show', issue_id })).body.claim) } } });
     assert.deepEqual(older.sent, [release, withoutField(release)]);
     const ignoring = recorded(operation => forwarded(withoutField(operation)));
     await assert.rejects(decode(release, ignoring.fetch), { code: 'claim_conflict', status: 409 });

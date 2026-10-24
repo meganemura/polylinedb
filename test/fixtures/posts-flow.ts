@@ -53,6 +53,8 @@ export async function runPostsFlow(db: SqlExecutor): Promise<void> {
   await sql("UPDATE comments SET created_at = '2026-03-01T00:00:00.000Z' WHERE id = ?", post.id);
   await sql("UPDATE comments SET created_at = '2026-03-01T00:00:01.000Z' WHERE id = ?", reply.id);
   post.created_at = '2026-03-01T00:00:00.000Z'; reply.created_at = '2026-03-01T00:00:01.000Z';
+  // show orders comments by time, and comments of the same millisecond by their random ids, so the two voiceless comments get times of their own.
+  await sql("UPDATE comments SET created_at = CASE id WHEN ? THEN '2026-03-01T00:00:02.000Z' ELSE '2026-03-01T00:00:03.000Z' END WHERE id IN (?, ?)", plain.id, plain.id, answer.id);
   assert.deepEqual(await events(start), [
     { issue_id: first, kind: 'commented', actor: 'alice' }, { issue_id: first, kind: 'commented', actor: 'bob' },
     { issue_id: first, kind: 'commented', actor: 'alice' }, { issue_id: first, kind: 'commented', actor: 'alice' },
