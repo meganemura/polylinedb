@@ -8,6 +8,7 @@ export { SCHEMA_V6_SQL } from './schema-v6.ts';
 export { SCHEMA_V7_SQL } from './schema-v7.ts';
 export { SCHEMA_V8_SQL } from './schema-v8.ts';
 export { SCHEMA_V9_SQL } from './schema-v9.ts';
+export { SCHEMA_V10_SQL } from './schema-v10.ts';
 import { SCHEMA_V9_STATEMENTS } from './schema-v9.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
 export { statuses, issueTypes, fields };

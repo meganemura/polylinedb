@@ -96,6 +96,7 @@
     "dist/records/schema-v7.js",
     "dist/records/schema-v8.js",
     "dist/records/schema-v9.js",
+    "dist/records/schema-v10.js",
     "dist/records/land-order.js",
     "dist/records/land-order-sql.js",
     "dist/records/resources.js",

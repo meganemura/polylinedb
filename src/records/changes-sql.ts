@@ -3,9 +3,10 @@ import type { SqlExecutor } from './issues.ts';
 import { fields } from '../transition/index.ts';
 import { activeBlockerStatusSql } from './active-blocker.ts';
 
-// Schemas 6 through 9 check exactly these kinds, so CHANGE_STATEMENTS keeps them and schema 10 rebuilds the table for the full list.
+// Schemas 6 through 9 check exactly these kinds, so CHANGE_STATEMENTS keeps them; each later schema that adds a kind rebuilds the table for its own list.
 const schemaV6ChangeKinds = ['created', 'updated', 'status_changed', 'commented', 'claim_acquired', 'claim_released', 'dependency_added', 'dependency_removed', 'became_ready'] as const;
-export const changeKinds = [...schemaV6ChangeKinds, 'comment_edited'] as const;
+const schemaV10ChangeKinds = [...schemaV6ChangeKinds, 'comment_edited'] as const;
+export const changeKinds = schemaV10ChangeKinds;
 export type ChangeKind = typeof changeKinds[number];
 const kindCheck = (kinds: readonly string[]) => `kind TEXT NOT NULL CHECK(kind IN (${kinds.map(kind => `'${kind}'`).join(',')}))`;
 export const CHANGE_RETENTION = 10000;
@@ -73,22 +74,24 @@ export const CHANGE_STATEMENTS = [
 const relationColumn = `relation TEXT CONSTRAINT change_relation CHECK(relation IS NULL OR relation IN (${changeRelations.map(relation => `'${relation}'`).join(',')}))`;
 export const CHANGE_RELATION_STATEMENTS = [`ALTER TABLE change_events ADD COLUMN ${relationColumn}`];
 
-// SQLite cannot change a CHECK in place, so schema 10 copies the feed into a table that admits comment_edited, keeping each seq.
+// SQLite cannot change a CHECK in place, so a schema that adds a kind copies the feed into a table that admits it, keeping each seq.
 // A rename to change_events fails while a trigger names that table and it does not exist, so the caller drops and recreates those triggers around it.
-export const CHANGE_KIND_REBUILD_STATEMENTS = [
-  `CREATE TABLE change_events_v10 (
+const changeKindRebuild = (table: string, kinds: readonly string[]) => [
+  `CREATE TABLE ${table} (
     seq INTEGER PRIMARY KEY NOT NULL CHECK(seq BETWEEN 1 AND 9007199254740991),
     issue_id TEXT NOT NULL REFERENCES issues(id),
-    ${kindCheck(changeKinds)},
+    ${kindCheck(kinds)},
     fields_json TEXT NOT NULL CHECK(json_valid(fields_json) AND json_type(fields_json) = 'array'),
     occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at) = 'integer' AND occurred_at >= 0),
     actor TEXT NOT NULL CHECK(length(actor) > 0),
     ${relationColumn}
   )`,
-  'INSERT INTO change_events_v10(seq,issue_id,kind,fields_json,occurred_at,actor,relation) SELECT seq,issue_id,kind,fields_json,occurred_at,actor,relation FROM change_events ORDER BY seq',
+  `INSERT INTO ${table}(seq,issue_id,kind,fields_json,occurred_at,actor,relation) SELECT seq,issue_id,kind,fields_json,occurred_at,actor,relation FROM change_events ORDER BY seq`,
   'DROP TABLE change_events',
-  'ALTER TABLE change_events_v10 RENAME TO change_events',
+  `ALTER TABLE ${table} RENAME TO change_events`,
 ];
+// Schema 10 admits comment_edited.
+export const CHANGE_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v10', schemaV10ChangeKinds);
 
 // Only a version change is an edit; the comment insert trigger keeps recording commented.
 export const COMMENT_EDIT_CHANGE_STATEMENTS = [
