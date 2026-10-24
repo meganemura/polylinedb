@@ -138,6 +138,7 @@ export async function runPostsFlow(db: SqlExecutor): Promise<void> {
   assert.deepEqual(await listed({ since: '2026-03-01T09:00:00.001+09:00' }), { ids: [reply.id], next_cursor: null }, 'since reads the time zone');
   assert.deepEqual(await listed({ limit: 1 }), { ids: [reply.id], next_cursor: reply.id });
   assert.deepEqual(await listed({ limit: 1, after: reply.id }), { ids: [post.id], next_cursor: null });
+  assert.deepEqual(await listed({ after: crypto.randomUUID() }), { ids: [], next_cursor: null }, "a cursor that names no comment gives an empty page");
   assert.deepEqual((await run({ op: 'posts', project: 'elsewhere' })).posts, [{ ...other, stars: 0, starrers: [] }]);
   assert.deepEqual(await refusal(run({ op: 'posts', project: 'posts', since: '2026-02-30' })), { code: 'invalid_input', status: 400, details: undefined });
 
