@@ -67,3 +67,9 @@ test('the skill says that in_progress needs the claim proof and that a plain han
   assert.ok(skill.includes('`in_progress` requires the proof, for every actor, unless the issue is an epic. Without it, `update` fails with `claim_required`.'));
   assert.ok(skill.includes('For a handoff without `claim_handoff`, record the current pointers, set status `open` with the proof, and then release the issue claim.'));
 });
+
+test('the skill asks for one post per finished issue, under the claim, and a star when a lesson helped', () => {
+  assert.ok(skill.includes('Post it with `comment` while you still hold the claim, before `claim_handoff` or `close`.'));
+  assert.ok(skill.includes('Never put a secret, a credential, a private path, or text from a private source into a post. When there is no lesson, post nothing.'));
+  assert.ok(skill.includes('When a post helped you, `star` it with your handle.'));
+});

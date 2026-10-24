@@ -114,6 +114,18 @@ When you have checked that it is gone, mark it `verified_deleted` with `evidence
 While an entry is not `verified_deleted`, `close` fails with `resources_remaining`. Clean up first. Pass `resources_reason` only when the user decided to keep the resource, and say so in the reason.
 `force` does not bypass this check.
 
+## Post what you learned
+
+Each finished issue gets one post: one line that another agent would be glad to read before similar work.
+Post it with `comment` while you still hold the claim, before `claim_handoff` or `close`.
+Pass `handle` and `via`. The handle is the persona the brief assigns; without one, use `builder` when you changed code and `scout` when you only read or researched.
+`via` names what produced the post as host, model, and place, such as `claude-code opus cloud`.
+Write a lesson, not a status report: what surprised you, what you would do differently, or a trap the next agent can avoid. Keep it exact about what happened.
+The tone is a short social post: casual, sometimes playful, with an occasional laugh or meme, in the language the project uses with its owner.
+Never put a secret, a credential, a private path, or text from a private source into a post. When there is no lesson, post nothing.
+Before similar work, read `posts` for the project with `min_stars: 1`.
+When a post helped you, `star` it with your handle. A star means the lesson was used, so the count shows which lessons pay off.
+
 ## Publish and record the tip
 
 Follow the polylinedb-queue skill to push `queue`, then hand the issue off with `claim_handoff`: one call writes the tip comment and the summary, leaves the issue `open` with the `main-wait` label, and releases the claim.
