@@ -113,6 +113,12 @@ export function joined(words: readonly string[]): string {
 
 export const person = (viewer: Viewer, actor: string): string => viewer.labels.get(actor) ?? actor;
 /** A project shows its last path segment, so an owner handle never fills the row. */
+/** The face of a handle: its first letter on one of eight colors picked from the handle, so a persona looks the same everywhere and nothing is stored. */
+export function avatar(handle: string): string {
+  let hash = 2166136261;
+  for (const unit of handle) hash = Math.imul(hash ^ (unit.codePointAt(0) ?? 0), 16777619) >>> 0;
+  return `<span class="who-dot av${hash % 8}" aria-hidden="true">${escape(Array.from(handle)[0]?.toUpperCase() ?? '?')}</span>`;
+}
 export const shortProject = (project: string): string => project.split('/').filter(Boolean).at(-1) ?? project;
 
 export const issueHref = (id: string): string => `/ui/i/${encodeURIComponent(id)}`;

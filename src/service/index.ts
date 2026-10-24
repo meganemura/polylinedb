@@ -301,6 +301,7 @@ const movedViews: Readonly<Record<string, string>> = { '/ui/inbox': '/ui', '/ui/
 const pages: Readonly<Record<string, UiRoute>> = {
   '/ui': { page: 'today' }, '/ui/agents': { page: 'agents' }, '/ui/activity': { page: 'activity' }, '/ui/landing': { page: 'landing' }, '/ui/stuck': { page: 'stuck' },
   '/ui/projects': { page: 'projects' }, '/ui/search': { page: 'search', query: '' }, '/ui/new': { page: 'new' },
+  '/ui/posts': { page: 'posts', project: null, handle: '', minStars: '0', after: null },
 };
 
 // An after link carries the feed cursor and its store incarnation. Without `after` the page shows the newest events.
@@ -379,6 +380,10 @@ export async function handleRequest(
       }
       if (route.page === 'activity') route = { page: 'activity', ...activityCursor(url) };
       if (route.page === 'search') route = { page: 'search', query: url.searchParams.get('q') ?? '' };
+      if (route.page === 'posts') {
+        const value = (name: string) => { const given = url.searchParams.get(name); return given === null || given.trim() === '' ? null : given.trim(); };
+        route = { page: 'posts', project: value('project'), handle: value('handle') ?? '', minStars: value('min_stars') ?? '0', after: value('after') };
+      }
       const page = await uiResponse(d1Executor(env.DB), actorLabels(env), route, viewer, url, request.headers.get('if-none-match'));
       // Workers advance this clock only across I/O, so the duration is the time spent waiting on Access keys and D1.
       page.headers.set('server-timing', `worker;dur=${(performance.now() - started).toFixed(1)}`);

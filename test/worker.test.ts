@@ -726,6 +726,8 @@ async function createIssue(env: ReturnType<typeof fixture>['env'], token: string
   return id;
 }
 
+const hiddenField = (name: string, value: string): string => `<input type="hidden" name="${name}" value="${value.replaceAll('&', '&amp;')}">`;
+
 /** The text of a page with tags removed, for sentence assertions that do not pin markup. */
 function textOf(html: string): string {
   return html.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '').replace(/<svg[\s\S]*?<\/svg>/g, '')
@@ -759,7 +761,7 @@ function assertPageScripts(html: string): void {
   assert.equal(/\son[a-z]+="/.test(html), false, 'no inline event handler');
 }
 
-const uiPages = ['/ui', '/ui/agents', '/ui/activity', '/ui/landing', '/ui/stuck', '/ui/projects', '/ui/p/compiler/parser', '/ui/search?q=Lane', '/ui/new'];
+const uiPages = ['/ui', '/ui/agents', '/ui/activity', '/ui/landing', '/ui/stuck', '/ui/projects', '/ui/p/compiler/parser', '/ui/search?q=Lane', '/ui/new', '/ui/posts'];
 
 test('ui: every page answers under the hashed policy with one fixed script, Server-Timing, and an ETag', async () => {
   const { sqlite, env } = fixture();
@@ -1804,6 +1806,80 @@ test('ui: the issue page shows the persona of a post and the star count of each 
     assert.ok(item('builder notes').includes('<span>as builder</span><span>2 stars</span>'), item('builder notes'));
     assert.ok(item('plain note').includes('<span>1 star</span>'), item('plain note'));
     assert.equal(item('plain note').includes('<span>as '), false);
+  } finally { sqlite.close(); }
+});
+
+test('ui: Posts lists the posts of a project newest first, filters them, and stars one from a plain form', async () => {
+  const { sqlite, env } = fixture('["access:owner",{"actor":"access:viewer","role":"reader"}]');
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  const page = async (path: string, headers: Record<string, string> = auth) => {
+    const response = await viewUi(env, headers, 'GET', path);
+    assert.equal(response.status, 200, path);
+    return response.text();
+  };
+  const posts = (html: string) => [...html.matchAll(/<p class="says"[^>]*>([\s\S]*?)<\/p>/g)].map(match => textOf(match[1] ?? '').trim());
+  try {
+    const other = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Elsewhere' });
+    await operation(env, token, { op: 'comment', id: other, body: 'other project lesson', handle: 'builder' });
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Posts timeline' });
+    const first = (await operation(env, token, { op: 'comment', id, body: 'first lesson\nwith a detail line', handle: 'builder', via: 'claude@cloud' })).comment;
+    await operation(env, token, { op: 'comment', id, body: 'plain note' });
+    const second = (await operation(env, token, { op: 'comment', id, body: 'second lesson', handle: 'tester', reply_to: first.id })).comment;
+
+    // With no project chosen, the page shows the project updated last.
+    const html = await page('/ui/posts');
+    assertPageScripts(html);
+    assert.ok(html.includes('<a href="/ui/posts" aria-current="page">Posts</a>'));
+    assert.ok(html.includes('<option value="meganemura/polylinedb" selected>'));
+    assert.deepEqual(posts(html), ['second lesson', 'first lesson More']);
+    assert.ok(html.includes(`<a href="/ui/i/${id}#comments">More</a>`));
+    assert.match(html, /<span class="who-dot av[0-7]" aria-hidden="true">B<\/span><b>builder<\/b><span>via claude@cloud<\/span>/);
+    assert.ok(html.slice(html.indexOf(`id="p-${second.id}"`)).includes('<span>reply</span>'));
+    assert.deepEqual(posts(await page('/ui/posts?project=parser')), ['other project lesson']);
+    assert.deepEqual(posts(await page('/ui/posts?project=meganemura/polylinedb&handle=builder')), ['first lesson More']);
+
+    const back = '/ui/posts?project=meganemura%2Fpolylinedb&handle=builder';
+    const starred = await postUi(env, `/ui/i/${id}/star`, token, [['return', `${back}#p-${first.id}`], ['comment', first.id], ['star', 'add']]);
+    assert.equal(starred.status, 303);
+    assert.equal(starred.headers.get('location'), `${back}#p-${first.id}`);
+    const after = await page(back);
+    assert.ok(after.includes('<span>1 star</span><span>access:owner</span>'), after);
+    assert.ok(after.includes('<button class="btn sm" aria-pressed="true">★ Starred</button>'));
+    assert.ok(after.includes(`${hiddenField('return', `${back}#p-${first.id}`)}`), 'the star form returns to the same filters');
+    assert.deepEqual(posts(await page('/ui/posts?project=meganemura/polylinedb&min_stars=1')), ['first lesson More']);
+    assert.deepEqual((await (await postUi(env, `/ui/i/${id}/star`, token, [['comment', first.id], ['star', 'add']], { json: true })).json()), { ok: true, message: 'Starred.' });
+    assert.equal((await operation(env, token, { op: 'show', id })).comments.find((comment: { id: string }) => comment.id === first.id).stars, 1);
+
+    const reader = await page('/ui/posts', { 'cf-access-jwt-assertion': await assertion({ sub: 'viewer' }) });
+    assert.deepEqual(posts(reader), ['second lesson', 'first lesson More']);
+    assert.equal(reader.includes('/star"'), false);
+    assert.equal((await postUi(env, `/ui/i/${id}/star`, await assertion({ sub: 'viewer' }), [['comment', first.id], ['star', 'remove']])).status, 403);
+
+    const removed = await postUi(env, `/ui/i/${id}/star`, token, [['comment', first.id], ['star', 'remove']], { json: true });
+    assert.deepEqual(await removed.json(), { ok: true, message: 'Star removed.' });
+    assert.deepEqual(posts(await page('/ui/posts?project=meganemura/polylinedb&min_stars=1')), []);
+    assert.equal((await postUi(env, `/ui/i/${id}/star`, token, [['comment', first.id], ['star', 'sideways']])).status, 400);
+
+    assert.ok(textOf(await page('/ui/posts?min_stars=many')).includes('The star filter must be a whole number. Start again from the newest posts.'));
+    assert.ok(textOf(await page('/ui/posts?handle=Not%20A%20Handle')).includes('Start again from the newest posts.'));
+    assert.ok(textOf(await page('/ui/posts?project=nowhere')).includes('No post matches.'));
+  } finally { sqlite.close(); }
+});
+
+test('ui: Posts pages older posts through the cursor of the last post shown', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Many posts' });
+    for (let index = 0; index < 51; index += 1) await operation(env, token, { op: 'comment', id, body: `lesson ${index}`, handle: 'builder' });
+    const html = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/posts?handle=builder')).text();
+    assert.equal(html.split('<p class="says"').length - 1, 50);
+    const older = html.match(/href="(\/ui\/posts\?[^"]+)">Older posts</)?.[1]?.replaceAll('&amp;', '&');
+    assert.ok(older?.includes('handle=builder') && older.includes('after='), older);
+    const rest = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', older)).text();
+    assert.deepEqual([...rest.matchAll(/<p class="says"[^>]*>([^<]+)/g)].map(match => match[1]), ['lesson 0']);
+    assert.equal(rest.includes('Older posts'), false);
   } finally { sqlite.close(); }
 });
 

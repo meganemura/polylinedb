@@ -2,13 +2,13 @@
  * The /ui entry: maps a route to its reads, renders the page, and adds the page headers (ETag, CSP by hash). GET never writes.
  * POST routes go to ui-writes.ts. Access, origin checks, and Server-Timing belong to the Worker entry.
  */
-import { executeOperation, PolylinedbError, projectClosedIssues, projectIssues, projectSummaries, type Actor, type Issue, type Status } from '../records/index.ts';
+import { executeOperation, parseOperation, PolylinedbError, projectClosedIssues, projectIssues, projectSummaries, type Actor, type Issue, type Status } from '../records/index.ts';
 import type { SqlExecutor } from '../records/persistence.ts';
 import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
 import { pageScript, speculationRules } from './ui-assets.ts';
 import { flash } from './ui-brief.ts';
-import { messagePage, activityPage, agentsPage, issuePage, landingPage, newPage, projectPage, projectsPage, searchPage, stuckPage, tabCounts, todayPage,
-  type ActivityCursor } from './ui-pages.ts';
+import { messagePage, activityPage, agentsPage, issuePage, landingPage, newPage, postsPage, projectPage, projectsPage, searchPage, stuckPage, tabCounts, todayPage,
+  type ActivityCursor, type PostsView } from './ui-pages.ts';
 import { readActivity, readIssueView, searchHits } from './ui-reads.ts';
 import { composeLanes, readLanes } from './ui-today.ts';
 import { doneParam, landedSentence, uiWrite, type WriteRoute } from './ui-writes.ts';
@@ -21,7 +21,9 @@ export type { ActivityCursor } from './ui-pages.ts';
 
 export type UiRoute = { page: 'today' } | { page: 'agents' } | { page: 'activity'; after?: ActivityCursor | 'invalid' } | { page: 'landing' } | { page: 'stuck' }
   | { page: 'projects' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'search'; query: string }
-  | { page: 'new' } | { page: 'issue'; id: string };
+  | { page: 'new' } | { page: 'issue'; id: string } | ({ page: 'posts' } & PostsQuery);
+/** The posts filters as the address bar carries them; the read validates them, so a bad value becomes a sentence on the page. */
+export type PostsQuery = { project: string | null; handle: string; minStars: string; after: string | null };
 /** Who reads the page: the caller from Access, its role, and what Dispatch would do for it. */
 export type UiCaller = { actor: Actor; role: ViewerRole; dispatch: DispatchControl };
 
@@ -30,6 +32,7 @@ const shownProjects = 200;
 const projectIssueLimit = 101;
 const shownProjectIssues = 100;
 const closedLimit = 50;
+const postsLimit = 50;
 
 // The page clock stops at the minute: every time it shows is minute-resolution, and a seconds clock would change the
 // ETag on every request, so a revalidation within the same minute could never answer 304.
@@ -113,6 +116,10 @@ async function pageHtml(db: SqlExecutor, route: UiRoute, viewer: Viewer, url: UR
       // The project page links here with ?project=<tool>\n<project>, the value of the project select.
       return newPage(projects, url.searchParams.get('project'), viewer, counts);
     }
+    case 'posts': {
+      const [reads, view] = await Promise.all([lanesRead, readPosts(db, route, actor)]);
+      return postsPage(view, viewer, tabCounts(composeLanes(reads)), postsBack(route));
+    }
     case 'issue': {
       const [reads, view, issue] = await Promise.all([lanesRead, readIssueView(db, route.id, actor), doneRead]);
       if (view === null) return null;
@@ -122,6 +129,35 @@ async function pageHtml(db: SqlExecutor, route: UiRoute, viewer: Viewer, url: UR
     }
     default: { const unreachable: never = route; return unreachable; }
   }
+}
+
+/** A project is chosen by name alone, as the posts read takes it; with none chosen, the project updated last. */
+async function readPosts(db: SqlExecutor, query: PostsQuery, actor: Actor): Promise<PostsView> {
+  const projects = [...new Set((await projectSummaries(db, shownProjects)).map(summary => summary.project))];
+  const project = query.project ?? projects[0] ?? null;
+  const minStars = /^(0|[1-9][0-9]{0,8})$/.test(query.minStars) ? Number(query.minStars) : null;
+  const base = { project, projects: project === null || projects.includes(project) ? projects : [project, ...projects], handle: query.handle, minStars: minStars ?? 0 };
+  if (project === null) return { ...base, page: { posts: [], next_cursor: null } };
+  if (minStars === null) return { ...base, page: { problem: 'The star filter must be a whole number.' } };
+  try {
+    const page = await executeOperation(db, parseOperation({ op: 'posts', project, min_stars: minStars, limit: postsLimit,
+      ...(query.handle === '' ? {} : { handle: query.handle }), ...(query.after === null ? {} : { after: query.after }) }), actor);
+    if (!('posts' in page)) throw new PolylinedbError('storage_error', 'Posts are unavailable', 500);
+    return { ...base, page };
+  } catch (error) {
+    if (error instanceof PolylinedbError && error.status === 400) return { ...base, page: { problem: `${error.message}.`.replace('..', '.') } };
+    throw error;
+  }
+}
+/** Where a star form returns: this page with the same filters, so the person lands back on the post they starred. */
+function postsBack(query: PostsQuery): string {
+  const params = new URLSearchParams();
+  if (query.project !== null) params.set('project', query.project);
+  if (query.handle !== '') params.set('handle', query.handle);
+  if (query.minStars !== '' && query.minStars !== '0') params.set('min_stars', query.minStars);
+  if (query.after !== null) params.set('after', query.after);
+  const text = params.toString();
+  return text === '' ? '/ui/posts' : `/ui/posts?${text}`;
 }
 
 async function entityTag(html: string): Promise<string> {

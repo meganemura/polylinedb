@@ -212,6 +212,9 @@ progress::-webkit-progress-bar{background:var(--hair);border-radius:4px}
 progress::-webkit-progress-value{background:var(--c,var(--agents));border-radius:4px}
 progress::-moz-progress-bar{background:var(--c,var(--agents));border-radius:4px}
 .who-dot{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--c,var(--agents));color:var(--on);font-size:12px;font-weight:800}
+.who-dot.av0{background:#c2410c;color:#fff}.who-dot.av1{background:#a16207;color:#fff}.who-dot.av2{background:#4d7c0f;color:#fff}.who-dot.av3{background:#047857;color:#fff}.who-dot.av4{background:#0e7490;color:#fff}.who-dot.av5{background:#1d4ed8;color:#fff}.who-dot.av6{background:#7e22ce;color:#fff}.who-dot.av7{background:#be185d;color:#fff}
+.post .meta b{font-weight:700}.post .says{margin:6px 0 4px;font-size:17px;line-height:1.45;overflow-wrap:anywhere}.post .stars{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px;color:var(--ink2)}
+.post .stars form{display:inline}.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:0 0 16px}.filters .field{margin:0}
 
 /* issue page */
 .issue-grid{display:grid;gap:16px;margin-top:16px}

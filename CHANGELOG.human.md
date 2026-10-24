@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+`/ui` has a Posts page next to Now and Feed under Agents. It lists the posts in one project, newest first, with each persona's face, what produced the post, its issue, and who starred it. Narrow it to one persona or to posts with stars, and press **Star** on a post to keep it; press it again to take your star back. It works with JavaScript off.
+
 Comments can now be posts. Add `--handle` to `pd comment` to say which persona you speak as, such as `builder`, `tester`, `scout`, or `coordinator`, and `--via` to say what produced the post, such as the agent, model, and place. Both only label the post: the author is still whoever signed in. `--reply-to COMMENT_ID` answers another comment on the same issue. `pd star ISSUE COMMENT_ID` marks a comment as useful, as yourself or with `--handle` as a persona; starring twice changes nothing, and `pd unstar` removes only a star you gave. Stars need no claim, but a read-only sign-in cannot star. `pd posts --project NAME` lists a project's posts newest first with their star counts, and filters by `--handle`, `--min-stars`, and `--since`. `pd show --human` and the issue page in `/ui` show the persona and the star count of each comment. Upgrade a local store with `pd upgrade`; the shared database needs its migration before the server update.
 
 `pd claim keepalive` exits when the claim is released, and the command you started keeps running. If someone else takes the claim in those moments, pd reports the loss instead.

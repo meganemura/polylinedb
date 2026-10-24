@@ -1,8 +1,8 @@
 /** Composes each /ui page from data the entry module already read. Nothing here reads the store or writes. */
-import { blockerIsActive, type ActivityEvent, type ActivityPage, type Attention, type ClaimDisplay, type Comment, type Issue, type IssueLink,
+import { blockerIsActive, type ActivityEvent, type ActivityPage, type Attention, type ClaimDisplay, type Comment, type Issue, type IssueLink, type PostPage,
   type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
-import { bodyAfterTitle, canDispatch, canWrite, clockTime, disclose, document, duration, escape, fullTime, icon, idLink, issueHref, japanTime,
-  labelChip, lang, lanePanel, liveForm, mono, pageHead, person, plural, priorityChip, projectHref, secondsOf, shortProject, shortTitle, statusChip,
+import { avatar, bodyAfterTitle, canDispatch, canWrite, clockTime, disclose, document, duration, escape, fullTime, hidden, icon, idLink, issueHref, japanTime,
+  joined, labelChip, lang, lanePanel, liveForm, mono, pageHead, person, plural, priorityChip, projectHref, secondsOf, shortProject, shortTitle, statusChip,
   statusWord, timeTag, title, whose, workflowLabels, type TabCounts, type Viewer } from './ui-html.ts';
 import { flash, hero, sinceYesterday, type DoneKind } from './ui-brief.ts';
 import { blockedRow, claimRow, commentForm, decideForm, dispatchForm, dispatchLine, doneForm, expiredRow, holderName, leaseBar, plainRow,
@@ -52,9 +52,10 @@ function staleSummary(lanes: Lanes): string {
     + (count > 0 ? `<p class="sub-line">${count} of the ${lanes.stale.length} shown ${plural(lanes.stale.length, 'is', 'are')} in ${escape(shortProject(top))}.</p>` : '') + '</li>';
 }
 
-function agentsTabs(current: 'now' | 'feed'): string {
-  const mark = (tab: 'now' | 'feed') => tab === current ? ' aria-current="page"' : '';
-  return `<nav class="subtabs" aria-label="Agents views"><a href="/ui/agents"${mark('now')}>Now</a><a href="/ui/activity"${mark('feed')}>Feed</a></nav>`;
+function agentsTabs(current: 'now' | 'feed' | 'posts'): string {
+  const mark = (tab: 'now' | 'feed' | 'posts') => tab === current ? ' aria-current="page"' : '';
+  return `<nav class="subtabs" aria-label="Agents views"><a href="/ui/agents"${mark('now')}>Now</a><a href="/ui/activity"${mark('feed')}>Feed</a>`
+    + `<a href="/ui/posts"${mark('posts')}>Posts</a></nav>`;
 }
 
 export function agentsPage(lanes: Lanes, viewer: Viewer): string {
@@ -112,6 +113,53 @@ export function activityPage(page: ActivityPage | { problem: string }, after: Ac
   }
   return document({ title: 'Agent feed', viewer, counts, tab: 'agents',
     body: pageHead('Agents', 'Every change in the store, as the change feed records it.') + agentsTabs('feed') + panel });
+}
+
+/** What /ui/posts shows: the chosen filters as typed, the projects to choose from, and the page or why it could not be read. */
+export type PostsView = { project: string | null; projects: readonly string[]; handle: string; minStars: number; page: PostPage | { problem: string } };
+const minStarChoices = [0, 1, 2, 3] as const;
+function postsHref(view: PostsView, after: string): string {
+  const query = new URLSearchParams();
+  if (view.project !== null) query.set('project', view.project);
+  if (view.handle !== '') query.set('handle', view.handle);
+  if (view.minStars > 0) query.set('min_stars', String(view.minStars));
+  query.set('after', after);
+  return `/ui/posts?${query.toString()}`;
+}
+
+function postRow(post: PostPage['posts'][number], viewer: Viewer, back: string): string {
+  const handle = post.handle ?? '';
+  const text = title(post.body);
+  const more = bodyAfterTitle(post.body).trim() === '' ? '' : ` <a href="${escape(issueHref(post.issue_id))}#comments">More</a>`;
+  // A person stars as their actor, so the star they can remove is the one under their actor id.
+  const mine = post.starrers.includes(viewer.actor.id);
+  const toggle = !canWrite(viewer) ? '' : `<form method="post" action="/ui/i/${escape(post.issue_id)}/star">${hidden({ return: `${back}#p-${post.id}`, comment: post.id, star: mine ? 'remove' : 'add' })}`
+    + `<button class="btn sm${mine ? '' : ' ghost'}" aria-pressed="${mine}">${mine ? '★ Starred' : '☆ Star'}</button></form>`;
+  const who = post.starrers.length === 0 ? '' : `<span>${escape(joined(post.starrers.map(name => person(viewer, name))))}${post.stars > post.starrers.length ? ` and ${post.stars - post.starrers.length} more` : ''}</span>`;
+  return `<li class="row post" id="p-${escape(post.id)}"><div class="meta">${avatar(handle)}<b>${escape(handle)}</b>`
+    + (post.via === null ? '' : `<span>via ${escape(post.via)}</span>`) + idLink(post.issue_id)
+    + `<span>${timeTag(secondsOf(post.created_at), fullTime(secondsOf(post.created_at)))}</span>${post.reply_to === null ? '' : '<span>reply</span>'}</div>`
+    + `<p class="says"${lang(text)}>${escape(text)}${more}</p>`
+    + `<div class="stars"><span>${post.stars} ${plural(post.stars, 'star', 'stars')}</span>${who}${toggle}</div></li>`;
+}
+
+export function postsPage(view: PostsView, viewer: Viewer, counts: TabCounts, back: string): string {
+  const options = view.projects.map(project => `<option value="${escape(project)}"${project === view.project ? ' selected' : ''}>${escape(project)}</option>`).join('');
+  const stars = minStarChoices.map(count => `<option value="${count}"${count === view.minStars ? ' selected' : ''}>${count === 0 ? 'Any' : `${count} or more`}</option>`).join('');
+  const filters = `<form class="filters" action="/ui/posts" method="get"><div class="field"><label for="pf-project">Project</label><select id="pf-project" name="project">${options}</select></div>`
+    + `<div class="field"><label for="pf-handle">Persona</label><input id="pf-handle" name="handle" value="${escape(view.handle)}" placeholder="any" autocapitalize="none" spellcheck="false"></div>`
+    + `<div class="field"><label for="pf-stars">Stars</label><select id="pf-stars" name="min_stars">${stars}</select></div><button class="btn sm">Show</button></form>`;
+  let panel: string;
+  if (view.project === null) panel = `<p class="role-note">No project has an issue yet, so there is nothing to post on.</p>`;
+  else if ('problem' in view.page) panel = `<p class="role-note">${escape(view.page.problem)} Start again from the <a href="/ui/posts">newest posts</a>.</p>`;
+  else {
+    const page = view.page;
+    panel = lanePanel({ lane: null, icon: 'comment', heading: 'Newest first', count: page.posts.length, rows: page.posts.map(post => postRow(post, viewer, back)).join(''),
+      empty: 'No post matches. A post is a comment written with a handle.',
+      foot: page.next_cursor === null ? '' : rest(`<a href="${escape(postsHref(view, page.next_cursor))}">Older posts</a>`) });
+  }
+  return document({ title: 'Posts', viewer, counts, tab: 'agents',
+    body: pageHead('Agents', 'One-line lessons agents post, newest first. Star the ones worth keeping.') + agentsTabs('posts') + filters + panel });
 }
 
 function orderForm(item: QueueItem, queue: readonly QueueItem[]): string {

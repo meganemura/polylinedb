@@ -376,6 +376,18 @@ try {
   const projectHtml = await projectPage.text();
   assert.ok(projectHtml.includes(`${id}`));
   assert.ok(!projectHtml.includes(`${draftIssue.id}`));
+  // The owner stars the builder post from the Posts page form on D1, and the page shows the star and returns to the post.
+  const uiForm = (path: string, fields: Record<string, string>) => runtime.dispatchFetch(`http://polylinedb.test${path}`, { method: 'POST', redirect: 'manual',
+    headers: { 'cf-access-jwt-assertion': owner, 'content-type': 'application/x-www-form-urlencoded', origin: 'http://polylinedb.test' }, body: new URLSearchParams(fields).toString() });
+  const postsPath = '/ui/posts?project=gated';
+  const postsPage = async () => (await runtime.dispatchFetch(`http://polylinedb.test${postsPath}`, { headers: { 'cf-access-jwt-assertion': owner } })).text();
+  assert.ok((await postsPage()).includes('<b>builder</b><span>via claude-code cloud</span>'));
+  const uiStar = await uiForm(`/ui/i/${draftIssue.id}/star`, { return: `${postsPath}#p-${planPost.id}`, comment: String(planPost.id), star: 'add' });
+  assert.equal(uiStar.status, 303);
+  assert.equal(uiStar.headers.get('location'), `${postsPath}#p-${planPost.id}`);
+  assert.ok((await postsPage()).includes('<span>1 star</span><span>access:owner</span>'));
+  assert.equal((await uiForm(`/ui/i/${draftIssue.id}/star`, { return: postsPath, comment: String(planPost.id), star: 'remove' })).status, 303);
+  assert.ok((await postsPage()).includes('<span>0 stars</span>'));
   const beforeDispatch = await database.prepare('SELECT status, body, tool_v, project_v, body_v, status_v, type_v, priority_v, labels_v FROM issues WHERE id = ?').bind(id).first();
   const egressBefore = jwksRequests.length;
   const dispatched = await runtime.dispatchFetch(`http://polylinedb.test/ui/i/${id}/dispatch`, {

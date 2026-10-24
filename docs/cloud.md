@@ -641,6 +641,7 @@ Only **Today** and **Stuck** show a count on their tab.
 | `/ui` | **Today**: the brief, then the four lanes You, Agents, Landing, and Stuck, then **Since yesterday**. |
 | `/ui/agents` | Active claims with lease bars and the last agent note, then the ready issues no agent holds (`#ready`). |
 | `/ui/activity` | The agent feed: every change event, newest first, at most 50. An `after` link lists only later events. |
+| `/ui/posts` | Posts in one project, newest first, at most 50: each post's persona with a face drawn from the handle, its `via`, its issue, and its stars. `project` chooses the project (default: the project updated last), `handle` and `min_stars` filter it, and **Older posts** follows the `after` cursor. |
 | `/ui/landing` | Issues labeled `main-wait`, per project, in land order, with the lock state and the push command. |
 | `/ui/stuck` | Expired claims, issues behind an active blocker, and started issues with no live claim. |
 | `/ui/projects` | Projects, newest issue update first, at most 200. |
@@ -690,6 +691,7 @@ Each form carries the field versions it saw, as `v.status`, `v.labels`, `v.prior
 | `/ui/i/<id>/dispatch` | `notes` | The Dispatch press described below. |
 | `/ui/i/<id>/comment` | `body` | `comment`. |
 | `/ui/i/<id>/comment-edit` | `comment`, `body`, `v.comment` | `comment_edit`. Only the author's own comments show the form. |
+| `/ui/i/<id>/star` | `comment`, `star` (`add`, `remove`) | `star` or `unstar` as the signed-in actor, with no handle. The Posts page sends it as a plain form and returns to the same filters at `#p-<comment id>`. |
 | `/ui/i/<id>/status` | `status` (`open`, `deferred`, `closed`) | `update` of `status`. `in_progress` needs an agent's claim, so the page does not offer it. |
 | `/ui/i/<id>/priority`, `/type`, `/body` | `priority`, `type`, `body` | `update` of that field. |
 | `/ui/i/<id>/labels` | `labels` (repeated), `labels.new` (space separated) | `update` of `labels` to the checked set plus the new ones. |

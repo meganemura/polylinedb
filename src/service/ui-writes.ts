@@ -12,7 +12,7 @@ import { issuePage, messagePage, newPage, tabCounts } from './ui-pages.ts';
 import { readIssueView } from './ui-reads.ts';
 import { composeLanes, readLanes } from './ui-today.ts';
 
-export const issueActions = ['decide', 'done', 'dispatch', 'comment', 'comment-edit', 'status', 'priority', 'type', 'labels', 'body',
+export const issueActions = ['decide', 'done', 'dispatch', 'comment', 'comment-edit', 'star', 'status', 'priority', 'type', 'labels', 'body',
   'blockers/add', 'blockers/remove', 'land-order'] as const;
 export type IssueAction = typeof issueActions[number];
 export type WriteRoute = { kind: 'issue'; id: string; action: IssueAction } | { kind: 'new' } | { kind: 'landed' };
@@ -279,6 +279,15 @@ async function addComment(ctx: WriteContext, id: string, form: URLSearchParams):
   return { kind: 'saved', id, message: 'Comment saved.', hash: 'comments' };
 }
 
+// A person stars as their actor and no handle, so a star from the page is theirs alone to remove. Both directions are idempotent.
+async function starComment(ctx: WriteContext, id: string, form: URLSearchParams): Promise<Done> {
+  const commentId = required(form, 'comment', 'The comment id');
+  const direction = one(form, 'star');
+  if (direction !== 'add' && direction !== 'remove') throw new Refusal(400, 'The form names neither a star nor its removal. Reload the page and try again.');
+  await run(ctx, { op: direction === 'add' ? 'star' : 'unstar', id, comment_id: commentId });
+  return { kind: 'saved', id, message: direction === 'add' ? 'Starred.' : 'Star removed.' };
+}
+
 async function editComment(ctx: WriteContext, id: string, form: URLSearchParams): Promise<Done> {
   const commentId = required(form, 'comment', 'The comment id');
   const body = required(form, 'body', 'The comment');
@@ -458,6 +467,7 @@ function failureSentence(error: PolylinedbError): string {
     case 'read_only_actor': return 'This sign-in can only read. Writes wait on the owner.';
     case 'comment_author_required': return 'Only the author of a comment can edit it. Nothing changed.';
     case 'comment_not_found': return 'That comment is not on this issue. Nothing changed.';
+    case 'star_owner_required': return 'Only the one who gave a star can remove it. Nothing changed.';
     case 'dependency_blocked': return 'The issue has active blockers, so it cannot start. Nothing changed.';
     case 'epic_has_children': return 'An epic with children stays an epic. Nothing changed.';
     default: return `${error.message}. Nothing changed.`.replace('.. ', '. ');
@@ -512,6 +522,7 @@ export async function uiWrite(route: WriteRoute, form: URLSearchParams | 'invali
     const id = route.id;
     const handlers: Record<Exclude<IssueAction, 'dispatch'>, () => Promise<Done>> = {
       decide: () => decide(ctx, id, form), done: () => doneAction(ctx, id, form), comment: () => addComment(ctx, id, form), 'comment-edit': () => editComment(ctx, id, form),
+      star: () => starComment(ctx, id, form),
       status: () => setField(ctx, id, form, 'status'), priority: () => setField(ctx, id, form, 'priority'), type: () => setField(ctx, id, form, 'type'),
       labels: () => setLabels(ctx, id, form), body: () => setField(ctx, id, form, 'body'),
       'blockers/add': () => blockers(ctx, id, form, true), 'blockers/remove': () => blockers(ctx, id, form, false), 'land-order': () => landOrder(ctx, id, form),
