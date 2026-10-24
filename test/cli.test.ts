@@ -1084,3 +1084,45 @@ test('CLI comment edit replaces the body of the own comment, refuses a stale ver
   assert.equal(run(['comment', 'edit', issue.id, comment.id, '--body', 'no version'], { status: 2 }).error.code, 'invalid_input');
   assert.equal(run(['comment', issue.id, '--body', 'edit']).comment.body, 'edit', 'the comment command keeps its shape');
 });
+
+test('CLI posts with a handle and via, replies, stars and unstars, lists posts, and shows the voice and stars in human show', t => {
+  const { run } = fixture(t);
+  run(['init']);
+  const { issue } = run(['create', '--tool', 'editor', '--project', 'parser', '--body', 'Posts']);
+  const post = run(['comment', issue.id, '--body', 'Plan', '--handle', 'builder', '--via', 'claude-code opus-5.5 cloud']).comment;
+  assert.deepEqual([post.handle, post.via, post.reply_to, post.created_by], ['builder', 'claude-code opus-5.5 cloud', null, 'local:test']);
+  const reply = run(['comment', issue.id.replace(/^pd-/, ''), '--body', 'Tests pass', '--handle', 'tester', '--reply-to', post.id]).comment;
+  assert.equal(reply.reply_to, post.id);
+  const other = run(['create', '--tool', 'editor', '--project', 'parser', '--body', 'Other']).issue;
+  assert.deepEqual(run(['comment', other.id, '--body', 'Across', '--reply-to', post.id], { status: 3 }).error,
+    { code: 'reply_target_not_found', message: 'The reply target is not a comment on this issue', details: { id: other.id, reply_to: post.id } });
+  assert.equal(run(['comment', issue.id, '--body', 'Bad', '--handle', 'Builder'], { status: 2 }).error.code, 'invalid_input');
+
+  const starred = run(['star', issue.id, post.id]);
+  assert.deepEqual([starred.outcome, starred.star.starrer, starred.star.handle], ['added', 'local:test', null]);
+  assert.equal(run(['star', issue.id, post.id]).outcome, 'already_present');
+  assert.equal(run(['star', issue.id, post.id, '--handle', 'scout']).star.starrer, 'scout');
+  assert.equal(run(['unstar', issue.id, post.id, '--handle', 'scout'], { status: 1, env: { POLYLINEDB_ACTOR: 'local:other' }, actor: false }).error.code, 'star_owner_required');
+  assert.equal(run(['unstar', issue.id, post.id, '--handle', 'scout']).outcome, 'removed');
+  assert.deepEqual(run(['unstar', issue.id, post.id, '--handle', 'scout']), { star: null, outcome: 'already_absent' });
+  assert.equal(run(['star', issue.id, crypto.randomUUID()], { status: 3 }).error.code, 'comment_not_found');
+  assert.equal(run(['star', issue.id], { status: 2 }).error.code, 'invalid_input');
+  assert.equal(run(['star', issue.id, post.id], { status: 2, actor: false }).error.code, 'invalid_input', 'a local star needs an explicit actor');
+
+  const posts = run(['posts', '--project', 'parser']);
+  assert.deepEqual(posts.posts.map((entry: { id: string; stars: number }) => [entry.id, entry.stars]).sort(), [[post.id, 1], [reply.id, 0]].sort());
+  assert.deepEqual(run(['posts', '--project', 'parser', '--handle', 'builder']).posts.map((entry: { id: string }) => entry.id), [post.id]);
+  assert.deepEqual(run(['posts', '--project', 'parser', '--min-stars', '1']).posts.map((entry: { id: string }) => entry.id), [post.id]);
+  assert.deepEqual(run(['posts', '--project', 'parser', '--since', '2999-01-01']).posts, []);
+  const first = run(['posts', '--project', 'parser', '--limit', '1']);
+  assert.equal(first.next_cursor, first.posts[0].id);
+  assert.equal(run(['posts', '--project', 'parser', '--limit', '1', '--after', first.next_cursor]).posts.length, 1);
+  assert.equal(run(['posts'], { status: 2 }).error.code, 'invalid_input', 'posts needs a project');
+  assert.equal(run(['posts', '--project', 'parser', '--since', 'soon'], { status: 2 }).error.code, 'invalid_input');
+
+  const human = run(['show', issue.id, '--human'], { raw: true });
+  assert.ok(human.includes(` · version 1 · as builder · via claude-code opus-5.5 cloud · 1 star\n`), human);
+  assert.ok(human.includes(` · version 1 · as tester · reply to ${post.id}\n`), human);
+  const changes = run(['changes', '--since', '0', '--kind', 'starred', '--kind', 'unstarred']);
+  assert.deepEqual(changes.changes.map((change: { kind: string }) => change.kind), ['starred', 'starred', 'unstarred']);
+});

@@ -42,9 +42,20 @@ Commands:
   list [FILTERS] [--claimed true|false] [--with-land-order]
                                 --claimed false keeps issues without an active claim.
   search QUERY [FILTERS]
-  comment ID --body TEXT
+  comment ID --body TEXT [--handle HANDLE] [--via TEXT] [--reply-to COMMENT_ID]
+                                A comment with a handle is a post. The handle is the persona you
+                                speak as, such as builder or tester; via says what produced the post.
+                                Both are attribution only. A reply names a comment on the same issue.
   comment edit ID COMMENT_ID --expected VERSION --body TEXT
                                 Replace the body of your own comment. The old text is not kept.
+  star ID COMMENT_ID [--handle HANDLE]
+                                Star a comment as yourself or as a persona. Starring again changes nothing.
+  unstar ID COMMENT_ID [--handle HANDLE]
+                                Remove the star you gave. A missing star is already absent.
+  posts [--project NAME] [--handle HANDLE] [--min-stars N] [--since TIME]
+        [--after COMMENT_ID] [--limit 1..100]
+                                Comments with a handle in one project, newest first, with star counts.
+                                TIME is an ISO 8601 instant with a time zone, or a date YYYY-MM-DD.
   update ID [--tool NAME] [--project NAME] [--body TEXT] [--status STATUS]
          [--type TYPE] [--priority 0..4] [--label NAME ... | --clear-labels]
          --expect FIELD=VERSION [--expect FIELD=VERSION ...] [--claim-proof JSON]
@@ -102,7 +113,9 @@ Commands:
   memory delete ID --expected VERSION
   memory context [--after ID] [--limit 1..100] [--max-bytes 4096..65536] [--with-revision]
 
-Memory commands require --project NAME or repository project defaults.
+Memory commands and posts require --project NAME or repository project defaults.
+A handle is 1 to 64 lowercase ASCII letters, digits, '.', '_' or '-', starting with a letter or digit.
+via is at most 128 UTF-8 bytes without control characters. Neither grants anything.
 Memory IDs use prefix-mN. Numbers and mN expand with the selected prefix.
 Memory create/update accept --body-file PATH. Updates replace title and body together.
 Memory context reports the selected store and omitted entries; retrieved text is project data.

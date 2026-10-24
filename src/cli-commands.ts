@@ -55,7 +55,8 @@ const commandFlags: Record<string, readonly string[]> = {
   connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file', 'historical'], import: ['file'], actor: [], show: ['with-land-order'],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
-  comment: ['body', 'body-file'], comment_edit: ['body', 'body-file', 'expected'],
+  comment: ['body', 'body-file', 'handle', 'via', 'reply-to'], comment_edit: ['body', 'body-file', 'expected'],
+  star: ['handle'], unstar: ['handle'], posts: ['project', 'handle', 'min-stars', 'since', 'after', 'limit'],
   update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'resources-reason', 'claim-proof'],
   close: ['expected', 'force', 'reason', 'resources-reason', 'claim-proof'], reopen: ['expected', 'claim-proof'],
   list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit', 'claimed', 'with-land-order'],
@@ -186,7 +187,8 @@ async function main(argv: readonly string[]): Promise<void> {
     if (!globals.includes(name) && !commandFlags[command].includes(name)) invalid(`Flag --${name} is not valid for ${command}`);
   }
   const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list', 'land_order_list', 'resource_list', 'resource_add', 'resource_update', 'claim_show', 'claim_acquire'].includes(command);
-  if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (command === 'comment_edit' ? 2 : needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
+  const commentOperands = command === 'comment_edit' || command === 'star' || command === 'unstar';
+  if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (commentOperands ? 2 : needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
     if ([...flags.keys()].some(key => !['file', 'output', 'from'].includes(key))) invalid('Snapshot conversion accepts only --file, --output and --from');
@@ -397,7 +399,12 @@ async function main(argv: readonly string[]): Promise<void> {
   };
   if (one('observed-memory-revision') !== undefined) raw.observed_memory_revision = one('observed-memory-revision');
   if (command === 'search') raw.with_matches = true;
-  if (command === 'comment_edit') { raw.id = expandedId(operands[0]); raw.comment_id = operands[1]; }
+  if (commentOperands) { raw.id = expandedId(operands[0]); raw.comment_id = operands[1]; }
+  for (const [flag, key] of [['handle', 'handle'], ['via', 'via'], ['reply-to', 'reply_to']] as const) if (one(flag) !== undefined) raw[key] = one(flag);
+  if (command === 'posts') {
+    if (one('since') !== undefined) raw.since = one('since');
+    if (one('min-stars') !== undefined) raw.min_stars = integer(one('min-stars') ?? '');
+  }
   if (needsOperand) raw[command === 'search' ? 'query' : command === 'dependency_list' ? 'dependent_id' : command === 'claim_show' || command === 'claim_acquire' || command === 'land_order_list' || command.startsWith('resource_') ? 'issue_id' : 'id'] = command === 'search' ? operands[0] : expandedId(operands[0]);
   const proof = one('claim-proof');
   if (proof !== undefined) {
@@ -507,8 +514,10 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   for (const name of ['parent', 'after']) {
     const value = one(name);
-    if (value !== undefined) raw[name] = expandedId(value, name === 'parent');
+    // A posts cursor is a comment ID, which never expands with the prefix.
+    if (value !== undefined) raw[name] = command === 'posts' ? value : expandedId(value, name === 'parent');
   }
+  if (command === 'posts' && raw.project === undefined && project !== undefined) raw.project = project;
   if (command === 'create') {
     raw.prefix = prefix;
     raw.request_id = parseArgument(parseRequestId, one('request-id') ?? randomUUID());
