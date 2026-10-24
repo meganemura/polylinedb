@@ -82,7 +82,9 @@ test('a snapshot keeps every post, reply and star through export and import, and
   assert.equal(canonicalSnapshot(destination.exportSnapshot()), canonicalSnapshot(exported));
   assert.equal(destination.importSnapshot(wire).result, 'already_present');
   const shown = await executeOperation(destination.db, parseOperation({ op: 'show', id }), 'alice'); assert.ok('comments' in shown);
-  assert.deepEqual(shown.comments.map(comment => [comment.handle, comment.stars, comment.starrers?.length]), [['builder', 2, 2], ['tester', 1, 1], [null, 0, 0]]);
+  // The three comments can share a millisecond, and show then orders them by id, so each is found by its text.
+  const voices = new Map(shown.comments.map(comment => [comment.body, [comment.handle, comment.stars, comment.starrers?.length]]));
+  assert.deepEqual(Object.fromEntries(voices), { 'Root post': ['builder', 2, 2], 'First reply': ['tester', 1, 1], 'Second reply': [null, 0, 0] });
 
   // A snapshot written by schema 10 has no voice and no stars; it converts with nulls and imports.
   const { stars: _stars, ...rest } = exported;
@@ -93,8 +95,8 @@ test('a snapshot keeps every post, reply and star through export and import, and
   const restored = store(t);
   assert.equal(restored.importSnapshot(converted).result, 'imported');
   const plain = await executeOperation(restored.db, parseOperation({ op: 'show', id }), 'alice'); assert.ok('comments' in plain);
-  assert.deepEqual(plain.comments.map(comment => [comment.body, comment.handle, comment.via, comment.reply_to, comment.stars]),
-    [['Root post', null, null, null, 0], ['First reply', null, null, null, 0], ['Second reply', null, null, null, 0]]);
+  assert.deepEqual(plain.comments.map(comment => [comment.body, comment.handle, comment.via, comment.reply_to, comment.stars]).sort(),
+    [['First reply', null, null, null, 0], ['Root post', null, null, null, 0], ['Second reply', null, null, null, 0]]);
   const posts = await executeOperation(restored.db, parseOperation({ op: 'posts', project: 'posts' }), 'alice'); assert.ok('posts' in posts);
   assert.deepEqual(posts.posts, []);
 });
