@@ -1,13 +1,13 @@
 # Restore a local snapshot into D1
 
-These instructions describe schema 10 and snapshot 8.
+These instructions describe schema 11 and snapshot 9.
 Version 0.6.0 uses schema 10 and snapshot 8. No release used schema 9 and snapshot 7, but a Worker built from main before comment edits did. Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6, versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
 
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.
 
-The repository operator command restores snapshot v8 into a new D1 database.
-It preserves issues and their close records, comments with their edit versions, memories, prerequisites, land order, external resources, claims, counters, request receipts, versions, and audit fields.
+The repository operator command restores snapshot v9 into a new D1 database.
+It preserves issues and their close records, comments with their edit versions, handles, `via`, and replies, stars, memories, prerequisites, land order, external resources, claims, counters, request receipts, versions, and audit fields.
 Ordinary `pd` commands can select SQLite or the authenticated cloud API. Snapshot maintenance remains an operator task.
 
 ## Prepare the transfer
@@ -30,7 +30,7 @@ Create a target file with mode 0600 outside Git checkouts. Environment-specific 
   "accountId": "ACCOUNT_ID",
   "databaseId": "DATABASE_UUID",
   "snapshotSha256": "CANONICAL_SNAPSHOT_SHA256",
-  "schemaVersion": 10
+  "schemaVersion": 11
 }
 ```
 
@@ -61,10 +61,13 @@ The excerpt replaces each run of 20 or more identifier characters with `[redacte
 <a id="upgrade-an-existing-schema-2-3-4-5-or-6-deployment"></a>
 <a id="upgrade-an-existing-schema-2-3-4-5-6-or-7-deployment"></a>
 <a id="upgrade-an-existing-schema-2-3-4-5-6-7-or-8-deployment"></a>
+<a id="upgrade-an-existing-schema-2-3-4-5-6-7-8-or-9-deployment"></a>
 
-## Upgrade an existing schema 2, 3, 4, 5, 6, 7, 8 or 9 deployment
+## Upgrade an existing schema 2, 3, 4, 5, 6, 7, 8, 9 or 10 deployment
 
-The new Worker needs schema 10. The CLI's `upgrade` command applies only to local SQLite.
+The new Worker needs schema 11. The CLI's `upgrade` command applies only to local SQLite.
+A schema 11 Worker on a schema 10 database fails every `show`, every issue page of the web view, and every `comment`, `star`, `unstar`, and `posts`, because they name the comment `handle`, `via`, and `reply_to` columns or the `stars` table.
+A schema 10 Worker keeps working against a schema 11 database. Its comments have no handle, and it cannot star or list posts.
 A schema 10 Worker on a schema 9 database fails every `show`, every issue page of the web view, and every `comment_edit`, because they name the comment `version`, `updated_at`, and `updated_by` columns.
 A schema 9 Worker keeps working against a schema 10 database. It cannot edit a comment, and its new comments start at version 1.
 A schema 9 Worker on a schema 8 database reads issues, but every `update`, `close`, and `reopen` fails, because the issue write reads `issue_resources`. Every land-order and resource operation, every read that asks for land order, and every change feed read fail too, because the new tables and the `relation` column are missing.
@@ -74,16 +77,16 @@ Upgrade the database before deploying the Worker.
 A schema 6 or 7 Worker keeps working against an upgraded database. A schema 6 Worker records no change events, and neither earlier Worker records closures, so its closes leave them null.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
 Record the account, database UUID, and Worker binding.
-Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL`, `SCHEMA_V6_SQL`, `SCHEMA_V7_SQL`, `SCHEMA_V8_SQL`, or `SCHEMA_V9_SQL` definition before a write.
+Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL`, `SCHEMA_V6_SQL`, `SCHEMA_V7_SQL`, `SCHEMA_V8_SQL`, `SCHEMA_V9_SQL`, or `SCHEMA_V10_SQL` definition before a write.
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
 Run `pd snapshot convert --from 2 --file OLD --output NEW` for a v2 snapshot.
-For a v3, v4, v5, v6, or v7 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, or `--from 7` instead.
-Then use the new v8 digest and the normal restore procedure.
+For a v3, v4, v5, v6, v7, or v8 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, or `--from 8` instead.
+Then use the new v9 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
-For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, `--upgrade-from 6`, `--upgrade-from 7`, `--upgrade-from 8`, or `--upgrade-from 9`.
+For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, `--upgrade-from 6`, `--upgrade-from 7`, `--upgrade-from 8`, `--upgrade-from 9`, or `--upgrade-from 10`.
 Apply every statement in one approved D1 batch or transaction; do not send these statements through the public Worker API.
 The `schemaUpgradeStatements` export provides complete statements, including trigger bodies, for a D1 batch adapter.
 Do not split migration SQL at semicolons because trigger bodies contain semicolons.
@@ -95,10 +98,12 @@ Upgrades from versions 2 through 7 add the `closed_at` and `closed_by` issue col
 The upgrade does not infer close times for issues that are already closed.
 Upgrades from versions 2 through 8 add the nullable `change_events.relation` column, the empty land-order and resource tables, and their triggers.
 They replace the `dependencies_acyclic` trigger with one that walks prerequisites and land order together.
-Every supported upgrade adds the comment columns `version` (1 for each existing comment), `updated_at`, and `updated_by` (both null).
-It then rebuilds `change_events` so that its kind check accepts `comment_edited`: it drops the triggers that name `change_events`, creates the new table, copies every event with its `seq`, drops the old table, renames the new one, and creates the triggers again with the same text.
-It adds the trigger that records `comment_edited` and sets schema version 10.
-D1 runs the whole upgrade in one batch, so a failure leaves the schema 9 database unchanged.
+Upgrades from versions 2 through 9 add the comment columns `version` (1 for each existing comment), `updated_at`, and `updated_by` (both null).
+They then rebuild `change_events` so that its kind check accepts `comment_edited`: they drop the triggers that name `change_events`, create the new table, copy every event with its `seq`, drop the old table, rename the new one, and create the triggers again with the same text.
+They add the trigger that records `comment_edited`.
+Every supported upgrade adds the nullable comment columns `handle`, `via`, and `reply_to`, the `comments_reply_on_issue` trigger that keeps a reply on the issue of its target, the `comments_posts` index, and the empty `stars` table.
+It rebuilds `change_events` again, in the same steps, so that its kind check accepts `starred` and `unstarred`. It drops and recreates the thirteen triggers that name `change_events`, adds the two star triggers, and sets schema version 11.
+D1 runs the whole upgrade in one batch, so a failure leaves the earlier database unchanged.
 Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
 Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
 Verify that schema 2 upgrades create empty memory collections.
@@ -110,8 +115,9 @@ Verify that both claim collections remain empty after an upgrade from schema 2 t
 Verify that `change_events` and `change_writer` are empty after an upgrade from schema 2 through 6, and that schema 7 change events remain unchanged.
 Verify that every issue has null `closed_at` and `closed_by` after an upgrade from schema 2 through 7, and that schema 8 closures remain unchanged.
 Verify that `land_order`, `land_order_revisions`, `land_order_requests`, `issue_resources`, `resource_revisions`, and `resource_requests` are empty after an upgrade from schema 2 through 8, and that every change event from before schema 9 has a null `relation`.
-Verify that every comment has version 1 with null `updated_at` and `updated_by`, and that every change event, with its `seq`, `relation`, and the other fields, is the same as before the upgrade.
-After the deploy, write one comment and edit it in a test project, then read `changes` with the `commented` and `comment_edited` kinds. Each write must add one event with the next `seq`.
+Verify that every comment has version 1 with null `updated_at` and `updated_by` after an upgrade from schema 2 through 9, and that schema 10 comment versions and editors remain unchanged.
+Verify that every comment has null `handle`, `via`, and `reply_to`, that `stars` is empty, and that every change event, with its `seq`, `relation`, and the other fields, is the same as before the upgrade.
+After the deploy, in a test project, write one comment with a handle, star it twice, and unstar it, then read `changes` with the `commented`, `starred`, and `unstarred` kinds. The comment, the first star, and the unstar must each add one event with the next `seq`, and the repeated star must add none.
 Deploy the new Worker only after those checks pass.
 If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
 
@@ -151,6 +157,18 @@ Rolling back the Worker has these costs:
 
 See [the comment edit decision](adr/0022-comment-edits.md#rollout).
 
+### Rollback cost of the schema 11 upgrade
+
+The schema 10 to 11 upgrade adds three nullable comment columns, one index, one table, rebuilds `change_events`, and adds triggers, so the database itself needs no rollback to run a schema 10 Worker.
+Rolling back the Worker has these costs:
+
+- A schema 10 Worker cannot star, unstar, or list posts, and its comments have no handle, `via`, or reply. It shows existing posts as plain comments, without their persona or star count.
+- A schema 10 Worker refuses a `starred` or `unstarred` event that it reads, because those kinds are not in its list. Every `changes` and `wait` page that holds such an event then fails. The events leave the feed after retention removes them, or after a restore rotates the incarnation.
+- The stars stay in the database. The star triggers still record events for a star change, but a schema 10 Worker makes none.
+- Restoring a schema 10 backup after schema 11 writes loses every write made since the backup, including every handle, `via`, reply, and star. Follow the raw database rollback below.
+
+See [the posts and stars decision](adr/0023-posts-and-stars.md#rollout).
+
 The application does not perform this remote upgrade automatically. This procedure requires separate operator approval and live verification.
 For a raw database rollback, stop readers and writers, restore, rotate the incarnation, then resume traffic.
 See [the restore contract](adr/0005-memory-freshness.md#raw-database-restore) for the exact SQL and verification.
@@ -174,8 +192,8 @@ Historical request UUIDs still replay their original receipts.
 Snapshot validation rejects dangling claim receipts and receipt counters above their aggregate, across every incarnation.
 
 A retired historical local store rejects `pd upgrade` and retains its write guards.
-Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, 6, 7, 8, or 9.
-That export converts the content to snapshot 8 with empty land order and resources before schema 9, with null close records before schema 8, and with each comment at version 1 and no editor. Schema 6, 7, and 8 claim records remain intact; earlier schemas receive empty claim collections.
+Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, 6, 7, 8, 9, or 10.
+That export converts the content to snapshot 9 with empty land order and resources before schema 9, with null close records before schema 8, with each comment at version 1 and no editor before schema 10, and with no handle, `via`, reply, or star. Schema 6, 7, and 8 claim records remain intact; earlier schemas receive empty claim collections.
 Schema 5 through 8 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
 It preserves creation payload strings and source attribution. Transfer it into a separately initialized destination.
 

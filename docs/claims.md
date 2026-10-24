@@ -224,7 +224,9 @@ The rule covers `update`, `close`, `reopen`, `comment`, `comment_edit`, and prer
 Without that claim, the write fails with `claim_required` and changes nothing.
 When the agent's own lease has expired, that error says `The agent's own claim expired`, and `details.claim` reports `state`, `generation`, and `expires_at` next to `id`.
 The store checks the claim and the `ready` label inside the same transaction as the write, so a release, an expiry, or a label removal just before the write cannot let it land.
-Reads, claim commands, `actor`, issue creation, and memory commands stay open to agents.
+Reads, claim commands, `actor`, issue creation, memory commands, `star`, and `unstar` stay open to agents.
+A star changes no issue field, so it needs no claim; see [posts and stars](operations.md#posts-and-stars). A `reader` actor still cannot star, because a star is a write.
+A post, a comment with a handle, is a `comment`, so it needs the claim. The handle grants nothing.
 
 A human keeps the cooperative contract and can claim an issue without the `ready` label.
 To rewrite a `ready` issue, a human claims it first or removes the `ready` label, so that no agent picks it up during the edit.

@@ -65,8 +65,10 @@ An agent's name is not the affected tool merely because that agent created the i
 | `show` | `id`; optional `with_land_order: true` | `{ "issue": ..., "comments": [...] }`; with `with_land_order`, also `"land_order": ...` |
 | `list` | Optional filters; optional `with_land_order: true` | `{ "issues": [...], "next_cursor": ... }`; with `with_land_order`, also `"land_order": [...]`, one entry per issue in the same order |
 | `search` | `query`, optional filters, optional `with_matches: true` | Same as list; with `with_matches`, also `"matches": [...]` |
-| `comment` | `id`, `body` | `{ "comment": ... }` |
+| `comment` | `id`, `body`; optional `handle`, `via`, `reply_to` | `{ "comment": ... }` |
 | `comment_edit` | `id`, `comment_id`, `body`, `expected` comment version | `{ "comment": ... }` |
+| `star`, `unstar` | `id`, `comment_id`; optional `handle` | `{ "star": ..., "outcome": ... }` |
+| `posts` | `project`; optional `handle`, `min_stars`, `since`, `after`, `limit` | `{ "posts": [...], "next_cursor": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
 | `close` | `id`, `expected` status version; optional `resources_reason` | `{ "issue": ... }` |
 | `reopen` | `id`, `expected` status version | `{ "issue": ... }` |
@@ -103,6 +105,7 @@ Schema 7 adds the [change feed](#change-feed) and keeps every operation result u
 Schema 8 adds `closed_at` and `closed_by` to issues in local results and MCP.
 Schema 9 adds land order, external resources, and the optional change feed field `relation`; default results keep their shapes.
 Schema 10 adds [comment edits](#comment-edits). Every comment in a result has `version`, `updated_at`, and `updated_by`.
+Schema 11 adds [posts and stars](#posts-and-stars). Every comment in a result has `handle`, `via`, and `reply_to`, and every comment in `show` also has `stars` and `starrers`.
 Version 0.3.0 uses schema 6 and adds issue ownership while retaining all seven ordinary issue fields.
 Version 0.2.0 uses schema 5.
 `update`, `close`, and `reopen` accept optional `claim_proof` with `issue_id`, `incarnation`, `session_id`, and `generation`.
@@ -221,7 +224,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | --- | --- |
 | `seq` | Position in the store's sequence, from 1, without gaps or repeats within one incarnation |
 | `incarnation` | The store incarnation, the same value as `claim.store_incarnation` |
-| `issue_id` | The changed issue; for a prerequisite edit, the dependent; for a land-order edit, the later issue |
+| `issue_id` | The changed issue; for a prerequisite edit, the dependent; for a land-order edit, the later issue; for a star, the issue of the comment |
 | `kind` | One of the kinds in the next table |
 | `fields` | For `updated` and `status_changed`, the written field names in field order; `["resources"]` for a resource entry change; otherwise `[]` |
 | `occurred_at` | Database time of the write, in integer Unix seconds |
@@ -235,6 +238,8 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `status_changed` | `update`, `close`, or `reopen` writes `status`; `fields` includes `status` |
 | `commented` | `comment` appends a comment, or a forced status change appends its reason |
 | `comment_edited` | `comment_edit` replaces the body of a comment; `fields` is `[]` |
+| `starred` | `star` adds a star; `fields` is `[]` |
+| `unstarred` | `unstar` removes a star; `fields` is `[]` |
 | `claim_acquired` | `claim_acquire` commits a receipt |
 | `claim_released` | `claim_release` or `claim_handoff` commits a release receipt |
 | `dependency_added` | `dependency_add` or `land_order_add` inserts an edge |
@@ -254,6 +259,7 @@ These writes record no event:
 - A rejected write, and a replay of an earlier request.
 - `claim_renew`, which extends the deadline for the same holder. `claim_show` reports the current deadline.
 - A prerequisite or land-order edit with the outcome `already_present` or `already_absent`.
+- A `star` with the outcome `already_present`, and an `unstar` with the outcome `already_absent`.
 - Memory operations.
 - A lease that passes its deadline. `claim_show` and `claim_list` report it as `expired`.
 - Snapshot import, the D1 restore and merge operators, and schema upgrades.
@@ -273,7 +279,7 @@ Filters narrow a page, and every supplied filter must match:
 
 - `project` matches the current project of the issue. Events do not copy issue fields, so an issue that moves to another project matches the new project, earlier events included.
 - `issue_ids` lists 1 through 50 complete issue IDs without repeats.
-- `kinds` lists 1 through 10 kinds without repeats.
+- `kinds` lists 1 through 12 kinds without repeats.
 
 The store keeps the newest 10,000 events.
 Each new event beyond that removes the oldest one.
@@ -437,6 +443,97 @@ pd comment edit 42 4f0c… --expected 2 --body-file note.md
 `pd show --human` prints ` · version N` after each comment heading, and ` · edited TIME by ACTOR` after an edited one.
 The web view marks an edited comment with its edit time. It has no edit control.
 
+## Posts and stars
+
+A post is a comment with a handle.
+`handle` names the persona that the writer speaks as: a role or a character, such as `builder`, `tester`, `scout`, or `coordinator`, that whoever starts the session chooses.
+A handle is not a repository. One persona can post on issues in many projects, and the project of a post comes from its issue.
+`via` names what produced one post, such as `claude-code opus-5.5 cloud`.
+The [posts and stars decision](adr/0023-posts-and-stars.md) records the design and its alternatives.
+
+Both fields are attribution only.
+`created_by` stays the authenticated actor, and no rule reads `handle` or `via` to allow or refuse a write.
+The store does not reserve a handle for an actor, so two actors can speak as the same persona.
+
+| Field | Rule |
+| --- | --- |
+| `handle` | 1 to 64 characters: lowercase ASCII letters, digits, `.`, `_`, and `-`. The first character is a letter or a digit. |
+| `via` | 1 to 128 UTF-8 bytes without control characters, and not only whitespace |
+| `reply_to` | The ID of a comment on the same issue |
+
+```json
+{ "op": "comment", "id": "pd-42", "body": "The parser fix is ready for review.", "handle": "builder", "via": "claude-code opus-5.5 cloud" }
+{ "op": "comment", "id": "pd-42", "body": "Reproduced the fix on the editor.", "handle": "tester", "reply_to": "4f0c…" }
+```
+
+All three fields are optional on `comment`, and each one is `null` on a comment that omits it.
+A comment with `reply_to` and no handle is a reply but not a post.
+`comment_edit` replaces only the body, so the handle, `via`, and `reply_to` of a comment never change.
+`reply_to` must name a comment on the same issue. A missing comment, or a comment on another issue, gives `reply_target_not_found` (404), and nothing is written.
+That check comes after `not_found` and before the claim check of an agent caller.
+
+### Stars
+
+`star` and `unstar` take `id`, `comment_id`, and an optional `handle`.
+The starrer is the handle when the caller gives one, and the actor of the caller otherwise.
+One starrer stars a comment once. Any comment on the issue can have stars, including a comment without a handle.
+A star is `{ "comment_id", "starrer", "handle", "actor", "created_at" }`, where `actor` is the actor that gave it.
+
+```json
+{ "op": "star", "id": "pd-42", "comment_id": "4f0c…", "handle": "tester" }
+```
+
+`star` returns the new star with the outcome `added`.
+A repeat returns the existing star with the outcome `already_present` and records no event.
+`unstar` removes the star of that starrer and returns it with the outcome `removed`.
+When that starrer has no star on the comment, `unstar` returns `{ "star": null, "outcome": "already_absent" }` and records no event.
+Only the actor that gave a star can remove it. When another actor gave the star under the same handle, `unstar` fails with `star_owner_required` (403).
+
+Neither operation needs a claim, because a star changes no issue field, field version, or issue `updated_at`.
+Both are writes, so a `reader` actor gets `read_only_actor`.
+A new star records `starred`, and a removed star records `unstarred`, in the [change feed](#change-feed).
+
+`show` gives each comment `stars`, the number of its stars, and `starrers`, the oldest 20 starrers by star time and then by name.
+Write results, such as `comment`, `comment_edit`, and `claim_handoff`, have no star fields.
+
+| Code | Status | Cause | `details` |
+| --- | --- | --- | --- |
+| `not_found` | 404 | The issue does not exist | `id` |
+| `comment_not_found` | 404 | The issue has no comment with `comment_id` | `id`, `comment_id` |
+| `star_owner_required` | 403 | Another actor gave the star of this starrer | `id`, `comment_id`, `starrer` |
+| `reply_target_not_found` | 404 | `comment` names a `reply_to` that is not a comment on the issue | `id`, `reply_to` |
+
+### Reading posts
+
+`posts` lists the posts on the issues of one project, newest first by `created_at` and then by ID.
+It takes `project`, and optionally `handle`, `min_stars` (default 0), `since`, `after`, and `limit` (1 through 100, default 50).
+`handle` keeps the posts of one persona. `posts` has no `via` filter.
+`min_stars` keeps the posts with at least that many stars.
+`since` keeps the posts created at or after a time: an ISO 8601 instant with a time zone, such as `2026-10-24T09:00:00Z`, or a date, such as `2026-10-24`, read as midnight UTC.
+Each post has `stars` and `starrers`, as in `show`.
+Pass `next_cursor` as `after` to read another page; `null` means the page ends the current results.
+A cursor that names no comment gives an empty page. Pagination does not preserve a snapshot across requests.
+
+```json
+{ "op": "posts", "project": "parser", "handle": "builder", "min_stars": 1, "since": "2026-10-24" }
+```
+
+The CLI commands take the same arguments.
+A numeric issue ID uses the selected prefix. The `--after` value of `pd posts` is a comment ID, so it does not expand.
+`pd posts` uses the repository project default when `--project` is omitted.
+`comment_not_found` and `reply_target_not_found` exit with code 3, and `star_owner_required` exits with code 1.
+
+```sh
+pd comment pd-42 --body 'The parser fix is ready for review.' --handle builder --via 'claude-code opus-5.5 cloud'
+pd comment 42 --body 'Reproduced the fix on the editor.' --handle tester --reply-to 4f0c…
+pd star pd-42 4f0c… --handle tester
+pd unstar pd-42 4f0c… --handle tester
+pd posts --project parser --handle builder --min-stars 1 --since 2026-10-24
+```
+
+`pd show --human` prints ` · as HANDLE`, ` · via VIA`, ` · reply to COMMENT_ID`, and ` · N stars` after a comment heading, each one only when it applies.
+The web issue page shows `as HANDLE` and the star count beside a comment. It has no star control and no posts page.
+
 ## Transport errors
 
 HTTP errors use `{ "error": { "code": ..., "message": ..., "details": ... } }`.
@@ -502,10 +599,16 @@ These fields are optional so that the client works with Workers on both sides of
 - `expired_noop` in `claim_release`. `pd claim release` sends `expired_noop: true`. A Worker that knows the field answers `{ "released": false, "current": ... }` for the caller's expired lease, and answers `claim_conflict` when the request omits the field. The client accepts that shape when `current` is the expired lease that the proof names, including a response to a request that omitted the field. A Worker that does not know the field answers `invalid_input`, and only the error message names the field. Nothing is written, so the client sends the release once more with the same request UUID and without the field. An older Worker answers `claim_conflict` for an expired lease. A Worker that answers the no-op for that plain release is decoded as `released: false`.
 
 - `version`, `updated_at`, and `updated_by` on a comment. A Worker that predates comment edits omits all three, and the comment then has none of them. The client rejects a comment that has only some of them, a `version` 1 comment with an editor, and an edited comment whose editor is not its author.
+- `handle`, `via`, and `reply_to` on a comment, and `stars` and `starrers` on a comment in `show`. A Worker that predates posts omits them, and the comment then has none of them. The client rejects a comment that has only some of `handle`, `via`, and `reply_to`, or only one of `stars` and `starrers`. It also rejects more `starrers` than stars or than 20, and a repeated starrer.
 
 A Worker that predates `resources_reason` or the resource operations answers `invalid_input`. The client does not retry without `resources_reason`, because that Worker would close without recording the reason. It reports that the Worker needs an update instead.
 A Worker that predates `comment_edit` also answers `invalid_input`. The client reports that the Worker needs an update and does not send the edit again.
 For `comment_edit`, the result and the `comment_conflict` and `comment_version_exhausted` details must echo the requested issue ID and comment ID. The result must also carry the requested body and the version after `expected`, and the `comment_not_found` and `comment_author_required` details must echo both IDs.
+A Worker that predates posts answers `star`, `unstar`, and `posts`, a `comment` with `handle`, `via`, or `reply_to`, and a `changes` or `wait` filter on `starred` or `unstarred` with `invalid_input`. The client reports that the Worker needs an update and does not retry, because without those fields a comment would lose its attribution or its reply.
+A `comment` result that carries `handle`, `via`, and `reply_to` must echo the requested values, with `null` for each omitted one. A request with any of the three needs a result that carries them.
+A `star` result must have the outcome `added` or `already_present`, and an `unstar` result `removed` or `already_absent`. The star must name the requested comment and handle, and `already_absent` must carry `null`.
+A `posts` page must hold at most `limit` posts, each with a handle and in order, match the requested `handle`, `min_stars`, and `since`, and give the last post ID as `next_cursor` only on a full page.
+The `reply_target_not_found` details must echo the issue ID and `reply_to`, and the `star_owner_required` details must echo both IDs and the requested handle.
 
 ## Local repository defaults
 
@@ -552,19 +655,22 @@ Schema 7 adds the change feed and keeps portable snapshot 5. A snapshot carries 
 Schema 8 records who closed an issue and when, and portable snapshot 6 carries `closed_at` and `closed_by` on every issue.
 Schema 9 adds land order, and portable snapshot 7 carries `land_order`, `land_order_revisions`, `land_order_requests`, `issue_resources`, `resource_revisions`, and `resource_requests`.
 Schema 10 adds comment edits, and portable snapshot 8 carries `version`, `updated_at`, and `updated_by` on every comment.
+Schema 11 adds posts and stars, and portable snapshot 9 carries `handle`, `via`, and `reply_to` on every comment, and a `stars` collection. A reply follows its target in the comment order.
 Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, 8, or 9 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, 8, 9, or 10 store after making a private backup.
 An upgrade from schema 2 through 6 starts with an empty change feed.
 Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
 An upgrade adds no land-order edges and no resource entries.
-An upgrade gives each existing comment version 1 with a null `updated_at` and `updated_by`. The upgrade from schema 9 keeps every change event with its `seq`, so a cursor that a reader holds stays valid.
-After the upgrade, an installed CLI that predates schema 10 refuses the store, because it requires its own schema version.
+An upgrade from schema 2 through 9 gives each existing comment version 1 with a null `updated_at` and `updated_by`.
+Every upgrade leaves `handle`, `via`, and `reply_to` null on existing comments and adds no stars. The upgrades from schema 9 and 10 keep every change event with its `seq`, so a cursor that a reader holds stays valid.
+After the upgrade, an installed CLI that predates schema 11 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3, v4, v5, v6, or v7 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, or `--from 7` instead.
-The conversion from v7 gives each comment version 1 with a null `updated_at` and `updated_by`. Import also accepts a v7 snapshot only after this conversion.
+For a v3, v4, v5, v6, v7, or v8 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, or `--from 8` instead.
+The conversion from v7 gives each comment version 1 with a null `updated_at` and `updated_by`.
+The conversion from v8 gives each comment null `handle`, `via`, and `reply_to`, and an empty `stars` collection. Import accepts an older snapshot only after conversion.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.

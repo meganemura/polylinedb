@@ -65,9 +65,14 @@ It is the only mutation that a repeat can duplicate.
 `comment_edit` replaces a comment body under a version check, so it advertises `idempotentHint: true`.
 After an uncertain comment result, read the issue before you decide whether to comment again.
 
+**Stars.** `star` and `unstar` have no request UUID and no version check.
+The comment and the starrer identify a star, so a repeated `star` finds the star and returns `already_present`, and a repeated `unstar` finds no star and returns `already_absent`.
+Neither repeat writes a row or records an event, so both advertise `idempotentHint: true`.
+Unlike a receipt replay, a repeat reports the current outcome, not the outcome of the first call.
+
 **Destructive updates.** A mutation advertises `destructiveHint: true` when it can remove or replace current state that other callers read.
-Issue field writes, comment edits, memory edits, prerequisite removal, and claim release do this.
-Creation, comments, prerequisite addition, claim acquisition, and claim renewal add records or extend the caller's own lease, so they advertise `destructiveHint: false`.
+Issue field writes, comment edits, star removal, memory edits, prerequisite removal, and claim release do this.
+Creation, comments, stars, prerequisite addition, claim acquisition, and claim renewal add records or extend the caller's own lease, so they advertise `destructiveHint: false`.
 Claim acquisition succeeds only when the issue has no active lease, so it does not take ownership from another session.
 
 **Closed domain.** Every tool advertises `openWorldHint: false`, because each tool acts only on the store.

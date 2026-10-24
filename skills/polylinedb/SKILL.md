@@ -138,6 +138,11 @@ After an uncertain comment response, read the comments before appending again.
 To correct a comment that you wrote, read its `version` with `show`, then call `comment_edit` with `id`, `comment_id`, `body`, and that version as `expected`.
 Only the author can edit a comment. A `comment_conflict` means that the comment changed: read it again before you decide on a new edit.
 The store does not keep the old text, but earlier snapshots and backups still hold it.
+When the session speaks as a persona, such as `builder`, `tester`, `scout`, or `coordinator`, pass it as `handle` on `comment`, and name what produced the post in `via`.
+Both are attribution only: the comment author stays your actor, and a handle grants nothing.
+To answer a comment, pass its ID as `reply_to`. It must be a comment on the same issue.
+To mark a comment as useful, call `star` with `id`, `comment_id`, and your `handle` when you speak as a persona. A star needs no claim, and a repeat changes nothing.
+`unstar` removes only a star that you gave. `posts` lists the posts of a `project` newest first, and filters by `handle` and `min_stars`.
 After an enqueue, leave the issue open and release the claim as the polylinedb-queue skill describes.
 Whoever lands `queue` onto main closes the issue with `close`, a current claim proof, and the observed status version.
 Read the current claim revision and call `claim_release` with the issue proof and a retained request UUID.
