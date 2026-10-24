@@ -323,8 +323,11 @@ export function issuePage(view: IssueView, viewer: Viewer, counts: TabCounts, to
     const editForm = own ? disclose('Edit', 'edit', liveForm(`/ui/i/${id}/comment-edit`, { return: back, comment: comment.id, 'v.comment': comment.version ?? 1 },
       `<div class="field"><label for="ce-${escape(comment.id)}">Comment</label><textarea id="ce-${escape(comment.id)}" name="body" rows="3">${escape(comment.body)}</textarea></div><button class="btn sm">Save comment</button>`, false), true) : '';
     const edited = typeof comment.updated_at === 'string' ? `<span>edited ${timeTag(secondsOf(comment.updated_at), fullTime(secondsOf(comment.updated_at)))}</span>` : '';
+    // The persona and the stars are attribution; the bold name stays the actor that wrote the comment.
+    const voice = (typeof comment.handle === 'string' ? `<span>as ${escape(comment.handle)}</span>` : '')
+      + (comment.stars === undefined || comment.stars === 0 ? '' : `<span>${comment.stars} ${comment.stars === 1 ? 'star' : 'stars'}</span>`);
     return `<li class="l-${comment.created_by === viewer.actor.id ? 'you' : 'agents'}"><div class="by"><b>${escape(person(viewer, comment.created_by))}</b>`
-      + `<span>${timeTag(secondsOf(comment.created_at), fullTime(secondsOf(comment.created_at)))}</span>${edited}</div><div class="prose"${lang(comment.body)}>${escape(comment.body)}</div>${editForm}</li>`;
+      + `<span>${timeTag(secondsOf(comment.created_at), fullTime(secondsOf(comment.created_at)))}</span>${voice}${edited}</div><div class="prose"${lang(comment.body)}>${escape(comment.body)}</div>${editForm}</li>`;
   }).join('');
   cards.push(`<section class="card" id="comments"><h2>Comments <span class="count">${view.comments.length}</span></h2>${comments === '' ? '<p class="hint">No comments yet.</p>' : `<ol class="tl">${comments}</ol>`}`
     + `<div id="comment">${write ? commentForm(issue, back, true) : ''}</div></section>`);

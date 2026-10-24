@@ -1787,6 +1787,26 @@ test('ui: the issue page marks an edited comment with its edit time and offers a
   } finally { sqlite.close(); }
 });
 
+test('ui: the issue page shows the persona of a post and the star count of each starred comment', async () => {
+  const { sqlite, env } = fixture('["access:owner"]');
+  const token = await assertion();
+  const operate = async (body: Record<string, unknown>) => (await handleRequest(new Request('https://issues.example/v1/operations', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token }, body: JSON.stringify(body),
+  }), env, authenticate)).json();
+  try {
+    const id = await createIssue(env, token, { tool: 'polylinedb', project: 'meganemura/polylinedb', body: 'Posts on the page' });
+    const post = (await operate({ op: 'comment', id, body: 'builder notes', handle: 'builder', via: 'claude-code cloud' })).comment;
+    const plain = (await operate({ op: 'comment', id, body: 'plain note' })).comment;
+    for (const handle of ['tester', 'scout']) assert.equal((await operate({ op: 'star', id, comment_id: post.id, handle })).outcome, 'added');
+    assert.equal((await operate({ op: 'star', id, comment_id: plain.id })).outcome, 'added');
+    const html = await (await viewIssue(env, id, { 'cf-access-jwt-assertion': token })).text();
+    const item = (body: string) => html.slice(html.lastIndexOf('<li', html.indexOf(body)), html.indexOf(body));
+    assert.ok(item('builder notes').includes('<span>as builder</span><span>2 stars</span>'), item('builder notes'));
+    assert.ok(item('plain note').includes('<span>1 star</span>'), item('plain note'));
+    assert.equal(item('plain note').includes('<span>as '), false);
+  } finally { sqlite.close(); }
+});
+
 test('ui: Projects orders by the latest issue update, caps at 200 with a sentence, and shows the last path segment', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();
