@@ -295,6 +295,21 @@ try {
   assert.deepEqual([editedStarted.version, editedStarted.updated_by, editedStarted.body], [2, 'service:codex-token', 'Started, with a plan']);
   assert.equal(record((await as(codex, editStarted, 409)).error).code, 'comment_conflict');
   assert.deepEqual(await database.prepare("SELECT actor FROM change_events WHERE kind = 'comment_edited'").all().then((result: { results: unknown[] }) => result.results), [{ actor: 'service:codex-token' }]);
+  // A handle is attribution: the owner speaks as builder on the draft, and Claude, an agent with no claim there, stars it as tester.
+  const planPost = record((await http({ op: 'comment', id: draftIssue.id, body: 'Plan ready', handle: 'builder', via: 'claude-code cloud' })).comment);
+  assert.deepEqual([planPost.created_by, planPost.handle, planPost.via, planPost.reply_to], ['access:owner', 'builder', 'claude-code cloud', null]);
+  assert.equal(record((await http({ op: 'comment', id: draftIssue.id, body: 'Elsewhere', reply_to: started.id }, 404)).error).code, 'reply_target_not_found');
+  const starPost = { op: 'star', id: draftIssue.id, comment_id: planPost.id, handle: 'tester' };
+  assert.equal(record((await as(viewer, starPost, 403)).error).code, 'read_only_actor');
+  assert.equal((await as(claude, starPost)).outcome, 'added');
+  assert.equal((await as(claude, starPost)).outcome, 'already_present');
+  assert.deepEqual(record((await as(codex, { ...starPost, op: 'unstar' }, 403)).error).details, { id: draftIssue.id, comment_id: planPost.id, starrer: 'tester' });
+  const listedPosts = (await as(viewer, { op: 'posts', project: 'gated', min_stars: 1 })).posts as unknown[];
+  assert.deepEqual(listedPosts.map(entry => [record(entry).id, record(entry).stars, record(entry).starrers]), [[planPost.id, 1, ['tester']]]);
+  assert.equal((await as(claude, { ...starPost, op: 'unstar' })).outcome, 'removed');
+  assert.equal((await as(claude, { ...starPost, op: 'unstar' })).outcome, 'already_absent');
+  assert.deepEqual(await database.prepare("SELECT kind, actor FROM change_events WHERE kind IN ('starred', 'unstarred') ORDER BY seq").all().then((result: { results: unknown[] }) => result.results),
+    [{ kind: 'starred', actor: 'service:claude-token' }, { kind: 'unstarred', actor: 'service:claude-token' }]);
   const view =(token: string | null, method = 'GET') => runtime.dispatchFetch('http://polylinedb.test/ui', {
     method, headers: token === null ? {} : { 'cf-access-jwt-assertion': token },
   });
@@ -385,7 +400,7 @@ try {
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
-      'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'author-only comment edit with a conflict and a comment_edited event', 'read-only /ui page',
+      'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'author-only comment edit with a conflict and a comment_edited event', 'a post with a persona, a same-issue reply rule, and claimless idempotent stars with one event per change', 'read-only /ui page',
       'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
       'Waiting on you lists an owner-action issue with a store-clock age',
       '/ui speculation rules prefetch behind a CSP hash', '/ui cross-document view transition',
