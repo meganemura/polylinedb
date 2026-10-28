@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeStore, openStore, upgradeStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
-import { SCHEMA_SQL, SCHEMA_V8_SQL, canonicalSnapshot, convertSnapshotV6, parseSnapshot } from '../src/records/persistence.ts';
+import { SCHEMA_SQL, SCHEMA_V8_SQL, canonicalSnapshot, convertSnapshotV6, parseSnapshot } from '../src/records/persistence/persistence.ts';
 import { downgradeToSchema8 } from './fixtures/legacy-schema.ts';
 import { runResourceFlow } from './fixtures/resource-flow.ts';
 

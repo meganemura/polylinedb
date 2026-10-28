@@ -291,14 +291,14 @@ Replace `DATABASE_UUID` with the ID returned by the create command.
 Apply the schema only to this new, empty database:
 
 ```sh
-node --input-type=module -e 'import { SCHEMA_STATEMENTS } from "./src/records/schema.ts"; process.stdout.write(JSON.stringify(SCHEMA_STATEMENTS.map(sql => ({ sql, params: [] }))) + "\n")' > schema-batch.json
+node --input-type=module -e 'import { SCHEMA_STATEMENTS } from "./src/records/persistence/schema.ts"; process.stdout.write(JSON.stringify(SCHEMA_STATEMENTS.map(sql => ({ sql, params: [] }))) + "\n")' > schema-batch.json
 cf d1 query "$PD_D1_DATABASE_ID" --batch @schema-batch.json
-node --input-type=module -e 'import { SCHEMA_VERSION } from "./src/records/schema.ts"; console.log(SCHEMA_VERSION)'
+node --input-type=module -e 'import { SCHEMA_VERSION } from "./src/records/persistence/schema.ts"; console.log(SCHEMA_VERSION)'
 cf d1 query "$PD_D1_DATABASE_ID" --sql 'SELECT version FROM schema_version'
 ```
 
 The database version must match `SCHEMA_VERSION` in this deployment copy.
-The JSON batch preserves each complete statement from `src/records/schema.ts`, including trigger bodies.
+The JSON batch preserves each complete statement from `src/records/persistence/schema.ts`, including trigger bodies.
 Do not split the schema SQL at semicolons.
 The batch creates tables and the schema-version record.
 It is not safe to apply twice, and it does not upgrade an existing database.

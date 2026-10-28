@@ -72,8 +72,8 @@ test('cf envelopes fail closed and targets reject ambiguous extra fields', () =>
 test('D1 schema inspection tolerates reserved storage tables and rejects unrelated tables', async () => {
   const { DatabaseSync } = await import('node:sqlite');
   const { createHash } = await import('node:crypto');
-  const { SCHEMA_SQL } = await import("../src/records/schema.ts");
-  const { canonicalSnapshot, parseSnapshot } = await import("../src/records/snapshot.ts");
+  const { SCHEMA_SQL } = await import("../src/records/persistence/schema.ts");
+  const { canonicalSnapshot, parseSnapshot } = await import("../src/records/persistence/snapshot.ts");
   const { snapshotMigration } = await import('../scripts/d1-snapshot-store.ts');
   const database = new DatabaseSync(':memory:');
   try {
@@ -92,8 +92,8 @@ test('D1 schema inspection tolerates reserved storage tables and rejects unrelat
 async function remoteD1Fixture() {
   const { createHash, randomUUID } = await import('node:crypto');
   const { initializeStore, openStore } = await import("../src/local-store/index.ts");
-  const { executeOperation, parseOperation } = await import("../src/records/issues.ts");
-  const { canonicalSnapshot } = await import("../src/records/snapshot.ts");
+  const { executeOperation, parseOperation } = await import("../src/records/issues/issues.ts");
+  const { canonicalSnapshot } = await import("../src/records/persistence/snapshot.ts");
   const directory = mkdtempSync(join(tmpdir(), 'pd-verify-cli-'));
   const location = { directory: join(directory, 'database') };
   const { database_path } = initializeStore(location);

@@ -1,5 +1,7 @@
 import type { Config } from "./archstrict.types.js";
 
+const recordsOnly = [{ file: "*.ts", from: "src/records/**", because: "Record domains are internal to records; the rest of pd reads records/index.ts and records/persistence." }];
+
 // Checks source dependency layers; test fixtures stay outside the architectural module graph.
 export default {
   schemaVersion: 1,
@@ -24,7 +26,17 @@ export default {
     { name: "cloudflare.config.ts", glob: "cloudflare.config.ts", surface: "cloudflare.config.ts" },
     { name: "scripts", glob: "scripts/**" },
     { name: "vite.config.ts", glob: "vite.config.ts", surface: "vite.config.ts" },
-    { name: "records", glob: "src/records/**", surface: ["index.ts", "persistence.ts"] },
+    { name: "records", glob: "src/records/*.ts", surface: "index.ts" },
+    { name: "records/store", glob: "src/records/store/**", friends: recordsOnly },
+    { name: "records/claims", glob: "src/records/claims/**", friends: recordsOnly },
+    { name: "records/resources", glob: "src/records/resources/**", friends: recordsOnly },
+    { name: "records/issues", glob: "src/records/issues/**", friends: recordsOnly },
+    { name: "records/dependencies", glob: "src/records/dependencies/**", friends: recordsOnly },
+    { name: "records/land-order", glob: "src/records/land-order/**", friends: recordsOnly },
+    { name: "records/posts", glob: "src/records/posts/**", friends: recordsOnly },
+    { name: "records/memories", glob: "src/records/memories/**", friends: recordsOnly },
+    { name: "records/changes", glob: "src/records/changes/**", friends: recordsOnly },
+    { name: "records/persistence", glob: "src/records/persistence/**", surface: "persistence.ts" },
     { name: "local-store", glob: "src/local-store/**", surface: "index.ts" },
     { name: "workspace", glob: "src/workspace/**", surface: "index.ts" },
     { name: "host-hooks", glob: "src/host-hooks/**", surface: "index.ts" },
@@ -42,7 +54,11 @@ export default {
     { glob: "cloudflare.config.ts", tags: ["layer:entrypoint"] },
     { glob: "scripts/**", tags: ["layer:entrypoint"] },
     { glob: "vite.config.ts", tags: ["layer:entrypoint"] },
-    { glob: "src/records/**", tags: ["capability:records", "layer:domain", "env:portable"] },
+    { glob: "src/records/**", tags: ["capability:records", "layer:domain", "env:portable", "records:domain"] },
+    { glob: "src/records/*.ts", tags: ["capability:records", "layer:domain", "env:portable", "records:operations"] },
+    { glob: "src/records/store/**", tags: ["capability:records", "layer:domain", "env:portable", "records:store"] },
+    { glob: "src/records/claims/**", tags: ["capability:records", "layer:domain", "env:portable", "records:claims"] },
+    { glob: "src/records/persistence/**", tags: ["capability:records", "layer:domain", "env:portable", "records:persistence"] },
     { glob: "src/local-store/**", tags: ["capability:local-store", "layer:adapter", "env:node"] },
     { glob: "src/workspace/**", tags: ["capability:workspace", "layer:adapter", "env:node"] },
     { glob: "src/host-hooks/**", tags: ["capability:host-hooks", "layer:adapter", "env:node"] },
@@ -69,6 +85,12 @@ export default {
         sequence: { "": ["core", "domain", "adapter", "entrypoint"] },
         direction: "downward-only",
         because: "Transition decisions stay independent of SQL; domain behavior stays independent of storage, credentials, and transport; adapters implement domain ports; command and Worker entrypoints consume both.",
+      },
+      {
+        tagNamespace: "records",
+        sequence: { "": ["store", "claims", "domain", "persistence", "operations"] },
+        direction: "downward-only",
+        because: "Every record domain reads the shared store and writes under a claim; persistence assembles each domain's SQL into one schema and snapshot; the operations layer dispatches to the domains and is the one surface the rest of pd reads.",
       },
     ],
   },

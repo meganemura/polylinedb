@@ -7,10 +7,10 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeStore, openStore } from "../src/local-store/index.ts";
-import { issueSortKey } from "../src/records/issue-id.ts";
-import { canonicalSnapshot, convertSnapshotV8, parseSnapshot } from "../src/records/snapshot.ts";
-import type { Snapshot } from "../src/records/snapshot.ts";
-import { executeOperation, parseOperation } from "../src/records/issues.ts";
+import { issueSortKey } from "../src/records/store/issue-id.ts";
+import { canonicalSnapshot, convertSnapshotV8, parseSnapshot } from "../src/records/persistence/snapshot.ts";
+import type { Snapshot } from "../src/records/persistence/snapshot.ts";
+import { executeOperation, parseOperation } from "../src/records/issues/issues.ts";
 
 const propertyCases = Number(process.env.PD_HEGEL_CASES ?? 100);
 assert.ok(Number.isSafeInteger(propertyCases) && propertyCases > 0);

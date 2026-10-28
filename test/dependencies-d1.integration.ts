@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/service/d1.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
-import { SCHEMA_STATEMENTS } from '../src/records/persistence.ts';
+import { SCHEMA_STATEMENTS } from '../src/records/persistence/persistence.ts';
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');
 const runtime = new Miniflare({ workers: [{ config: { name: 'dependencies-test', compatibilityDate: '2026-09-25', manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: 'export default { fetch() { return new Response("ready"); } }' } } }, env: { DB: { type: 'd1', name: 'dependencies-test' } } } }] });

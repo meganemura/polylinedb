@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { storageOf } from 'solarsql/node';
-import { SCHEMA_SQL } from '../src/records/schema.ts';
+import { SCHEMA_SQL } from '../src/records/persistence/schema.ts';
 import { handleRequest } from '../src/service/index.ts';
 import { createDispatcher } from '../src/service/dispatch.ts';
 

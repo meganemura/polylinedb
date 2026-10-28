@@ -9,7 +9,7 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
-Internal reorganization of the record code. Nothing changes for people who use pd.
+Internal reorganization of the record code into one folder per kind of record. Nothing changes for people who use pd.
 
 The architecture check now uses archstrict 0.6.0. Nothing changes for people who use pd.
 

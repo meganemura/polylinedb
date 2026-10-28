@@ -90,15 +90,15 @@ The current code checks each of these rules inside one SQLite or D1 transaction:
 
 | Rule | State that the rule reads | Current enforcement |
 | --- | --- | --- |
-| Start or close needs no active blockers | Dependency edges and blocker statuses | `activeBlockerExists` in `update()` in `src/records/issues.ts` |
-| A dependency graph has no cycle | All edges | The `dependencies_acyclic` trigger in `src/records/schema.ts` |
-| Both ends of a dependency exist | Two issues | The admission condition in `src/records/dependencies.ts` |
-| An epic with children stays an epic | Children of the issue | The `epic_has_children` guard in `update()` in `src/records/issues.ts` |
-| A child needs an epic parent | The parent's type | The `create` batch in `src/records/issues.ts` |
+| Start or close needs no active blockers | Dependency edges and blocker statuses | `activeBlockerExists` in `update()` in `src/records/issues/issues.ts` |
+| A dependency graph has no cycle | All edges | The `dependencies_acyclic` trigger in `src/records/persistence/schema.ts` |
+| Both ends of a dependency exist | Two issues | The admission condition in `src/records/dependencies/dependencies.ts` |
+| An epic with children stays an epic | Children of the issue | The `epic_has_children` guard in `update()` in `src/records/issues/issues.ts` |
+| A child needs an epic parent | The parent's type | The `create` batch in `src/records/issues/issues.ts` |
 | Numbers are never reused | The counter for a prefix or a parent | The `counters` table and the `create` batch |
 | A creation request has one result | The creation receipt for the request ID | The `requests` table and the `create` batch |
-| A claim request ID has one result in the store | All claim receipts | The `claim_requests` primary key in `src/records/claims-sql.ts` |
-| A claim proof names the current store | The store incarnation | `memory_store_identity` in the claim guard in `src/records/claims-sql.ts` |
+| A claim request ID has one result in the store | All claim receipts | The `claim_requests` primary key in `src/records/claims/claims-sql.ts` |
+| A claim proof names the current store | The store incarnation | `memory_store_identity` in the claim guard in `src/records/claims/claims-sql.ts` |
 
 The port owns these rules.
 The per-issue write layer asks the port for each answer that a decision needs, such as "the issue has no active blockers".
@@ -171,7 +171,7 @@ The claim list derives `expired` at read time from `expires_at` and the read tim
 The projection keeps that derivation, so an expired claim shows as expired in D1 without a new signal.
 
 An abandoned claim frees itself at its deadline.
-`claim_acquire` admits a new acquisition when the current claim has `expires_at <= unixepoch()`, as `claimMutationStatements` in `src/records/claims-sql.ts` shows.
+`claim_acquire` admits a new acquisition when the current claim has `expires_at <= unixepoch()`, as `claimMutationStatements` in `src/records/claims/claims-sql.ts` shows.
 Another session can therefore acquire the issue as soon as the lease expires.
 The issue status stays as the last owner left it, because only a caller with a proof can change it.
 

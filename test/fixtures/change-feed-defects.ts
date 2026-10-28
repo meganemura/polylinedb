@@ -1,6 +1,6 @@
 // Wraps a store executor with a known change feed defect; local SQLite and workerd D1 run the same injections.
 import assert, { AssertionError } from 'node:assert/strict';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 import { runChangeFeedFlow } from './change-feed-flow.ts';
 
 export type FeedDefect = 'drop-one-event' | 'event-on-rejected-write';

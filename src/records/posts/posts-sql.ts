@@ -1,5 +1,5 @@
 // Owns the post DDL: the voice and reply columns on comments, the stars table, and the triggers that record stars in the feed.
-import { changeEvent } from './changes-sql.ts';
+import { changeEvent } from '../store/changes-sql.ts';
 
 /** The handle rule in SQL; parseHandle states the same rule for callers. GLOB limits the text to ASCII, so length counts bytes. */
 export const handleSql = (column: string) => `${column} IS NULL OR (length(${column}) BETWEEN 1 AND 64 AND ${column} GLOB '[a-z0-9]*' AND ${column} NOT GLOB '*[^a-z0-9._-]*')`;

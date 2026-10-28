@@ -12,8 +12,8 @@ import { parseQueryOutput, parseTarget } from '../scripts/d1-snapshot.ts';
 import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { d1Executor } from "../src/service/d1.ts";
-import { canonicalSnapshot } from "../src/records/snapshot.ts";
-import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
+import { canonicalSnapshot } from "../src/records/persistence/snapshot.ts";
+import { SCHEMA_STATEMENTS } from "../src/records/persistence/schema.ts";
 import { d1Relay, d1RelayModule } from "./fixtures/d1-relay.ts";
 
 const modulePath = process.argv[2];

@@ -7,8 +7,8 @@ import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, open
 import { isAbsolute, join } from 'node:path';
 import { childFailure, childLimitMs, stderrExcerpt } from './d1-child.ts';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
-import { canonicalSnapshot } from '../src/records/persistence.ts';
-import { SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
+import { canonicalSnapshot } from '../src/records/persistence/persistence.ts';
+import { SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence/persistence.ts';
 import { validateExternalDirectory } from "../src/workspace/index.ts";
 
 assert.equal(process.argv[2],'--plan','Usage: node scripts/d1-cutover.ts --plan PRIVATE_JSON --apply');

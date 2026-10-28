@@ -1,9 +1,9 @@
 // Runs posts, replies, stars, and the schema 10 to 11 upgrade on one store; local SQLite and workerd D1 run the same flows.
 import assert from 'node:assert/strict';
 import { executeOperation, parseOperation } from '../../src/records/index.ts';
-import { PolylinedbError } from '../../src/records/errors.ts';
+import { PolylinedbError } from '../../src/records/store/errors.ts';
 import type { Actor } from '../../src/records/index.ts';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 import { legacyComment } from './legacy-schema.ts';
 
 type Refusal = { code: string; status: number; details: unknown };

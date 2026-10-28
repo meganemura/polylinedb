@@ -9,7 +9,7 @@ import { appendFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { traceCredentialChild } from './credential-trace.ts';
 import { initializeStore, openStore } from "../../src/local-store/index.ts";
-import { executeOperation, parseOperation } from "../../src/records/index.ts"; import { PolylinedbError } from "../../src/records/errors.ts";
+import { executeOperation, parseOperation } from "../../src/records/index.ts"; import { PolylinedbError } from "../../src/records/store/errors.ts";
 import { withoutClosure } from "../../src/service/released-issues.ts";
 
 const spawn = childProcess.spawn;

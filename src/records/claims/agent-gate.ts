@@ -1,9 +1,9 @@
 // Puts the agent gate into each write batch and names a rejected agent write; humans pass an always-true condition.
-import { PolylinedbError } from './errors.ts';
+import { PolylinedbError } from '../store/errors.ts';
 import { claimRow } from './claims.ts';
-import type { SqlStatement } from './sql.ts';
-import { admitAgentWrite, claimState, readyLabel } from '../transition/index.ts';
-import type { Actor, GatedWrite } from '../transition/index.ts';
+import type { SqlStatement } from '../store/sql.ts';
+import { admitAgentWrite, claimState, readyLabel } from '../../transition/index.ts';
+import type { Actor, GatedWrite } from '../../transition/index.ts';
 
 const open: SqlStatement = { sql: '1', params: [] };
 

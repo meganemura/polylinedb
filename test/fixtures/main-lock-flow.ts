@@ -1,7 +1,7 @@
 // Runs the publish sequence with a per-repository lock issue and a tip comment; SQLite and D1 callers supply the executor.
 import assert from 'node:assert/strict';
 import { executeOperation, parseOperation } from '../../src/records/index.ts';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 
 const codex = { id: 'local:codex', kind: 'agent' } as const;
 const claude = { id: 'local:claude', kind: 'agent' } as const;

@@ -127,7 +127,7 @@ Keep the normal type check as a separate required check.
 PD_HEGEL_CASES=20 npm run test:mutation
 ```
 
-Stryker 10.0.0 mutates `src/transition/**/*.ts` together with the existing ranges in `src/records/issue-id.ts`, `src/records/issues.ts`, and `src/records/snapshot.ts`.
+Stryker 10.0.0 mutates `src/transition/**/*.ts` together with the existing ranges in `src/records/store/issue-id.ts`, `src/records/issues/issues.ts`, `src/records/store/issue-record.ts`, and `src/records/persistence/snapshot.ts`.
 The run uses the issue, snapshot, transition, claim, differential, and agent-gate tests, two workers, and a ten-second mutant timeout.
 `PD_HEGEL_CASES=20` bounds the generated cases.
 The machine has 4 vCPUs.
@@ -143,8 +143,8 @@ Those files have grown, so the ranges now cover the update rejection path and th
 The run before the tests in this section measured 435 mutants in 6 minutes 51 seconds.
 It killed 380, left 37 survivors, timed out 2, and found 16 with no coverage.
 `src/transition` held 296 of them: 293 killed and 3 survivors, with no timeouts and no missing coverage.
-`src/records/issues.ts` held 119: 82 killed, 2 timeouts, 29 survivors, and 6 with no coverage.
-`src/records/snapshot.ts` held 20: 5 killed, 5 survivors, and 10 with no coverage.
+`src/records/issues/issues.ts` held 119: 82 killed, 2 timeouts, 29 survivors, and 6 with no coverage.
+`src/records/persistence/snapshot.ts` held 20: 5 killed, 5 survivors, and 10 with no coverage.
 
 The added tests check which edits honor active prerequisites, including a close paired with another field.
 They check that an exhausted status stays `version_exhausted` when the issue has no blocker and when force is set on a blocked issue.

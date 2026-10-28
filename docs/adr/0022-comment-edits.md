@@ -85,7 +85,7 @@ The human `pd show` prints the version of each comment and marks an edited one. 
 ## Schema and snapshot
 
 Schema 10 adds the three comment columns with `ALTER TABLE`, rebuilds `change_events`, and adds the comment edit trigger, after the schema 9 objects, on a fresh store and an upgrade alike.
-`src/records/schema-v9.ts` freezes the schema 9 statements for upgrades and tests.
+`src/records/persistence/schema-v9.ts` freezes the schema 9 statements for upgrades and tests.
 Snapshot 8 carries `version`, `updated_at`, and `updated_by` on every comment. A snapshot 7 converts with version 1 and null editor fields.
 Export, import, historical export, the D1 snapshot operator, the additive merge, and the restored addition all carry the three fields.
 

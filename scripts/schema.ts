@@ -1,5 +1,5 @@
 // Emits the shared schema for an explicitly selected D1 database.
-import { SCHEMA_SQL, schemaUpgradeStatements } from '../src/records/persistence.ts';
+import { SCHEMA_SQL, schemaUpgradeStatements } from '../src/records/persistence/persistence.ts';
 
 const args = process.argv.slice(2);
 const upgradable = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10 } as const;

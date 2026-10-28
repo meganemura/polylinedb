@@ -1,16 +1,16 @@
 // Owns prerequisite graphs and immutable mutation receipts; issue fields remain a separate aggregate.
-import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
-import { parseOperation as parseIssue } from './issues.ts';
-import { issueRow } from './issue-record.ts';
-import { knownError, PolylinedbError, requireFields } from './errors.ts';
-import type { Operation as IssueOperation } from './issues.ts';
-import type { Issue, Status } from './issue-record.ts';
-import type { SqlExecutor, SqlStatement } from './sql.ts';
-import { issueQueries } from './issue-queries.ts';
-import { recordingChanges } from './changes-sql.ts';
-import { decidePrerequisiteEdit, decideReplay } from '../transition/index.ts';
-import type { Actor } from '../transition/index.ts';
-import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
+import { parseIssueId, parseRequestId, issueSortKey } from '../store/issue-id.ts';
+import { parseOperation as parseIssue } from '../issues/issues.ts';
+import { issueRow } from '../store/issue-record.ts';
+import { knownError, PolylinedbError, requireFields } from '../store/errors.ts';
+import type { Operation as IssueOperation } from '../issues/issues.ts';
+import type { Issue, Status } from '../store/issue-record.ts';
+import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
+import { issueQueries } from '../store/issue-queries.ts';
+import { recordingChanges } from '../store/changes-sql.ts';
+import { decidePrerequisiteEdit, decideReplay } from '../../transition/index.ts';
+import type { Actor } from '../../transition/index.ts';
+import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from '../claims/agent-gate.ts';
 
 type WorkFilters = Omit<Extract<IssueOperation, { op: 'list' }>, 'op' | 'status'>;
 export type DependencyMutation = { op: 'dependency_add' | 'dependency_remove'; dependent_id: string; blocker_id: string; expected_revision: number; request_id: string };

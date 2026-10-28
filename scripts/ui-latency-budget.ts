@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { storageOf } from 'solarsql/node';
-import { SCHEMA_SQL } from '../src/records/persistence.ts';
+import { SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
 import { handleRequest, type Environment } from '../src/service/index.ts';
 
 export const linkBudgetMs = 100;

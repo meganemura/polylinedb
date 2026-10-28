@@ -5,15 +5,15 @@
 // A comment rejected for its handle, via, or reply_to is not retried either, because without them an older Worker would post without the attribution or the reply.
 // A close or update rejected for `resources_reason` is not retried either, because without it an older Worker would close with no recorded reason.
 import { PolylinedbError, type Comment, type Issue, type SearchMatch, type ShownComment, type Star } from '../records/index.ts';
-import { issueRow, commentRow, shownCommentRow, starRow, issueSortKey } from '../records/persistence.ts';
+import { issueRow, commentRow, shownCommentRow, starRow, issueSortKey } from '../records/persistence/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
-import { memoryRow } from '../records/persistence.ts';
+import { memoryRow } from '../records/persistence/persistence.ts';
 import { parseMemoryId, parseMemoryRevision, observedMemoryProject } from '../records/index.ts';
 import type { Memory, MemoryContext } from '../records/index.ts';
-import { fields } from '../records/persistence.ts';
+import { fields } from '../records/persistence/persistence.ts';
 import { parseIssueId, parseRequestId } from '../records/index.ts';
-import { statuses } from '../records/persistence.ts';
-import { claimRow, resourceRow } from '../records/persistence.ts';
+import { statuses } from '../records/persistence/persistence.ts';
+import { claimRow, resourceRow } from '../records/persistence/persistence.ts';
 import { parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels, waitPageLimit } from '../records/index.ts';
 import type { Claim, ClaimInspection, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning, Resource, ResourceList } from '../records/index.ts';
 

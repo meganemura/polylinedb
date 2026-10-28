@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/service/d1.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
-import { SCHEMA_STATEMENTS } from '../src/records/persistence.ts';
+import { SCHEMA_STATEMENTS } from '../src/records/persistence/persistence.ts';
 import { runResourceFlow } from './fixtures/resource-flow.ts';
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');

@@ -5,13 +5,13 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { executeOperation, parseOperation } from "../src/records/issues.ts"; import { PolylinedbError } from "../src/records/errors.ts";
-import type { Issue } from "../src/records/issue-record.ts";
-import type { SqlExecutor } from "../src/records/sql.ts";
+import { executeOperation, parseOperation } from "../src/records/issues/issues.ts"; import { PolylinedbError } from "../src/records/store/errors.ts";
+import type { Issue } from "../src/records/store/issue-record.ts";
+import type { SqlExecutor } from "../src/records/store/sql.ts";
 import { initializeStore, openStore } from "../src/local-store/index.ts";
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
-import { issueSortKey } from "../src/records/issue-id.ts";
+import { issueSortKey } from "../src/records/store/issue-id.ts";
 import { executeOperation as executeRecord, parseOperation as parseRecord } from "../src/records/index.ts";
 
 function fixture(t: test.TestContext) {
@@ -344,7 +344,7 @@ async function parallel(directory: string, cwd: string, operations: unknown[]) {
       finally { store.close(); }
     })().catch(error => { throw error; });
   `, { eval: true, workerData: { operation, directory, cwd, gate,
-    sqlite: new URL("../src/local-store/index.ts", import.meta.url).href, issues: new URL("../src/records/issues.ts", import.meta.url).href } }));
+    sqlite: new URL("../src/local-store/index.ts", import.meta.url).href, issues: new URL("../src/records/issues/issues.ts", import.meta.url).href } }));
   try {
     const results = workers.map((worker) => new Promise<{ error?: string; result?: unknown }>((resolve, reject) => {
       worker.on('error', reject);

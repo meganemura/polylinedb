@@ -4,7 +4,7 @@
  * The update goes first and the note second, so a note never claims a change that did not happen. Origin checks belong to the entry module.
  */
 import { executeOperation, parseIssueId, parseOperation, projectSummaries, PolylinedbError, type ClaimInspection, type Issue, type Status } from '../records/index.ts';
-import type { SqlExecutor } from '../records/persistence.ts';
+import type { SqlExecutor } from '../records/persistence/persistence.ts';
 import type { DispatchOutcome } from './dispatch.ts';
 import { escape, fullTime, hidden, icon, idLink, joined, person, secondsOf, shortTitle, statusWord, type Viewer } from './ui-html.ts';
 import { doneKinds, type DoneKind } from './ui-brief.ts';

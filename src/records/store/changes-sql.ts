@@ -1,6 +1,6 @@
 // Owns the change feed DDL; triggers record an event only while a mutation batch holds the writer row.
 import type { SqlExecutor } from './sql.ts';
-import { fields } from '../transition/index.ts';
+import { fields } from '../../transition/index.ts';
 import { activeBlockerStatusSql } from './active-blocker.ts';
 
 // Schemas 6 through 9 check exactly these kinds, so CHANGE_STATEMENTS keeps them; each later schema that adds a kind rebuilds the table for its own list.

@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { storageOf } from 'solarsql/node';
 import { createAccessVerifier } from '../src/service/access.ts';
 import { handleRequest } from '../src/service/index.ts';
-import { SCHEMA_SQL } from '../src/records/schema.ts';
+import { SCHEMA_SQL } from '../src/records/persistence/schema.ts';
 import { initializeStore, openStore } from '../src/local-store/index.ts';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';

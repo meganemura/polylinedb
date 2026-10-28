@@ -1,7 +1,7 @@
 // Runs the owner-wait scenario; SQLite and D1 callers supply the executor.
 import assert from 'node:assert/strict';
 import { executeOperation, parseOperation } from '../../src/records/index.ts';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 
 const agent = { id: 'local:codex', kind: 'agent' } as const;
 const human = 'local:operator';

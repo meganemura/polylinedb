@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/service/d1.ts';
-import { SCHEMA_STATEMENTS, schemaUpgradeStatements } from '../src/records/persistence.ts';
-import { SCHEMA_V10_STATEMENTS } from '../src/records/schema-v10.ts';
+import { SCHEMA_STATEMENTS, schemaUpgradeStatements } from '../src/records/persistence/persistence.ts';
+import { SCHEMA_V10_STATEMENTS } from '../src/records/persistence/schema-v10.ts';
 import { checkSchema10Upgrade, populateSchema10, readEvents, runPostsFlow } from './fixtures/posts-flow.ts';
 
 const modulePath = process.argv[2];

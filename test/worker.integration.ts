@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare';
-import { SCHEMA_STATEMENTS, SCHEMA_VERSION } from "../src/records/schema.ts";
+import { SCHEMA_STATEMENTS, SCHEMA_VERSION } from "../src/records/persistence/schema.ts";
 import { pageScript } from "../src/service/ui.ts";
 
 const bundleUrl = new URL('../.cloudflare/output/v0/workers/default/bundle/index.js', import.meta.url);

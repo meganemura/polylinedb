@@ -9,13 +9,13 @@
  *   attention.waitingForMain  // open main-wait issues, last updated first (home)
  *   attention.more            // true when the read stopped at 100 issues; counts are then lower bounds
  */
-import { PolylinedbError } from './errors.ts';
-import { issueSortKey } from './issue-id.ts';
-import { issueQueries } from './issue-queries.ts';
-import { issueRow } from './issue-record.ts';
-import type { Issue, Status } from './issue-record.ts';
-import type { SqlExecutor } from './sql.ts';
-import { ownerWaitLabels, statuses } from '../transition/index.ts';
+import { PolylinedbError } from '../store/errors.ts';
+import { issueSortKey } from '../store/issue-id.ts';
+import { issueQueries } from '../store/issue-queries.ts';
+import { issueRow } from '../store/issue-record.ts';
+import type { Issue, Status } from '../store/issue-record.ts';
+import type { SqlExecutor } from '../store/sql.ts';
+import { ownerWaitLabels, statuses } from '../../transition/index.ts';
 
 /** Label order matters: owner groups follow `ownerWaitLabels`, and an issue with two owner labels belongs to the first. */
 const attentionRule = {

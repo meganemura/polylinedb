@@ -12,8 +12,8 @@ import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation, PolylinedbError } from '../src/records/index.ts';
 import type { ClaimReceipt } from '../src/records/index.ts';
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_SQL } from '../src/records/persistence.ts';
-import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence.ts';
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
+import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence/persistence.ts';
 import { downgradeToSchema6 } from './fixtures/legacy-schema.ts';
 const request = () => crypto.randomUUID();
 function fixture(t: test.TestContext) {

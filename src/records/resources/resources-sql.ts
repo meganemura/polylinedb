@@ -1,5 +1,5 @@
 // Owns the external-resource DDL; operations live in resources.ts.
-import { changeEvent } from './changes-sql.ts';
+import { changeEvent } from '../store/changes-sql.ts';
 
 const counter = (column: string, minimum: number) => `INTEGER NOT NULL CHECK(typeof(${column}) = 'integer' AND ${column} BETWEEN ${minimum} AND 9007199254740991)`;
 const bytes = (column: string, maximum: number) => `length(CAST(${column} AS BLOB)) BETWEEN 1 AND ${maximum}`;

@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import * as hegel from '@hegeldev/hegel';
 import * as gs from '@hegeldev/hegel/generators';
 import { executeOperation, parseOperation, PolylinedbError } from '../../src/records/index.ts';
-import { claimRow } from '../../src/records/persistence.ts';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import { claimRow } from '../../src/records/persistence/persistence.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 import { decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, startedWorkNeedsClaim, statuses, issueTypes } from '../../src/transition/index.ts';
 import type { ObservedClaim } from '../../src/transition/index.ts';
 

@@ -3,7 +3,7 @@
  * POST routes go to ui-writes.ts. Access, origin checks, and Server-Timing belong to the Worker entry.
  */
 import { executeOperation, parseOperation, PolylinedbError, postHandles, postProjects, projectClosedIssues, projectIssues, projectSummaries, type Actor, type Issue, type Status } from '../records/index.ts';
-import type { SqlExecutor } from '../records/persistence.ts';
+import type { SqlExecutor } from '../records/persistence/persistence.ts';
 import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
 import { pageScript, speculationRules } from './ui-assets.ts';
 import { flash } from './ui-brief.ts';

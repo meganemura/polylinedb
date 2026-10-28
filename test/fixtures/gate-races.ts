@@ -1,7 +1,7 @@
 // Interleaves a competing change right before each gated write batch; SQLite and D1 callers supply the executor.
 import assert from 'node:assert/strict';
 import { executeOperation, parseOperation } from '../../src/records/index.ts';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 
 const session = '00000000-0000-4000-8000-0000000000d1';
 const codex = { id: 'local:codex', kind: 'agent' } as const;

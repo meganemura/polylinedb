@@ -1,14 +1,14 @@
 // Owns stars and the posts read. A post is a comment with a handle; comments themselves stay in issues.ts and the DDL in posts-sql.ts.
-import { parseIssueId, parseRequestId } from './issue-id.ts';
-import { PolylinedbError, requireFields } from './errors.ts';
-import { handleSchema, parseHandle, shownCommentRow, starrerNames } from './issue-record.ts';
-import type { ShownComment } from './issue-record.ts';
-import type { SqlExecutor } from './sql.ts';
-import { issueQueries } from './issue-queries.ts';
-import { recordingChanges } from './changes-sql.ts';
-import { asActor } from './agent-gate.ts';
-import { decideStarring, starRowChanges } from '../transition/index.ts';
-import type { Actor } from '../transition/index.ts';
+import { parseIssueId, parseRequestId } from '../store/issue-id.ts';
+import { PolylinedbError, requireFields } from '../store/errors.ts';
+import { handleSchema, parseHandle, shownCommentRow, starrerNames } from '../store/issue-record.ts';
+import type { ShownComment } from '../store/issue-record.ts';
+import type { SqlExecutor } from '../store/sql.ts';
+import { issueQueries } from '../store/issue-queries.ts';
+import { recordingChanges } from '../store/changes-sql.ts';
+import { asActor } from '../claims/agent-gate.ts';
+import { decideStarring, starRowChanges } from '../../transition/index.ts';
+import type { Actor } from '../../transition/index.ts';
 
 // starrer is the handle when the caller gave one, else the actor, so one persona or one actor stars a post once.
 // actor is who wrote the star and the only one who can remove it; the handle grants nothing.

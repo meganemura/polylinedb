@@ -8,8 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeStore, openStore, upgradeStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
-import { SCHEMA_SQL } from '../src/records/persistence.ts';
-import type { SqlExecutor } from '../src/records/persistence.ts';
+import { SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
+import type { SqlExecutor } from '../src/records/persistence/persistence.ts';
 import { runChangeFeedFlow } from './fixtures/change-feed-flow.ts';
 import { downgradeToSchema6, withoutChangeWriter } from './fixtures/legacy-schema.ts';
 

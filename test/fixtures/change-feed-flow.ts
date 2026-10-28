@@ -2,9 +2,9 @@
 import assert from 'node:assert/strict';
 import { executeOperation, parseOperation } from '../../src/records/index.ts';
 import type { ChangesResult } from '../../src/records/index.ts';
-import { CHANGE_RETENTION } from '../../src/records/changes-sql.ts';
-import { ROTATE_MEMORY_IDENTITY_SQL } from '../../src/records/persistence.ts';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import { CHANGE_RETENTION } from '../../src/records/store/changes-sql.ts';
+import { ROTATE_MEMORY_IDENTITY_SQL } from '../../src/records/persistence/persistence.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 
 export type LoggedChange = { seq: number; issue_id: string; kind: string; fields: string[]; actor: string };
 type Expected = [issue_id: string, kind: string, fields?: string[], actor?: string];

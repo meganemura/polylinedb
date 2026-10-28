@@ -10,9 +10,9 @@ import * as gs from '@hegeldev/hegel/generators';
 import { node } from 'solarsql/node';
 import { initializeStore, openStore, upgradeStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
-import { SCHEMA_SQL, SCHEMA_V10_SQL, canonicalSnapshot, convertSnapshotV8, parseSnapshot } from '../src/records/persistence.ts';
-import type { SqlExecutor } from '../src/records/persistence.ts';
-import { PolylinedbError } from '../src/records/errors.ts';
+import { SCHEMA_SQL, SCHEMA_V10_SQL, canonicalSnapshot, convertSnapshotV8, parseSnapshot } from '../src/records/persistence/persistence.ts';
+import type { SqlExecutor } from '../src/records/persistence/persistence.ts';
+import { PolylinedbError } from '../src/records/store/errors.ts';
 import { checkSchema10Upgrade, populateSchema10, readEvents, runPostsFlow } from './fixtures/posts-flow.ts';
 
 const propertyCases = Number(process.env.PD_HEGEL_CASES ?? 100);

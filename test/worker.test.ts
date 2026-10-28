@@ -11,9 +11,9 @@ import { handleRequest } from "../src/service/index.ts";
 import { pageScript, speculationRules } from "../src/service/ui.ts";
 import { composeLanes, stuckCount } from "../src/service/ui-today.ts";
 import type { Issue } from "../src/records/index.ts";
-import { SCHEMA_SQL } from "../src/records/schema.ts";
-import { statements } from "../src/records/solarsql.generated.ts";
-import { issueSortKey } from "../src/records/issue-id.ts";
+import { SCHEMA_SQL } from "../src/records/persistence/schema.ts";
+import { statements } from "../src/records/store/solarsql.generated.ts";
+import { issueSortKey } from "../src/records/store/issue-id.ts";
 import { assertSnapshot } from "./fixtures/snapshot.ts";
 import manifest from '../package.json' with { type: 'json' };
 

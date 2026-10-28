@@ -30,7 +30,7 @@ The tests in `test/dependency-persistence.test.ts`, `test/issues.test.ts`, and `
 
 The local store builds its export with `parseSnapshot`, which sorts each collection into a canonical order.
 Issue IDs sort by number, so `pd-9` comes before `pd-10`. `issueSortKey` pads each number to make text order equal number order.
-The injected fault removed `issueSortKey` from the second key of the dependency sort in `src/records/snapshot.ts`:
+The injected fault removed `issueSortKey` from the second key of the dependency sort in `src/records/persistence/snapshot.ts`:
 
 ```diff
 -    }).sort((a, b) => compareText(issueSortKey(a.dependent_id), issueSortKey(b.dependent_id)) || compareText(issueSortKey(a.blocker_id), issueSortKey(b.blocker_id)));
@@ -74,16 +74,16 @@ Each command below ran with `-- node --test --test-name-pattern='^export lists t
 
 1. `preflight` gave different results in different runs.
    One run reported `deterministic (app calls: 3236)`. Another run reported `first divergence at call 2812`.
-   The two indexes separate inside the comparator at `src/records/snapshot.ts:89`, which sorts creation requests by request ID.
+   The two indexes separate inside the comparator at `src/records/persistence/snapshot.ts:89`, which sorts creation requests by request ID.
    The test creates random request IDs, so that sort calls its comparator a different number of times in each run.
    A call index counts the calls of one function. The calls used below kept the same index, `#1`, in every run.
 2. `frames --at src/local-store/index.ts:196` named the export function that ran: `src/local-store/index.ts:readSnapshot@196:9#1`.
-   The frames index showed one call of the dependency sort comparator, `src/records/snapshot.ts:<anonymous>@172:13#1`, inside `parseSnapshotV4@153:10#1`.
-3. `probe "src/records/snapshot.ts:<anonymous>@169:36"` showed the rows that the store read, before the sort: `pd-10`, then `pd-9`.
-4. `probe "src/records/snapshot.ts:<anonymous>@172:13"` showed the comparator decision:
+   The frames index showed one call of the dependency sort comparator, `src/records/persistence/snapshot.ts:<anonymous>@172:13#1`, inside `parseSnapshotV4@153:10#1`.
+3. `probe "src/records/persistence/snapshot.ts:<anonymous>@169:36"` showed the rows that the store read, before the sort: `pd-10`, then `pd-9`.
+4. `probe "src/records/persistence/snapshot.ts:<anonymous>@172:13"` showed the comparator decision:
 
    ```text
-   src/records/snapshot.ts:<anonymous>@172:13  calls: 1, threw: 0
+   src/records/persistence/snapshot.ts:<anonymous>@172:13  calls: 1, threw: 0
      a: {dependent_id: "pd-1", blocker_id: "pd-9"}
      b: {dependent_id: "pd-1", blocker_id: "pd-10"}
      returns: 1
@@ -92,7 +92,7 @@ Each command below ran with `-- node --test --test-name-pattern='^export lists t
    A positive result puts `pd-9` after `pd-10`. The comparator kept the wrong order of the input.
 5. In the frames index, that comparator call made two `compareText` calls but only two `issueSortKey` calls. Padded keys for both the dependents and the blockers need four.
    So one of the two comparisons received unpadded IDs.
-6. `exec "src/records/snapshot.ts:parseSnapshotV4@153:10#1" --line 173` evaluated an expression after the sort, in the scope of that call:
+6. `exec "src/records/persistence/snapshot.ts:parseSnapshotV4@153:10#1" --line 173` evaluated an expression after the sort, in the scope of that call:
 
    ```sh
    --statement "[dependencies.map(e => e.blocker_id), compareText('pd-9', 'pd-10'), compareText(issueSortKey('pd-9'), issueSortKey('pd-10'))]"

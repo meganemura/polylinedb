@@ -8,8 +8,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { node } from 'solarsql/node';
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { initializeStore, openStore, upgradeStore } from "../src/local-store/index.ts";
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, ROTATE_MEMORY_IDENTITY_SQL, schemaUpgradeStatements } from "../src/records/schema.ts";
-import type { SqlExecutor } from "../src/records/sql.ts";
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, ROTATE_MEMORY_IDENTITY_SQL, schemaUpgradeStatements } from "../src/records/persistence/schema.ts";
+import type { SqlExecutor } from "../src/records/store/sql.ts";
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
 
 function fixture(t: test.TestContext) {

@@ -14,12 +14,12 @@ import type { OperationResult } from '../src/records/index.ts';
 import { createAccessVerifier } from '../src/service/access.ts';
 import { handleRequest } from '../src/service/index.ts';
 import { executeCloudOperation } from '../src/cloud-client/cloud-operations.ts';
-import { SCHEMA_SQL } from '../src/records/schema.ts';
+import { SCHEMA_SQL } from '../src/records/persistence/schema.ts';
 import { runClosureFlow } from './fixtures/closure-flow.ts';
 import { snapshotMigration } from '../scripts/d1-snapshot-store.ts';
 import { createHash } from 'node:crypto';
-import { canonicalSnapshot, canonicalSnapshotV5, convertSnapshotV5, parseSnapshot, SCHEMA_V6_SQL, SCHEMA_V7_SQL } from '../src/records/persistence.ts';
-import type { Snapshot, SqlExecutor } from '../src/records/persistence.ts';
+import { canonicalSnapshot, canonicalSnapshotV5, convertSnapshotV5, parseSnapshot, SCHEMA_V6_SQL, SCHEMA_V7_SQL } from '../src/records/persistence/persistence.ts';
+import type { Snapshot, SqlExecutor } from '../src/records/persistence/persistence.ts';
 import { withoutChangeWriter } from './fixtures/legacy-schema.ts';
 
 const source = new URL('../src/cli.ts', import.meta.url).pathname;

@@ -1,7 +1,7 @@
 /** The store reads behind /ui pages other than the lanes: one issue with everything its page shows, search hits, and the activity feed. Nothing here writes. */
 import { activityAfter, activityNewest, claimDisplay, executeOperation, issueChildren, issueParent, parseIssueId, PolylinedbError,
   type ActivityPage, type Actor, type Issue } from '../records/index.ts';
-import type { SqlExecutor } from '../records/persistence.ts';
+import type { SqlExecutor } from '../records/persistence/persistence.ts';
 import type { ActivityCursor, IssueView } from './ui-pages.ts';
 import { pageLimit } from './ui-today.ts';
 

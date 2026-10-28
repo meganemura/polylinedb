@@ -8,8 +8,8 @@ import { pathToFileURL } from 'node:url';
 import { snapshotMigration, type Query, type Statement } from '../scripts/d1-snapshot-store.ts';
 import { AdditionRefused, AdditionUnknown, restoredAddition, type Batch } from '../scripts/d1-restored-addition.ts';
 import { tables } from '../scripts/d1-additive-merge.ts';
-import { canonicalSnapshot } from '../src/records/snapshot.ts';
-import { SCHEMA_STATEMENTS, SCHEMA_V3_SQL, schemaUpgradeStatements } from '../src/records/schema.ts';
+import { canonicalSnapshot } from '../src/records/persistence/snapshot.ts';
+import { SCHEMA_STATEMENTS, SCHEMA_V3_SQL, schemaUpgradeStatements } from '../src/records/persistence/schema.ts';
 import { d1Relay, d1RelayModule } from './fixtures/d1-relay.ts';
 import { failAt, isAddition, legacyRestore, localStore, loseResponse, originalInput, privateDirectory, routingEnvironment } from './fixtures/restored-addition.ts';
 

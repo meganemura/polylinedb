@@ -49,7 +49,7 @@ async function pooled<T>(tasks: (() => Promise<T>)[]): Promise<T[]> {
 }
 const baselineRun = run(['check', '--json'], 0);
 const worker = 'src/service/index.ts';
-const records = 'src/records/issues.ts';
+const records = 'src/records/issues/issues.ts';
 const transition = 'src/transition/index.ts';
 const pathTo = (source: string, target: string) => {
   const path = relative(dirname(source), target);
@@ -69,7 +69,7 @@ type Control = { name: string; path: string; statement: string; rule?: string; p
 const controls: Control[] = [
   { name: 'human renderer cannot import cloud client', path: 'src/cli-human.ts', statement: "import { createCloudClient as proof } from './cloud-client/index.ts'; void proof;", rule: 'tag-boundary', pointer: capabilityPointer('cli-human') },
   { name: 'human renderer cannot import CLI commands', path: 'src/cli-human.ts', statement: "import { parseOperation as proof } from './cli-commands.ts'; void proof;", rule: 'tag-order', pointer: 'edges.order[0].sequence' },
-  { name: 'human renderer cannot bypass records public surface', path: 'src/cli-human.ts', statement: "import { parseOperation as proof } from './records/issues.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records') },
+  { name: 'human renderer cannot bypass records public surface', path: 'src/cli-human.ts', statement: "import { parseOperation as proof } from './records/issues/issues.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records/issues') },
   { name: 'CLI public cloud actions', path: 'src/cli.ts', statement: "import { createCloudClient as proof } from './cloud-client/index.ts'; void proof;" },
   { name: 'private OAuth implementation', path: 'src/cli.ts', statement: "import { createCloudAuth as proof } from './cloud-client/oauth.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('cloud-client') },
   { name: 'Node to Worker', path: 'src/cli.ts', statement: `import { handleRequest as proof } from '${pathTo('src/cli.ts', worker)}'; void proof;`, rule: 'tag-boundary', pointer: 'edges.allowDeny[0].deny[0]' },
@@ -78,8 +78,11 @@ const controls: Control[] = [
   { name: 'portable Node builtin', path: records, statement: "import { readFileSync as proof } from 'node:fs'; void proof;", rule: 'tag-boundary', pointer: 'edges.allowDeny[2].deny[0]' },
   { name: 'Worker Node builtin', path: worker, statement: "import { readFileSync as proof } from 'node:fs'; void proof;", rule: 'tag-boundary', pointer: 'edges.allowDeny[3].deny[0]' },
   { name: 'public record commands', path: 'src/cli.ts', statement: "import { parseOperation as proof } from './records/index.ts'; void proof;" },
-  { name: 'public record persistence', path: 'src/cli.ts', statement: "import { parseSnapshot as proof } from './records/persistence.ts'; void proof;" },
-  { name: 'private issue behavior', path: 'src/cli.ts', statement: "import { parseOperation as proof } from './records/issues.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records') },
+  { name: 'public record persistence', path: 'src/cli.ts', statement: "import { parseSnapshot as proof } from './records/persistence/persistence.ts'; void proof;" },
+  { name: 'private issue behavior', path: 'src/cli.ts', statement: "import { parseOperation as proof } from './records/issues/issues.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records/issues') },
+  { name: 'private schema history', path: 'src/cli.ts', statement: "import { SCHEMA_VERSION as proof } from './records/persistence/schema.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records/persistence') },
+  { name: 'record domains read each other', path: records, statement: "import { claimDisplay as proof } from '../claims/claims.ts'; void proof;" },
+  { name: 'store below claims', path: 'src/records/store/sql.ts', statement: "import { claimDisplay as proof } from '../claims/claims.ts'; void proof;", rule: 'tag-order', pointer: 'edges.order[1].sequence' },
   { name: 'public local store', path: 'src/cli.ts', statement: "import { openStore as proof } from './local-store/index.ts'; void proof;" },
   { name: 'public workspace selection', path: 'src/cli.ts', statement: "import { selectConnection as proof } from './workspace/index.ts'; void proof;" },
   { name: 'private workspace settings', path: 'src/cli.ts', statement: "import { readConnections as proof } from './workspace/connections.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('workspace') },

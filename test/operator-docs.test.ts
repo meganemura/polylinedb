@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SCHEMA_VERSION } from '../src/records/schema.ts';
+import { SCHEMA_VERSION } from '../src/records/persistence/schema.ts';
 import { help } from '../src/cli-help.ts';
 
 const memory = readFileSync(new URL('../docs/memory.md', import.meta.url), 'utf8');

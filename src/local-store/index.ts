@@ -4,15 +4,15 @@ import { node, UnsupportedRuntimeError } from 'solarsql/node';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { commentRow, issueRow, starRow, storedCommentRow } from "../records/persistence.ts";
+import { commentRow, issueRow, starRow, storedCommentRow } from "../records/persistence/persistence.ts";
 import { PolylinedbError } from "../records/index.ts";
-import type { SqlExecutor, SqlStatement } from "../records/persistence.ts";
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8 } from "../records/persistence.ts";
-import { claimRow, claimRequestRow } from '../records/persistence.ts';
-import type { Snapshot, SnapshotImport } from "../records/persistence.ts";
-import { issueSortKey } from "../records/persistence.ts";
-import { memoryRow, memorySortKey } from "../records/persistence.ts";
+import type { SqlExecutor, SqlStatement } from "../records/persistence/persistence.ts";
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence/persistence.ts";
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8 } from "../records/persistence/persistence.ts";
+import { claimRow, claimRequestRow } from '../records/persistence/persistence.ts';
+import type { Snapshot, SnapshotImport } from "../records/persistence/persistence.ts";
+import { issueSortKey } from "../records/persistence/persistence.ts";
+import { memoryRow, memorySortKey } from "../records/persistence/persistence.ts";
 
 export type LocalStore = { db: SqlExecutor; exportSnapshot(): Snapshot; importSnapshot(snapshot: Snapshot): SnapshotImport; close(): void };
 

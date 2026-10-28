@@ -1,11 +1,11 @@
 // Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7, 8, 9 or 10 stores made from a current one.
 import type { DatabaseSync } from 'node:sqlite';
-import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_STATEMENTS } from '../../src/records/changes-sql.ts';
-import { SCHEMA_V9_ADDITIONS } from '../../src/records/schema.ts';
-import { SCHEMA_V8_STATEMENTS } from '../../src/records/schema-v8.ts';
-import { SCHEMA_V9_STATEMENTS } from '../../src/records/schema-v9.ts';
-import { SCHEMA_V10_STATEMENTS } from '../../src/records/schema-v10.ts';
-import type { SqlExecutor } from '../../src/records/persistence.ts';
+import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_STATEMENTS } from '../../src/records/store/changes-sql.ts';
+import { SCHEMA_V9_ADDITIONS } from '../../src/records/persistence/schema.ts';
+import { SCHEMA_V8_STATEMENTS } from '../../src/records/persistence/schema-v8.ts';
+import { SCHEMA_V9_STATEMENTS } from '../../src/records/persistence/schema-v9.ts';
+import { SCHEMA_V10_STATEMENTS } from '../../src/records/persistence/schema-v10.ts';
+import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 
 /** Writes a comment as a release before posts did, so it runs on a schema that lacks the edit or post columns; recorded writes its event as a comment operation would. */
 export async function legacyComment(db: SqlExecutor, comment: { issue_id: string; body: string; actor: string; recorded?: boolean }): Promise<string> {

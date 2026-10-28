@@ -48,13 +48,27 @@ The source modules expose capability contracts through these public entries:
 
 | Module | Public entries | Responsibility |
 | --- | --- | --- |
-| records | `src/records/index.ts`, `src/records/persistence.ts` | Commands and domain types; storage ports, row decoding, schemas, and portable snapshots |
+| records | `src/records/index.ts`, `src/records/persistence/persistence.ts` | Commands and domain types; storage ports, row decoding, schemas, and portable snapshots |
 | transition | `src/transition/index.ts` | Pure issue, claim, creation, prerequisite, and agent gate decisions that both stores share |
 | local-store | `src/local-store/index.ts` | SQLite lifetime, transactions, upgrades, and restoration |
 | workspace | `src/workspace/index.ts` | Connection selection and repository settings |
 | cloud-client | `src/cloud-client/index.ts` | Authenticated outbound actions; private OAuth, credentials, and transport |
 | host-hooks | `src/host-hooks/index.ts` | Host settings and memory retrieval events |
 | service | `src/service/index.ts` | HTTP/MCP requests and deployment fetch; private Access verification and D1 adaptation |
+
+Inside records, each record domain is its own directory and its own archstrict module.
+A domain's files are visible to the other records files only, so the rest of pd reads the two public entries above.
+
+| Rank | Directories | Responsibility |
+| --- | --- | --- |
+| store | `src/records/store/` | Issue rows and their decoding, the SQL executor port, issue ids, errors, the read catalog, and the change log SQL |
+| claims | `src/records/claims/` | Claims, the claim guard SQL, the agent write gate, and the handoff |
+| domain | `src/records/issues/`, `resources/`, `dependencies/`, `land-order/`, `posts/`, `memories/`, `changes/` | One record kind each: its operations, its validation, and its SQL |
+| persistence | `src/records/persistence/` | The schema, its frozen past versions, and portable snapshots across every domain |
+| operations | `src/records/*.ts` | The operation dispatch and the public entry |
+
+A file may import its own rank or an earlier one, never a later one.
+The domains of one rank may import each other, and the cycle check keeps those imports one-way.
 
 The CLI retains its explicit local/cloud branch and closes each local store after execution.
 The Worker build uses the service's default fetch entry.

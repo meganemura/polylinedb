@@ -6,7 +6,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, rea
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { additiveMerge, rawToSnapshot, retireSource, tables } from './d1-additive-merge.ts';
 import type { Counts, Statement } from './d1-additive-merge.ts';
-import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV5, canonicalSnapshotV6, canonicalSnapshotV7, canonicalSnapshotV8, convertSnapshotV3, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
+import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV5, canonicalSnapshotV6, canonicalSnapshotV7, canonicalSnapshotV8, convertSnapshotV3, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, parseSnapshot, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence/persistence.ts';
 import { defaultConnection, readConnections, readRepositoryDefaults, repositoryConfigPath, selectConnection, useRepositoryConnection } from '../src/workspace/index.ts';
 import type { RepositoryConfiguration, RepositorySelection } from '../src/workspace/index.ts';
 import { PolylinedbError } from '../src/records/index.ts';

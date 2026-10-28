@@ -1,15 +1,15 @@
 // Owns the queue handoff: one atomic write that records the tip and result comments, moves the issue to the landing
 // queue labels, and releases the claim. The release receipt is the idempotency record, so the schema does not change.
-import { PolylinedbError, requireFields } from './errors.ts';
-import { parseRequestId } from './issue-id.ts';
-import { issueQueries } from './issue-queries.ts';
+import { PolylinedbError, requireFields } from '../store/errors.ts';
+import { parseRequestId } from '../store/issue-id.ts';
+import { issueQueries } from '../store/issue-queries.ts';
 import { claimMutationStatements } from './claims-sql.ts';
-import { recordingChanges } from './changes-sql.ts';
-import { commentRow, issueRow } from './issue-record.ts';
+import { recordingChanges } from '../store/changes-sql.ts';
+import { commentRow, issueRow } from '../store/issue-record.ts';
 import type { ClaimProof } from './claims-sql.ts';
-import type { Comment, Issue } from './issue-record.ts';
-import type { SqlExecutor, SqlStatement } from './sql.ts';
-import { decideReplay, readyLabel } from '../transition/index.ts';
+import type { Comment, Issue } from '../store/issue-record.ts';
+import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
+import { decideReplay, readyLabel } from '../../transition/index.ts';
 
 export const mainWaitLabel = 'main-wait';
 export type ClaimHandoff = { op: 'claim_handoff'; claim_proof: ClaimProof; expected_revision: number; request_id: string; tip: string; summary?: string };

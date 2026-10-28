@@ -6,7 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { childFailure, childLimitMs, stderrExcerpt } from './d1-child.ts';
 import { snapshotMigration, type Query } from './d1-snapshot-store.ts';
-import { canonicalSnapshot, SCHEMA_VERSION } from '../src/records/persistence.ts';
+import { canonicalSnapshot, SCHEMA_VERSION } from '../src/records/persistence/persistence.ts';
 
 export function parseTarget(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid target');

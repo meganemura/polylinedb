@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/service/d1.ts';
-import { SCHEMA_STATEMENTS, schemaUpgradeStatements } from '../src/records/persistence.ts';
-import { SCHEMA_V9_STATEMENTS } from '../src/records/schema-v9.ts';
+import { SCHEMA_STATEMENTS, schemaUpgradeStatements } from '../src/records/persistence/persistence.ts';
+import { SCHEMA_V9_STATEMENTS } from '../src/records/persistence/schema-v9.ts';
 import { checkSchema9Upgrade, populateSchema9, readEvents, runCommentEditFlow } from './fixtures/comment-edit-flow.ts';
 import { runChangeFeedFlow } from './fixtures/change-feed-flow.ts';
 

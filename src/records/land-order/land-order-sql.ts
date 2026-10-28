@@ -1,5 +1,5 @@
 // Owns the land-order DDL and the cycle check that both edge kinds share; operations live in land-order.ts.
-import { changeEvent } from './changes-sql.ts';
+import { changeEvent } from '../store/changes-sql.ts';
 
 const counter = (column: string, minimum: number) => `INTEGER NOT NULL CHECK(typeof(${column}) = 'integer' AND ${column} BETWEEN ${minimum} AND 9007199254740991)`;
 

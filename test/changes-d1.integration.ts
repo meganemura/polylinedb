@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/service/d1.ts';
-import { SCHEMA_STATEMENTS, schemaUpgradeStatements } from '../src/records/persistence.ts';
-import { SCHEMA_V6_STATEMENTS } from '../src/records/schema-v6.ts';
+import { SCHEMA_STATEMENTS, schemaUpgradeStatements } from '../src/records/persistence/persistence.ts';
+import { SCHEMA_V6_STATEMENTS } from '../src/records/persistence/schema-v6.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { runChangeFeedFlow } from './fixtures/change-feed-flow.ts';
 import { failsChangeFeedContract, feedDefects } from './fixtures/change-feed-defects.ts';

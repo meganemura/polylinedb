@@ -1,9 +1,9 @@
 // Owns the persistent schema for the shared issue vocabulary; runtime adapters own database access.
-import { CLAIM_STATEMENTS } from './claims-sql.ts';
-import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS, COMMENT_EDIT_CHANGE_STATEMENTS, STAR_KIND_REBUILD_STATEMENTS } from './changes-sql.ts';
-import { LAND_ORDER_STATEMENTS } from './land-order-sql.ts';
-import { POST_STATEMENTS, STAR_CHANGE_STATEMENTS } from './posts-sql.ts';
-import { RESOURCE_STATEMENTS } from './resources-sql.ts';
+import { CLAIM_STATEMENTS } from '../claims/claims-sql.ts';
+import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS, COMMENT_EDIT_CHANGE_STATEMENTS, STAR_KIND_REBUILD_STATEMENTS } from '../store/changes-sql.ts';
+import { LAND_ORDER_STATEMENTS } from '../land-order/land-order-sql.ts';
+import { POST_STATEMENTS, STAR_CHANGE_STATEMENTS } from '../posts/posts-sql.ts';
+import { RESOURCE_STATEMENTS } from '../resources/resources-sql.ts';
 export { SCHEMA_V5_SQL } from './schema-v5.ts';
 export { SCHEMA_V6_SQL } from './schema-v6.ts';
 export { SCHEMA_V7_SQL } from './schema-v7.ts';
@@ -12,7 +12,7 @@ export { SCHEMA_V9_SQL } from './schema-v9.ts';
 export { SCHEMA_V10_SQL } from './schema-v10.ts';
 import { SCHEMA_V9_STATEMENTS } from './schema-v9.ts';
 import { SCHEMA_V10_STATEMENTS } from './schema-v10.ts';
-import { statuses, issueTypes, fields } from '../transition/index.ts';
+import { statuses, issueTypes, fields } from '../../transition/index.ts';
 export const SCHEMA_VERSION = 11;
 
 export const MEMORY_SCHEMA_SQL = `

@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { executeOperation, parseOperation } from "../src/records/index.ts";
-import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories.ts";
-import { canonicalSnapshot } from "../src/records/snapshot.ts";
+import { executeMemoryOperation, parseMemoryOperation } from "../src/records/memories/memories.ts";
+import { canonicalSnapshot } from "../src/records/persistence/snapshot.ts";
 import { initializeStore, openStore } from "../src/local-store/index.ts";
 import { additiveMerge, rawToSnapshot, retireSource, tables } from '../scripts/d1-additive-merge.ts';
 

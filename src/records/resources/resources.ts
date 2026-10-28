@@ -1,16 +1,16 @@
 // Owns external resources recorded on an issue: entries, marks, the per-issue revision, and immutable receipts.
 // An entry holds identifiers only. The close guard that reads live entries belongs to issue updates.
-import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
-import { knownError, PolylinedbError, requireFields } from './errors.ts';
-import { recordingChanges } from './changes-sql.ts';
-import { claimProofSchema, parseClaimProof } from './claims.ts';
-import { claimProofPredicate } from './claims-sql.ts';
-import type { ClaimProof } from './claims-sql.ts';
-import type { SqlExecutor, SqlStatement } from './sql.ts';
-import type { Status } from './issue-record.ts';
-import { decideReplay, decideResourceAddition, decideResourceUpdate, resourceMarks, resourceState, statuses } from '../transition/index.ts';
-import type { Actor, ResourceDecision, ResourceMark, ResourceState } from '../transition/index.ts';
-import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
+import { parseIssueId, parseRequestId, issueSortKey } from '../store/issue-id.ts';
+import { knownError, PolylinedbError, requireFields } from '../store/errors.ts';
+import { recordingChanges } from '../store/changes-sql.ts';
+import { claimProofSchema, parseClaimProof } from '../claims/claims.ts';
+import { claimProofPredicate } from '../claims/claims-sql.ts';
+import type { ClaimProof } from '../claims/claims-sql.ts';
+import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
+import type { Status } from '../store/issue-record.ts';
+import { decideReplay, decideResourceAddition, decideResourceUpdate, resourceMarks, resourceState, statuses } from '../../transition/index.ts';
+import type { Actor, ResourceDecision, ResourceMark, ResourceState } from '../../transition/index.ts';
+import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from '../claims/agent-gate.ts';
 
 export type ResourceAdd = { op: 'resource_add'; issue_id: string; kind: string; name: string; expected_revision: number; request_id: string };
 export type ResourceUpdate = { op: 'resource_update'; issue_id: string; seq: number; expected_revision: number; request_id: string;

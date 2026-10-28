@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { Miniflare } from 'miniflare';
 import { d1Executor } from "../src/service/d1.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_STATEMENTS, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../src/records/schema.ts";
-import { SCHEMA_V5_STATEMENTS } from '../src/records/schema-v5.ts';
-import { SCHEMA_V6_STATEMENTS } from '../src/records/schema-v6.ts';
-import { SCHEMA_V7_STATEMENTS } from '../src/records/schema-v7.ts';
-import { SCHEMA_V8_STATEMENTS } from '../src/records/schema-v8.ts';
-import { SCHEMA_V9_STATEMENTS } from '../src/records/schema-v9.ts';
-import { SCHEMA_V10_STATEMENTS } from '../src/records/schema-v10.ts';
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_STATEMENTS, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../src/records/persistence/schema.ts";
+import { SCHEMA_V5_STATEMENTS } from '../src/records/persistence/schema-v5.ts';
+import { SCHEMA_V6_STATEMENTS } from '../src/records/persistence/schema-v6.ts';
+import { SCHEMA_V7_STATEMENTS } from '../src/records/persistence/schema-v7.ts';
+import { SCHEMA_V8_STATEMENTS } from '../src/records/persistence/schema-v8.ts';
+import { SCHEMA_V9_STATEMENTS } from '../src/records/persistence/schema-v9.ts';
+import { SCHEMA_V10_STATEMENTS } from '../src/records/persistence/schema-v10.ts';
 import { withoutChangeWriter } from './fixtures/legacy-schema.ts';
 
 const runtime = new Miniflare({ host: '127.0.0.1', cf: false, telemetry: { enabled: false }, workers: [{ config: {

@@ -12,8 +12,8 @@ import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import type { Actor } from '../src/records/index.ts';
-import { SCHEMA_SQL, SCHEMA_V8_SQL, canonicalSnapshot, convertSnapshotV6, parseSnapshot } from '../src/records/persistence.ts';
-import type { SqlExecutor } from '../src/records/persistence.ts';
+import { SCHEMA_SQL, SCHEMA_V8_SQL, canonicalSnapshot, convertSnapshotV6, parseSnapshot } from '../src/records/persistence/persistence.ts';
+import type { SqlExecutor } from '../src/records/persistence/persistence.ts';
 import { runLandOrderFlow } from './fixtures/land-order-flow.ts';
 import { downgradeToSchema8 } from './fixtures/legacy-schema.ts';
 

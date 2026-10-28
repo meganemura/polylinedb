@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/service/d1.ts';
-import { SCHEMA_STATEMENTS } from '../src/records/persistence.ts';
+import { SCHEMA_STATEMENTS } from '../src/records/persistence/persistence.ts';
 import { runGateRaces } from './fixtures/gate-races.ts';
 import { runMainLockFlow } from './fixtures/main-lock-flow.ts';
 import { runOwnerWaitFlow } from './fixtures/owner-wait-flow.ts';

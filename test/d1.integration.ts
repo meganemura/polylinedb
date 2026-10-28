@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from "../src/service/d1.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
-import { SCHEMA_STATEMENTS } from "../src/records/schema.ts";
+import { SCHEMA_STATEMENTS } from "../src/records/persistence/schema.ts";
 import { runClaimedListFlow, runShowClaimFlow } from "./fixtures/show-claim-flow.ts";
 import { runClosureFlow } from "./fixtures/closure-flow.ts";
 

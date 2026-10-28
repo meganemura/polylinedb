@@ -130,7 +130,7 @@ The human `pd show` prints the persona, `via`, the reply target, and the star co
 Schema 11 adds the three comment columns with `ALTER TABLE`, the `comments_reply_on_issue` trigger, the partial index, and the `stars` table, after the schema 10 objects, on a fresh store and an upgrade alike.
 The `change_events` kind check lists the kinds, so schema 11 rebuilds the table for `starred` and `unstarred` the way schema 10 rebuilt it for `comment_edited`.
 It drops the thirteen triggers that name `change_events`, creates `change_events_v11`, copies every event with its `seq`, renames it, creates the triggers again with their schema 10 text, and adds the two star triggers.
-`src/records/schema-v10.ts` freezes the schema 10 statements for upgrades and tests.
+`src/records/persistence/schema-v10.ts` freezes the schema 10 statements for upgrades and tests.
 Snapshot 9 carries `handle`, `via`, and `reply_to` on every comment and a `stars` collection, and it orders each reply after its target.
 A snapshot 8 converts with null fields and no stars.
 Export, import, historical export, the D1 snapshot operator, the additive merge, and the restored addition all carry the fields and the stars.

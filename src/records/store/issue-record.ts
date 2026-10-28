@@ -1,7 +1,7 @@
 // Decodes issue and comment rows, and parses the field values they hold. Issue commands and their SQL stay in issues.ts.
 import { parseIssueId, parseRequestId } from './issue-id.ts';
 import { PolylinedbError } from './errors.ts';
-import { fields, issueTypes, statuses } from '../transition/index.ts';
+import { fields, issueTypes, statuses } from '../../transition/index.ts';
 
 export type Status = typeof statuses[number];
 export type IssueType = typeof issueTypes[number];

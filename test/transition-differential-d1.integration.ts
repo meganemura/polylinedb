@@ -1,7 +1,7 @@
 // Proves that the transition and local workerd D1 accept the same commands with the shared differential cases.
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from '../src/service/d1.ts';
-import { SCHEMA_STATEMENTS } from '../src/records/persistence.ts';
+import { SCHEMA_STATEMENTS } from '../src/records/persistence/persistence.ts';
 import { runDifferential } from './fixtures/transition-differential.ts';
 const modulePath = process.argv[2];
 const { Miniflare } = await import(modulePath ? pathToFileURL(modulePath).href : 'miniflare');

@@ -1,18 +1,18 @@
 // Owns lease commands, inspection, and immutable replay; issue fields and transports retain their own contracts.
-import { PolylinedbError, requireFields } from './errors.ts';
-import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
-import { issueQueries } from './issue-queries.ts';
-import { statements } from './solarsql.generated.ts';
+import { PolylinedbError, requireFields } from '../store/errors.ts';
+import { parseIssueId, parseRequestId, issueSortKey } from '../store/issue-id.ts';
+import { issueQueries } from '../store/issue-queries.ts';
+import { statements } from '../store/solarsql.generated.ts';
 import { claimMutationStatements } from './claims-sql.ts';
-import { recordingChanges } from './changes-sql.ts';
+import { recordingChanges } from '../store/changes-sql.ts';
 import { attemptHandoff, parseHandoff } from './claim-handoff.ts';
 import type { ClaimHandoff, HandoffParts } from './claim-handoff.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
-import type { SqlExecutor, SqlStatement } from './sql.ts';
-import { claimState, decideReplay, ownsExpiredLease } from '../transition/index.ts';
-import type { Actor } from '../transition/index.ts';
+import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
+import { claimState, decideReplay, ownsExpiredLease } from '../../transition/index.ts';
+import type { Actor } from '../../transition/index.ts';
 import { agentMayAcquire, asActor, rejectAgentWrite } from './agent-gate.ts';
-import type { ClaimState } from '../transition/index.ts';
+import type { ClaimState } from '../../transition/index.ts';
 
 export type Claim = ClaimProof & { actor: string; agent_label: string | null; revision: number; acquired_at: number; changed_at: number; expires_at: number; released_at: number | null };
 export type ClaimReceipt = Omit<Claim, 'released_at'> & ({ outcome: 'released'; released_at: number } | { outcome: 'acquired' | 'renewed'; released_at: null });

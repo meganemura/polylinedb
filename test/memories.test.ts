@@ -8,10 +8,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { node } from 'solarsql/node';
 import { initializeStore, openStore, upgradeStore } from "../src/local-store/index.ts";
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
-import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from "../src/records/snapshot.ts";
-import { SCHEMA_V2_SQL } from "../src/records/schema.ts";
-import type { SqlExecutor } from "../src/records/sql.ts";
-import { issueRow } from "../src/records/persistence.ts";
+import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from "../src/records/persistence/snapshot.ts";
+import { SCHEMA_V2_SQL } from "../src/records/persistence/schema.ts";
+import type { SqlExecutor } from "../src/records/store/sql.ts";
+import { issueRow } from "../src/records/persistence/persistence.ts";
 import { legacyComment, withoutChangeWriter } from "./fixtures/legacy-schema.ts";
 
 function fixture(t: test.TestContext) {

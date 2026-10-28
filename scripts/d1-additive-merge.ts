@@ -1,12 +1,12 @@
 // Owns additive D1 merge planning and local source retirement. Remote selection and execution stay outside.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { issueRow, storedCommentRow } from '../src/records/persistence.ts';
-import { issueSortKey } from '../src/records/persistence.ts';
-import { fields, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence.ts';
-import { memoryRow, memorySortKey } from '../src/records/persistence.ts';
-import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence.ts';
-import type { Snapshot } from '../src/records/persistence.ts';
+import { issueRow, storedCommentRow } from '../src/records/persistence/persistence.ts';
+import { issueSortKey } from '../src/records/persistence/persistence.ts';
+import { fields, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence/persistence.ts';
+import { memoryRow, memorySortKey } from '../src/records/persistence/persistence.ts';
+import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence/persistence.ts';
+import type { Snapshot } from '../src/records/persistence/persistence.ts';
 
 export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'memory_store_identity', 'project_memory_revisions'] as const;
 export type Table = typeof tables[number];
