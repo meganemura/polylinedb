@@ -124,13 +124,14 @@ try {
       const status = roll < 0.55 ? 'closed' : roll < 0.83 ? 'open' : roll < 0.9 ? 'in_progress' : 'deferred';
       const labels = (['ready', 'main-wait', 'owner-decision', 'owner-action', 'dogfood'] as const).filter((_, at) => random() < [0.15, 0.03, 0.03, 0.02, 0.05][at]!);
       const parent = index < 30 ? scoped[index % 2]!.id : undefined;
-      return { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool, project, status, labels, priority: Math.floor(random() * 5),
+      // The store refuses a new issue that starts in_progress, so it is created open and moved below.
+      return { op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool, project, status: status === 'in_progress' ? 'open' : status, intended: status, labels, priority: Math.floor(random() * 5),
         type: pick(['task', 'bug', 'feature', 'chore']), body: `# ${sentence()}\n\n${Array.from({ length: 1 + Math.floor(random() * 5) }, paragraph).join('\n\n')}`,
         ...(parent === undefined ? {} : { parent }) };
     });
-    await inParallel(fields, async body => {
+    await inParallel(fields, async ({ intended, ...body }) => {
       const issue = (await operation(body)).issue;
-      scoped.push({ id: issue.id, tool, project, status: issue.status });
+      scoped.push({ id: issue.id, tool, project, status: intended });
     });
     issues.push(...scoped);
   }
@@ -159,6 +160,8 @@ try {
     const { claim } = await operation({ op: 'claim_show', issue_id: issue.id });
     await operation({ op: 'claim_acquire', issue_id: issue.id, incarnation: claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), ttl: 3600, agent_label: pick(['Codex', 'Claude', null]) });
   });
+  // Started work without a claim, as an agent leaves it when its lease lapses; the Stuck lane reads these rows.
+  await database.batch(issues.filter(issue => issue.status === 'in_progress').map(issue => database.prepare("UPDATE issues SET status = 'in_progress' WHERE id = ?").bind(issue.id)));
   const now = Date.now();
   await database.batch(issues.map(issue => database.prepare('UPDATE issues SET updated_at = ? WHERE id = ?')
     .bind(new Date(now - Math.floor(random() * 90 * 86_400_000)).toISOString(), issue.id)));
@@ -226,7 +229,8 @@ try {
     const profile = await mkdtemp(join(tmpdir(), 'ui-latency-'));
     cleanups.push(() => rm(profile, { recursive: true, force: true }));
     const chrome = spawn(options.chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--window-size=420,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-    cleanups.unshift(async () => { chrome.kill(); await new Promise(resolve => chrome.once('exit', resolve)); });
+    // A Chrome that already exited fires no second exit event, so waiting for one would hang the cleanup.
+    cleanups.unshift(async () => { if (chrome.exitCode !== null || chrome.signalCode !== null) return; const exited = new Promise(resolve => chrome.once('exit', resolve)); chrome.kill(); await exited; });
     const endpoint = await new Promise<string>((resolve, reject) => {
       let output = '';
       chrome.stderr.on('data', (chunk: Buffer) => {
@@ -234,7 +238,7 @@ try {
         const found = /DevTools listening on (ws:\/\/\S+)/.exec(output);
         if (found?.[1] !== undefined) resolve(found[1]);
       });
-      chrome.once('exit', code => reject(new Error(`Chrome exited with ${code}`)));
+      chrome.once('exit', code => reject(new Error(`Chrome exited with ${code}:\n${output.slice(-2000)}`)));
     });
     const cdp = await connect(endpoint);
     for (let run = 0; run < browserRuns; run += 1) {
@@ -332,13 +336,14 @@ async function scenario(cdp: Cdp, base: string, projectPath: string, dwell: numb
     await cdp.send('Runtime.evaluate', { expression: restoreProbe }, sessionId);
   };
   const follow = async (step: string, selector: string) => {
+    // The pages scroll smoothly, so the link is scrolled at once; otherwise its box is read mid-scroll and the click lands on another row.
     // The crossfade covers the new page for its duration, and a click during it does not reach the link.
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.getAnimations().some(animation => animation.playState === "running")', returnByValue: true }, sessionId);
       if (result.value !== true) break;
       await sleep(20);
     }
-    const { result } = await cdp.send('Runtime.evaluate', { expression: `(() => { const link = document.querySelector(${JSON.stringify(selector)}); link.scrollIntoView({ block: 'center' }); const box = link.getBoundingClientRect(); return { x: box.left + Math.min(box.width / 2, 40), y: box.top + box.height / 2, href: link.href }; })()`, returnByValue: true }, sessionId);
+    const { result } = await cdp.send('Runtime.evaluate', { expression: `(() => { const link = document.querySelector(${JSON.stringify(selector)}); link.scrollIntoView({ block: 'center', behavior: 'instant' }); const box = link.getBoundingClientRect(); return { x: box.left + Math.min(box.width / 2, 40), y: box.top + box.height / 2, href: link.href }; })()`, returnByValue: true }, sessionId);
     const { x, y, href } = result.value as { x: number; y: number; href: string };
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId);
     await sleep(dwell);
