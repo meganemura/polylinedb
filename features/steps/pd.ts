@@ -21,8 +21,19 @@ export async function pd(args: string[], store: { workDir: string; dataDir: stri
   return { exitCode: result.exitCode ?? 1, output: JSON.parse(result.stdout || result.stderr) };
 }
 
+// docs/operations.md: "Exit codes are 0 for success, 2 for invalid input, 3
+// for missing issues, 4 for conflicts, and 1 for other failures." A Then
+// claims the word a sentence uses, so a step names the code by this table.
+export const exitMeanings = ['success', 'failure', 'invalid input', 'missing issue', 'conflict'] as const;
+export type ExitMeaning = (typeof exitMeanings)[number];
+
+export function exitMeaning(exitCode: number): ExitMeaning {
+  return exitMeanings[exitCode] ?? 'failure';
+}
+
 export const rewriteResult = {
   exitCode: 'pd\'s exit code: 0 on success, 4 on a conflict',
+  exit: 'pd\'s exit code by its meaning in docs/operations.md: success, conflict, and so on',
   body: 'the body this actor tried to write',
   output: 'pd\'s JSON output: the updated issue, or the error',
 };
@@ -30,8 +41,8 @@ export const rewriteResult = {
 export async function rewriteBody(
   actor: string,
   { workDir, dataDir, id, bodyVersion }: { workDir: string; dataDir: string; id: string; bodyVersion: number },
-): Promise<{ exitCode: number; body: string; output: Record<string, unknown> }> {
+): Promise<{ exitCode: number; exit: ExitMeaning; body: string; output: Record<string, unknown> }> {
   const body = `Handle empty input, as ${actor} decided`;
   const { exitCode, output } = await pd(['--actor', actor, 'update', id, '--body', body, '--expect', `body=${bodyVersion}`], { workDir, dataDir });
-  return { exitCode, body, output };
+  return { exitCode, exit: exitMeaning(exitCode), body, output };
 }

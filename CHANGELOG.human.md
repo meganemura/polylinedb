@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The acceptance scenario now runs on nukadoko 0.22.0, which checks each expected outcome as data rather than as test code. Nothing changes for people who use pd.
+
 Internal reorganization of the record code into one folder per kind of record. Nothing changes for people who use pd.
 
 The architecture check now uses archstrict 0.6.0. Nothing changes for people who use pd.

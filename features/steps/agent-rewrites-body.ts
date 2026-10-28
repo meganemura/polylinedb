@@ -1,5 +1,5 @@
 import { defineStep, z } from 'nukadoko';
-import { rewriteBody, rewriteResult } from './pd.ts';
+import { exitMeanings, rewriteBody, rewriteResult } from './pd.ts';
 import createIssue from './create-issue.ts';
 import initLocalStore from './init-local-store.ts';
 
@@ -11,6 +11,7 @@ export default defineStep({
   args: z.object({ workDir: z.string(), dataDir: z.string(), id: z.string(), bodyVersion: z.number() }),
   returns: z.object({
     exitCode: z.number().describe(rewriteResult.exitCode),
+    exit: z.enum(exitMeanings).describe(rewriteResult.exit),
     body: z.string().describe(rewriteResult.body),
     output: z.record(z.string(), z.unknown()).describe(rewriteResult.output),
   }),
