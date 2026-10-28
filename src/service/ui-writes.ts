@@ -10,7 +10,7 @@ import { escape, fullTime, hidden, icon, idLink, joined, person, secondsOf, shor
 import { doneKinds, type DoneKind } from './ui-brief.ts';
 import { issuePage, messagePage, newPage, newProject, tabCounts, type FreshProject } from './ui-pages.ts';
 import { readIssueView } from './ui-reads.ts';
-import { composeLanes, readLanes } from './ui-today.ts';
+import { composeLanes, readBadgeLanes } from './ui-today.ts';
 
 export const issueActions = ['decide', 'done', 'dispatch', 'comment', 'comment-edit', 'star', 'status', 'priority', 'type', 'labels', 'body',
   'blockers/add', 'blockers/remove', 'land-order'] as const;
@@ -445,7 +445,7 @@ export function landedSentence(params: URLSearchParams): string {
 }
 
 async function counts(ctx: WriteContext) {
-  return tabCounts(composeLanes(await readLanes(ctx.db, ctx.viewer.actor)));
+  return tabCounts(composeLanes(await readBadgeLanes(ctx.db)));
 }
 
 function conflictSection(action: string, conflict: Conflict, back: string): string {

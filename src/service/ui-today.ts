@@ -70,6 +70,15 @@ export async function readLanes(db: SqlExecutor, actor: Actor): Promise<LaneRead
   };
 }
 
+/**
+ * The reads behind the tab badges alone. Today counts You items and Stuck counts expired claims plus blocked issues, and the dedupe
+ * between them needs only the attention, started, and blocked reads, so a page outside the lanes skips the other five.
+ */
+export async function readBadgeLanes(db: SqlExecutor): Promise<LaneReads> {
+  const [attention, started, blocked] = await Promise.all([attentionIssues(db), startedWithoutClaim(db, readLimit), blockedIssues(db, readLimit)]);
+  return { attention, claims: [], started, blocked, ready: [], queue: [], locks: [], since: [] };
+}
+
 /** The dedupe rules: a You item is not also Ready, Expired, or Stale; an expired claim is not also Stale; a lock is never a row. Blocked may repeat a You item. */
 export function composeLanes(reads: LaneReads): Lanes {
   const owner = reads.attention.issues.filter(row => isOwnerItem(row.issue) && row.issue.status !== 'closed');

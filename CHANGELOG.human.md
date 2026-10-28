@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+Issue pages, project pages, Search, and the other pages outside the four lanes now load faster, because they no longer read every lane just to show the Today and Stuck badges.
+
 The page-speed notes now measure the current `/ui` pages. They are slower and larger than the pages they replaced, and that is being worked on next.
 
 You can now start a project from **New issue** in `/ui`. Choose **New project…**, type the tool, the project, and its id prefix, and the first issue is created there. Before, the first issue of a project needed pd or MCP.

@@ -10,7 +10,7 @@ import { flash } from './ui-brief.ts';
 import { messagePage, activityPage, agentsPage, issuePage, landingPage, newPage, postsPage, projectPage, projectsPage, searchPage, stuckPage, tabCounts, todayPage,
   type ActivityCursor, type PostsView } from './ui-pages.ts';
 import { readActivity, readIssueView, searchHits } from './ui-reads.ts';
-import { composeLanes, readLanes } from './ui-today.ts';
+import { composeLanes, readBadgeLanes, readLanes } from './ui-today.ts';
 import { doneParam, landedSentence, uiWrite, type WriteRoute } from './ui-writes.ts';
 import type { Viewer, ViewerRole } from './ui-html.ts';
 
@@ -77,11 +77,14 @@ async function doneIssue(db: SqlExecutor, id: string, actor: Actor): Promise<Iss
   }
 }
 
+const lanePages: ReadonlySet<UiRoute['page']> = new Set(['today', 'agents', 'stuck', 'landing']);
+
 /** Every page reads the lanes for its tab badges, in the same parallel wave as its own reads. */
 async function pageHtml(db: SqlExecutor, route: UiRoute, viewer: Viewer, url: URL): Promise<string | null> {
   const actor = viewer.actor;
-  const lanesRead = readLanes(db, actor);
   const done = doneParam(url.searchParams.get('done'));
+  // A lane page and a done flash, which names the next item in any lane, read every lane; any other page reads only what its badges count.
+  const lanesRead = lanePages.has(route.page) || done !== null ? readLanes(db, actor) : readBadgeLanes(db);
   const doneRead = done === null ? Promise.resolve(null) : doneIssue(db, done.id, actor);
   switch (route.page) {
     case 'today': {

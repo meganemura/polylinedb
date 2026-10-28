@@ -994,6 +994,19 @@ test('ui: Today composes the lanes by rule, and the dedupe rules keep each issue
     assert.match(html, /aria-label="Today, 2"/);
     assert.match(html, /aria-label="Stuck, 2"/);
     assert.match(html, /aria-label="Agents"/);
+
+    // A page outside the lanes reads only what its badges count; an expired claim on an owner item stays off Stuck there too.
+    for (const id of [decide, ready]) {
+      await operation(env, token, { op: 'claim_acquire', issue_id: id, incarnation: store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), ttl: 900 });
+      sqlite.prepare("UPDATE issues SET status = 'in_progress' WHERE id = ?").run(id);
+      sqlite.prepare('UPDATE issue_claims SET acquired_at = 100, changed_at = 100, expires_at = 1000 WHERE issue_id = ?').run(id);
+    }
+    const badges = (page: string) => [/aria-label="Today(?:, \d+)?"/.exec(page)?.[0], /aria-label="Stuck(?:, \d+)?"/.exec(page)?.[0]];
+    const today = badges(await (await viewUi(env, auth)).text());
+    assert.deepEqual(today, ['aria-label="Today, 2"', 'aria-label="Stuck, 3"']);
+    for (const path of ['/ui/projects', '/ui/p/compiler/acme/parser', `/ui/i/${waiting}`, '/ui/search?q=fuzz', '/ui/activity', '/ui/new', '/ui/posts']) {
+      assert.deepEqual(badges(await (await viewUi(env, auth, 'GET', path)).text()), today, path);
+    }
   } finally { sqlite.close(); }
 });
 
