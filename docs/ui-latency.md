@@ -97,92 +97,85 @@ Its visible time runs from `history.back()` to the frame after `pageshow`.
 The `restoredFrom` column says where the page came from: `network`, `revalidated`, `http-cache`, `prefetch`, `prerender`, or `bfcache`.
 
 Set `CHROME` or `--chrome` when Chrome is not on the path as `google-chrome`.
+As root, point it at a wrapper that adds `--no-sandbox`; otherwise Chrome exits at start and the script prints its error.
 Use `--skip-browser` to measure only the Worker.
 
 ## Results
 
-These numbers are from local workerd and headless Chrome 148, in a 420 × 900 window.
-They were measured before the lanes design replaced the views. **Inbox**, **Working**, **Blocked**, and **Recent** below are the earlier pages that now answer `301` to **Today**, **Agents**, **Stuck**, and **Activity**, and the earlier path went from home to a project and then to **Inbox**.
-The new pages have not been measured in Chrome yet; `npm run check:ui-latency` checks their budget bound.
+These numbers come from one Linux container on 2026-10-28: local workerd, and the Playwright build of Chromium 141 in headless mode with `--no-sandbox` (the container runs as root), in a 420 × 900 window.
+**Lanes** is the current design. **Before** is the main branch just before the lanes design replaced the views, run on the same machine with the same seed and the same fixed script.
 The store is the script's fixed synthetic dataset: 10 projects, 1,000 issues, 1,958 comments, 243 prerequisites, and 24 active claims.
 The largest project has 320 issues.
 Each Worker figure is the median of 10 requests after 3 warm-up requests.
 Each visible figure is the median of 3 browser runs.
-The pointer rested 300 ms, which is the script's default.
-pd1 was not measured.
-A deployed Worker, production Access, and Cloudflare D1 were not measured.
-The 150 ms proxy delay stands in for the phone link and the remote D1 reads.
+pd1, a deployed Worker, production Access, and Cloudflare D1 were not measured.
+An earlier table on another machine with Chrome 148 measured the earlier pages 1.5 to 2 times faster than **Before** below, so compare rows within one table only.
 
 ### Worker
 
-The Worker time below includes the Access check, the local D1 reads, and rendering.
+The Worker time includes the Access check, the local D1 reads, and rendering.
 It does not include a network round trip.
+Every lanes page runs the lane reads for its tab badges.
 
-| Page | Median | 95th | HTML | gzip | 304 median |
-| --- | --- | --- | --- | --- | --- |
-| Home | 7.3 ms | 11 ms | 10,176 | 2,910 | 6.4 ms |
-| Inbox | 5.8 ms | 7.9 ms | 22,618 | 4,352 | 5.1 ms |
-| Working | 6.4 ms | 7.0 ms | 13,844 | 2,965 | 5.2 ms |
-| Blocked | 6.9 ms | 7.7 ms | 18,818 | 3,731 | 5.2 ms |
-| Recent | 6.3 ms | 7.7 ms | 26,698 | 4,824 | 5.6 ms |
-| Largest project | 12.1 ms | 13 ms | 55,571 | 8,344 | 10.5 ms |
-| That project, open | 11.4 ms | 13.3 ms | 55,926 | 8,355 | 8.9 ms |
-| That project, ready | 7.0 ms | 10.4 ms | 31,522 | 5,820 | 8.7 ms |
-| Issue, epic | 13.3 ms | 20.3 ms | 21,690 | 5,236 | 12.2 ms |
-| Issue, leaf | 14.7 ms | 31.6 ms | 7,241 | 2,601 | 12.3 ms |
-| Search, words | 7.1 ms | 9.3 ms | 19,224 | 3,771 | 6.5 ms |
-| Search, id | 15.8 ms | 16.6 ms | 4,848 | 1,960 | 14.2 ms |
+| Page | Lanes median | Lanes 95th | Lanes HTML | Lanes gzip | Lanes 304 | Before median | Before HTML |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Today (before: Home) | 35.4 ms | 50.3 ms | 69,086 | 12,353 | 24.6 ms | 10.3 ms | 20,957 |
+| Agents (before: Working) | 30.4 ms | 46.9 ms | 82,416 | 12,283 | 33.5 ms | 9.4 ms | 33,793 |
+| Landing | 26.3 ms | 32.0 ms | 43,045 | 9,808 | 31.8 ms | | |
+| Stuck (before: Blocked) | 31.8 ms | 62.3 ms | 117,085 | 15,620 | 32.0 ms | 6.7 ms | 23,551 |
+| Projects | 32.6 ms | 42.6 ms | 34,761 | 9,233 | 29.8 ms | | |
+| Activity | 31.3 ms | 40.0 ms | 52,365 | 10,814 | 31.4 ms | 5.7 ms | 29,892 |
+| Largest project | 42.4 ms | 69.5 ms | 106,817 | 17,365 | 35.9 ms | 13.9 ms | 60,950 |
+| That project, open | 34.8 ms | 43.2 ms | 106,405 | 17,374 | 35.4 ms | 16.4 ms | 61,735 |
+| That project, ready | 31.1 ms | 35.5 ms | 76,119 | 13,747 | 34.8 ms | 9.2 ms | 37,427 |
+| Issue, epic | 37.1 ms | 54.0 ms | 74,002 | 14,421 | 34.8 ms | 11.5 ms | 26,624 |
+| Issue, leaf | 37.6 ms | 43.1 ms | 43,287 | 10,664 | 39.2 ms | 10.3 ms | 11,373 |
+| Search, words | 29.6 ms | 39.1 ms | 55,114 | 11,850 | 28.6 ms | 6.4 ms | 23,598 |
+| Search, id | 38.3 ms | 47.2 ms | 31,242 | 8,882 | 31.1 ms | 10.5 ms | 9,284 |
 
-Activity was added after this table. With `--skip-browser` on the same dataset, its Worker median was 5.1 ms (95th 8.3 ms, 27,660 bytes, 4,690 gzip, 304 median 4.0 ms).
-
-`Server-Timing` on these responses was about 3–15 ms.
-A 304 still reads D1 before it compares the `ETag`, so it is not much faster than the full response on local D1.
-Before the prefetch script and the crossfade, the same pages were about 6–19 ms and a few hundred bytes smaller.
+The lanes pages take about three times the Worker time and two to four times the bytes of the pages they replaced.
+On Today and Stuck, an inline stylesheet of 23 KB (7 KB before), 58 and 201 inline icons, and 25 and 49 forms make up most of the bytes.
+A 304 still reads D1 and renders before it compares the `ETag`, so it is not faster.
+Which share of the Worker time is the lane reads and which is rendering was not measured.
 
 ### Visible time
 
 The first load has no budget.
 Back should be the next frame.
 A followed link should be under 100 ms after the first load.
+The lanes path is **Today**, **Projects**, the largest project, its `open` chip, an issue, back, **Stuck**, a stuck issue, and **Today**.
+The **Before** path was **Home**, the largest project, its `open` chip, an issue, back, **Inbox**, an inbox issue, and **Home**.
 
-With no added delay, local workerd already answered fast enough to paint in well under 100 ms.
-The prefetch and the crossfade changed where the page came from, and the crossfade made the paint a little later.
+With no added delay:
 
-| Step | Before | After prefetch and crossfade |
-| --- | --- | --- |
-| First load of home | 48 ms, network | 36 ms, network |
-| Home to the largest project | 40 ms, network | 56 ms, prefetch |
-| Open filter | 36 ms, network | 64 ms, prefetch |
-| An issue | 36 ms, network | 48 ms, prefetch |
-| Back | 3.0 ms, back-forward cache | 35 ms, back-forward cache |
-| Inbox | 36 ms, network | 48 ms, prefetch |
-| An inbox issue | 36 ms, network | 52 ms, prefetch |
-| Projects | 32 ms, revalidated | 52 ms, prefetch |
+| Step | Lanes, 300 ms rest | Lanes, immediate | Before, 300 ms rest | Before, immediate |
+| --- | --- | --- | --- | --- |
+| First load | 152 ms, network | 104 ms, network | 52 ms, network | 56 ms, network |
+| To Projects | 104 ms, prefetch | 120 ms, prefetch | | |
+| To the largest project | 124 ms, prefetch | 176 ms, prefetch | 104 ms, prefetch | 124 ms, prefetch |
+| Open filter | 140 ms, prefetch | 192 ms, prefetch | 100 ms, prefetch | 120 ms, prefetch |
+| An issue | 116 ms, prefetch | 124 ms, prefetch | 84 ms, prefetch | 100 ms, prefetch |
+| Back | 64 ms, back-forward cache | 57 ms, back-forward cache | 43 ms, back-forward cache | 44 ms, back-forward cache |
+| Stuck (before: Inbox) | 120 ms, prefetch | 124 ms, prefetch | 72 ms, prefetch | 80 ms, prefetch |
+| A listed issue | 108 ms, prefetch | 128 ms, prefetch | 92 ms, prefetch | 96 ms, prefetch |
+| Back to Today | 112 ms, prefetch | 140 ms, prefetch | 84 ms, prefetch | 104 ms, prefetch |
 
-With a 150 ms delay, a cold navigation paints at about 180–200 ms.
-Prefetch brings a rested click under 100 ms.
-The 80 ms crossfade adds to that paint, and several steps then land between 100 ms and 116 ms.
+With a 150 ms delay on every request:
 
-| Step | Before | Prefetch only | Prefetch and crossfade |
-| --- | --- | --- | --- |
-| First load of home | 184 ms, network | 188 ms, network | 200 ms, network |
-| Home to the largest project | 192 ms, network | 92 ms, prefetch | 116 ms, prefetch |
-| Open filter | 188 ms, network | 92 ms, prefetch | 116 ms, prefetch |
-| An issue | 184 ms, network | 84 ms, prefetch | 104 ms, prefetch |
-| Back | 2.4 ms, back-forward cache | 2.6 ms, back-forward cache | 38 ms, back-forward cache |
-| Inbox | 184 ms, network | 72 ms, prefetch | 108 ms, prefetch |
-| An inbox issue | 188 ms, network | 92 ms, prefetch | 96 ms, prefetch |
-| Projects | 184 ms, revalidated | 72 ms, prefetch | 100 ms, prefetch |
+| Step | Lanes, 300 ms rest | Lanes, immediate | Before, 300 ms rest | Before, immediate |
+| --- | --- | --- | --- | --- |
+| First load | 280 ms, network | 264 ms, network | 220 ms, network | 212 ms, network |
+| To Projects | 176 ms, prefetch | 272 ms, prefetch | | |
+| To the largest project | 200 ms, prefetch | 312 ms, prefetch | 180 ms, prefetch | 268 ms, prefetch |
+| Open filter | 204 ms, prefetch | 368 ms, prefetch | 176 ms, prefetch | 268 ms, prefetch |
+| An issue | 188 ms, prefetch | 292 ms, prefetch | 140 ms, prefetch | 248 ms, prefetch |
+| Back | 58 ms, back-forward cache | 63 ms, back-forward cache | 44 ms, back-forward cache | 46 ms, back-forward cache |
+| Stuck (before: Inbox) | 208 ms, prefetch | 308 ms, prefetch | 120 ms, prefetch | 232 ms, prefetch |
+| A listed issue | 176 ms, prefetch | 300 ms, prefetch | 128 ms, prefetch | 248 ms, prefetch |
+| Back to Today | 196 ms, prefetch | 300 ms, prefetch | 132 ms, prefetch | 240 ms, prefetch |
 
-An immediate click, with the same 150 ms delay, still paints at about 190–220 ms.
-Moderate prefetch starts on pointer down for that click, and the response is still in flight.
-A 600 ms rest, measured with prefetch and without the crossfade, paints the followed pages in 16–40 ms from the prefetch cache.
-Back in that run was 2.3 ms from the back-forward cache.
-The first load stayed near 196 ms.
-
-No application JavaScript was added for this budget. The issue page later gained one small fixed script for Dispatch; it runs only on a press and does not touch navigation, so page moves and the back-forward cache are unchanged.
-Prefetch meets the 100 ms budget for a 300 ms rest on a 150 ms link.
-The crossfade is the part that can miss that budget.
+On this machine neither design meets the 100 ms budget for a followed link, and the lanes design adds about 20 to 90 ms to each step.
+Back comes from the back-forward cache in both, but takes 44 to 64 ms here, not the next frame; the earlier measurement put that on the 80 ms crossfade.
 
 ## Measure on a deployed Worker
 

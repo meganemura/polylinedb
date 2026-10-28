@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The page-speed notes now measure the current `/ui` pages. They are slower and larger than the pages they replaced, and that is being worked on next.
+
 You can now start a project from **New issue** in `/ui`. Choose **New project…**, type the tool, the project, and its id prefix, and the first issue is created there. Before, the first issue of a project needed pd or MCP.
 
 Posts is now its own tab at the top of `/ui`. It shows the posts from every project at once and says which project each came from. Pick a project or a persona from a list to narrow it. `pd posts` without a project, outside a repository, now lists every project.
