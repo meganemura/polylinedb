@@ -136,7 +136,22 @@ Every lanes page runs the lane reads for its tab badges.
 The lanes pages take about three times the Worker time and two to four times the bytes of the pages they replaced.
 On Today and Stuck, an inline stylesheet of 23 KB (7 KB before), 58 and 201 inline icons, and 25 and 49 forms make up most of the bytes.
 A 304 still reads D1 and renders before it compares the `ETag`, so it is not faster.
-Which share of the Worker time is the lane reads and which is rendering was not measured.
+Timing each lane read alone inside workerd put nearly all of the Worker time on the reads: the eight reads took 2 to 8 ms each and ran one after another on local D1, and `Server-Timing`, which counts only the time spent waiting on I/O, was within a few ms of the total.
+Pages outside the four lanes now read only the three queries their Today and Stuck badges count. Measured again the same way:
+
+| Page | Before the change | After |
+| --- | --- | --- |
+| Projects | 32.6 ms | 16.1 ms |
+| Activity | 31.3 ms | 15.4 ms |
+| Largest project | 42.4 ms | 24.7 ms |
+| Issue, epic | 37.1 ms | 23.5 ms |
+| Issue, leaf | 37.6 ms | 19.0 ms |
+| Search, words | 29.6 ms | 16.9 ms |
+| Search, id | 38.3 ms | 23.3 ms |
+
+The lane pages kept their times, about 25 to 30 ms.
+On Cloudflare D1 the reads of one page run in parallel, each with its own round trip, so the local sum overstates what a deployed page waits; that was not measured.
+In Chrome, with 3 runs and no added delay, the paints of the followed links moved by -40 to +30 ms, which is within the spread of the runs.
 
 ### Visible time
 
