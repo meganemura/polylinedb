@@ -6,9 +6,9 @@ import { recordingChanges } from './changes-sql.ts';
 import { claimProofSchema, parseClaimProof } from './claims.ts';
 import { claimProofPredicate } from './claims-sql.ts';
 import type { ClaimProof } from './claims-sql.ts';
-import type { SqlExecutor, SqlStatement, Status } from './issues.ts';
-import { statuses } from './schema.ts';
-import { decideReplay, decideResourceAddition, decideResourceUpdate, resourceMarks, resourceState } from '../transition/index.ts';
+import type { SqlExecutor, SqlStatement } from './sql.ts';
+import type { Status } from './issue-record.ts';
+import { decideReplay, decideResourceAddition, decideResourceUpdate, resourceMarks, resourceState, statuses } from '../transition/index.ts';
 import type { Actor, ResourceDecision, ResourceMark, ResourceState } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 

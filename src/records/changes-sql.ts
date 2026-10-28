@@ -1,5 +1,5 @@
 // Owns the change feed DDL; triggers record an event only while a mutation batch holds the writer row.
-import type { SqlExecutor } from './issues.ts';
+import type { SqlExecutor } from './sql.ts';
 import { fields } from '../transition/index.ts';
 import { activeBlockerStatusSql } from './active-blocker.ts';
 

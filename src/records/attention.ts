@@ -12,10 +12,10 @@
 import { PolylinedbError } from './errors.ts';
 import { issueSortKey } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
-import { issueRow } from './issues.ts';
-import type { Issue, SqlExecutor, Status } from './issues.ts';
-import { statuses } from './schema.ts';
-import { ownerWaitLabels } from '../transition/index.ts';
+import { issueRow } from './issue-record.ts';
+import type { Issue, Status } from './issue-record.ts';
+import type { SqlExecutor } from './sql.ts';
+import { ownerWaitLabels, statuses } from '../transition/index.ts';
 
 /** Label order matters: owner groups follow `ownerWaitLabels`, and an issue with two owner labels belongs to the first. */
 const attentionRule = {

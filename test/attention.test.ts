@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { attentionIssues, executeOperation, parseOperation } from '../src/records/index.ts';
 import type { Issue, OpenIssue } from '../src/records/index.ts';
-import type { SqlExecutor } from '../src/records/issues.ts';
+import type { SqlExecutor } from '../src/records/sql.ts';
 import { initializeStore, openStore } from '../src/local-store/index.ts';
 
 function fixture(t: test.TestContext) {

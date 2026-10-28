@@ -1,6 +1,7 @@
 // Selects the domain operation; each domain owns its validation, SQL, and conflicts.
 import { executeOperation as executeIssue, parseOperation as parseIssue, operationSchemas as issueSchemas } from "./issues.ts";
-import type { Operation as IssueOperation, OperationResult as IssueResult, SqlExecutor } from "./issues.ts";
+import type { Operation as IssueOperation, OperationResult as IssueResult } from "./issues.ts";
+import type { SqlExecutor } from "./sql.ts";
 import { executeMemoryOperation, parseMemoryOperation, memorySchemas, parseMemoryRevision, observedMemoryProject, memoryFreshness } from "./memories.ts";
 import type { MemoryOperation, MemoryResult, MemoryStore, MemoryRevision, MemoryFreshness } from "./memories.ts";
 import { issueQueries } from "./issue-queries.ts";

@@ -4,9 +4,9 @@ import { parseIssueId, parseRequestId } from './issue-id.ts';
 import { knownError, PolylinedbError, requireFields } from './errors.ts';
 import { recordingChanges } from './changes-sql.ts';
 import { mainWaitLabel } from './claim-handoff.ts';
-import type { SqlExecutor, SqlStatement, Status } from './issues.ts';
-import { statuses } from './schema.ts';
-import { decidePrerequisiteEdit, decideReplay } from '../transition/index.ts';
+import type { SqlExecutor, SqlStatement } from './sql.ts';
+import type { Status } from './issue-record.ts';
+import { decidePrerequisiteEdit, decideReplay, statuses } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from './agent-gate.ts';
 

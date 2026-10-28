@@ -1,8 +1,9 @@
 // Owns stars and the posts read. A post is a comment with a handle; comments themselves stay in issues.ts and the DDL in posts-sql.ts.
 import { parseIssueId, parseRequestId } from './issue-id.ts';
 import { PolylinedbError, requireFields } from './errors.ts';
-import { handleSchema, parseHandle, shownCommentRow, starrerNames } from './issues.ts';
-import type { ShownComment, SqlExecutor } from './issues.ts';
+import { handleSchema, parseHandle, shownCommentRow, starrerNames } from './issue-record.ts';
+import type { ShownComment } from './issue-record.ts';
+import type { SqlExecutor } from './sql.ts';
 import { issueQueries } from './issue-queries.ts';
 import { recordingChanges } from './changes-sql.ts';
 import { asActor } from './agent-gate.ts';

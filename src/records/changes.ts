@@ -5,7 +5,7 @@ import { issueQueries } from './issue-queries.ts';
 import { parseIncarnation } from './claims.ts';
 import { changeKinds, changeRelations } from './changes-sql.ts';
 import type { ChangeKind } from './changes-sql.ts';
-import type { SqlExecutor } from './issues.ts';
+import type { SqlExecutor } from './sql.ts';
 
 export type { ChangeKind };
 type FeedFilter = { since: number; incarnation?: string; project?: string; issue_ids?: string[]; kinds?: ChangeKind[] };

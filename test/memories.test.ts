@@ -10,7 +10,7 @@ import { initializeStore, openStore, upgradeStore } from "../src/local-store/ind
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { canonicalSnapshot, convertSnapshotV2, parseSnapshot } from "../src/records/snapshot.ts";
 import { SCHEMA_V2_SQL } from "../src/records/schema.ts";
-import type { SqlExecutor } from "../src/records/issues.ts";
+import type { SqlExecutor } from "../src/records/sql.ts";
 import { issueRow } from "../src/records/persistence.ts";
 import { legacyComment, withoutChangeWriter } from "./fixtures/legacy-schema.ts";
 

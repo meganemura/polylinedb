@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeOperation, parseOperation } from '../src/records/issues.ts';
-import type { SqlExecutor } from '../src/records/issues.ts';
+import type { SqlExecutor } from '../src/records/sql.ts';
 import { PolylinedbError } from '../src/records/errors.ts';
 import { initializeStore, openStore } from '../src/local-store/index.ts';
 

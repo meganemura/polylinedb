@@ -76,6 +76,8 @@
     "dist/cloud-client/cloud-operations.js",
     "dist/records/memories.js",
     "dist/records/operations.js",
+    "dist/records/issue-record.js",
+    "dist/records/sql.js",
     "CHANGELOG.md",
     "CHANGELOG.human.md",
     "dist/host-hooks/index.js",

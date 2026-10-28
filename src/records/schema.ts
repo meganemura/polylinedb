@@ -13,7 +13,6 @@ export { SCHEMA_V10_SQL } from './schema-v10.ts';
 import { SCHEMA_V9_STATEMENTS } from './schema-v9.ts';
 import { SCHEMA_V10_STATEMENTS } from './schema-v10.ts';
 import { statuses, issueTypes, fields } from '../transition/index.ts';
-export { statuses, issueTypes, fields };
 export const SCHEMA_VERSION = 11;
 
 export const MEMORY_SCHEMA_SQL = `

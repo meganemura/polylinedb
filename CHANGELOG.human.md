@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+Internal reorganization of the record code. Nothing changes for people who use pd.
+
 The architecture check now uses archstrict 0.6.0. Nothing changes for people who use pd.
 
 Issue pages, project pages, Search, and the other pages outside the four lanes now load faster, because they no longer read every lane just to show the Today and Stuck badges.

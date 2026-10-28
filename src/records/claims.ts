@@ -8,7 +8,7 @@ import { recordingChanges } from './changes-sql.ts';
 import { attemptHandoff, parseHandoff } from './claim-handoff.ts';
 import type { ClaimHandoff, HandoffParts } from './claim-handoff.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
-import type { SqlExecutor, SqlStatement } from './issues.ts';
+import type { SqlExecutor, SqlStatement } from './sql.ts';
 import { claimState, decideReplay, ownsExpiredLease } from '../transition/index.ts';
 import type { Actor } from '../transition/index.ts';
 import { agentMayAcquire, asActor, rejectAgentWrite } from './agent-gate.ts';

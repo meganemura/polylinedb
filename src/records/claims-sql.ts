@@ -1,5 +1,5 @@
 // Owns atomic lease transitions and proof predicates; transports supply validated commands and actors.
-import type { SqlStatement } from './issues.ts';
+import type { SqlStatement } from './sql.ts';
 import type { ClaimProof, IssueType, Status } from '../transition/index.ts';
 export type { ClaimProof };
 

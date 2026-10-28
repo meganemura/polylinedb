@@ -1,9 +1,10 @@
 // Owns portable snapshot validation and canonical form; storage and file access belong to callers.
-import { commentRow, issueRow, parseClosure, parseOperation, storedCommentRow } from "./issues.ts";
+import { commentRow, issueRow, parseClosure, storedCommentRow } from "./issue-record.ts";
+import { parseOperation } from "./issues.ts";
 import { PolylinedbError } from './errors.ts';
 import { issueSortKey, parseIssueId, parsePrefix, parseRequestId } from "./issue-id.ts";
-import type { Comment, CommentEdits, Issue, StoredComment, StoredIssue } from "./issues.ts";
-import { fields } from "./schema.ts";
+import type { Comment, CommentEdits, Issue, StoredComment, StoredIssue } from "./issue-record.ts";
+import { fields } from "../transition/index.ts";
 import { memoryRow, memorySortKey, parseMemoryId, parseMemoryOperation } from "./memories.ts";
 import type { Memory, MemoryCounter, MemoryRequest } from "./memories.ts";
 import { parseDependencyOperation } from './dependencies.ts';

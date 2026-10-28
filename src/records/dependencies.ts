@@ -1,8 +1,11 @@
 // Owns prerequisite graphs and immutable mutation receipts; issue fields remain a separate aggregate.
 import { parseIssueId, parseRequestId, issueSortKey } from './issue-id.ts';
-import { parseOperation as parseIssue, issueRow } from './issues.ts';
+import { parseOperation as parseIssue } from './issues.ts';
+import { issueRow } from './issue-record.ts';
 import { knownError, PolylinedbError, requireFields } from './errors.ts';
-import type { Operation as IssueOperation, Issue, SqlExecutor, SqlStatement, Status } from './issues.ts';
+import type { Operation as IssueOperation } from './issues.ts';
+import type { Issue, Status } from './issue-record.ts';
+import type { SqlExecutor, SqlStatement } from './sql.ts';
 import { issueQueries } from './issue-queries.ts';
 import { recordingChanges } from './changes-sql.ts';
 import { decidePrerequisiteEdit, decideReplay } from '../transition/index.ts';

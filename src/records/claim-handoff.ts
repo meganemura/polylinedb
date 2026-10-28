@@ -5,9 +5,10 @@ import { parseRequestId } from './issue-id.ts';
 import { issueQueries } from './issue-queries.ts';
 import { claimMutationStatements } from './claims-sql.ts';
 import { recordingChanges } from './changes-sql.ts';
-import { commentRow, issueRow } from './issues.ts';
+import { commentRow, issueRow } from './issue-record.ts';
 import type { ClaimProof } from './claims-sql.ts';
-import type { Comment, Issue, SqlExecutor, SqlStatement } from './issues.ts';
+import type { Comment, Issue } from './issue-record.ts';
+import type { SqlExecutor, SqlStatement } from './sql.ts';
 import { decideReplay, readyLabel } from '../transition/index.ts';
 
 export const mainWaitLabel = 'main-wait';

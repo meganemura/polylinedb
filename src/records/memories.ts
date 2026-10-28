@@ -1,6 +1,6 @@
 // Owns current project knowledge, its write conflicts, and bounded retrieval; hosts own invocation and identity.
 import { PolylinedbError, requireFields } from "./errors.ts";
-import type { SqlExecutor, SqlStatement } from "./issues.ts";
+import type { SqlExecutor, SqlStatement } from "./sql.ts";
 import { parsePrefix, parseRequestId } from "./issue-id.ts";
 import { issueQueries } from "./issue-queries.ts";
 import { statements } from "./solarsql.generated.ts";
