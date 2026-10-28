@@ -1241,6 +1241,34 @@ test('ui: New issue creates with the project prefix and opens it, and a refusal 
   } finally { sqlite.close(); }
 });
 
+test('ui: New project starts a project with its own prefix, and a refusal keeps every typed field', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const empty = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/new')).text();
+    assert.ok(empty.includes('<option value="new" selected>New project…</option>'));
+    assert.ok(empty.includes('name="new.prefix"'));
+    const bad = await postUi(env, '/ui/new', token, [['project', 'new'], ['new.tool', 'reader'], ['new.project', 'me/readalong'], ['new.prefix', 'Ra'], ['body', 'First <one>']]);
+    assert.equal(bad.status, 400);
+    const page = await bad.text();
+    assert.ok(textOf(page).includes('The id prefix takes 1 to 16 lowercase letters or digits'));
+    assert.ok(page.includes('value="me/readalong"') && page.includes('value="Ra"') && page.includes('>First &lt;one&gt;</textarea>'));
+    const blank = await postUi(env, '/ui/new', token, [['project', 'new'], ['new.tool', ' '], ['new.project', 'me/readalong'], ['new.prefix', 'ra'], ['body', 'First']], { json: true });
+    assert.equal(blank.status, 400);
+    const made = await postUi(env, '/ui/new', token, [['project', 'new'], ['new.tool', 'reader'], ['new.project', 'me/readalong'], ['new.prefix', 'ra'], ['body', 'First issue']]);
+    assert.equal(made.status, 303);
+    assert.equal(made.headers.get('location'), '/ui/i/ra-1?done=created:ra-1');
+    const shown = await operation(env, token, { op: 'show', id: 'ra-1' });
+    assert.deepEqual([shown.issue.tool, shown.issue.project], ['reader', 'me/readalong']);
+    const listed = await (await viewUi(env, { 'cf-access-jwt-assertion': token }, 'GET', '/ui/new')).text();
+    assert.ok(listed.includes('<option value="new">New project…</option>'));
+    const other = await postUi(env, '/ui/new', token, [['project', 'new'], ['new.tool', 'reader'], ['new.project', 'me/readalong'], ['new.prefix', 'rb'], ['body', 'Second']], { json: true });
+    assert.equal(other.status, 400);
+    assert.match((await other.json() as { message: string }).message, /already has issues with the prefix ra/);
+    assert.equal(sqlite.prepare('SELECT count(*) AS count FROM issues').get()?.count, 1);
+  } finally { sqlite.close(); }
+});
+
 test('ui: the issue page and an ID search start their independent reads together', async () => {
   const { sqlite, env } = fixture();
   const token = await assertion();

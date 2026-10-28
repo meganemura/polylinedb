@@ -647,7 +647,7 @@ Only **Today** and **Stuck** show a count on their tab.
 | `/ui/projects` | Projects, newest issue update first, at most 200. |
 | `/ui/p/<tool>/<project>` | One project's unfinished issues, at most 100, and its last 50 closed issues. `status` and `label` filter it. |
 | `/ui/search?q=` | An issue id, then literal text matches in bodies and comments, at most 50. |
-| `/ui/new` | The new-issue form. `?project=<tool>%0A<project>` selects a project. |
+| `/ui/new` | The new-issue form. `?project=<tool>%0A<project>` selects a project. **New project…** at the end of the list asks for a tool, a project, and an id prefix, to start a project from its first issue. |
 | `/ui/i/<id>` | One issue with its decision or action card, text, agent card, blockers, family, comments, and the Change card. |
 
 The earlier views answer `301` to their new place: `/ui/inbox` to `/ui`, `/ui/working` to `/ui/agents`, `/ui/blocked` to `/ui/stuck`, and `/ui/recent` to `/ui/activity`.
@@ -697,7 +697,7 @@ Each form carries the field versions it saw, as `v.status`, `v.labels`, `v.prior
 | `/ui/i/<id>/labels` | `labels` (repeated), `labels.new` (space separated) | `update` of `labels` to the checked set plus the new ones. |
 | `/ui/i/<id>/blockers/add`, `/blockers/remove` | `blocker` | `dependency_add` or `dependency_remove`. |
 | `/ui/i/<id>/land-order` | `op` (`set`, `clear`), `after` | `land_order_add` or `land_order_remove`. |
-| `/ui/new` | `project` (`<tool>\n<project>`), `body`, `type`, `priority`, `labels`, `parent`, `then=dispatch` | `create` with the prefix of the project's existing issues. |
+| `/ui/new` | `project` (`<tool>\n<project>`, or `new` with `new.tool`, `new.project`, and `new.prefix`), `body`, `type`, `priority`, `labels`, `parent`, `then=dispatch` | `create` with the prefix of the project's existing issues, or with `new.prefix` for a project that has none. Projects that share a prefix share one id sequence. |
 | `/ui/landing/landed` | `landed` (repeated issue ids) | Per issue: remove `main-wait`, then comment "Landed on main." |
 
 The update comes first and the note second, so a note never claims a change that did not happen.

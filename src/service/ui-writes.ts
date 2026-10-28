@@ -8,7 +8,7 @@ import type { SqlExecutor } from '../records/persistence.ts';
 import type { DispatchOutcome } from './dispatch.ts';
 import { escape, fullTime, hidden, icon, idLink, joined, person, secondsOf, shortTitle, statusWord, type Viewer } from './ui-html.ts';
 import { doneKinds, type DoneKind } from './ui-brief.ts';
-import { issuePage, messagePage, newPage, tabCounts } from './ui-pages.ts';
+import { issuePage, messagePage, newPage, newProject, tabCounts, type FreshProject } from './ui-pages.ts';
 import { readIssueView } from './ui-reads.ts';
 import { composeLanes, readLanes } from './ui-today.ts';
 
@@ -372,8 +372,22 @@ export function dispatchStatus(outcome: Exclude<DispatchOutcome, { kind: 'not_fo
 }
 const dispatchOk = (outcome: DispatchOutcome): boolean => outcome.kind !== 'not_found' && dispatchStatus(outcome) === 200;
 
+/** The three fields of New project. The prefix pattern is the store's, checked here so the sentence can say what to type. */
+function freshProject(form: URLSearchParams): FreshProject {
+  const field = (name: keyof FreshProject, label: string) => {
+    const value = (one(form, `new.${name}`) ?? '').trim();
+    if (value === '') throw new Refusal(400, `${label} is empty. Nothing was created.`);
+    return value;
+  };
+  const fresh = { tool: field('tool', 'The tool'), project: field('project', 'The project'), prefix: field('prefix', 'The id prefix') };
+  if (!/^[a-z][a-z0-9]{0,15}$/.test(fresh.prefix)) throw new Refusal(400, 'The id prefix takes 1 to 16 lowercase letters or digits, starting with a letter. Nothing was created.');
+  return fresh;
+}
+
 async function created(ctx: WriteContext, form: URLSearchParams): Promise<{ id: string; dispatched?: DispatchOutcome }> {
-  const [tool, project, ...extra] = required(form, 'project', 'The project').split('\n');
+  const chosen = required(form, 'project', 'The project');
+  const fresh = chosen === newProject ? freshProject(form) : null;
+  const [tool, project, ...extra] = fresh === null ? chosen.split('\n') : [fresh.tool, fresh.project];
   if (tool === undefined || project === undefined || extra.length > 0) throw new Refusal(400, 'Choose a project from the list. Nothing was created.');
   const body = required(form, 'body', 'The text');
   const type = one(form, 'type') ?? 'task';
@@ -384,10 +398,12 @@ async function created(ctx: WriteContext, form: URLSearchParams): Promise<{ id: 
   if (!labels.every(label => newLabels.includes(label as typeof newLabels[number]))) throw new Refusal(400, `A new issue takes only these labels here: ${newLabels.join(', ')}. Nothing was created.`);
   const parentText = (one(form, 'parent') ?? '').trim();
   const parent = parentText === '' ? undefined : issueId(parentText, 'The parent');
-  // The store asks for the id prefix; a project keeps the prefix of its existing issues.
+  // The store asks for the id prefix; a project keeps the prefix of its existing issues, and a new one takes the typed prefix.
   const sample = await run(ctx, { op: 'list', tool, project, limit: 1 });
-  const prefix = 'issues' in sample ? sample.issues[0]?.id.split('-')[0] : undefined;
-  if (prefix === undefined) throw new Refusal(404, 'That project has no issue yet, so its id prefix is unknown. Create its first issue with pd or MCP.');
+  const kept = 'issues' in sample ? sample.issues[0]?.id.split('-')[0] : undefined;
+  if (fresh !== null && kept !== undefined && kept !== fresh.prefix) throw new Refusal(400, `${project} already has issues with the prefix ${kept}. Choose it from the list. Nothing was created.`);
+  const prefix = fresh?.prefix ?? kept;
+  if (prefix === undefined) throw new Refusal(404, 'That project has no issue yet. Choose New project and give its prefix. Nothing was created.');
   const result = await run(ctx, { op: 'create', tool, project, body, type, priority: Number(priorityText), labels, prefix, request_id: crypto.randomUUID(), ...(parent === undefined ? {} : { parent }) });
   const id = issueOf(result).id;
   const dispatched = one(form, 'then') === 'dispatch' && ctx.viewer.dispatch === 'ready' ? await ctx.dispatch(id, new URLSearchParams()) : undefined;
@@ -513,7 +529,8 @@ export async function uiWrite(route: WriteRoute, form: URLSearchParams | 'invali
         const status = given === 409 ? 422 : given;
         if (json) return { status, json: { ok: false, message } };
         const [lanes, projects] = await Promise.all([counts(ctx), projectSummaries(ctx.db, 200)]);
-        return { status, html: newPage(projects, one(form, 'project'), ctx.viewer, lanes, message, one(form, 'body') ?? '') };
+        const typed = { tool: one(form, 'new.tool') ?? '', project: one(form, 'new.project') ?? '', prefix: one(form, 'new.prefix') ?? '' };
+        return { status, html: newPage(projects, one(form, 'project'), ctx.viewer, lanes, message, one(form, 'body') ?? '', typed) };
       }
       const sent = made.dispatched === undefined || made.dispatched.kind === 'not_found' ? '' : ` Dispatch: ${dispatchSentence(made.dispatched)}`;
       if (json) return { status: 200, json: { ok: true, message: `${made.id} is created.${sent}` } };

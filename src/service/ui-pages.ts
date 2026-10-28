@@ -286,7 +286,12 @@ export function searchPage(query: string, hits: readonly Issue[], more: boolean,
   return document({ title: 'Search', viewer, counts, body: pageHead('Search', 'Literal text in the issue text and comments, or an issue id.') + form + (trimmed === '' ? `<p class="hint">${empty}</p>` : `<div class="closing">${panel}</div>`) });
 }
 
-export function newPage(projects: readonly ProjectSummary[], selected: string | null, viewer: Viewer, counts: TabCounts, problem = '', draft = ''): string {
+/** What the person typed for a project that has no issue yet, kept across a refusal. */
+export type FreshProject = { tool: string; project: string; prefix: string };
+
+/** The new-issue form. The project select ends with "New project", whose three fields CSS shows only while it is chosen. */
+export function newPage(projects: readonly ProjectSummary[], selected: string | null, viewer: Viewer, counts: TabCounts, problem = '', draft = '', fresh: FreshProject = { tool: '', project: '', prefix: '' }): string {
+  const starting = projects.length === 0 || selected === newProject;
   const options = projects.map(summary => {
     const value = `${summary.tool}\n${summary.project}`;
     return `<option value="${escape(value)}"${value === selected ? ' selected' : ''}>${escape(shortProject(summary.project))} · ${escape(summary.tool)}</option>`;
@@ -294,9 +299,14 @@ export function newPage(projects: readonly ProjectSummary[], selected: string | 
   const toggles = (name: string, values: readonly (string | number)[], checked: string | number | null, type: 'radio' | 'checkbox', text: (value: string | number) => string) =>
     values.map(value => `<label class="tog"><input type="${type}" name="${name}" value="${value}"${value === checked ? ' checked' : ''}><span>${escape(text(value))}</span></label>`).join('');
   const send = canDispatch(viewer) && viewer.dispatch === 'ready' ? `<button class="btn ghost" name="then" value="dispatch">${icon('send', true)}Create and dispatch</button>` : '';
-  const form = projects.length === 0 ? '<p class="role-note">No project exists yet. Create the first issue of a project with pd or MCP.</p>'
-    : `<form method="post" action="/ui/new" class="card">${problem === '' ? '' : `<p class="role-note" role="alert">${escape(problem)}</p>`}`
-    + `<div class="field"><label for="pj">Project</label><select id="pj" name="project">${options}</select></div>`
+  const text = (id: string, name: keyof FreshProject, label: string, hint: string) =>
+    `<div class="field"><label for="${id}">${label}</label><input id="${id}" type="text" name="new.${name}" value="${escape(fresh[name])}" placeholder="${hint}" autocapitalize="none" autocomplete="off" spellcheck="false"></div>`;
+  const form = `<form method="post" action="/ui/new" class="card">${problem === '' ? '' : `<p class="role-note" role="alert">${escape(problem)}</p>`}`
+    + `<div class="field"><label for="pj">Project</label><select id="pj" name="project">${options}<option value="${newProject}"${starting ? ' selected' : ''}>New project…</option></select></div>`
+    + `<fieldset class="newproj"><legend>New project</legend>`
+    + text('nt', 'tool', 'Tool', 'e.g. polylinedb') + text('np', 'project', 'Project', 'e.g. owner/repo')
+    + text('nx', 'prefix', 'Id prefix', 'e.g. pd')
+    + '<p class="hint">Lowercase letters and digits, starting with a letter. Projects that share a prefix share one id sequence, so pick one no other project uses.</p></fieldset>'
     + `<div class="field"><label for="bd">Text. The first line is the title.</label><textarea id="bd" name="body" rows="8" required placeholder="Short title on the first line&#10;&#10;What and why.">${escape(draft)}</textarea></div>`
     + `<div class="field"><span class="lbl">Type</span><div class="togs">${toggles('type', ['task', 'bug', 'feature', 'chore', 'epic'], 'task', 'radio', String)}</div></div>`
     + `<div class="field"><span class="lbl">Priority</span><div class="togs">${toggles('priority', [0, 1, 2, 3, 4], 2, 'radio', value => `P${value}`)}</div></div>`
@@ -305,6 +315,9 @@ export function newPage(projects: readonly ProjectSummary[], selected: string | 
     + `<div class="btn-row"><button class="btn">${icon('plus', true)}Create</button>${send}</div></form>`;
   return document({ title: 'New issue', viewer, counts, body: pageHead('New issue', 'Creates the issue, then opens it.') + form });
 }
+
+/** The select value that asks for a project with no issue yet. A real value always holds a newline between tool and project. */
+export const newProject = 'new';
 
 export type IssueView = {
   issue: Issue; comments: readonly Comment[]; claim: ClaimDisplay & { acquiredAt?: number };

@@ -180,6 +180,8 @@ textarea:focus-visible,input:focus-visible,select:focus-visible{border-color:var
 .seg .btn{min-height:44px;padding:0 6px;font-size:15px}
 .seg .btn[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .togs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.newproj{display:none;border:1px solid var(--hair);border-radius:var(--r2);padding:12px 12px 0;margin:0 0 12px}.newproj legend{font-size:13px;font-weight:700;color:var(--ink2);padding:0 6px}
+form:has(#pj option[value="new"]:checked) .newproj{display:block}
 .tog{position:relative;display:inline-flex}
 .tog input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
 .tog span{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 14px;border:2px solid var(--edge);border-radius:999px;font-size:14px;font-weight:700;color:var(--ink2);background:var(--surface)}
