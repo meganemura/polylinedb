@@ -1,7 +1,7 @@
 // Pins which body line a /ui row and the issue page use as the title.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bodyAfterTitle, title } from '../src/service/ui.ts';
+import { bodyAfterTitle, title } from '../src/service/ui/index.ts';
 
 test('a first line that is only an owner marker gives way to the next non-empty line', () => {
   const cases: [string, string, string][] = [

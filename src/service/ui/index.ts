@@ -1,23 +1,25 @@
 /**
  * The /ui entry: maps a route to its reads, renders the page, and adds the page headers (ETag, CSP by hash). GET never writes.
- * POST routes go to ui-writes.ts. Access, origin checks, and Server-Timing belong to the Worker entry.
+ * POST routes go to writes.ts. Access, origin checks, and Server-Timing belong to the Worker entry.
  */
-import { executeOperation, parseOperation, PolylinedbError, postHandles, postProjects, projectClosedIssues, projectIssues, projectSummaries, type Actor, type Issue, type Status } from '../records/index.ts';
-import type { SqlExecutor } from '../records/persistence/persistence.ts';
-import type { DispatchControl, DispatchOutcome } from './dispatch.ts';
-import { pageScript, speculationRules } from './ui-assets.ts';
-import { flash } from './ui-brief.ts';
+import { executeOperation, parseOperation, PolylinedbError, postHandles, postProjects, projectClosedIssues, projectIssues, projectSummaries, type Actor, type Issue, type Status } from '../../records/index.ts';
+import type { SqlExecutor } from '../../records/persistence/persistence.ts';
+import type { DispatchControl, DispatchOutcome } from '../dispatch.ts';
+import { pageScript, speculationRules } from './assets.ts';
+import { flash } from './brief.ts';
 import { messagePage, activityPage, agentsPage, issuePage, landingPage, newPage, postsPage, projectPage, projectsPage, searchPage, stuckPage, tabCounts, todayPage,
-  type ActivityCursor, type PostsView } from './ui-pages.ts';
-import { readActivity, readIssueView, searchHits } from './ui-reads.ts';
-import { composeLanes, readBadgeLanes, readLanes } from './ui-today.ts';
-import { doneParam, landedSentence, uiWrite, type WriteRoute } from './ui-writes.ts';
-import type { Viewer, ViewerRole } from './ui-html.ts';
+  type ActivityCursor, type PostsView } from './pages.ts';
+import { readActivity, readIssueView, searchHits } from './reads.ts';
+import { composeLanes, readBadgeLanes, readLanes } from './today.ts';
+import { doneParam, landedSentence, uiWrite, type WriteRoute } from './writes.ts';
+import type { Viewer, ViewerRole } from './html.ts';
 
-export { bodyAfterTitle, title } from './ui-html.ts';
-export { pageScript, speculationRules } from './ui-assets.ts';
-export { issueActions, returnPath, type IssueAction, type WriteRoute } from './ui-writes.ts';
-export type { ActivityCursor } from './ui-pages.ts';
+export { bodyAfterTitle, title } from './html.ts';
+export { pageScript, speculationRules } from './assets.ts';
+export { issueActions, returnPath, type IssueAction, type WriteRoute } from './writes.ts';
+export type { ActivityCursor } from './pages.ts';
+export type { ViewerRole } from './html.ts';
+export type { DispatchControl } from '../dispatch.ts';
 
 export type UiRoute = { page: 'today' } | { page: 'agents' } | { page: 'activity'; after?: ActivityCursor | 'invalid' } | { page: 'landing' } | { page: 'stuck' }
   | { page: 'projects' } | { page: 'project'; tool: string; project: string; status?: Status; label?: string } | { page: 'search'; query: string }

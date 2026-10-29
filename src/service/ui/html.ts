@@ -1,7 +1,7 @@
 /** Shared /ui text rules and markup: escaping, titles, times, chips, form parts, and the page chrome. Reads and writes stay in the page and write modules. */
-import type { Actor, Issue, Status } from '../records/index.ts';
-import type { DispatchControl } from './dispatch.ts';
-import { faviconHref, pageScript, palette, speculationRules, sprite, styles, type IconName } from './ui-assets.ts';
+import type { Actor, Issue, Status } from '../../records/index.ts';
+import type { DispatchControl } from '../dispatch.ts';
+import { faviconHref, pageScript, palette, speculationRules, sprite, styles, type IconName } from './assets.ts';
 
 /** human sees every control; agent sees no Dispatch; reader sees no form. The POST handlers check again. */
 export type ViewerRole = 'human' | 'agent' | 'reader';

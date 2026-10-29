@@ -2,7 +2,7 @@
 import { AccessError, actorLabels, createAccessVerifier, type AccessSettings, type Caller } from "./access.ts";
 import { d1Executor, type D1DatabaseLike } from "./d1.ts";
 import { createDispatcher, dispatchSecretNames, type Dispatcher } from "./dispatch.ts";
-import { issueActions, uiNotFoundResponse, uiResponse, uiWriteResponse, type ActivityCursor, type IssueAction, type UiCaller, type UiRoute, type WriteRoute } from "./ui.ts";
+import { issueActions, uiNotFoundResponse, uiResponse, uiWriteResponse, type ActivityCursor, type IssueAction, type UiCaller, type UiRoute, type WriteRoute } from "./ui/index.ts";
 import { formLimitBytes, readForm } from "./form.ts";
 import { issueFieldsFor } from "./released-issues.ts";
 import { PolylinedbError } from "../records/index.ts";

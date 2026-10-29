@@ -1,10 +1,10 @@
 /** The brief on Today: a headline, a sub line, and one sentence per lane, each composed by rule from the lanes. No model runs at request time. */
-import type { ActivityCount, Issue } from '../records/index.ts';
+import type { ActivityCount, Issue } from '../../records/index.ts';
 import { canDispatch, canWrite, dateLine, duration, escape, hidden, icon, idLink, joined, numberWord, person, plural, sentence, shortProject,
-  shortTitle, clockTime, timeTag, whose, type Lane, type Viewer } from './ui-html.ts';
-import type { IconName } from './ui-assets.ts';
-import { holderName } from './ui-rows.ts';
-import type { Lanes } from './ui-today.ts';
+  shortTitle, clockTime, timeTag, whose, type Lane, type Viewer } from './html.ts';
+import type { IconName } from './assets.ts';
+import { holderName } from './rows.ts';
+import type { Lanes } from './today.ts';
 
 type Line = { lane: Lane; icon: IconName; name: string; text: string; action: string };
 

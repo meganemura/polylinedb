@@ -3,8 +3,8 @@
  * `readLanes` runs every read in parallel; `composeLanes` is pure and owns the dedupe rules, so one function decides what each lane shows.
  */
 import { activeClaimIssues, activitySince, attentionIssues, blockedIssues, executeOperation, startedWithoutClaim, PolylinedbError,
-  type ActiveClaimIssue, type ActivityCount, type Actor, type Attention, type BlockedIssue, type Issue, type StartedIssue } from '../records/index.ts';
-import type { SqlExecutor } from '../records/persistence/persistence.ts';
+  type ActiveClaimIssue, type ActivityCount, type Actor, type Attention, type BlockedIssue, type Issue, type StartedIssue } from '../../records/index.ts';
+import type { SqlExecutor } from '../../records/persistence/persistence.ts';
 
 export const pageLimit = 50;
 const readLimit = 101;

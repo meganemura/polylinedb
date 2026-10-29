@@ -1,13 +1,13 @@
 /** Composes each /ui page from data the entry module already read. Nothing here reads the store or writes. */
 import { blockerIsActive, type ActivityEvent, type ActivityPage, type Attention, type ClaimDisplay, type Comment, type Issue, type IssueLink, type PostPage,
-  type ProjectIssue, type ProjectSummary, type Status } from '../records/index.ts';
+  type ProjectIssue, type ProjectSummary, type Status } from '../../records/index.ts';
 import { avatar, bodyAfterTitle, canDispatch, canWrite, clockTime, disclose, document, duration, escape, fullTime, hidden, icon, idLink, issueHref, japanTime,
   joined, labelChip, lang, lanePanel, liveForm, mono, pageHead, person, plural, priorityChip, projectHref, secondsOf, shortProject, shortTitle, statusChip,
-  statusWord, timeTag, title, whose, workflowLabels, type TabCounts, type Viewer } from './ui-html.ts';
-import { flash, hero, sinceYesterday, type DoneKind } from './ui-brief.ts';
+  statusWord, timeTag, title, whose, workflowLabels, type TabCounts, type Viewer } from './html.ts';
+import { flash, hero, sinceYesterday, type DoneKind } from './brief.ts';
 import { blockedRow, claimRow, commentForm, decideForm, dispatchForm, dispatchLine, doneForm, expiredRow, holderName, leaseBar, plainRow,
-  queueRow, readyRow, unblockForm, youRow } from './ui-rows.ts';
-import { pageLimit, stuckCount, type Lanes, type QueueItem } from './ui-today.ts';
+  queueRow, readyRow, unblockForm, youRow } from './rows.ts';
+import { pageLimit, stuckCount, type Lanes, type QueueItem } from './today.ts';
 
 export const tabCounts = (lanes: Lanes): TabCounts => ({ today: lanes.you.length, stuck: stuckCount(lanes) });
 const rest = (text: string): string => `<p class="rest">${text}</p>`;

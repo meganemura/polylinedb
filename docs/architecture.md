@@ -54,7 +54,7 @@ The source modules expose capability contracts through these public entries:
 | workspace | `src/workspace/index.ts` | Connection selection and repository settings |
 | cloud-client | `src/cloud-client/index.ts` | Authenticated outbound actions; private OAuth, credentials, and transport |
 | host-hooks | `src/host-hooks/index.ts` | Host settings and memory retrieval events |
-| service | `src/service/index.ts` | HTTP/MCP requests and deployment fetch; private Access verification and D1 adaptation |
+| service | `src/service/index.ts` | HTTP/MCP requests and deployment fetch; private Access verification and D1 adaptation; the `/ui` pages live in `src/service/ui/`, a module of their own whose entry `src/service/ui/index.ts` the Worker entry calls |
 
 Inside records, each record domain is its own directory and its own archstrict module.
 A domain's files are visible to the other records files only, so the rest of pd reads the two public entries above.

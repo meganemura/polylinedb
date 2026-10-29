@@ -1,8 +1,8 @@
 /** Lane rows and the inline forms they carry. Each form posts to a /ui write route with the field versions it observed. */
-import { ownerWaitLabels, readyLabel, type ActiveClaimIssue, type BlockedIssue, type ClaimDisplay, type Issue, type StartedIssue } from '../records/index.ts';
+import { ownerWaitLabels, readyLabel, type ActiveClaimIssue, type BlockedIssue, type ClaimDisplay, type Issue, type StartedIssue } from '../../records/index.ts';
 import { canDispatch, canWrite, clockTime, disclose, duration, escape, fullTime, icon, idLink, issueHref, lang, liveForm, mono,
-  person, priorityChip, secondsOf, shortProject, statusChip, timeTag, title, workflowChips, type Lane, type Viewer } from './ui-html.ts';
-import type { QueueItem, YouItem } from './ui-today.ts';
+  person, priorityChip, secondsOf, shortProject, statusChip, timeTag, title, workflowChips, type Lane, type Viewer } from './html.ts';
+import type { QueueItem, YouItem } from './today.ts';
 
 const seenLabels = (issue: Issue): string => JSON.stringify(issue.labels);
 

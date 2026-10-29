@@ -3,14 +3,14 @@
  * form observed, and answers a 303 to a /ui path, JSON for the fixed script, or a full page: 409 with a diff when a version is stale.
  * The update goes first and the note second, so a note never claims a change that did not happen. Origin checks belong to the entry module.
  */
-import { executeOperation, parseIssueId, parseOperation, projectSummaries, PolylinedbError, type ClaimInspection, type Issue, type Status } from '../records/index.ts';
-import type { SqlExecutor } from '../records/persistence/persistence.ts';
-import type { DispatchOutcome } from './dispatch.ts';
-import { escape, fullTime, hidden, icon, idLink, joined, person, secondsOf, shortTitle, statusWord, type Viewer } from './ui-html.ts';
-import { doneKinds, type DoneKind } from './ui-brief.ts';
-import { issuePage, messagePage, newPage, newProject, tabCounts, type FreshProject } from './ui-pages.ts';
-import { readIssueView } from './ui-reads.ts';
-import { composeLanes, readBadgeLanes } from './ui-today.ts';
+import { executeOperation, parseIssueId, parseOperation, projectSummaries, PolylinedbError, type ClaimInspection, type Issue, type Status } from '../../records/index.ts';
+import type { SqlExecutor } from '../../records/persistence/persistence.ts';
+import type { DispatchOutcome } from '../dispatch.ts';
+import { escape, fullTime, hidden, icon, idLink, joined, person, secondsOf, shortTitle, statusWord, type Viewer } from './html.ts';
+import { doneKinds, type DoneKind } from './brief.ts';
+import { issuePage, messagePage, newPage, newProject, tabCounts, type FreshProject } from './pages.ts';
+import { readIssueView } from './reads.ts';
+import { composeLanes, readBadgeLanes } from './today.ts';
 
 export const issueActions = ['decide', 'done', 'dispatch', 'comment', 'comment-edit', 'star', 'status', 'priority', 'type', 'labels', 'body',
   'blockers/add', 'blockers/remove', 'land-order'] as const;

@@ -40,7 +40,8 @@ export default {
     { name: "local-store", glob: "src/local-store/**", surface: "index.ts" },
     { name: "workspace", glob: "src/workspace/**", surface: "index.ts" },
     { name: "host-hooks", glob: "src/host-hooks/**", surface: "index.ts" },
-    { name: "service", glob: "src/service/**", surface: "index.ts" },
+    { name: "service", glob: "src/service/*.ts", surface: "index.ts", friends: [{ file: "dispatch.ts", from: "src/service/ui/**", because: "The pages render what a dispatched operation returned." }] },
+    { name: "service/ui", glob: "src/service/ui/**", surface: "index.ts" },
     { name: "transition", glob: "src/transition/**", surface: "index.ts" },
   ],
   classify: [
