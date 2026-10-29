@@ -205,3 +205,28 @@ Then run this in the console of each page to read the visible time of the last n
 
 Repeat on the phone, because its link sets the round trip.
 On an iPhone, run the same line in the Web Inspector of a connected Mac.
+
+To read the Worker time of several pages at once, run this in the console of any `/ui` page.
+It fetches each page 7 times and prints the median and the slowest `Server-Timing` value:
+
+```js
+(async () => { const rows = []; for (const path of ['/ui', '/ui/agents', '/ui/stuck', '/ui/landing', '/ui/projects', '/ui/activity']) { const d = []; for (let i = 0; i < 7; i++) { const r = await fetch(path, { cache: 'no-store' }); await r.text(); const m = /worker;dur=([\d.]+)/.exec(r.headers.get('server-timing') ?? ''); if (m) d.push(Number(m[1])); } d.sort((a, b) => a - b); rows.push({ path, median_ms: d[d.length >> 1], max_ms: d.at(-1) }); } console.table(rows); })()
+```
+
+### Result on 2026-10-29
+
+The deployed Worker with Cloudflare D1, measured from a desktop browser before reads shared a D1 call:
+
+| Page | D1 calls | Median | Slowest |
+| --- | --- | --- | --- |
+| Today | 11 | 201 ms | 219 ms |
+| Agents | 11 | 168 ms | 240 ms |
+| Stuck | 11 | 143 ms | 221 ms |
+| Landing | 11 | 147 ms | 210 ms |
+| Projects | 4 | 74 ms | 155 ms |
+| Activity | 4 | 130 ms | 202 ms |
+
+The Worker time follows the number of D1 calls, not the rows read: each statement read under 3 ms on node:sqlite with 1,000 issues.
+The pages already started their reads together, so the gap suggests that D1 serves the calls of one request one after another, each with its own round trip; this was inferred from the counts and not traced per call.
+The Worker now sends reads that start before the next macrotask as one D1 batch, so Today, Agents, Stuck, and Landing make 2 calls and Projects and Activity make 1.
+Activity reads the change log, which is large in a long-lived store, so its time depends on that read too.

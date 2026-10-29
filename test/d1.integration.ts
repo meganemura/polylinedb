@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { d1Executor } from "../src/service/d1.ts";
+import type { D1Like, D1StatementLike } from 'solarsql/d1';
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
 import { SCHEMA_STATEMENTS } from "../src/records/persistence/schema.ts";
 import { runClaimedListFlow, runShowClaimFlow } from "./fixtures/show-claim-flow.ts";
@@ -113,5 +114,32 @@ try {
   await runShowClaimFlow(run);
   await runClosureFlow(run, 'test:d1');
   await runClaimedListFlow(run, (statement, ...params) => db.batch([{ sql: statement, params }]));
-  process.stdout.write('PASS: local workerd D1 persistence, CAS, rollback, comments, show claim inspection, the list claimed filter over every claim state, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
+  const trips: string[] = [];
+  let failNextBatch = false;
+  const watch = (statement: D1StatementLike): D1StatementLike => new Proxy(statement, { get(target, key) {
+    if (key === 'bind') return (...values: unknown[]) => watch(target.bind(...values));
+    if (key === 'all') return () => { trips.push('all'); return target.all(); };
+    const value: unknown = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const watched: D1Like = {
+    prepare: sql => watch(database.prepare(sql)),
+    batch: statements => {
+      trips.push(`batch ${statements.length}`);
+      if (failNextBatch) { failNextBatch = false; return Promise.reject(new Error('D1 batch failed')); }
+      return database.batch(statements);
+    },
+  };
+  const tripping = d1Executor(watched);
+  const readTogether = () => Promise.all([
+    executeOperation(tripping, parseOperation({ op: 'show', id }), 'test:d1'),
+    executeOperation(tripping, parseOperation({ op: 'list', limit: 2 }), 'test:d1'),
+    executeOperation(tripping, parseOperation({ op: 'search', query: 'D1', limit: 2 }), 'test:d1'),
+  ]);
+  const apart = [await run({ op: 'show', id }), await run({ op: 'list', limit: 2 }), await run({ op: 'search', query: 'D1', limit: 2 })];
+  assert.deepEqual(await readTogether(), apart);
+  assert.equal(trips[0], 'batch 3', `reads started together share one D1 trip: ${trips.join(', ')}`);
+  trips.length = 0; failNextBatch = true;
+  assert.deepEqual(await readTogether(), apart);
+  assert.deepEqual(trips.slice(0, 4), ['batch 3', 'all', 'all', 'all'], 'a failed shared trip answers each read on its own');
+  process.stdout.write('PASS: local workerd D1 persistence, shared read trips and their fallback, CAS, rollback, comments, show claim inspection, the list claimed filter over every claim state, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
 } finally { await runtime.dispose(); }
