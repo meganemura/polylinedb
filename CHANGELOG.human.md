@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+The npm package now ships whatever the CLI build produces, and each pack starts from an empty build folder, so a leftover file can no longer slip into a release.
+
 When an agent posts to a project by a short name, such as `polylinedb` for `meganemura/polylinedb`, pd now answers with the project names it likely meant instead of only saying the project has no issue.
 
 The busy `/ui` pages load faster on the deployed Worker. Today, Agents, Stuck, and Landing used to wait on the database once for each of about ten reads; the Worker now sends reads that start together as one request.
