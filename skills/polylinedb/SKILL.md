@@ -79,6 +79,10 @@ An `in_progress` status does not reserve work. Release and expiry do not change 
 
 Before expiry, read `claim_show` and use `claim_renew` with the proof and observed claim revision.
 The TTL is at most 3600 seconds, so renew between long steps. Cloud agents renew through the MCP connector, not a CLI login with owner credentials.
+Report what you are doing with `claim_report`: `kind` is `working`, `blocked`, `error`, or `done`, and `text` is one line.
+It needs only the proof, not a revision, and it keeps the deadline, so it never races a renewal. It does not renew.
+Report `blocked` or `error` as soon as you stop, because Stuck in `/ui` shows them to a person, and `done` just before the handoff.
+A `working` holder with no report for 600 seconds shows as quiet.
 If ownership expires or changes, stop protected work and make a deliberate new selection and acquisition.
 If you cannot renew before the lease ends, because writes are suspended or a step outlasts the TTL, hand off instead of letting it lapse.
 Push `work/<issue id>`, write a `comment` that says what is done and what remains, set status `open` with the proof, and release the claim.

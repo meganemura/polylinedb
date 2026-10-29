@@ -70,6 +70,7 @@ Kill only the PIDs that you started.
 The claim TTL is at most 3600 seconds.
 Between long steps, read `claim_show` for the revision and call `claim_renew` with the issue proof.
 Cloud agents renew through the MCP connector. Do not log in to the CLI with owner credentials to renew.
+Before the handoff, call `claim_report` with `kind: done` and one line; it needs no revision.
 
 ## Record the enqueue
 

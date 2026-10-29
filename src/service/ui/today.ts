@@ -2,8 +2,8 @@
  * Composes the four lanes of /ui from store reads: You, Agents, Landing, and Stuck.
  * `readLanes` runs every read in parallel; `composeLanes` is pure and owns the dedupe rules, so one function decides what each lane shows.
  */
-import { activeClaimIssues, activitySince, attentionIssues, blockedIssues, executeOperation, startedWithoutClaim, PolylinedbError,
-  type ActiveClaimIssue, type ActivityCount, type Actor, type Attention, type BlockedIssue, type Issue, type StartedIssue } from '../../records/index.ts';
+import { activeClaimIssues, activitySince, attentionIssues, blockedIssues, executeOperation, startedWithoutClaim, watchedLeases, PolylinedbError,
+  type ActiveClaimIssue, type ActivityCount, type Actor, type Attention, type BlockedIssue, type Issue, type StartedIssue, type WatchedLease } from '../../records/index.ts';
 import type { SqlExecutor } from '../../records/persistence/persistence.ts';
 
 export const pageLimit = 50;
@@ -14,6 +14,7 @@ const ownerLabels = ['owner-decision', 'owner-action'] as const;
 export type LaneReads = {
   attention: Attention;
   claims: readonly ActiveClaimIssue[];
+  leases: readonly WatchedLease[];
   started: { rows: readonly StartedIssue[]; total: number; expired: number };
   blocked: { rows: readonly BlockedIssue[]; total: number };
   ready: readonly Issue[];
@@ -37,7 +38,10 @@ export type Lanes = {
   lockIssues: readonly Issue[];
   ready: readonly Issue[];
   queue: readonly QueueItem[];
-  expired: readonly StartedIssue[];
+  /** Expired leases on started issues, and leases on any unfinished issue that expired after an error report. */
+  expired: readonly (StartedIssue | WatchedLease)[];
+  /** Live leases whose holder went quiet or reported an error: the lease alone would not show them until it expired. */
+  silent: readonly WatchedLease[];
   stale: readonly StartedIssue[];
   staleTotal: number;
   blocked: readonly BlockedIssue[];
@@ -50,9 +54,10 @@ const isOwnerItem = (issue: Issue): boolean => ownerLabels.some(label => issue.l
 
 /** Every read of the lanes, in one parallel wave. */
 export async function readLanes(db: SqlExecutor, actor: Actor): Promise<LaneReads> {
-  const [attention, claims, started, blocked, ready, queue, locks, since] = await Promise.all([
+  const [attention, claims, leases, started, blocked, ready, queue, locks, since] = await Promise.all([
     attentionIssues(db),
     activeClaimIssues(db, readLimit),
+    watchedLeases(db, readLimit),
     startedWithoutClaim(db, readLimit),
     blockedIssues(db, readLimit),
     executeOperation(db, { op: 'dependency_worklist', state: 'ready', label: 'ready', limit: 100 }, actor),
@@ -65,18 +70,18 @@ export async function readLanes(db: SqlExecutor, actor: Actor): Promise<LaneRead
   }
   const orders = queue.land_order;
   return {
-    attention, claims, started, blocked, ready: ready.issues, locks: locks.issues.filter(issue => issue.status !== 'closed'), since,
+    attention, claims, leases, started, blocked, ready: ready.issues, locks: locks.issues.filter(issue => issue.status !== 'closed'), since,
     queue: queue.issues.map((issue, index) => ({ issue, after: orders[index]?.after.map(entry => entry.id) ?? [], revision: orders[index]?.revision ?? 1 })),
   };
 }
 
 /**
- * The reads behind the tab badges alone. Today counts You items and Stuck counts expired claims plus blocked issues, and the dedupe
- * between them needs only the attention, started, and blocked reads, so a page outside the lanes skips the other five.
+ * The reads behind the tab badges alone. Today counts You items and Stuck counts expired, quiet, and errored claims plus blocked
+ * issues, and the dedupe between them needs only the attention, watched lease, started, and blocked reads, so a page outside the lanes skips the other five.
  */
 export async function readBadgeLanes(db: SqlExecutor): Promise<LaneReads> {
-  const [attention, started, blocked] = await Promise.all([attentionIssues(db), startedWithoutClaim(db, readLimit), blockedIssues(db, readLimit)]);
-  return { attention, claims: [], started, blocked, ready: [], queue: [], locks: [], since: [] };
+  const [attention, leases, started, blocked] = await Promise.all([attentionIssues(db), watchedLeases(db, readLimit), startedWithoutClaim(db, readLimit), blockedIssues(db, readLimit)]);
+  return { attention, claims: [], leases, started, blocked, ready: [], queue: [], locks: [], since: [] };
 }
 
 /** The dedupe rules: a You item is not also Ready, Expired, or Stale; an expired claim is not also Stale; a lock is never a row. Blocked may repeat a You item. */
@@ -97,7 +102,10 @@ export function composeLanes(reads: LaneReads): Lanes {
     || a.issue.id.localeCompare(b.issue.id));
   const claimed = new Set(reads.claims.map(row => row.issue.id));
   const shown = (issue: Issue) => !youIds.has(issue.id) && !isLock(issue);
-  const expired = reads.started.rows.filter(row => row.claim.state === 'expired' && shown(row.issue));
+  const errored = new Map(reads.leases.filter(row => row.claim.state === 'expired' && row.run.state === 'errored' && shown(row.issue)).map(row => [row.issue.id, row]));
+  const startedExpired = reads.started.rows.filter(row => row.claim.state === 'expired' && shown(row.issue));
+  const startedIds = new Set(startedExpired.map(row => row.issue.id));
+  const expired = [...startedExpired.map(row => errored.get(row.issue.id) ?? row), ...[...errored.values()].filter(row => !startedIds.has(row.issue.id))];
   const notExpired = reads.started.rows.filter(row => row.claim.state !== 'expired');
   const stale = notExpired.filter(row => shown(row.issue));
   return {
@@ -111,6 +119,7 @@ export function composeLanes(reads: LaneReads): Lanes {
     ready: reads.ready.filter(issue => !claimed.has(issue.id) && shown(issue)),
     queue: landOrder(reads.queue.filter(row => !isLock(row.issue))),
     expired,
+    silent: reads.leases.filter(row => row.claim.state === 'active' && !isLock(row.issue) && (row.run.state === 'quiet' || row.run.state === 'errored')),
     stale,
     staleTotal: Math.max(stale.length, reads.started.total - reads.started.expired - (notExpired.length - stale.length)),
     blocked: reads.blocked.rows.filter(row => !isLock(row.issue)),
@@ -119,8 +128,8 @@ export function composeLanes(reads: LaneReads): Lanes {
   };
 }
 
-/** Expired claims plus blocked issues: the Stuck count on the tab and the lane. */
-export const stuckCount = (lanes: Lanes): number => lanes.expired.length + lanes.blockedTotal;
+/** Expired claims, quiet or errored live claims, and blocked issues: the Stuck count on the tab and the lane. */
+export const stuckCount = (lanes: Lanes): number => lanes.expired.length + lanes.silent.length + lanes.blockedTotal;
 
 /** A topological order over the land-order edges inside the queue; ties go to the least recently updated, then the id. */
 function landOrder(rows: LaneReads['queue']): QueueItem[] {

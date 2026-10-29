@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeStore, openStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
-import { admitAgentWrite, claimState, decideClaimMutation, decideIssueUpdate, statuses } from '../src/transition/index.ts';
+import * as hegel from '@hegeldev/hegel';
+import * as gs from '@hegeldev/hegel/generators';
+import { activityKinds, admitAgentWrite, claimState, decideClaimMutation, decideIssueUpdate, runState, statuses } from '../src/transition/index.ts';
 import type { Actor, ClaimProof, FieldChange, ObservedClaim, Status } from '../src/transition/index.ts';
 
 const store = 'a'.repeat(32);
@@ -228,6 +230,26 @@ test('property: only the holder of the current proof changes the status of a cla
     accepted += 1;
   }
   assert.ok(accepted > 0);
+});
+
+// docs/claims.md "Report what you are doing": Only working turns quiet with time; blocked, error, and done stay until the next report.
+// A lease that ended keeps the run it ended with.
+test('property: time changes a run only from working to quiet (docs/claims.md: Report what you are doing)', () => {
+  const moved = new Set<string>();
+  hegel.test(tc => {
+    const acquired_at = tc.draw(gs.integers({ minValue: 0, maxValue: 5000 }));
+    const expires_at = acquired_at + tc.draw(gs.integers({ minValue: 1, maxValue: 5000 }));
+    const released_at = tc.draw(gs.booleans()) ? tc.draw(gs.integers({ minValue: acquired_at, maxValue: expires_at })) : null;
+    const reported = tc.draw(gs.booleans());
+    const last = reported ? { kind: tc.draw(gs.sampledFrom(activityKinds)), text: 'line', at: tc.draw(gs.integers({ minValue: acquired_at, maxValue: expires_at })) } : null;
+    const earlier = tc.draw(gs.integers({ minValue: last?.at ?? acquired_at, maxValue: 12_000 }));
+    const later = earlier + tc.draw(gs.integers({ minValue: 0, maxValue: 12_000 }));
+    const before = runState({ acquired_at, expires_at, released_at }, last, earlier).state;
+    const after = runState({ acquired_at, expires_at, released_at }, last, later).state;
+    if (before !== after) moved.add(`${before}->${after}`);
+    assert.ok(before === after || (before === 'working' && after === 'quiet'), `${before} became ${after}`);
+  }, { testCases: 500, seed: 20261029 });
+  assert.deepEqual([...moved], ['working->quiet'], 'the generator reaches the one allowed move');
 });
 
 // docs/architecture.md "Containment and queries": A parent with children must remain an epic.

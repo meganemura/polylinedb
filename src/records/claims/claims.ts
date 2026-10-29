@@ -9,8 +9,8 @@ import { attemptHandoff, parseHandoff } from './claim-handoff.ts';
 import type { ClaimHandoff, HandoffParts } from './claim-handoff.ts';
 import type { ClaimMutation, ClaimProof } from './claims-sql.ts';
 import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
-import { claimState, decideReplay, ownsExpiredLease } from '../../transition/index.ts';
-import type { Actor } from '../../transition/index.ts';
+import { activityKinds, claimState, decideReplay, ownsExpiredLease, runState } from '../../transition/index.ts';
+import type { ActivityKind, Actor, ReportedActivity, Run } from '../../transition/index.ts';
 import { agentMayAcquire, asActor, rejectAgentWrite } from './agent-gate.ts';
 import type { ClaimState } from '../../transition/index.ts';
 
@@ -18,7 +18,8 @@ export type Claim = ClaimProof & { actor: string; agent_label: string | null; re
 export type ClaimReceipt = Omit<Claim, 'released_at'> & ({ outcome: 'released'; released_at: number } | { outcome: 'acquired' | 'renewed'; released_at: null });
 export type ClaimRequest = ClaimReceipt & { request_id: string; payload: string; created_at: number };
 export type { ClaimState };
-export type ClaimInspection = { issue_id: string; store_incarnation: string; observed_at: number; state: ClaimState; lease: Claim | null };
+/** `run` is what the holder last reported and whether it went quiet. claim_show, show, and claim_list carry it for every lease; a lease that ended keeps the run it ended with. */
+export type ClaimInspection = { issue_id: string; store_incarnation: string; observed_at: number; state: ClaimState; lease: Claim | null; run?: Run };
 export type ClaimDisplay = { state: 'never_claimed' } | { state: Exclude<ClaimState, 'never_claimed'>; actor: string; agentLabel: string | null; expiresAt: number; releasedAt: number | null };
 export function claimDisplay(inspection: ClaimInspection): ClaimDisplay {
   if (inspection.lease === null || inspection.state === 'never_claimed') return { state: 'never_claimed' };
@@ -41,6 +42,7 @@ export const claimSchemas = {
   claim_list: objectSchema({ tool: { type: 'string', minLength: 1, maxLength: 256 }, project: { type: 'string', minLength: 1, maxLength: 256 }, after: idSchema, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } }, []),
   claim_acquire: objectSchema({ issue_id: idSchema, incarnation: incarnationSchema, session_id: uuidSchema, request_id: uuidSchema, ttl: ttlSchema, agent_label: { type: ['string', 'null'], minLength: 1, maxLength: 64, description: 'Caller metadata, at most 64 UTF-8 bytes. Omitted labels become null.' } }, ['issue_id', 'incarnation', 'session_id', 'request_id']),
   claim_renew: objectSchema({ ...mutationProperties, ttl: ttlSchema }, ['claim_proof', 'expected_revision', 'request_id']),
+  claim_report: objectSchema({ claim_proof: claimProofSchema, kind: { enum: activityKinds }, text: { type: 'string', minLength: 1, maxLength: 200, description: 'One line, at most 200 UTF-8 bytes.' }, request_id: uuidSchema }, ['claim_proof', 'kind', 'text', 'request_id']),
   claim_handoff: objectSchema({ ...mutationProperties,
     tip: { type: 'string', pattern: '^[0-9a-f]{7,40}$', description: 'The queue commit SHA, written as a "tip: <sha>" comment.' },
     summary: { type: 'string', minLength: 1, maxLength: 65536, description: 'Optional result comment, at most 65536 UTF-8 bytes.' } }, ['claim_proof', 'expected_revision', 'request_id', 'tip']),
@@ -76,19 +78,25 @@ export function parseClaimProof(value: unknown, target?: string): ClaimProof {
 export function parseClaimOperation(value: unknown): ClaimOperation {
   const input = object(value);
   const op = input.op;
-  if (op !== 'claim_show' && op !== 'claim_list' && op !== 'claim_acquire' && op !== 'claim_renew' && op !== 'claim_release' && op !== 'claim_handoff') return invalid('Unknown claim operation');
+  if (op !== 'claim_show' && op !== 'claim_list' && op !== 'claim_acquire' && op !== 'claim_renew' && op !== 'claim_report' && op !== 'claim_release' && op !== 'claim_handoff') return invalid('Unknown claim operation');
   const schema = claimSchemas[op]; requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   if (op === 'claim_list') return { op, limit: input.limit === undefined ? 50 : integer(input.limit, 'limit', 1, 100), ...(input.tool === undefined ? {} : { tool: name(input.tool, 'tool') }), ...(input.project === undefined ? {} : { project: name(input.project, 'project') }), ...(input.after === undefined ? {} : { after: identifier(parseIssueId, input.after) }) };
   if (op === 'claim_show') return { op, issue_id: identifier(parseIssueId, input.issue_id) };
   const request_id = identifier(parseRequestId, input.request_id);
   if (op === 'claim_acquire') return { op, issue_id: identifier(parseIssueId, input.issue_id), incarnation: parseIncarnation(input.incarnation), session_id: identifier(value => parseRequestId(value, 'session_id'), input.session_id), request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600), agent_label: input.agent_label === undefined || input.agent_label === null ? null : name(input.agent_label, 'agent_label', 64) };
-  const claim_proof = parseClaimProof(input.claim_proof); const expected_revision = integer(input.expected_revision, 'expected_revision', 1);
+  const claim_proof = parseClaimProof(input.claim_proof);
+  if (op === 'claim_report') return { op, claim_proof, kind: activityKind(input.kind), text: name(input.text, 'text', 200), request_id };
+  const expected_revision = integer(input.expected_revision, 'expected_revision', 1);
   if (op === 'claim_handoff') return parseHandoff(input, { claim_proof, expected_revision, request_id }, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   if (op === 'claim_release') {
     if (input.expired_noop !== undefined && input.expired_noop !== true) return invalid('expired_noop must be true when present');
     return { op, claim_proof, expected_revision, request_id, ...(input.expired_noop === true ? { expired_noop: true } : {}) };
   }
   return { op, claim_proof, expected_revision, request_id, ttl: input.ttl === undefined ? 300 : integer(input.ttl, 'ttl', 30, 3600) };
+}
+function activityKind(value: unknown): ActivityKind {
+  const kind = activityKinds.find(kind => kind === value);
+  return kind ?? invalid(`kind must be one of ${activityKinds.join(', ')}`);
 }
 export function claimRow(row: Record<string, unknown>): Claim {
   try {
@@ -119,10 +127,22 @@ function inspection(row: Record<string, unknown>): ClaimInspection {
   const lease = row.generation === null ? null : claimRow(row);
   return { issue_id, store_incarnation, observed_at, state: claimState(lease, store_incarnation, observed_at), lease };
 }
+// A report is an immutable receipt, so the newest one on the lease is the holder's current line and the store keeps no second copy.
+// The read joins it as report_at, report_kind, and report_text.
+export function reportedRun(lease: Claim, row: Record<string, unknown>, observed_at: number): Run {
+  try {
+    const last: ReportedActivity | null = row.report_at === null ? null : { kind: activityKind(row.report_kind), text: name(row.report_text, 'text', 200), at: integer(row.report_at, 'report_at', 0) };
+    return runState(lease, last, observed_at);
+  } catch (error) { throw new PolylinedbError('invalid_store', error instanceof Error ? error.message : 'Invalid stored report', 500); }
+}
+function inspectionWithRun(row: Record<string, unknown>): ClaimInspection {
+  const current = inspection(row);
+  return current.lease === null ? current : { ...current, run: reportedRun(current.lease, row, current.observed_at) };
+}
 export async function inspectClaim(db: SqlExecutor, issue_id: string): Promise<ClaimInspection> {
   const row = (await db.reads.all(issueQueries.claimShow, { issue_id }))[0];
   if (!row) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
-  return inspection(row);
+  return inspectionWithRun(row);
 }
 function duplicateReceipt(error: unknown): boolean {
   let cause = error; const seen = new Set<unknown>();
@@ -141,7 +161,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   const caller = asActor(by);
   const actor = caller.id;
   if (operation.op === 'claim_list') {
-    const all = (await db.reads.all(issueQueries.claimList, { tool: operation.tool ?? null, project: operation.project ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 })).map(inspection);
+    const all = (await db.reads.all(issueQueries.claimList, { tool: operation.tool ?? null, project: operation.project ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 })).map(inspectionWithRun);
     const claims = all.slice(0, operation.limit); return { claims, next_cursor: all.length > operation.limit ? claims.at(-1)?.issue_id ?? null : null };
   }
   if (operation.op === 'claim_show') return { claim: await inspectClaim(db, operation.issue_id) };

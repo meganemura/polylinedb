@@ -1,7 +1,7 @@
 // Checks the pure transition decisions with literal states; store tests prove that SQL agrees with them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { claimState, decideClaimMutation, decideCreation, decideIssueUpdate, decidePrerequisiteEdit, decideReplay, decideResourceAddition, decideResourceUpdate, nextResourceMarks, resourceIsLive, resourceState } from '../src/transition/index.ts';
+import { claimState, decideClaimMutation, decideCreation, runState, decideIssueUpdate, decidePrerequisiteEdit, decideReplay, decideResourceAddition, decideResourceUpdate, nextResourceMarks, resourceIsLive, resourceState } from '../src/transition/index.ts';
 import type { FieldChange, ObservedClaim, ObservedIssue } from '../src/transition/index.ts';
 
 const store = 'a'.repeat(32);
@@ -194,4 +194,32 @@ test('a prerequisite edit needs both endpoints and the observed revision', () =>
   assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: 3, blocker_exists: false }, 3), { accepted: false, reason: 'blocker_not_found' });
   assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: 4, blocker_exists: true }, 3), { accepted: false, reason: 'revision_conflict' });
   assert.deepEqual(decidePrerequisiteEdit({ dependent_revision: Number.MAX_SAFE_INTEGER, blocker_exists: true }, Number.MAX_SAFE_INTEGER), { accepted: false, reason: 'revision_exhausted' });
+});
+
+test('a report sets the run, and only a silent working holder turns quiet', () => {
+  const live = { acquired_at: 1000, expires_at: 99_999, released_at: null };
+  const at = (kind: 'working' | 'blocked' | 'error' | 'done', when = 2000) => ({ kind, text: kind, at: when });
+  assert.equal(runState(live, null, 1599).state, 'working', 'a fresh lease with no report is working');
+  assert.equal(runState(live, null, 1600).state, 'quiet', 'no report for 600 seconds after the acquisition is quiet');
+  assert.equal(runState(live, at('working'), 2599).state, 'working');
+  assert.equal(runState(live, at('working'), 2600).state, 'quiet');
+  assert.equal(runState(live, at('blocked'), 90_000).state, 'waiting');
+  assert.equal(runState(live, at('error'), 90_000).state, 'errored');
+  assert.equal(runState(live, at('done'), 90_000).state, 'finishing');
+  assert.deepEqual(runState(live, at('error'), 2000), { state: 'errored', quiet_after: 600, last: { kind: 'error', text: 'error', at: 2000 } });
+});
+
+test('a lease that ended keeps the run it ended with', () => {
+  assert.equal(runState({ acquired_at: 1000, expires_at: 2300, released_at: null }, { kind: 'working', text: 'x', at: 2000 }, 90_000).state, 'working', 'expired 300 seconds after the report');
+  assert.equal(runState({ acquired_at: 1000, expires_at: 2700, released_at: null }, { kind: 'working', text: 'x', at: 2000 }, 90_000).state, 'quiet', 'expired 700 seconds after the report');
+  assert.equal(runState({ acquired_at: 1000, expires_at: 9000, released_at: 2100 }, { kind: 'done', text: 'x', at: 2000 }, 90_000).state, 'finishing');
+  assert.equal(runState({ acquired_at: 1000, expires_at: 2300, released_at: null }, { kind: 'error', text: 'x', at: 2000 }, 90_000).state, 'errored');
+});
+
+test('a report is accepted on the proof alone, whatever the revision', () => {
+  const report = { op: 'claim_report', claim_proof: proof } as const;
+  assert.deepEqual(decideClaimMutation(lease({ revision: 41 }), store, report, 'alice', 999), { accepted: true });
+  assert.deepEqual(decideClaimMutation(lease(), store, report, 'alice', 1000), { accepted: false, reason: 'proof_rejected' }, 'an expired lease takes no report');
+  assert.deepEqual(decideClaimMutation(lease(), store, report, 'bob', 999), { accepted: false, reason: 'proof_rejected' });
+  assert.deepEqual(decideClaimMutation(lease({ revision: 9007199254740991 }), store, report, 'alice', 999), { accepted: false, reason: 'counter_exhausted' });
 });

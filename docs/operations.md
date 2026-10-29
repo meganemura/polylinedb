@@ -88,6 +88,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
 | `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ..., "open_blockers": [...] }` |
 | `claim_renew` | `claim_proof`, `expected_revision`, `request_id`; optional `ttl` | `{ "claim_receipt": ... }` |
+| `claim_report` | `claim_proof`, `kind` (`working`, `blocked`, `error`, or `done`), `text` (at most 200 UTF-8 bytes), `request_id` | `{ "claim_receipt": ... }` with outcome `renewed` and the unchanged `expires_at` |
 | `claim_handoff` | `claim_proof`, `expected_revision`, `request_id`, `tip` (7 to 40 lowercase hex digits); optional `summary` (at most 65536 UTF-8 bytes) | `{ "claim_receipt": ..., "handoff": { "issue": ..., "comments": [...] }, "land_order_warnings": [{ "id": ..., "status": ... }] }` |
 | `claim_release` | `claim_proof`, `expected_revision`, `request_id`; optional `expired_noop: true` | `{ "claim_receipt": ... }`; with `expired_noop` and the caller's expired lease, `{ "released": false, "current": ... }` |
 | `changes` | `since`; `incarnation` when `since` is greater than 0; optional `project`, `issue_ids`, `kinds`, `limit` | `{ "incarnation": ..., "changes": [...], "next_since": ... }` |
@@ -259,6 +260,7 @@ These writes record no event:
 
 - A rejected write, and a replay of an earlier request.
 - `claim_renew`, which extends the deadline for the same holder. `claim_show` reports the current deadline.
+- `claim_report`. `claim_show` reports the newest line as `claim.run.last`.
 - A prerequisite or land-order edit with the outcome `already_present` or `already_absent`.
 - A `star` with the outcome `already_present`, and an `unstar` with the outcome `already_absent`.
 - Memory operations.
@@ -613,6 +615,7 @@ Version 0.4.0 accepts unknown response fields. The CLI 0.3.1 and earlier reject 
 
 These fields are optional so that the client works with Workers on both sides of a change:
 
+- `run` in a claim inspection from `claim_show`, `show`, and `claim_list`. A Worker that predates claim reports omits it, and the inspection then has no `run`. The client rejects a `run` without a lease, an unknown `state` or `kind`, and a `text` longer than 200 UTF-8 bytes.
 - `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
 - `open_blockers` in `claim_acquire`. When the Worker sends it, it must be an array of issue IDs in issue order that does not contain the claimed issue, and the client includes that array. When the Worker omits it, the result has no `open_blockers` key.
 - `matches` in `search`. A Worker that predates `with_matches` answers the request with `invalid_input`, and only the error message names the field. The client then sends the search once more without `with_matches` and returns that page without `matches`. If that request fails, the search fails with its error. A successful response to a request with `with_matches` must still contain `matches`.
@@ -624,6 +627,7 @@ These fields are optional so that the client works with Workers on both sides of
 - `handle`, `via`, and `reply_to` on a comment, and `stars` and `starrers` on a comment in `show`. A Worker that predates posts omits them, and the comment then has none of them. The client rejects a comment that has only some of `handle`, `via`, and `reply_to`, or only one of `stars` and `starrers`. It also rejects more `starrers` than stars or than 20, and a repeated starrer.
 
 A Worker that predates `resources_reason` or the resource operations answers `invalid_input`. The client does not retry without `resources_reason`, because that Worker would close without recording the reason. It reports that the Worker needs an update instead.
+A Worker that predates `claim_report` answers `invalid_input` with `Unknown claim operation`. The client reports that the Worker needs an update and does not retry.
 A Worker that predates `comment_edit` also answers `invalid_input`. The client reports that the Worker needs an update and does not send the edit again.
 For `comment_edit`, the result and the `comment_conflict` and `comment_version_exhausted` details must echo the requested issue ID and comment ID. The result must also carry the requested body and the version after `expected`, and the `comment_not_found` and `comment_author_required` details must echo both IDs.
 A Worker that predates posts answers `star`, `unstar`, and `posts`, a `comment` with `handle`, `via`, or `reply_to`, and a `changes` or `wait` filter on `starred` or `unstarred` with `invalid_input`. The client reports that the Worker needs an update and does not retry, because without those fields a comment would lose its attribution or its reply.

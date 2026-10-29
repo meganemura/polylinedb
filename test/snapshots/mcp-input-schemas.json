@@ -308,6 +308,65 @@
       "request_id"
     ]
   },
+  "claim_report": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "claim_proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "issue_id",
+          "incarnation",
+          "session_id",
+          "generation"
+        ]
+      },
+      "kind": {
+        "enum": [
+          "working",
+          "blocked",
+          "error",
+          "done"
+        ]
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "One line, at most 200 UTF-8 bytes."
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
+    },
+    "required": [
+      "claim_proof",
+      "kind",
+      "text",
+      "request_id"
+    ]
+  },
   "claim_show": {
     "type": "object",
     "additionalProperties": false,

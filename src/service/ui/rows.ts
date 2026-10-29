@@ -1,5 +1,5 @@
 /** Lane rows and the inline forms they carry. Each form posts to a /ui write route with the field versions it observed. */
-import { ownerWaitLabels, readyLabel, type ActiveClaimIssue, type BlockedIssue, type ClaimDisplay, type Issue, type StartedIssue } from '../../records/index.ts';
+import { ownerWaitLabels, readyLabel, type ActiveClaimIssue, type BlockedIssue, type ClaimDisplay, type Issue, type StartedIssue, type WatchedLease } from '../../records/index.ts';
 import { canDispatch, canWrite, clockTime, disclose, duration, escape, fullTime, icon, idLink, issueHref, lang, liveForm, mono,
   person, priorityChip, secondsOf, shortProject, statusChip, timeTag, title, workflowChips, type Lane, type Viewer } from './html.ts';
 import type { QueueItem, YouItem } from './today.ts';
@@ -130,13 +130,15 @@ export function queueRow(item: QueueItem, actions = ''): string {
     + `<a class="title"${lang(text)} href="${escape(issueHref(item.issue.id))}">${escape(text)}</a>${actions === '' ? '' : `<div class="acts">${actions}</div>`}</div></li>`;
 }
 
-export function expiredRow(started: StartedIssue, viewer: Viewer, back: string): string {
+export function expiredRow(started: StartedIssue | WatchedLease, viewer: Viewer, back: string): string {
   const claim = started.claim as Exclude<ClaimDisplay, { state: 'never_claimed' }>;
   const name = holderName(viewer, claim);
   const meta = `<span class="chip c l-stuck">Claim expired</span>${dot(name)}<b>${escape(name)}</b>${mono(started.issue.id)}${priorityChip(started.issue.priority)}`;
   const actions = !canWrite(viewer) ? '' : statusForm(started.issue, back, 'open', 'Set to open')
     + (canDispatch(viewer) ? disclose('Dispatch again', 'send', dispatchForm(started.issue, back, viewer, null)) : '');
-  return row(started.issue, 'stuck', meta, actions, leaseBar(claim.expiresAt, claim.expiresAt, viewer.now));
+  const error = 'run' in started && started.run.state === 'errored' ? started.run.last : null;
+  const reported = error === null ? '' : `<p class="sub-line">The last report was an error: ${escape(error.text)}</p>`;
+  return row(started.issue, 'stuck', meta, actions, reported + leaseBar(claim.expiresAt, claim.expiresAt, viewer.now));
 }
 
 export function blockedRow(blocked: BlockedIssue, viewer: Viewer, back: string): string {

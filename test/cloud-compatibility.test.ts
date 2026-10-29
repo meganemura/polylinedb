@@ -264,7 +264,8 @@ test('a release that asks for expired_noop gets a clear answer from an older Wor
     const release = { op: 'claim_release', claim_proof: expired.claim_proof, expected_revision: expired.revision, request_id: crypto.randomUUID(), expired_noop: true };
     const older = rejecting();
     // observed_at is in seconds, so the conflict and the later claim_show can fall on either side of a second boundary.
-    const unobserved = (claim: unknown) => ({ ...(claim as Record<string, unknown>), observed_at: 0 });
+    // A conflict names the lease as the write observed it, without the run that claim_show reads.
+    const unobserved = (claim: unknown) => { const { run: _, ...rest } = claim as Record<string, unknown>; return { ...rest, observed_at: 0 }; };
     const conflict = await outcome(decode(release, older.fetch)) as { error: { details: { current: unknown } } };
     assert.deepEqual({ ...conflict, error: { ...conflict.error, details: { current: unobserved(conflict.error.details.current) } } },
       { error: { code: 'claim_conflict', status: 409, details: { current: unobserved((await wire({ op: 'claim_show', issue_id })).body.claim) } } });
@@ -367,6 +368,8 @@ const commentShape = { id: 'string', issue_id: 'string', body: 'string', created
 const shownCommentShape = { ...commentShape, stars: 'number', starrers: ['string'] };
 const claimShape = { issue_id: 'string', incarnation: 'string', session_id: 'string', generation: 'number', actor: 'string', agent_label: 'string|null', revision: 'number', acquired_at: 'number', changed_at: 'number', expires_at: 'number', released_at: 'number|null' };
 const inspectionShape = { issue_id: 'string', store_incarnation: 'string', observed_at: 'number', state: 'string', lease: claimShape };
+// A released client drops run; a lease with no report has last: null.
+const runShape = { state: 'string', quiet_after: 'number', last: null };
 function assertShape(value: unknown, shape: unknown, path = 'response'): void {
   if (shape === null) { assert.equal(value, null, path); return; }
   if (shape === 'string|null') { assert.ok(value === null || typeof value === 'string', path); return; }
@@ -418,7 +421,11 @@ test('existing operation responses keep the keys a released client decodes', asy
     assertShape(replay.body, { error: { code: 'string', message: 'string' } });
     assert.equal((replay.body.error as { code: string }).code, 'claim_request_conflict');
     const active = await wire({ op: 'show', id });
-    assertShape(active.body, { issue: issueShape, comments: [shownCommentShape], claim: inspectionShape });
+    assertShape(active.body, { issue: issueShape, comments: [shownCommentShape], claim: { ...inspectionShape, run: runShape } });
+    const lease = acquiredBody.claim_receipt as { incarnation: string; session_id: string; generation: number };
+    const report = { op: 'claim_report', claim_proof: { issue_id: id, incarnation: lease.incarnation, session_id: lease.session_id, generation: lease.generation }, kind: 'blocked', text: 'Waiting on the lexer', request_id: crypto.randomUUID() };
+    assertShape((await wire(report)).body, { claim_receipt: { ...claimShape, outcome: 'string' } });
+    assertShape((await wire({ op: 'claim_show', issue_id: id })).body, { claim: { ...inspectionShape, run: { ...runShape, last: { kind: 'string', text: 'string', at: 'number' } } } });
     assertShape((await wire({ op: 'actor' })).body, { actor: 'string' });
     const memoryRequest = { op: 'memory_create', project: 'compat', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Fact', body: 'Confirmed' };
     assertShape((await wire(memoryRequest)).body, { memory: { id: 'string', project: 'string', title: 'string', body: 'string', version: 'number', created_at: 'string', created_by: 'string', updated_at: 'string', updated_by: 'string' } });
@@ -844,6 +851,21 @@ test('the cloud client posts to a project timeline and checks the written post a
     const older: typeof fetch = async () => Response.json({ error: { code: 'invalid_input', message: 'op must be one of create, show, list, search, comment, comment_edit, update, close, reopen, actor' } }, { status: 400 });
     await assert.rejects(decode(post, older), { code: 'invalid_input', message: 'The cloud Worker does not support posting to a timeline. Deploy a newer Worker to use it.' });
   } finally { sqlite.close(); }
+});
+
+test('an older Worker that does not know claim_report fails with a clear message and no retry', async () => {
+  const proof = { issue_id: 'pd-1', incarnation: 'a'.repeat(32), session_id: crypto.randomUUID(), generation: 1 };
+  const report = { op: 'claim_report', claim_proof: proof, kind: 'error', text: 'build fails', request_id: crypto.randomUUID() };
+  let sent = 0;
+  const older: typeof fetch = async () => { sent += 1; return Response.json({ error: { code: 'invalid_input', message: 'Unknown claim operation' } }, { status: 400 }); };
+  await assert.rejects(decode(report, older), { code: 'invalid_input', message: 'The cloud Worker does not support claim reports. Deploy a newer Worker to use them.' });
+  assert.equal(sent, 1);
+  const receipt = { ...proof, actor: 'access:owner', agent_label: null, revision: 3, acquired_at: 10, changed_at: 20, expires_at: 400, released_at: null, outcome: 'renewed' };
+  const answer = (body: unknown): typeof fetch => async () => Response.json(body);
+  assert.deepEqual(await decode(report, answer({ claim_receipt: receipt })), { claim_receipt: receipt });
+  for (const damaged of [{ ...receipt, outcome: 'released', released_at: 20 }, { ...receipt, generation: 2 }, { ...receipt, session_id: crypto.randomUUID() }]) {
+    await assert.rejects(decode(report, answer({ claim_receipt: damaged })), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+  }
 });
 
 test('an older Worker that rejects posts, stars, a post field, or a star kind fails with a clear message and no retry', async () => {

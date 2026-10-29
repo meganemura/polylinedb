@@ -1,23 +1,23 @@
 // Exposes record commands and their domain types; storage and snapshot details use the persistence entry.
 export { executeOperation, parseOperation, operationSchemas } from './operations.ts';
-export { recentlyClosedIssues, projectSummaries, projectIssues, projectClosedIssues, activeClaimIssues, startedWithoutClaim, blockedIssues, recentUpdates, issueParent, issueChildren, issueDispatchScope } from './issues/issues.ts';
+export { recentlyClosedIssues, projectSummaries, projectIssues, projectClosedIssues, activeClaimIssues, watchedLeases, startedWithoutClaim, blockedIssues, recentUpdates, issueParent, issueChildren, issueDispatchScope } from './issues/issues.ts';
 export { attentionIssues } from './issues/attention.ts';
 export type { Attention, AttentionIssue, AttentionLabel, OpenIssue, OwnerGroup, OwnerLabel, OwnerQueue } from './issues/attention.ts';
-export type { ProjectSummary, ProjectIssue, ActiveClaimIssue, BlockedIssue, StartedIssue, IssueLink } from './issues/issues.ts';
+export type { ProjectSummary, ProjectIssue, ActiveClaimIssue, BlockedIssue, StartedIssue, WatchedLease, IssueLink } from './issues/issues.ts';
 export { claimDisplay } from './claims/claims.ts';
 export type { ClaimDisplay } from './claims/claims.ts';
 export { mcpAnnotationsFor, operationAccess, requiresExplicitLocalActor } from './operation-policy.ts';
 export type { Operation, OperationResult } from './operations.ts';
 export type { OperationAccess } from './operation-policy.ts';
 export { PolylinedbError } from './store/errors.ts';
-export type { Actor } from '../transition/index.ts';
+export type { Actor, Run, RunState, ReportedActivity } from '../transition/index.ts';
 export type { Status, IssueType, Field, Values, Issue, Comment, CommentPost, CommentStars, ShownComment, StoredComment } from './store/issue-record.ts';
 export type { Change, SearchMatch } from './issues/issues.ts';
 export { parseIssueId, parsePrefix, parseRequestId } from './store/issue-id.ts';
 export { parseMemoryId, parseMemoryRevision, observedMemoryProject } from './memories/memories.ts';
 export type { Memory, MemoryStore, MemoryOperation, MemoryContext, MemoryRevision, MemoryFreshness, MemoryResult } from './memories/memories.ts';
 export { ownerWaitDependentLimit } from './dependencies/dependencies.ts';
-export { ownerWaitLabels, readyLabel } from '../transition/index.ts';
+export { ownerWaitLabels, readyLabel, activityKinds, runStates } from '../transition/index.ts';
 export type { OwnerWait } from './dependencies/dependencies.ts';
 export type { DependencyOperation, DependencyMutation, DependencyResult, DependencyReceipt, DependencyOutcome, DependencyRequest, DependencyRevision, Dependency } from './dependencies/dependencies.ts';
 export type { LandOrder, LandOrderNeighbor, LandOrderOperation, LandOrderMutation, LandOrderReceipt, LandOrderResult, LandOrderWarning, LandOrderOutcome, LandOrderEdge, LandOrderRevision, LandOrderRequest } from './land-order/land-order.ts';

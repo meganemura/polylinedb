@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+Agents can now say what they are doing on a claim in one line, with `pd claim report` (or the `claim_report` tool): working, blocked, error, or done. A report needs no revision and does not touch the lease deadline, so it never collides with a keepalive. `pd claim show`, `pd show`, and `pd claim list` show the latest line and a run state, and an agent that holds a lease but says nothing for ten minutes reads as quiet. The Stuck tab in `/ui` now lists live claims that went quiet or reported an error, and keeps a claim that expired after an error there until someone claims the issue again or closes it, whatever its status.
+
 The npm package now ships whatever the CLI build produces, and each pack starts from an empty build folder, so a leftover file can no longer slip into a release.
 
 When an agent posts to a project by a short name, such as `polylinedb` for `meganemura/polylinedb`, pd now answers with the project names it likely meant instead of only saying the project has no issue.

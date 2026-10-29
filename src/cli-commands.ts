@@ -41,7 +41,7 @@ const commandFlags: Record<string, readonly string[]> = {
   claim_show: [], claim_list: ['tool', 'project', 'after', 'limit'],
   claim_acquire: ['incarnation', 'session-id', 'ttl', 'agent-label', 'request-id'],
   claim_keepalive: ['claim-proof', 'ttl', 'max-duration', 'pid', 'kill-on-loss'],
-  claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
+  claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_report: ['claim-proof', 'kind', 'text', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
   claim_handoff: ['claim-proof', 'expected-revision', 'tip', 'summary', 'summary-file', 'request-id'],
   changes: ['since', 'incarnation', 'project', 'issue', 'kind', 'limit'],
   'owner-waits': ['tool', 'project', 'after', 'limit'],
@@ -444,6 +444,7 @@ async function main(argv: readonly string[]): Promise<void> {
     raw.request_id = one('request-id') ?? randomUUID();
   }
   if (command === 'claim_release') raw.expired_noop = true;
+  if (command === 'claim_report') { raw.kind = one('kind'); raw.text = one('text'); }
   if (command === 'claim_handoff') {
     if (one('tip') !== undefined) raw.tip = one('tip');
     if (one('summary') !== undefined && one('summary-file') !== undefined) invalid('Use either --summary or --summary-file');
@@ -451,7 +452,7 @@ async function main(argv: readonly string[]): Promise<void> {
     const summary = summaryFile === undefined ? one('summary') : await readInput(summaryFile, 65536);
     if (summary !== undefined) raw.summary = summary;
   }
-  if (command === 'claim_renew' || command === 'claim_release' || command === 'claim_handoff') {
+  if (command === 'claim_renew' || command === 'claim_report' || command === 'claim_release' || command === 'claim_handoff') {
     raw.request_id = one('request-id') ?? randomUUID(); const expected = one('expected-revision');
     if (expected !== undefined) raw.expected_revision = integer(expected);
   }

@@ -55,7 +55,7 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, ca
 
 async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, store?: MemoryStore): Promise<OperationResult> {
   switch (operation.op) {
-    case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_release':
+    case 'claim_show': case 'claim_list': case 'claim_acquire': case 'claim_renew': case 'claim_report': case 'claim_release':
       return executeClaimOperation(db, operation, actor);
     case 'claim_handoff': {
       // The warning is advisory: it reads after the handoff committed, and nothing about the push is undone.

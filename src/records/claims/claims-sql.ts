@@ -1,11 +1,12 @@
 // Owns atomic lease transitions and proof predicates; transports supply validated commands and actors.
 import type { SqlStatement } from '../store/sql.ts';
-import type { ClaimProof, IssueType, Status } from '../../transition/index.ts';
+import type { ActivityKind, ClaimProof, IssueType, Status } from '../../transition/index.ts';
 export type { ClaimProof };
 
 export type ClaimMutation =
   | { op: 'claim_acquire'; issue_id: string; incarnation: string; session_id: string; request_id: string; ttl: number; agent_label: string | null }
   | { op: 'claim_renew'; claim_proof: ClaimProof; expected_revision: number; request_id: string; ttl: number }
+  | { op: 'claim_report'; claim_proof: ClaimProof; kind: ActivityKind; text: string; request_id: string }
   | { op: 'claim_release'; claim_proof: ClaimProof; expected_revision: number; request_id: string; expired_noop?: true };
 const counter = "INTEGER NOT NULL CHECK(typeof(%s) = 'integer' AND %s BETWEEN 1 AND 9007199254740991)";
 const numeric = (column: string) => counter.replaceAll('%s', column);
@@ -72,6 +73,13 @@ export function claimMutationStatements(command: ClaimMutation, actor: string, g
       AND (claim.issue_id IS NULL OR claim.incarnation <> identity.incarnation OR claim.released_at IS NOT NULL OR claim.expires_at <= unixepoch())
       AND COALESCE(claim.generation,0) < 9007199254740991 AND COALESCE(claim.revision,0) < 9007199254740991 AND ${gate.sql}`,
     params: [command.request_id, actor, payload, command.session_id, command.agent_label, command.ttl, issue, command.incarnation, ...gate.params] };
+  } else if (command.op === 'claim_report') {
+    // A report keeps the deadline: a keepalive's long lease must not shrink to whatever TTL a report would have named.
+    const proof = claimProofPredicate(command.claim_proof, actor);
+    admission = { sql: `INSERT INTO claim_requests(${columns})
+      SELECT ?,?,?,issue_id,incarnation,session_id,agent_label,generation,revision+1,acquired_at,unixepoch(),expires_at,NULL,unixepoch(),'renewed'
+      FROM issue_claims WHERE issue_id = ? AND revision < 9007199254740991 AND ${proof.sql} AND ${gate.sql}`,
+    params: [command.request_id, actor, payload, issue, ...proof.params, ...gate.params] };
   } else {
     const proof = claimProofPredicate(command.claim_proof, actor);
     admission = { sql: `INSERT INTO claim_requests(${columns})

@@ -7,14 +7,28 @@ export async function runShowClaimFlow(run: (value: Record<string, unknown>) => 
   assert.ok('issue' in created); const id = created.issue.id;
   const before = await run({ op: 'show', id }); assert.ok('issue' in before && 'claim' in before);
   assert.equal(before.claim.state, 'never_claimed'); assert.equal(before.claim.lease, null); assert.match(before.claim.store_incarnation, /^[a-f0-9]{32}$/);
+  assert.equal('run' in before.claim, false, 'an issue never claimed has no run');
   const inspected = await run({ op: 'claim_show', issue_id: id }); assert.ok('claim' in inspected);
   assert.deepEqual({ ...before.claim, observed_at: 0 }, { ...inspected.claim, observed_at: 0 });
   const acquired = await run({ op: 'claim_acquire', issue_id: id, incarnation: before.claim.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID(), agent_label: 'Codex' });
   assert.ok('claim_receipt' in acquired);
   const after = await run({ op: 'show', id }); assert.ok('issue' in after && 'claim' in after);
   const { outcome: _, ...lease } = acquired.claim_receipt;
-  assert.deepEqual(after.claim, { issue_id: id, store_incarnation: before.claim.store_incarnation, observed_at: after.claim.observed_at, state: 'active', lease });
+  assert.deepEqual(after.claim, { issue_id: id, store_incarnation: before.claim.store_incarnation, observed_at: after.claim.observed_at, state: 'active', lease,
+    run: { state: 'working', quiet_after: 600, last: null } });
   assert.deepEqual(after.issue, before.issue);
+
+  const claim_proof = { issue_id: id, incarnation: lease.incarnation, session_id: lease.session_id, generation: lease.generation };
+  const report = { op: 'claim_report', claim_proof, kind: 'error', text: 'wrangler d1 execute fails: no such table', request_id: crypto.randomUUID() };
+  const reported = await run(report); assert.ok('claim_receipt' in reported);
+  assert.deepEqual({ revision: reported.claim_receipt.revision, expires_at: reported.claim_receipt.expires_at, outcome: reported.claim_receipt.outcome },
+    { revision: lease.revision + 1, expires_at: lease.expires_at, outcome: 'renewed' }, 'a report needs no revision and keeps the deadline');
+  assert.deepEqual(await run(report), reported, 'a retried report returns its receipt');
+  const errored = { state: 'errored', quiet_after: 600, last: { kind: 'error', text: report.text, at: reported.claim_receipt.changed_at } };
+  const shown = await run({ op: 'show', id }); assert.ok('claim' in shown); assert.deepEqual(shown.claim.run, errored);
+  const reread = await run({ op: 'claim_show', issue_id: id }); assert.ok('claim' in reread); assert.deepEqual(reread.claim.run, errored);
+  const listed = await run({ op: 'claim_list', tool: 'test', project: 'show-claim', limit: 100 }); assert.ok('claims' in listed);
+  assert.deepEqual(listed.claims.find(claim => claim.issue_id === id)?.run, errored);
   await assert.rejects(run({ op: 'show', id: 'pd-999' }), { code: 'not_found' });
 }
 

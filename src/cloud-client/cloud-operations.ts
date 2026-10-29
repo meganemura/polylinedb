@@ -14,8 +14,8 @@ import { fields } from '../records/persistence/persistence.ts';
 import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence/persistence.ts';
 import { claimRow, resourceRow } from '../records/persistence/persistence.ts';
-import { parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels, waitPageLimit } from '../records/index.ts';
-import type { Claim, ClaimInspection, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning, Resource, ResourceList } from '../records/index.ts';
+import { activityKinds, parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels, runStates, waitPageLimit } from '../records/index.ts';
+import type { Claim, ClaimInspection, ReportedActivity, Run, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning, Resource, ResourceList } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;
@@ -73,15 +73,28 @@ function searchMatch(value: unknown, issues: readonly Issue[]): SearchMatch {
 }
 const claimKeys = ['issue_id', 'incarnation', 'session_id', 'generation', 'actor', 'agent_label', 'revision', 'acquired_at', 'changed_at', 'expires_at', 'released_at'];
 function claim(value: unknown): Claim { return claimRow(known(value, claimKeys)); }
+// A Worker from before reports sends no run. A run never comes without a lease.
 function claimInspection(value: unknown): ClaimInspection {
-  const row = known(value, ['issue_id', 'store_incarnation', 'observed_at', 'state', 'lease']);
+  const row = known(value, ['issue_id', 'store_incarnation', 'observed_at', 'state', 'lease'], ['run']);
   const issue_id = parseIssueId(row.issue_id); const store_incarnation = parseIncarnation(row.store_incarnation);
   if (typeof row.observed_at !== 'number' || !Number.isSafeInteger(row.observed_at) || row.observed_at < 0) return invalid();
   const lease = row.lease === null ? null : claim(row.lease);
   if (lease && lease.issue_id !== issue_id) return invalid();
   const state = lease === null ? 'never_claimed' : lease.incarnation !== store_incarnation ? 'invalidated' : lease.released_at !== null ? 'released' : lease.expires_at <= row.observed_at ? 'expired' : 'active';
-  if (row.state !== state) return invalid();
-  return { issue_id, store_incarnation, observed_at: row.observed_at, state, lease };
+  if (row.state !== state || (lease === null && Object.hasOwn(row, 'run'))) return invalid();
+  return { issue_id, store_incarnation, observed_at: row.observed_at, state, lease, ...(Object.hasOwn(row, 'run') ? { run: claimRun(row.run) } : {}) };
+}
+function claimRun(value: unknown): Run {
+  const row = known(value, ['state', 'quiet_after', 'last']);
+  const state = runStates.find(state => state === row.state);
+  if (state === undefined) return invalid();
+  return { state, quiet_after: count(row.quiet_after, 1), last: row.last === null ? null : reportedActivity(row.last) };
+}
+function reportedActivity(value: unknown): ReportedActivity {
+  const row = known(value, ['kind', 'text', 'at']);
+  const kind = activityKinds.find(kind => kind === row.kind);
+  if (kind === undefined || typeof row.text !== 'string' || !row.text.trim() || /\p{Cc}/u.test(row.text) || new TextEncoder().encode(row.text).length > 200) return invalid();
+  return { kind, text: row.text, at: count(row.at, 0) };
 }
 const count = (value: unknown, minimum: number): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum ? value : invalid();
 // A later Worker may record a kind or name a field that this client does not know, so both are checked only as names.
@@ -220,6 +233,13 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         return blockers === undefined ? { claim_receipt, previous_lease } : { claim_receipt, open_blockers: blockers, previous_lease };
       }
       return invalid();
+    }
+    case 'claim_report': {
+      const { outcome, ...owner } = known(known(value, ['claim_receipt']).claim_receipt, [...claimKeys, 'outcome']); const parsed = claim(owner);
+      const proof = operation.claim_proof;
+      if (outcome !== 'renewed' || parsed.released_at !== null || parsed.issue_id !== proof.issue_id || parsed.incarnation !== proof.incarnation
+        || parsed.session_id !== proof.session_id || parsed.generation !== proof.generation) return invalid();
+      return { claim_receipt: { ...parsed, outcome, released_at: null } };
     }
     case 'changes': case 'wait': {
       const row = known(value, ['incarnation', 'changes', 'next_since']);
@@ -465,7 +485,7 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
   if (value === undefined) return undefined;
   switch (code) {
     case 'claim_conflict': {
-      if (operation.op !== 'claim_acquire' && operation.op !== 'claim_renew' && operation.op !== 'claim_release') return invalid();
+      if (operation.op !== 'claim_acquire' && operation.op !== 'claim_renew' && operation.op !== 'claim_report' && operation.op !== 'claim_release') return invalid();
       const current = claimInspection(known(value, ['current']).current);
       if (current.issue_id !== (operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id)) return invalid();
       return { current };
@@ -742,6 +762,9 @@ export async function executeCloudOperation(input: {
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'post' && /^op must be one of /.test(error.message) && !/\bpost\b/.test(error.message)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support posting to a timeline. Deploy a newer Worker to use it.', 400);
       }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'claim_report' && error.message === 'Unknown claim operation') {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support claim reports. Deploy a newer Worker to use them.', 400);
+      }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'comment' && /^Unexpected fields?: /.test(error.message) && /\b(handle|via|reply_to)\b/.test(error.message)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support handle, via, or reply_to on comments. Deploy a newer Worker to use them.', 400);
       }
@@ -767,10 +790,10 @@ export async function executeCloudOperation(input: {
     // The retry is a whole request, so its errors reach the caller as a first request's would. An authorization failure keeps its code.
     if (retried) throw error;
     if (error instanceof PolylinedbError) {
-      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'resource_add' || input.operation.op === 'resource_update' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
+      if ((input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'resource_add' || input.operation.op === 'resource_update' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_report' || input.operation.op === 'claim_release') && error.status >= 500) error.details = { request_id: input.operation.request_id };
       throw error;
     }
-    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'resource_add' || input.operation.op === 'resource_update' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_release' ? { request_id: input.operation.request_id } : undefined;
+    const details = input.operation.op === 'create' || input.operation.op === 'memory_create' || input.operation.op === 'dependency_add' || input.operation.op === 'dependency_remove' || input.operation.op === 'land_order_add' || input.operation.op === 'land_order_remove' || input.operation.op === 'resource_add' || input.operation.op === 'resource_update' || input.operation.op === 'claim_acquire' || input.operation.op === 'claim_renew' || input.operation.op === 'claim_report' || input.operation.op === 'claim_release' ? { request_id: input.operation.request_id } : undefined;
     throw new PolylinedbError('cloud_unavailable', 'The cloud operation did not return a valid result. Its outcome may be unknown.', 503, details);
   } finally {
     clearTimeout(timer);

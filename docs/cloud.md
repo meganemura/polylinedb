@@ -662,7 +662,7 @@ The footer says so: "Composed by rule from the store at HH:MM JST. Reload for a 
 - **You** lists open, not deferred issues labeled `owner-decision` or `owner-action`. Decisions come first, then priority, then the longest wait. A deferred owner item leaves You until it is reopened.
 - **Agents** lists active claims, then ready issues. A ready issue that a claim holds, or that is on You, is not repeated there.
 - **Landing** lists open issues labeled `main-wait` in land order.
-- **Stuck** lists expired claims and issues behind an active blocker. An item on You does not repeat as an expired claim, but it does show as blocked.
+- **Stuck** lists expired claims, live claims whose holder went quiet or reported an error (see [report what you are doing](claims.md#report-what-you-are-doing)), and issues behind an active blocker. An expired claim whose last report was an error stays on Stuck whatever the issue status, until the issue is closed or claimed again. An item on You does not repeat as an expired claim, but it does show as blocked.
 - An issue labeled `main-lock` is never a work row. Its live claim is one sentence on the Agents line: "NAME holds the main lock for PROJECT until HH:MM, so a push to main is under way."
 
 The brief heading counts the You items ("Two things wait on you."), and the sub line gives the split and the oldest wait ("2 to decide, 3 to do; the oldest has waited 13 days.").

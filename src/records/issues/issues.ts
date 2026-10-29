@@ -3,11 +3,11 @@ import { parseIssueId, issueSortKey, parsePrefix, parseRequestId } from "../stor
 import type { Database } from 'solarsql';
 import { issueQueries } from "../store/issue-queries.ts";
 import { expectedType, PolylinedbError, requireFields } from '../store/errors.ts';
-import { claimProofSchema, claimRow, inspectClaim, parseClaimProof, parseIncarnation } from '../claims/claims.ts';
+import { claimProofSchema, claimRow, inspectClaim, parseClaimProof, parseIncarnation, reportedRun } from '../claims/claims.ts';
 import type { ClaimDisplay } from '../claims/claims.ts';
 import type { ClaimInspection } from '../claims/claims.ts';
 import { claimState, decideCommentEdit, decideCreation, decideIssueUpdate, decideReply, decideReplay, fields, issueTypes, startedWorkNeedsClaim, statuses } from '../../transition/index.ts';
-import type { Actor } from '../../transition/index.ts';
+import type { Actor, Run } from '../../transition/index.ts';
 import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from '../claims/agent-gate.ts';
 import { issueClaimGuard } from '../claims/claims-sql.ts';
 import { recordingChanges } from '../store/changes-sql.ts';
@@ -497,6 +497,23 @@ export async function activeClaimIssues(db: SqlExecutor, limit: number): Promise
     if (state !== 'active') return [];
     const lastNote = typeof row.note_body === 'string' && typeof row.note_created_at === 'string' ? { body: row.note_body, at: row.note_created_at } : null;
     return [{ issue, actor: lease.actor, agentLabel: lease.agent_label, acquiredAt: lease.acquired_at, expiresAt: lease.expires_at, lastNote }];
+  });
+}
+
+/** A lease that Stuck watches on an unfinished issue: a live one, or one that expired after its holder reported an error. */
+export type WatchedLease = { issue: Issue; claim: Exclude<ClaimDisplay, { state: 'never_claimed' }>; acquiredAt: number; run: Run };
+export async function watchedLeases(db: SqlExecutor, limit: number): Promise<WatchedLease[]> {
+  const rows = await db.reads.all(issueQueries.watchedLeases, { limit });
+  return rows.flatMap(row => {
+    const issue = issueRow(row);
+    const lease = claimRow({ issue_id: issue.id, incarnation: row.claim_incarnation, actor: row.claim_actor, session_id: row.claim_session_id,
+      agent_label: row.claim_agent_label, generation: row.claim_generation, revision: row.claim_revision, acquired_at: row.claim_acquired_at,
+      changed_at: row.claim_changed_at, expires_at: row.claim_expires_at, released_at: row.claim_released_at });
+    const observed_at = clock(row.observed_at);
+    const state = claimState(lease, parseIncarnation(row.store_incarnation), observed_at);
+    if (state !== 'active' && state !== 'expired') return [];
+    return [{ issue, claim: { state, actor: lease.actor, agentLabel: lease.agent_label, expiresAt: lease.expires_at, releasedAt: lease.released_at },
+      acquiredAt: lease.acquired_at, run: reportedRun(lease, row, observed_at) }];
   });
 }
 

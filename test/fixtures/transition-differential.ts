@@ -151,12 +151,14 @@ export function differentialCases(db: SqlExecutor, label: string) {
       const actor = tc.draw(gs.sampledFrom([owner, owner, owner, 'bob']));
       const store = await incarnation();
       const claim = await observedClaim(issue.id);
-      const op = tc.draw(gs.sampledFrom(['claim_acquire', 'claim_renew', 'claim_release'] as const));
+      const op = tc.draw(gs.sampledFrom(['claim_acquire', 'claim_renew', 'claim_report', 'claim_release'] as const));
       const command = op === 'claim_acquire'
         ? { op, issue_id: issue.id, incarnation: tc.draw(gs.booleans()) ? store : otherIncarnation, session_id: session, request_id: crypto.randomUUID(), ttl: 300 }
+        : op === 'claim_report'
+        ? { op, claim_proof: await proofFor(issue.id, tc.draw(gs.sampledFrom(proofs.filter(kind => kind !== 'none')))), kind: 'working', text: 'differential', request_id: crypto.randomUUID() }
         : { op, claim_proof: await proofFor(issue.id, tc.draw(gs.sampledFrom(proofs.filter(kind => kind !== 'none')))), expected_revision: (claim?.revision ?? 1) + (tc.draw(gs.booleans()) ? 0 : 1), request_id: crypto.randomUUID(), ...(op === 'claim_renew' ? { ttl: 300 } : {}), ...(op === 'claim_release' && tc.draw(gs.booleans()) ? { expired_noop: true } : {}) };
       const parsed = parseOperation(command);
-      assert.ok(parsed.op === 'claim_acquire' || parsed.op === 'claim_renew' || parsed.op === 'claim_release');
+      assert.ok(parsed.op === 'claim_acquire' || parsed.op === 'claim_renew' || parsed.op === 'claim_report' || parsed.op === 'claim_release');
       const clock = await now(); observeClock(claim, clock);
       const decision = decideClaimMutation(claim, store, parsed, actor, clock);
       assert.equal(await outcome(() => actorRun(command, actor)), decision.accepted ? 'accepted' : 'claim_conflict', JSON.stringify({ command, decision }));

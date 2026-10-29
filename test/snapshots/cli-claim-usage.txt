@@ -3,6 +3,10 @@
   claim acquire ID --incarnation HEX --session-id UUID [--ttl 30..3600]
         [--agent-label TEXT] [--request-id UUID]
   claim renew --claim-proof JSON --expected-revision N [--ttl 30..3600] [--request-id UUID]
+  claim report --claim-proof JSON --kind working|blocked|error|done --text LINE
+        [--request-id UUID]
+                                Say what you are doing in one line. Needs no revision and keeps the deadline.
+                                The newest report sets the run that claim show, show, and claim list return.
   claim release --claim-proof JSON --expected-revision N [--request-id UUID]
   claim handoff --claim-proof JSON --expected-revision N --tip SHA
         [--summary TEXT | --summary-file PATH] [--request-id UUID]

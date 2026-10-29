@@ -44,6 +44,7 @@ const operationPolicy = {
   claim_list: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   claim_acquire: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   claim_renew: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  claim_report: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   claim_release: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   claim_handoff: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   land_order_add: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },

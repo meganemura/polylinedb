@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { d1Executor } from "../src/service/d1.ts";
 import type { D1Like, D1StatementLike } from 'solarsql/d1';
 import { executeOperation, parseOperation } from "../src/records/operations.ts";
+import { watchedLeases } from "../src/records/index.ts";
 import { SCHEMA_STATEMENTS } from "../src/records/persistence/schema.ts";
 import { runClaimedListFlow, runShowClaimFlow } from "./fixtures/show-claim-flow.ts";
 import { runClosureFlow } from "./fixtures/closure-flow.ts";
@@ -112,6 +113,8 @@ try {
   await database.prepare('INSERT INTO counters(scope,last_number) VALUES (?,?)').bind('full', Number.MAX_SAFE_INTEGER).run();
   await assert.rejects(run({ ...request, prefix: 'full', request_id: crypto.randomUUID() }), { code: 'counter_exhausted', status: 409 });
   await runShowClaimFlow(run);
+  const stuckLease = (await watchedLeases(db, 101)).find(row => row.issue.body === 'Read then claim');
+  assert.deepEqual([stuckLease?.claim.state, stuckLease?.run.state, stuckLease?.run.last?.text], ['active', 'errored', 'wrangler d1 execute fails: no such table'], 'the Stuck lease read joins the newest report on D1');
   await runClosureFlow(run, 'test:d1');
   await runClaimedListFlow(run, (statement, ...params) => db.batch([{ sql: statement, params }]));
   const trips: string[] = [];
@@ -151,5 +154,5 @@ try {
   assert.equal(shownBeside.status, 'fulfilled', 'a read sharing a call with a failing write still answers');
   assert(stale.status === 'rejected'); assert.equal(stale.reason.code, 'conflict');
   assert.deepEqual(settled(await run({ op: 'show', id })), settled(apart[0]), 'the failed write committed nothing');
-  process.stdout.write('PASS: local workerd D1 persistence, shared read trips and their fallback, CAS, rollback, comments, show claim inspection, the list claimed filter over every claim state, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
+  process.stdout.write('PASS: local workerd D1 persistence, shared read trips and their fallback, CAS, rollback, comments, show claim inspection, claim reports and the run they set, the list claimed filter over every claim state, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
 } finally { await runtime.dispose(); }

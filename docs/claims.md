@@ -37,12 +37,13 @@ When the list is non-empty and the claim was meant to start work, release the cl
 Acquire also returns `previous_lease`. It is the lease that expired without a release just before this acquisition, with its actor, session, label, generation, and deadline, or `null` after a release, a first acquisition, or a lease from another store incarnation.
 The value comes from the immutable receipt history, so a replay returns the same `previous_lease`.
 A non-null `previous_lease` means the previous holder may still be running. Read the issue comments and any pushed `work/<issue id>` branch before starting.
+The `claim.run` that `show` or `claim show` returned before the acquisition carries that holder's last report.
 A holder that cannot renew in time pushes its work branch, comments with what remains, sets status `open` with its proof, and releases the claim instead of letting the lease lapse.
 It leaves the issue status unchanged and can claim a closed issue.
 Concurrent acquisitions elect one winner.
 An already active claim rejects a fresh acquisition, including one from the same session.
 
-`claim show` returns `claim` with `state`, `lease`, `store_incarnation`, and `observed_at`.
+`claim show` returns `claim` with `state`, `lease`, `store_incarnation`, and `observed_at`, and `run` when a lease exists; see [report what you are doing](#report-what-you-are-doing).
 States are `never_claimed`, `active`, `released`, `expired`, and `invalidated`.
 The lease retains the last owner and label after release or expiry.
 An invalidated lease belongs to another store incarnation.
@@ -144,6 +145,44 @@ Release followed by acquisition provides explicit handoff.
 
 The [change feed](operations.md#change-feed) records `claim_acquired` and `claim_released` for committed receipts.
 
+## Report what you are doing
+
+A holder reports one line about its work with `claim_report`:
+
+```sh
+pd claim report --claim-proof "$PROOF_JSON" --kind error \
+  --text 'wrangler d1 execute fails: no such table comments_v2' --request-id REPORT_REQUEST_UUID
+```
+
+`kind` is `working`, `blocked`, `error`, or `done`. `text` is one line of at most 200 UTF-8 bytes.
+A report needs the unexpired proof and no `expected_revision`, so it never conflicts with a keepalive renewal in the same session.
+The newest report replaces the one before it, and a report adds no comment.
+A report writes a receipt with outcome `renewed` that increases the revision and keeps `expires_at`. It never extends or shortens the lease, so renew separately.
+A renewal or release that read the revision before a report gets `claim_conflict` and reads again, as keepalive already does.
+A retry with the same request UUID and payload returns the original receipt. A report under an expired, released, or foreign proof returns `claim_conflict` with the current inspection.
+The change feed records no event for a report.
+
+`claim show`, `show`, and `claim list` return `run` for every lease: `{ state, quiet_after, last }`.
+`last` is the newest report, `{ kind, text, at }`, or `null`. `at` is the store clock in Unix seconds.
+
+| Newest report | `run.state` |
+| --- | --- |
+| `working`, or none | `working`, then `quiet` after `quiet_after` (600) seconds with no report |
+| `blocked` | `waiting` |
+| `error` | `errored` |
+| `done` | `finishing` |
+
+Only `working` turns `quiet` with time. A lease with no report counts from its acquisition.
+Keepalive renewals carry no report, so a holder whose keepalive runs but who says nothing becomes `quiet` while the lease stays live.
+A lease that ended keeps the run it had at its deadline or its release, so an `error` stays visible after the lease expires.
+A `claim_conflict` inspection and the `released: false` answer carry no `run`.
+
+`/ui/stuck` lists live claims whose run is `quiet` or `errored` under **Live claim, quiet or errored**.
+Under **Claim expired** it lists expired leases on started issues, and expired leases whose last report was `error` on any issue that is not closed.
+The Stuck badge counts both.
+
+Report `blocked` or `error` as soon as you stop, and `done` just before a handoff.
+
 ## Hand off to the landing queue
 
 `claim_handoff` ends a lane's work on an issue in one write.
@@ -204,6 +243,7 @@ It renews as the actor of the CLI connection, which must be the claim's actor.
 
 Cloud agents must not log the CLI in with the owner's OAuth, because that would be a different actor and a borrowed identity.
 A cloud agent renews with the MCP `claim_renew` tool between long steps, reading `claim_show` for the revision, and runs long checks as separate commands.
+While a keepalive holds the lease, report progress with `claim_report`, which needs no revision.
 Use keepalive on hosts that hold their own CLI credentials.
 
 ## Gate agent work

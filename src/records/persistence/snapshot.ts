@@ -254,6 +254,9 @@ function parseSnapshotV5(input: unknown): SnapshotV5 {
       if (operation.op === 'claim_show' || operation.op === 'claim_list' || operation.request_id !== row.request_id || JSON.stringify(operation) !== row.payload) return fail('Invalid canonical claim request');
       if (operation.op === 'claim_acquire') {
         if (row.outcome !== 'acquired' || operation.issue_id !== row.issue_id || operation.incarnation !== row.incarnation || operation.session_id !== row.session_id || operation.agent_label !== row.agent_label || row.acquired_at !== row.changed_at || row.expires_at !== row.changed_at + operation.ttl) return fail('Claim acquisition receipt differs from the request');
+      } else if (operation.op === 'claim_report') {
+        const proof = operation.claim_proof;
+        if (proof.issue_id !== row.issue_id || proof.incarnation !== row.incarnation || proof.session_id !== row.session_id || proof.generation !== row.generation || row.outcome !== 'renewed') return fail('Claim report receipt differs from the request');
       } else {
         const proof = operation.claim_proof;
         if (proof.issue_id !== row.issue_id || proof.incarnation !== row.incarnation || proof.session_id !== row.session_id || proof.generation !== row.generation || operation.expected_revision + 1 !== row.revision || row.outcome !== (operation.op === 'claim_renew' ? 'renewed' : 'released') || (operation.op === 'claim_renew' && row.expires_at !== row.changed_at + operation.ttl)) return fail('Claim receipt differs from the request');

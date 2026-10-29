@@ -122,7 +122,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'post', 'posts', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'star', 'unstar', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_report', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'post', 'posts', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'star', 'unstar', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -134,6 +134,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['claim_list', true, false, true, false],
       ['claim_release', false, true, true, false],
       ['claim_renew', false, false, true, false],
+      ['claim_report', false, false, true, false],
       ['claim_show', true, false, true, false],
       ['close', false, true, true, false],
       ['comment', false, false, false, false],
@@ -476,7 +477,8 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     const lease = (await repeat('claim_acquire', { issue_id: issue.id, incarnation: observed.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() })).claim_receipt;
     const claim_proof = { issue_id: issue.id, incarnation: lease.incarnation, session_id: lease.session_id, generation: lease.generation };
     await repeat('claim_renew', { claim_proof, expected_revision: 1, request_id: crypto.randomUUID() });
-    await repeat('claim_release', { claim_proof, expected_revision: 2, request_id: crypto.randomUUID() });
+    await repeat('claim_report', { claim_proof, kind: 'working', text: 'parsing empty input', request_id: crypto.randomUUID() });
+    await repeat('claim_release', { claim_proof, expected_revision: 3, request_id: crypto.randomUUID() });
     const reclaimed = (await call('claim_acquire', { issue_id: issue.id, incarnation: observed.store_incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() })).claim_receipt;
     await repeat('claim_handoff', { claim_proof: { issue_id: issue.id, incarnation: reclaimed.incarnation, session_id: reclaimed.session_id, generation: reclaimed.generation },
       expected_revision: reclaimed.revision, request_id: crypto.randomUUID(), tip: 'abcdef0', summary: 'Enqueued.' });
@@ -1012,6 +1014,45 @@ test('ui: Today composes the lanes by rule, and the dedupe rules keep each issue
   } finally { sqlite.close(); }
 });
 
+test('ui: Stuck shows quiet and errored live claims, and keeps an errored claim after its lease expires on any unfinished issue', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const make = (body: string) => createIssue(env, token, { tool: 'compiler', project: 'acme/parser', body, labels: [] });
+    const lease = async (id: string) => {
+      const { store_incarnation } = (await operation(env, token, { op: 'claim_show', issue_id: id })).claim;
+      const session_id = crypto.randomUUID();
+      const { claim_receipt } = await operation(env, token, { op: 'claim_acquire', issue_id: id, incarnation: store_incarnation, session_id, request_id: crypto.randomUUID(), ttl: 3600, agent_label: 'lane-a' });
+      return { issue_id: id, incarnation: claim_receipt.incarnation, session_id, generation: claim_receipt.generation };
+    };
+    const report = (claim_proof: Record<string, unknown>, kind: string, text: string) => operation(env, token, { op: 'claim_report', claim_proof, kind, text, request_id: crypto.randomUUID() });
+    const quiet = await make('Port the lexer tables'); await lease(quiet);
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = acquired_at - 700, changed_at = changed_at - 700 WHERE issue_id = ?').run(quiet);
+    const errored = await make('Migrate the comment table'); await report(await lease(errored), 'error', 'wrangler d1 execute fails: no such table comments_v2');
+    const busy = await make('Fuzz the parser'); await report(await lease(busy), 'working', '3 of 41 tests fail');
+    const waiting = await make('Pick the error format'); await report(await lease(waiting), 'blocked', 'waiting on the owner');
+    const lapsed = await make('Rotate the parser cache'); await report(await lease(lapsed), 'error', 'cache bucket is gone');
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = acquired_at - 4000, changed_at = changed_at - 4000, expires_at = unixepoch() - 60 WHERE issue_id = ?').run(lapsed);
+    const lapsedWorking = await make('Trim the fixtures'); await report(await lease(lapsedWorking), 'working', 'trimming');
+    sqlite.prepare('UPDATE issue_claims SET acquired_at = acquired_at - 4000, changed_at = changed_at - 4000, expires_at = unixepoch() - 60 WHERE issue_id = ?').run(lapsedWorking);
+
+    const html = await (await viewUi(env, auth, 'GET', '/ui/stuck')).text();
+    const live = panel(html, 'Live claim, quiet or errored');
+    assert.ok(live.includes(`/ui/i/${quiet}"`) && live.includes(`/ui/i/${errored}"`), live);
+    for (const id of [busy, waiting, lapsed, lapsedWorking]) assert.equal(live.includes(`/ui/i/${id}"`), false, id);
+    const liveText = textOf(live);
+    assert.ok(liveText.includes('reported an error') && liveText.includes('wrangler d1 execute fails: no such table comments_v2'), liveText);
+    assert.ok(liveText.includes('has reported nothing since it claimed this'), liveText);
+    const expired = panel(html, 'Claim expired');
+    assert.ok(expired.includes(`/ui/i/${lapsed}"`), 'an errored lease stays on Stuck after it expires, though the issue is open');
+    assert.ok(textOf(expired).includes('The last report was an error: cache bucket is gone'));
+    assert.equal(expired.includes(`/ui/i/${lapsedWorking}"`), false, 'an open issue whose lease lapsed while working is not stuck');
+    assert.match(html, /aria-label="Stuck, 3"/);
+    for (const path of ['/ui', '/ui/projects', `/ui/i/${busy}`]) assert.match(await (await viewUi(env, auth, 'GET', path)).text(), /aria-label="Stuck, 3"/, path);
+  } finally { sqlite.close(); }
+});
+
 test('ui: composeLanes drops You items from Ready, Expired, and Stale, and counts what the page cap hides', () => {
   const issue = (id: string, labels: string[], status: Issue['status'] = 'open'): Issue => ({ id, tool: 't', project: 'o/p', body: id, status, type: 'task', priority: 2, labels,
     parent_id: null, created_at: '2026-10-01T00:00:00.000Z', created_by: 'a', updated_at: '2026-10-01T00:00:00.000Z', updated_by: 'a',
@@ -1021,7 +1062,7 @@ test('ui: composeLanes drops You items from Ready, Expired, and Stale, and count
   const owner = issue('t-1', ['owner-action']);
   const lanes = composeLanes({
     attention: { issues: [{ issue: owner, labels: owner.labels, waitingSeconds: 60 }, { issue: issue('t-9', ['owner-decision'], 'closed'), labels: ['owner-decision'], waitingSeconds: 1 }] } as never,
-    claims: [], blocked: { rows: [], total: 0 }, queue: [], locks: [], since: [],
+    claims: [], leases: [], blocked: { rows: [], total: 0 }, queue: [], locks: [], since: [],
     started: { rows: [expired('t-1', ['owner-action']), expired('t-2'), stale('t-3'), stale('t-4', ['main-lock']), stale('t-1')], total: 120, expired: 2 },
     ready: [issue('t-1', ['ready', 'owner-action']), issue('t-5', ['ready'])],
   });

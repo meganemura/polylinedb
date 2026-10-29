@@ -1,6 +1,6 @@
 /** Composes each /ui page from data the entry module already read. Nothing here reads the store or writes. */
 import { blockerIsActive, type ActivityEvent, type ActivityPage, type Attention, type ClaimDisplay, type Comment, type Issue, type IssueLink, type PostPage,
-  type ProjectIssue, type ProjectSummary, type Status } from '../../records/index.ts';
+  type ProjectIssue, type ProjectSummary, type Status, type WatchedLease } from '../../records/index.ts';
 import { avatar, bodyAfterTitle, canDispatch, canWrite, clockTime, disclose, document, duration, escape, fullTime, hidden, icon, idLink, issueHref, japanTime,
   joined, labelChip, lang, lanePanel, liveForm, mono, pageHead, person, plural, priorityChip, projectHref, secondsOf, shortProject, shortTitle, statusChip,
   statusWord, timeTag, title, whose, workflowLabels, type TabCounts, type Viewer } from './html.ts';
@@ -204,7 +204,10 @@ export function landingPage(lanes: Lanes, viewer: Viewer, results: string): stri
 
 export function stuckPage(lanes: Lanes, viewer: Viewer): string {
   const expired = lanePanel({ lane: 'stuck', icon: 'warn', heading: 'Claim expired', count: lanes.expired.length, rows: lanes.expired.slice(0, pageLimit).map(row => expiredRow(row, viewer, '/ui/stuck')).join(''),
-    empty: 'No claim has expired on a started issue.', foot: lanes.expired.length > pageLimit ? rest(`Showing ${pageLimit} of ${lanes.expired.length}.`) : '' });
+    empty: 'No claim has expired on a started issue or after an error.', foot: lanes.expired.length > pageLimit ? rest(`Showing ${pageLimit} of ${lanes.expired.length}.`) : '' });
+  const silentRows = lanes.silent.slice(0, pageLimit).map(row => plainRow(row.issue, viewer, `<p class="sub-line">${silentClaim(row, viewer)}</p>`, true)).join('');
+  const silent = lanePanel({ lane: 'stuck', icon: 'stuck', heading: 'Live claim, quiet or errored', count: lanes.silent.length, rows: silentRows,
+    empty: 'Every live claim reported work recently.' });
   const blocked = lanePanel({ lane: 'stuck', icon: 'link', heading: 'Waiting on unfinished work', count: lanes.blockedTotal, rows: lanes.blocked.slice(0, pageLimit).map(row => blockedRow(row, viewer, '/ui/stuck')).join(''),
     empty: 'Nothing waits on a blocker.', foot: lanes.blockedTotal === 0 ? '' : limitNote(Math.min(pageLimit, lanes.blocked.length), lanes.blockedTotal, plural(lanes.blockedTotal, 'is', 'are')) });
   const staleRows = lanes.stale.slice(0, pageLimit).map(row => plainRow(row.issue, viewer, `<p class="sub-line">${staleClaim(row.claim, viewer)}</p>`, true)).join('');
@@ -212,7 +215,15 @@ export function stuckPage(lanes: Lanes, viewer: Viewer): string {
     empty: 'Every started issue has a live claim.', foot: lanes.staleTotal === 0 ? '' : limitNote(Math.min(pageLimit, lanes.stale.length), lanes.staleTotal, plural(lanes.staleTotal, 'is', 'are'))
       + '<p class="panel-note">Open an issue to set it back to open or send it to an agent.</p>' });
   return document({ title: 'Stuck', viewer, counts: tabCounts(lanes), tab: 'stuck',
-    body: pageHead('Stuck', 'Expired leases, work behind a blocker, and started issues nobody holds.') + `<div class="board">${expired}${blocked}</div><div class="closing">${stale}</div>` });
+    body: pageHead('Stuck', 'Expired leases, work behind a blocker, and started issues nobody holds.') + `<div class="board">${expired}${silent}${blocked}</div><div class="closing">${stale}</div>` });
+}
+
+function silentClaim(row: WatchedLease, viewer: Viewer): string {
+  const name = escape(holderName(viewer, row.claim));
+  const last = row.run.last;
+  if (row.run.state === 'errored' && last) return `${name} reported an error ${duration(viewer.now - last.at)} ago: ${escape(last.text)}`;
+  if (!last) return `${name} has reported nothing since it claimed this ${duration(viewer.now - row.acquiredAt)} ago; the lease is still live.`;
+  return `${name} has been quiet for ${duration(viewer.now - last.at)}; the lease is still live. Last: ${escape(last.text)}`;
 }
 
 function staleClaim(claim: ClaimDisplay, viewer: Viewer): string {

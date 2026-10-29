@@ -471,3 +471,54 @@ test('completed D1 restore requires its recorded target incarnation for verify a
   assert.deepEqual(database.prepare('SELECT * FROM issues').all(), rows);
   assert.equal(database.prepare('SELECT incarnation FROM memory_store_identity').get()?.incarnation, provenance.original_incarnation);
 });
+test('a report needs only the proof, keeps the deadline, and sets the run claim_show reads', async t => {
+  const { run, db } = fixture(t); const issue = await create(run);
+  const owner = await acquire(run, issue.id, { ttl: 3600 });
+  const shownRun = async () => { const shown = await run({ op: 'claim_show', issue_id: issue.id }); assert.ok('claim' in shown); return shown.claim; };
+  assert.deepEqual((await shownRun()).run, { state: 'working', quiet_after: 600, last: null });
+  // A keepalive renews in between; a report that read no revision still lands.
+  await run({ op: 'claim_renew', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request(), ttl: 3600 });
+  const report = (kind: string, text: string) => ({ op: 'claim_report', claim_proof: proof(owner.receipt), kind, text, request_id: request() });
+  const blocked = report('blocked', 'waiting for the owner to pick a schema');
+  const reported = await run(blocked); assert.ok('claim_receipt' in reported);
+  assert.equal(reported.claim_receipt.revision, 3);
+  assert.equal(reported.claim_receipt.expires_at - reported.claim_receipt.changed_at > 3000, true, 'a report never shortens a long lease');
+  assert.deepEqual((await shownRun()).run, { state: 'waiting', quiet_after: 600, last: { kind: 'blocked', text: blocked.text, at: reported.claim_receipt.changed_at } });
+  assert.deepEqual(await run(blocked), reported);
+  await assert.rejects(run({ ...blocked, text: 'another line' }), { code: 'claim_request_conflict' });
+  await assert.rejects(run({ op: 'claim_renew', claim_proof: proof(owner.receipt), expected_revision: 2, request_id: request() }), { code: 'claim_conflict' }, 'a renewal that read before the report rereads');
+  for (const [kind, state] of [['done', 'finishing'], ['working', 'working'], ['error', 'errored']] as const) {
+    await run(report(kind, `${kind} line`));
+    assert.equal((await shownRun()).run?.state, state, kind);
+  }
+  await assert.rejects(async () => run(report('stalled', 'x')), { code: 'invalid_input' });
+  await assert.rejects(async () => run({ ...report('working', 'x'), expected_revision: 6 }), { code: 'invalid_input' }, 'a report takes no revision');
+  await assert.rejects(run({ ...report('working', 'x'), claim_proof: { ...proof(owner.receipt), session_id: request() } }), { code: 'claim_conflict' });
+  await assert.rejects(run(report('working', 'x'), 'test:other'), { code: 'claim_conflict' });
+
+  // The lease expires while the error stands: the run keeps it, and a report on the dead lease is refused.
+  await db.batch([{ sql: 'UPDATE issue_claims SET acquired_at = unixepoch() - 4000, changed_at = unixepoch() - 4000, expires_at = unixepoch() - 1 WHERE issue_id = ?', params: [issue.id] }]);
+  const expired = await shownRun();
+  assert.equal(expired.state, 'expired'); assert.equal(expired.run?.state, 'errored'); assert.equal(expired.run?.last?.text, 'error line');
+  await assert.rejects(run(report('working', 'too late')), { code: 'claim_conflict' });
+  const listed = await run({ op: 'claim_list', limit: 10 }); assert.ok('claims' in listed);
+  assert.deepEqual(listed.claims.find(claim => claim.issue_id === issue.id)?.run, expired.run);
+});
+test('a working holder with no report for 600 seconds is quiet while its lease is live', async t => {
+  const { run, db } = fixture(t); const issue = await create(run);
+  await acquire(run, issue.id, { ttl: 3600 });
+  await db.batch([{ sql: 'UPDATE issue_claims SET acquired_at = unixepoch() - 600, changed_at = unixepoch() - 600 WHERE issue_id = ?', params: [issue.id] }]);
+  const shown = await run({ op: 'claim_show', issue_id: issue.id }); assert.ok('claim' in shown);
+  assert.equal(shown.claim.state, 'active'); assert.equal(shown.claim.run?.state, 'quiet');
+});
+test('a snapshot carries report receipts and restores the same run', async t => {
+  const source = fixture(t); const destination = fixture(t); await create(source.run);
+  const owner = await acquire(source.run, 'pd-1');
+  await source.run({ op: 'claim_report', claim_proof: proof(owner.receipt), kind: 'error', text: 'migration fails', request_id: request() });
+  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.claim_requests.length, 2);
+  destination.store.importSnapshot(snapshot); assert.equal(canonicalSnapshot(destination.store.exportSnapshot()), canonicalSnapshot(snapshot));
+  const restored = await destination.run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in restored);
+  assert.equal(restored.claim.run?.last?.text, 'migration fails');
+  const forged = { ...snapshot, claim_requests: snapshot.claim_requests.map(row => row.outcome === 'renewed' ? { ...row, outcome: 'released' as const, released_at: row.changed_at } : row) };
+  assert.throws(() => parseSnapshot(forged), { code: 'invalid_snapshot' });
+});

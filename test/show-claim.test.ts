@@ -109,7 +109,8 @@ test('cloud client accepts the claim in show and rejects a foreign or inconsiste
     await runShowClaimFlow(value => cloud(value));
     await runClaimedListFlow(value => cloud(value), async (statement, ...params) => sqlite.prepare(statement).run(...params));
     const shown = await (await post('/v1/operations', { op: 'show', id: 'pd-1' })).json();
-    for (const damaged of [{ ...shown, claim: { ...shown.claim, issue_id: 'pd-2' } }, { ...shown, claim: { ...shown.claim, state: 'released' } }]) {
+    for (const damaged of [{ ...shown, claim: { ...shown.claim, issue_id: 'pd-2' } }, { ...shown, claim: { ...shown.claim, state: 'released' } },
+      { ...shown, claim: { ...shown.claim, run: { ...shown.claim.run, state: 'stalled' } } }, { ...shown, claim: { ...shown.claim, run: { ...shown.claim.run, last: { ...shown.claim.run.last, kind: 'idle' } } } }]) {
       await assert.rejects(cloud({ op: 'show', id: 'pd-1' }, async () => Response.json(damaged)), { code: 'cloud_invalid_response' });
     }
   } finally { sqlite.close(); }

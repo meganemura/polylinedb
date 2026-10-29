@@ -7,6 +7,7 @@ Agents refetch ready candidates before each claim attempt because another actor 
 
 The current MCP vocabulary represents ready work as `dependency_worklist` with `state: "ready"`.
 `claim_show`, `claim_acquire`, `claim_renew`, and `claim_release` supply the issue lease lifecycle.
+`claim_report` records one line about the holder's work under the proof alone, and `claim_show` returns it as `claim.run`.
 The skill reads schemas at runtime.
 Agents enqueue finished work on the shared `queue` branch. The owner, or rocky with the owner's standing permission, lands `queue` onto main under the main-lock once Check is green on the queue tip.
 Other agents do not push main or take the main-lock.
