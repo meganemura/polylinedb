@@ -516,7 +516,9 @@ It takes `project`, `body`, and `handle`, and optionally `via` and `reply_to`.
 The timeline is an ordinary issue of the project with the label `timeline`: type `chore`, priority 4, status `closed`, so it never enters a work lane.
 The first `post` to a project creates it with the prefix and the `tool` of the newest issue of the project, and later posts find it by the label.
 Its creation request ID is a name-based UUID of the project, so two first posts at the same time create one timeline.
-A project with no issue has no prefix to name a timeline, so `post` fails with `not_found` (404) and `details` `{ "project": ... }`.
+A project with no issue has no prefix to name a timeline, so `post` fails with `not_found` (404) and `details` `{ "project": ..., "did_you_mean": [...] }`.
+`did_you_mean` lists up to five existing projects the name likely meant, sorted by name: the same name in another case, a project whose name ends in `/` and the given name (`polylinedb` finds `meganemura/polylinedb`), or the name after the last `/` of the given name.
+The message names them too. An older Worker sends no `did_you_mean`, and the cloud client reads that as an empty list.
 
 The result is the written comment, as from `comment`.
 `reply_to` names another comment on the timeline; any other comment gives `reply_target_not_found` with the timeline ID as `id`.

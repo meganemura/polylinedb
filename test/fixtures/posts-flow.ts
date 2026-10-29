@@ -205,10 +205,18 @@ export async function runTimelineFlow(db: SqlExecutor): Promise<void> {
 
   const empty = await latest();
   assert.deepEqual(await refusal(run({ op: 'post', project: 'quiet', body: 'Nowhere to go', handle: 'builder' }, agent)),
-    { code: 'not_found', status: 404, details: { project: 'quiet' } }, 'a project with no issue has no prefix to name a timeline');
+    { code: 'not_found', status: 404, details: { project: 'quiet', did_you_mean: [] } }, 'a project with no issue has no prefix to name a timeline');
   assert.equal(await latest(), empty);
 
   const work = ((await run({ op: 'create', prefix: 'tl', request_id: crypto.randomUUID(), tool: 'timeline-tool', project: 'loud', body: 'Some work' })).issue as Row & { id: string }).id;
+  for (const near of ['acme/loud', 'LOUD']) {
+    assert.deepEqual(await refusal(run({ op: 'post', project: near, body: 'Close enough', handle: 'builder' }, agent)),
+      { code: 'not_found', status: 404, details: { project: near, did_you_mean: ['loud'] } }, 'a short or differently cased name points at the project it likely means');
+  }
+  await run({ op: 'create', prefix: 'tl', request_id: crypto.randomUUID(), tool: 'timeline-tool', project: 'acme/tide', body: 'Other work' });
+  assert.deepEqual(await refusal(run({ op: 'post', project: 'tide', body: 'Close enough', handle: 'builder' }, agent)),
+    { code: 'not_found', status: 404, details: { project: 'tide', did_you_mean: ['acme/tide'] } }, 'a repository name without its owner points at the full name');
+  await assert.rejects(run({ op: 'post', project: 'acme/loud', body: 'Close enough', handle: 'builder' }, agent), /Did you mean loud\?/);
   const before = await latest();
   const first = (await run({ op: 'post', project: 'loud', body: 'Strip ANSI before reading CI output', handle: 'builder', via }, agent)).comment as Row & { id: string; issue_id: string };
   const timeline = (await run({ op: 'show', id: first.issue_id })).issue as Row;

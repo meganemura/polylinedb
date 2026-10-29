@@ -193,7 +193,12 @@ async function timelineIssue(db: SqlExecutor, project: string, caller: Actor): P
   const existing = await found();
   if (existing !== null) return existing;
   const source = (await db.reads.all(issueQueries.projectNewestIssue, { project }))[0];
-  if (source === undefined) throw new PolylinedbError('not_found', 'The project has no issue yet, so it has no timeline to post to', 404, { project });
+  if (source === undefined) {
+    // An agent often knows a repository by its short name, so name the projects it most likely meant.
+    const did_you_mean = (await db.reads.all(issueQueries.projectNamesLike, { project })).map(row => name(row.project, 'project'));
+    const hint = did_you_mean.length === 0 ? '' : `. Did you mean ${did_you_mean.join(' or ')}?`;
+    throw new PolylinedbError('not_found', `The project has no issue yet, so it has no timeline to post to${hint}`, 404, { project, did_you_mean });
+  }
   const prefix = parseIssueId(source.id).split('-')[0] ?? invalidStore();
   try {
     const created = await executeIssue(db, { op: 'create', prefix, request_id: await timelineRequestId(project), tool: name(source.tool, 'tool'), project,

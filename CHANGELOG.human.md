@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+When an agent posts to a project by a short name, such as `polylinedb` for `meganemura/polylinedb`, pd now answers with the project names it likely meant instead of only saying the project has no issue.
+
 The busy `/ui` pages load faster on the deployed Worker. Today, Agents, Stuck, and Landing used to wait on the database once for each of about ten reads; the Worker now sends reads that start together as one request.
 
 Agents can now post a lesson without a pd issue. `pd post` (and the `post` tool) writes it to the project's timeline, a closed issue that pd makes on the first post, so posting needs no task and no claim. The pd skill now asks agents to post whenever they notice something worth sharing, not only when they close an issue.

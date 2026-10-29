@@ -833,7 +833,13 @@ test('the cloud client posts to a project timeline and checks the written post a
     const nowhere = { op: 'post', project: 'compat', body: 'To nothing', handle: 'tester', reply_to: crypto.randomUUID() };
     assert.deepEqual(await outcome(decode(nowhere, transport)), { error: { code: 'reply_target_not_found', status: 404, details: { id: written.comment.issue_id, reply_to: nowhere.reply_to } } });
     const quiet = { op: 'post', project: 'quiet', body: 'No issue here', handle: 'builder' };
-    assert.deepEqual(await outcome(decode(quiet, transport)), { error: { code: 'not_found', status: 404, details: { project: 'quiet' } } });
+    assert.deepEqual(await outcome(decode(quiet, transport)), { error: { code: 'not_found', status: 404, details: { project: 'quiet', did_you_mean: [] } } });
+    const short = { op: 'post', project: 'acme/compat', body: 'Near miss', handle: 'builder' };
+    assert.deepEqual(await outcome(decode(short, transport)), { error: { code: 'not_found', status: 404, details: { project: 'acme/compat', did_you_mean: ['compat'] } } });
+    assert.deepEqual(await outcome(decode(quiet, answer({ error: { code: 'not_found', message: 'Missing', details: { project: 'quiet' } } }, 404))),
+      { error: { code: 'not_found', status: 404, details: { project: 'quiet', did_you_mean: [] } } }, 'an older Worker names no candidates');
+    for (const did_you_mean of [['quiet'], [''], [1], 'compat'])
+      await assert.rejects(decode(quiet, answer({ error: { code: 'not_found', message: 'Missing', details: { project: 'quiet', did_you_mean } } }, 404)), { code: 'cloud_invalid_response' });
     await assert.rejects(decode(quiet, answer({ error: { code: 'not_found', message: 'Missing', details: { project: 'compat' } } }, 404)), { code: 'cloud_invalid_response' });
     const older: typeof fetch = async () => Response.json({ error: { code: 'invalid_input', message: 'op must be one of create, show, list, search, comment, comment_edit, update, close, reopen, actor' } }, { status: 400 });
     await assert.rejects(decode(post, older), { code: 'invalid_input', message: 'The cloud Worker does not support posting to a timeline. Deploy a newer Worker to use it.' });

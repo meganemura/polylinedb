@@ -591,7 +591,14 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
     }
     case 'not_found': {
       // A post names the project it found no issue in, because the caller never named an issue.
-      if (operation.op === 'post') { if (known(value, ['project']).project !== operation.project) return invalid(); return { project: operation.project }; }
+      // An older Worker names no candidates, so a missing did_you_mean reads as none.
+      if (operation.op === 'post') {
+        const row = known(value, ['project'], ['did_you_mean']);
+        const candidates = row.did_you_mean ?? [];
+        if (row.project !== operation.project || !Array.isArray(candidates) || candidates.length > 5
+          || candidates.some(candidate => typeof candidate !== 'string' || candidate.length === 0 || candidate === operation.project)) return invalid();
+        return { project: operation.project, did_you_mean: candidates as string[] };
+      }
       return { id: parseIssueId(known(value, ['id']).id) };
     }
     case 'epic_has_children': return { issue: issue(known(value, ['issue']).issue) };
