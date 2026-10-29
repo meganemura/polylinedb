@@ -29,6 +29,7 @@ export default {
     { name: "records/dependencies", glob: "src/records/dependencies/**", friends: recordsOnly },
     { name: "records/land-order", glob: "src/records/land-order/**", friends: recordsOnly },
     { name: "records/posts", glob: "src/records/posts/**", friends: recordsOnly },
+    { name: "records/items", glob: "src/records/items/**", friends: recordsOnly },
     { name: "records/memories", glob: "src/records/memories/**", friends: recordsOnly },
     { name: "records/changes", glob: "src/records/changes/**", friends: recordsOnly },
     { name: "records/persistence", glob: "src/records/persistence/**", surface: "persistence.ts" },

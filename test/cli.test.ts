@@ -349,6 +349,30 @@ test('CLI owner-waits lists owner waits with direct dependents and keeps them of
   assert.deepEqual(run(['owner-waits', '--project', 'other'], { actor: false }).waits, []);
   assert.equal(run(['owner-waits', '--status', 'open'], { actor: false, status: 2 }).error.code, 'invalid_input');
 });
+test('CLI item verbs ask, answer, meet, and waive, and close names the items that hold it', t => {
+  const { run } = fixture(t);
+  run(['init'], { actor: false });
+  run(['create', '--tool', 'test', '--project', 'test', '--body', 'Pick a format']);
+  const asked = run(['item', 'ask', 'pd-1', 'Bare dates or timestamps?', '--option', 'bare date', '--option', 'timestamp', '--recommended', 'bare date']);
+  assert.deepEqual([asked.item.n, asked.item.kind, asked.item.options, asked.item.recommended, typeof asked.wait_from.since], [1, 'ask', ['bare date', 'timestamp'], 'bare date', 'number']);
+  run(['item', 'check', 'pd-1', 'npm test passes']);
+  assert.deepEqual(run(['ready'], { actor: false }).issues, []);
+  assert.deepEqual(run(['owner-waits'], { actor: false }).waits.map((wait: { issue: { id: string } }) => wait.issue.id), ['pd-1']);
+  const human = run(['show', 'pd-1', '--human'], { raw: true });
+  assert.match(human, /Asks and checks \(2 open\)\n  ask 1 · open · by local:test\n    Bare dates or timestamps\?\n    options: bare date \(recommended\), timestamp\n  check 2 · open · by local:test\n    npm test passes\n/);
+  assert.equal(run(['item', 'answer', 'pd-1', '1', 'bare date'], { status: 1 }).error.code, 'item_actor_refused', 'the asker does not answer its own ask');
+  assert.equal(run(['--actor', 'local:owner', 'item', 'answer', 'pd-1', '1', 'epoch'], { actor: false, status: 2 }).error.code, 'invalid_input');
+  const answered = run(['--actor', 'local:owner', 'item', 'answer', 'pd-1', '1', 'bare date', '--note', 'keep it simple'], { actor: false });
+  assert.deepEqual([answered.item.state, answered.item.answer, answered.item.note], ['answered', 'bare date', 'keep it simple']);
+  assert.equal(run(['--actor', 'local:owner', 'item', 'answer', 'pd-1', '1', 'timestamp'], { actor: false, status: 4 }).error.code, 'item_conflict');
+  const refused = run(['close', 'pd-1', '--expected', '1'], { status: 4 }).error;
+  assert.equal(refused.code, 'items_open');
+  assert.match(refused.message, /check #2 "npm test passes": meet it with evidence \(pd item meet pd-1 2 'EVIDENCE'/);
+  assert.equal(run(['--actor', 'local:bot', '--actor-kind', 'agent', 'item', 'waive', 'pd-1', '2', 'not needed'], { actor: false, status: 1 }).error.code, 'item_actor_refused');
+  assert.equal(run(['item', 'meet', 'pd-1', '2', 'npm test: 12 pass, 0 fail']).item.state, 'met');
+  assert.equal(run(['close', 'pd-1', '--expected', '1']).issue.status, 'closed');
+  assert.equal(run(['item', 'meet', 'pd-1', '9', 'x'], { status: 3 }).error.code, 'item_not_found');
+});
 test('CLI ready and blocked retain local reader fallback, and unknown commands reach command validation', t => {
   const { run } = fixture(t);
   run(['init'], { actor: false });
@@ -866,7 +890,7 @@ test('CLI reports retired stores for writes while reads and exports remain avail
     try {
       assert.deepEqual(destinationCli(['import', '--file', '-'], { input: JSON.stringify(snapshot), status: 4 }).error,
         { code: 'store_retired', message });
-      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 9, stars: [], land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [],
+      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 10, issue_items: [], stars: [], land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [],
         issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
     } finally { destinationRetirement.close(); }
   } finally {

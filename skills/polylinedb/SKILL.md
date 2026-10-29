@@ -60,10 +60,11 @@ A successful `claim_acquire` returns `open_blockers`, the ids of active blockers
 An empty list means there are none.
 Acquire does not fail because of those blockers.
 If `open_blockers` is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist.
+It also returns `open_asks`, the asks on the issue that still wait for a person's answer. A non-empty list means part of the work waits on that answer; read the asks before starting.
 It also returns `previous_lease`: the lease that expired without a release just before this acquisition, or `null`.
 A non-null `previous_lease` means its holder may still be running. Before starting, read the issue comments and look for a pushed `work/<issue id>` branch, and continue from what they hold instead of starting over or pushing over that branch.
 For an agent actor, `claim_acquire` rejects an issue without the `ready` label with `not_ready`.
-The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `comment_edit`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.
+The agent needs its own active claim for `update`, `close`, `reopen`, `comment`, `comment_edit`, `item_add`, `item_resolve`, `dependency_add`, and `dependency_remove`; otherwise they fail with `claim_required`.
 The store checks both rules in the same transaction as the write. A recommendation never overrides a rejection.
 A cloud connector reports a human actor until per-agent tokens exist and does not enforce these gates, so refetch `ready` after acquisition there.
 Start work only after successful acquisition and a fresh readiness check.
@@ -100,6 +101,19 @@ The call returns when a matching change-feed event exists after `since`.
 If the timeout elapses first, the result has no events and the current cursor. Call `wait` again with that cursor.
 `wait` is a read. It does not claim an issue and it does not change one.
 Do not sleep in a loop and poll `show`, `list`, or the ready worklist.
+
+## Ask a person and check the result
+
+When the work needs a person's decision, add an ask instead of guessing: `item_add` with `id`, `kind: "ask"`, the question as `text`, 2 to 8 `options` when the answers are known, the one you would choose as `recommended`, and a new `request_id`.
+Keep your claim. Report `blocked` with `claim_report`, then `wait` with `since` set to the returned `wait_from.since`, `issue_ids` set to the issue, and `kinds: ["answered"]`. Your own ask records `asked`, so it does not wake you.
+While the ask is open, the issue is off the ready worklist and listed in owner waits, so a person sees it.
+After the wake, read the answer in `items` with `show` and continue. Renew the claim between waits.
+Only a person answers. Neither an agent nor the actor that asked can answer through a tool, and a cloud connector shares the owner's actor, so the owner answers on the `/ui` page.
+If the question goes away, withdraw it: `item_resolve` with `n`, `to: "withdrawn"`, and the reason in `note`.
+
+When the issue has an acceptance condition, add it as a check: `item_add` with `kind: "check"` and the condition as `text`.
+Meet it when it holds: `item_resolve` with `n`, `to: "met"`, and one evidence line in `note`, such as the test command and its counts. Only a person waives a check.
+`close` and `claim_handoff` fail with `items_open` while an ask is open or a check is unmet. The error names each item and the call that ends it.
 
 ## Work in your own worktree
 

@@ -84,6 +84,8 @@ Hand the issue off with one `claim_handoff` call.
 Pass the issue proof, the current claim revision as `expected_revision`, a new request UUID, `tip` set to the 40-character SHA of the queue tip, and `summary` set to the changed paths, commit SHAs, and verification result.
 In one atomic write it adds the `tip: <sha>` comment and the summary comment, sets status `open`, removes `ready`, adds `main-wait`, keeps the other labels, and releases the claim.
 If any part fails, nothing is written. After an uncertain response, call it again with the same request UUID and the same arguments; it returns the first result.
+While the issue has an open ask or an unmet check, the handoff fails with `items_open` and writes nothing; the error names each item.
+Meet each check with `item_resolve` and its evidence, and wait for each ask to be answered or withdraw it. Then hand off again with a new request UUID.
 
 When the result carries a non-empty `land_order_warnings`, report each `id` and `status` to the user: this issue should land after those issues, and they have not reached the queue yet.
 Do not reorder `queue`, revert the push, or undo the handoff because of it. The person who lands `queue` decides.

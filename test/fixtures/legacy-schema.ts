@@ -1,10 +1,11 @@
-// Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7, 8, 9 or 10 stores made from a current one.
+// Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7, 8, 9, 10 or 11 stores made from a current one.
 import type { DatabaseSync } from 'node:sqlite';
-import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_STATEMENTS } from '../../src/records/store/changes-sql.ts';
+import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_STATEMENTS, STAR_KIND_REBUILD_STATEMENTS } from '../../src/records/store/changes-sql.ts';
 import { SCHEMA_V9_ADDITIONS } from '../../src/records/persistence/schema.ts';
 import { SCHEMA_V8_STATEMENTS } from '../../src/records/persistence/schema-v8.ts';
 import { SCHEMA_V9_STATEMENTS } from '../../src/records/persistence/schema-v9.ts';
 import { SCHEMA_V10_STATEMENTS } from '../../src/records/persistence/schema-v10.ts';
+import { SCHEMA_V11_STATEMENTS } from '../../src/records/persistence/schema-v11.ts';
 import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 
 /** Writes a comment as a release before posts did, so it runs on a schema that lacks the edit or post columns; recorded writes its event as a comment operation would. */
@@ -14,6 +15,13 @@ export async function legacyComment(db: SqlExecutor, comment: { issue_id: string
   await db.batch(comment.recorded === false ? [insert]
     : [{ sql: 'INSERT INTO change_writer(singleton,actor) VALUES (1,?)', params: [comment.actor] }, insert, { sql: 'DELETE FROM change_writer', params: [] }]);
   return id;
+}
+
+/** Sets a priority as a release before asks did: the current update reads the item table, which an older schema lacks. It records the same `updated` event. */
+export async function legacyPriority(db: SqlExecutor, change: { id: string; priority: number; actor: string }): Promise<void> {
+  await db.batch([{ sql: 'INSERT INTO change_writer(singleton,actor) VALUES (1,?)', params: [change.actor] },
+    { sql: 'UPDATE issues SET priority=?, priority_v=priority_v+1, updated_at=?, updated_by=? WHERE id=?', params: [change.priority, new Date().toISOString(), change.actor, change.id] },
+    { sql: 'DELETE FROM change_writer', params: [] }]);
 }
 
 export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
@@ -28,8 +36,25 @@ export function withoutChangeWriter(db: SqlExecutor): SqlExecutor {
   };
 }
 
+const feedTriggers = (statements: readonly string[]) => {
+  const name = (sql: string) => /^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? '';
+  return statements.filter((sql, index) => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql) && !statements.slice(index + 1).some(later => name(later) === name(sql)));
+};
+
+// Schema 12 rebuilt change_events for the item kinds, so the downgrade drops the items and every item event, then runs the schema 11 rebuild and recreates the schema 11 triggers that name the table.
+export function downgradeToSchema11(database: DatabaseSync): void {
+  const triggers = feedTriggers(SCHEMA_V11_STATEMENTS);
+  if (triggers.length === 0) throw new Error('Schema 11 has no change feed triggers');
+  database.exec("BEGIN; DROP TRIGGER issue_items_change_insert; DROP TRIGGER issue_items_change_update; DROP TABLE issue_items; DELETE FROM change_events WHERE kind IN ('asked','answered')");
+  for (const sql of triggers) database.exec(`DROP TRIGGER ${/^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? ''}`);
+  for (const sql of STAR_KIND_REBUILD_STATEMENTS) database.exec(sql);
+  for (const sql of triggers) database.exec(sql);
+  database.exec('UPDATE schema_version SET version = 11; COMMIT');
+}
+
 // Schema 11 rebuilt change_events for the star kinds, so the downgrade drops the stars and every star event, then runs the schema 10 rebuild and recreates the schema 10 triggers that name the table.
 export function downgradeToSchema10(database: DatabaseSync): void {
+  downgradeToSchema11(database);
   const name = (sql: string) => /^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? '';
   const triggers = SCHEMA_V10_STATEMENTS.filter((sql, index) => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql)
     && !SCHEMA_V10_STATEMENTS.slice(index + 1).some(later => name(later) === name(sql)));

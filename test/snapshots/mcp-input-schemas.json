@@ -54,11 +54,13 @@
             "became_ready",
             "comment_edited",
             "starred",
-            "unstarred"
+            "unstarred",
+            "asked",
+            "answered"
           ]
         },
         "minItems": 1,
-        "maxItems": 12,
+        "maxItems": 14,
         "uniqueItems": true
       },
       "limit": {
@@ -773,6 +775,101 @@
         "minimum": 1,
         "maximum": 100,
         "default": 50
+      }
+    }
+  },
+  "item_add": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "kind",
+      "text",
+      "request_id"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "ask",
+          "check"
+        ],
+        "description": "ask: a question a person answers once; while it is open the issue is off the ready worklist, listed in owner waits, and cannot close or be handed off. check: an acceptance condition; while it is unmet the issue cannot close or be handed off."
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "description": "The question, or the condition that must hold."
+      },
+      "options": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "minItems": 2,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "description": "ask only: the answers a person picks from. Without options the answer is free text."
+      },
+      "recommended": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "ask only: the option you recommend, one of options."
+      },
+      "request_id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "A new UUID for this add. A retry with the same UUID and arguments returns the same item."
+      }
+    }
+  },
+  "item_resolve": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "n",
+      "to"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
+      },
+      "n": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "The item number that show, item_add, or the items_open refusal names."
+      },
+      "to": {
+        "type": "string",
+        "enum": [
+          "answered",
+          "withdrawn",
+          "met",
+          "waived"
+        ],
+        "description": "answered: a person answers an ask (not the actor that asked, and not an agent). withdrawn: the actor that asked, or a person, drops an ask, with a reason in note. met: a check holds, with the evidence in note. waived: a person drops a check, with the reason in note."
+      },
+      "answer": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "description": "answered only: one of the options, or the free answer when the ask has none."
+      },
+      "note": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "description": "The evidence for met, the reason for waived or withdrawn, or an optional comment on an answer."
       }
     }
   },
@@ -1890,11 +1987,13 @@
             "became_ready",
             "comment_edited",
             "starred",
-            "unstarred"
+            "unstarred",
+            "asked",
+            "answered"
           ]
         },
         "minItems": 1,
-        "maxItems": 12,
+        "maxItems": 14,
         "uniqueItems": true
       },
       "timeout": {

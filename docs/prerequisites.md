@@ -34,7 +34,7 @@ pd ready --project demo
 pd blocked --tool compiler --project demo --after demo-10 --limit 50
 ```
 
-Ready issues have status `open`, no active blockers, no `main-lock` label, and neither the `owner-decision` nor the `owner-action` label.
+Ready issues have status `open`, no active blockers, no open [ask](claims.md#ask-a-person-and-check-the-result), no `main-lock` label, and neither the `owner-decision` nor the `owner-action` label.
 A `main-lock` issue is a repository lock, so the ready worklist leaves it out even when the filter names that label; find it with `pd list --label main-lock`.
 An issue that waits on an owner decision or action leaves the ready worklist for every actor, because no agent should start it and a human should not mistake it for open work.
 Naming one of those labels in the filter does not bring the issue back; list owner waits as described below.
@@ -51,20 +51,23 @@ Reopen uses normal status CAS.
 
 ## Owner waits
 
-The labels `owner-decision` and `owner-action` mark an issue that waits on the owner.
+An issue waits on the owner while it has an open [ask](claims.md#ask-a-person-and-check-the-result), or while it carries the label `owner-decision` or `owner-action`.
 The store has no owner identity, so "owner" means any human.
-An agent may add one of these labels as a handoff: set the status to `open`, add the label with the proof as a comment, and release the claim.
-The labels act through the ready worklist only. `claim_acquire` still follows [the agent gate](claims.md#gate-agent-work), so an agent must not claim an owner wait by ID.
+An agent that needs an answer adds an ask and keeps its claim; the ask holds the question and its options, and the answer reaches the agent through the change feed.
+The labels remain for an issue that is itself the owner's work, and for issues labeled before asks existed. An agent may still add one as a handoff: set the status to `open`, add the label with the proof as a comment, and release the claim.
+Asks and labels act through the ready worklist only. `claim_acquire` still follows [the agent gate](claims.md#gate-agent-work), so an agent must not claim an owner wait by ID.
 `main-wait` is not an owner wait. It means the work sits in the land queue and is not yet on main, and it does not leave the ready worklist.
 
 ```sh
 pd owner-waits --project demo --limit 50
 ```
 
-`owner-waits` returns each unfinished issue that carries either label, in ID order, with its direct unfinished dependents.
+`owner-waits` returns each unfinished issue that has an open ask or carries either label, in ID order, with its direct unfinished dependents.
 Each entry has `issue`, `dependents` (`id`, `project`, `status`, at most 50, in ID order), and `dependents_next`, which is the last returned dependent ID when more exist and otherwise `null`.
 Only direct dependents are reported, as in `dependency list`. Filters are `--tool`, `--project`, `--after`, and `--limit 1..100` (default 50).
-The change feed is unchanged: adding or removing an owner label appears as an `updated` event, and `became_ready` still fires only when the last active blocker closes or is removed.
+Adding or removing an owner label appears as an `updated` event, and `became_ready` fires when the last active blocker closes or is removed, whatever the labels and asks.
+An ask records `asked`, its answer records `answered`, and when the last open ask leaves an open issue with no active blocker, `became_ready` follows the answer.
+A released client that does not send the `items` field token gets only the labeled issues from `dependency_owner_waits`, because its decoder requires an owner label on each entry.
 
 Existing issues need no migration. They carry the same labels, and an issue that holds `ready` together with an owner label leaves the ready worklist when this version is deployed.
 Audit them with `pd list --label owner-decision` and `pd list --label owner-action`.

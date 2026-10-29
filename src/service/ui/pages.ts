@@ -1,12 +1,12 @@
 /** Composes each /ui page from data the entry module already read. Nothing here reads the store or writes. */
-import { blockerIsActive, type ActivityEvent, type ActivityPage, type Attention, type ClaimDisplay, type Comment, type Issue, type IssueLink, type PostPage,
+import { blockerIsActive, type ActivityEvent, type ActivityPage, type Attention, type ClaimDisplay, type Comment, type Issue, type IssueLink, type Item, type PostPage,
   type ProjectIssue, type ProjectSummary, type Status, type WatchedLease } from '../../records/index.ts';
 import { avatar, bodyAfterTitle, canDispatch, canWrite, clockTime, disclose, document, duration, escape, fullTime, hidden, icon, idLink, issueHref, japanTime,
   joined, labelChip, lang, lanePanel, liveForm, mono, pageHead, person, plural, priorityChip, projectHref, secondsOf, shortProject, shortTitle, statusChip,
   statusWord, timeTag, title, whose, workflowLabels, type TabCounts, type Viewer } from './html.ts';
 import { flash, hero, sinceYesterday, type DoneKind } from './brief.ts';
-import { blockedRow, claimRow, commentForm, decideForm, dispatchForm, dispatchLine, doneForm, expiredRow, holderName, leaseBar, plainRow,
-  queueRow, readyRow, unblockForm, youRow } from './rows.ts';
+import { answerForm, blockedRow, claimRow, commentForm, decideForm, dispatchForm, dispatchLine, doneForm, expiredRow, holderName, leaseBar, plainRow,
+  queueRow, readyRow, unblockForm, waiveForm, youRow } from './rows.ts';
 import { pageLimit, stuckCount, type Lanes, type QueueItem } from './today.ts';
 
 export const tabCounts = (lanes: Lanes): TabCounts => ({ today: lanes.you.length, stuck: stuckCount(lanes) });
@@ -18,7 +18,7 @@ const limitNote = (shown: number, total: number, noun: string): string => total 
 
 export function todayPage(lanes: Lanes, viewer: Viewer, done: { kind: DoneKind; id: string; issue: Issue | null } | null): string {
   const you = lanes.you.slice(0, pageLimit).map(item => youRow(item, viewer)).join('');
-  const youFoot = (lanes.you.length > 0 ? '<p class="panel-note">Decisions first, then actions. Highest priority, then the longest wait.</p>' : '')
+  const youFoot = (lanes.you.length > 0 ? '<p class="panel-note">Questions first, then decisions, then actions. Highest priority, then the longest wait.</p>' : '')
     + (lanes.you.length > pageLimit ? rest(`Showing ${pageLimit} of ${lanes.you.length}.`) : '')
     + (lanes.parked > 0 ? rest(`${lanes.parked} deferred ${plural(lanes.parked, 'item is', 'items are')} out of sight until reopened.`) : '');
   const agents = lanes.claims.slice(0, 3).map(claim => claimRow(claim, viewer, '/ui', false)).join('') + lanes.ready.slice(0, 2).map(issue => readyRow(issue, viewer, '/ui')).join('');
@@ -28,7 +28,7 @@ export function todayPage(lanes: Lanes, viewer: Viewer, done: { kind: DoneKind; 
     + (lanes.queue.length > 0 ? `<p class="panel-note">${icon('lock', true)} Landing is a git push from your machine. This page cannot land the queue.</p>` : '');
   const staleRow = lanes.staleTotal === 0 ? '' : staleSummary(lanes);
   const stuck = lanes.expired.slice(0, pageLimit).map(row => expiredRow(row, viewer, '/ui')).join('') + lanes.blocked.slice(0, 2).map(row => blockedRow(row, viewer, '/ui')).join('') + staleRow;
-  const panels = lanePanel({ lane: 'you', icon: 'you', heading: 'You', count: lanes.you.length, rows: you, empty: `Nothing waits on ${whose(viewer)}. A new owner-decision or owner-action issue shows up here first.`, foot: youFoot })
+  const panels = lanePanel({ lane: 'you', icon: 'you', heading: 'You', count: lanes.you.length, rows: you, empty: `Nothing waits on ${whose(viewer)}. A new ask, owner-decision, or owner-action issue shows up here first.`, foot: youFoot })
     + lanePanel({ lane: 'agents', icon: 'agents', heading: 'Agents', count: lanes.claims.length, more: { href: '/ui/agents', label: 'All' }, rows: agents,
       empty: 'No agent holds a claim, and no ready issue is waiting for one.', foot: moreOn(agentsMore, 'Agents', '/ui/agents') })
     + lanePanel({ lane: 'land', icon: 'land', heading: 'Landing', count: lanes.queue.length, more: { href: '/ui/landing', label: 'All' }, rows: queue, empty: 'Nothing waits on queue for main.', foot: queueFoot })
@@ -236,7 +236,7 @@ function staleClaim(claim: ClaimDisplay, viewer: Viewer): string {
 export function projectsPage(projects: readonly ProjectSummary[], more: boolean, attention: Attention, viewer: Viewer, counts: TabCounts): string {
   const waiting = new Map<string, number>();
   for (const row of attention.issues) {
-    if (row.issue.status === 'closed' || row.issue.status === 'deferred' || !row.labels.some(label => label === 'owner-decision' || label === 'owner-action')) continue;
+    if (row.issue.status === 'closed' || row.issue.status === 'deferred' || (row.openAsks === 0 && !row.labels.some(label => label === 'owner-decision' || label === 'owner-action'))) continue;
     const key = `${row.issue.tool}\n${row.issue.project}`;
     waiting.set(key, (waiting.get(key) ?? 0) + 1);
   }
@@ -335,7 +335,24 @@ export type IssueView = {
   blockers: readonly { id: string; status: Status }[]; dependencyRevision: number;
   landOrder: { revision: number; after: readonly { id: string; status: Status }[]; before: readonly { id: string; status: Status }[] };
   parent: IssueLink | null; children: readonly IssueLink[]; moreChildren: boolean;
+  /** Asks and checks, in the order they were added. */
+  items: readonly Item[];
 };
+
+const itemStateWords = { open: 'open', answered: 'answered', withdrawn: 'withdrawn', met: 'met', waived: 'waived' } as const;
+
+/** One ask or check: what it says, how it ended, and, while it is open and the viewer writes, the form that ends it. */
+function itemEntry(issueId: string, item: Item, viewer: Viewer, write: boolean): string {
+  const open = item.state === 'open';
+  const head = `<div class="by"><b>${item.kind === 'ask' ? 'Ask' : 'Check'} ${item.n}</b><span>${itemStateWords[item.state]}</span><span>by ${escape(person(viewer, item.created_by))}</span></div>`;
+  const options = item.options === null || !open ? '' : `<p class="hint">Options: ${escape(item.options.map(option => option === item.recommended ? `${option} (recommended)` : option).join(', '))}</p>`;
+  const ended = open ? '' : `<p class="hint">${item.answer === null ? '' : `Answer: ${escape(item.answer)}. `}${item.note === null ? '' : `${escape(item.note)} `}`
+    + `${item.resolved_by === null ? '' : `(${escape(person(viewer, item.resolved_by))})`}</p>`;
+  const form = !open || !write ? '' : item.kind === 'ask'
+    ? answerForm(issueId, { n: item.n, text: item.text, options: item.options, recommended: item.recommended }, `/ui/i/${issueId}`, true)
+    : disclose('Waive', 'x', waiveForm(issueId, item.n, `/ui/i/${issueId}`), true);
+  return `<li class="l-${open ? 'you' : 'agents'}">${head}<div class="prose"${lang(item.text)}>${escape(item.text)}</div>${open ? options : ended}${form}</li>`;
+}
 
 /** The issue page. `top` holds a conflict or a result above the title; `note` refills the decision note after a conflict. */
 export function issuePage(view: IssueView, viewer: Viewer, counts: TabCounts, top = '', note = ''): string {
@@ -348,7 +365,9 @@ export function issuePage(view: IssueView, viewer: Viewer, counts: TabCounts, to
   const active = view.blockers.filter(blocker => blockerIsActive(blocker.status));
   const done = view.blockers.filter(blocker => !blockerIsActive(blocker.status));
   const holder = view.claim.state === 'active' ? `held by ${holderName(viewer, view.claim)} until ${clockTime(view.claim.expiresAt)}` : null;
-  const line = dispatchLine(issue, active.length, holder);
+  const openItems = view.items.filter(item => item.state === 'open');
+  const openAsks = openItems.filter(item => item.kind === 'ask').length;
+  const line = dispatchLine(issue, active.length, holder, openAsks);
   const startable = line.endsWith('can start now');
   const write = canWrite(viewer);
   const text = title(issue.body);
@@ -359,6 +378,12 @@ export function issuePage(view: IssueView, viewer: Viewer, counts: TabCounts, to
   }
   if (write && act) {
     cards.push(`<section class="card themed l-you" id="done"><h2>Your action</h2><p class="hint">Mark done saves your note as a comment and closes the issue. Not now parks it. Hand back to agents clears owner-action and adds ready.</p>${doneForm(issue, '/ui', true, note)}</section>`);
+  }
+  if (view.items.length > 0) {
+    const hint = openItems.length === 0 ? 'Every ask is answered or withdrawn, and every check is met or waived.'
+      : 'An open ask keeps the issue off the ready list. An open ask or an unmet check holds close and the queue handoff. The agent meets a check with evidence; a person may waive it with a reason.';
+    cards.push(`<section class="card${openAsks > 0 ? ' themed l-you' : ''}" id="items"><h2>Asks and checks <span class="count">${openItems.length} open</span></h2><p class="hint">${hint}</p>`
+      + `<ol class="tl">${view.items.map(item => itemEntry(id, item, viewer, write)).join('')}</ol></section>`);
   }
   const rest = bodyAfterTitle(issue.body);
   const edit = write ? disclose('Edit text', 'edit', liveForm(`/ui/i/${id}/body`, { return: back, 'v.body': issue.versions.body },
@@ -446,6 +471,7 @@ export function issuePage(view: IssueView, viewer: Viewer, counts: TabCounts, to
   if (write) {
     const buttons: string[] = [];
     if (closed) buttons.push(liveForm(`/ui/i/${id}/status`, { return: back, status: 'open', 'v.status': issue.versions.status, 'seen.status': issue.status }, `<button class="btn l-land">${icon('undo', true)}Reopen</button>`, false).replace(/<p class="live" role="status"><\/p>/, ''));
+    else if (openAsks > 0) buttons.push(`<a class="btn l-you grow" href="#items">${icon('check', true)}Answer</a>`);
     else if (decide) buttons.push(`<a class="btn l-you grow" href="#decide">${icon('check', true)}Decide</a>`);
     else if (act) buttons.push(`<a class="btn l-you grow" href="#done">${icon('check', true)}Mark done</a>`);
     else if (startable && canDispatch(viewer)) buttons.push(`<a class="btn l-agents grow" href="#dispatch">${icon('send', true)}Dispatch</a>`);
@@ -454,7 +480,7 @@ export function issuePage(view: IssueView, viewer: Viewer, counts: TabCounts, to
     bar = `<div class="bar" role="toolbar" aria-label="Actions for ${escape(id)}">${buttons.join('')}</div>`;
   }
   const role = viewer.role === 'reader' ? `<p class="role-note">${icon('lock', true)} Signed in as a reader. This page has no controls.</p>` : '';
-  const since = decide || act ? `<p class="since l-you">${icon('clock')}On ${whose(viewer)} since ${timeTag(created, fullTime(created))} (${duration(viewer.now - created)})</p>` : '';
+  const since = decide || act || openAsks > 0 ? `<p class="since l-you">${icon('clock')}On ${whose(viewer)} since ${timeTag(created, fullTime(created))} (${duration(viewer.now - created)})</p>` : '';
   const head = `<nav class="crumbs" aria-label="Breadcrumb"><a href="${escape(projectHref(issue.tool, issue.project))}">${icon('back', true)}${escape(shortProject(issue.project))}</a>`
     + `${view.parent === null ? '' : `<a href="${escape(issueHref(view.parent.id))}">${icon('link', true)}Parent ${escape(view.parent.id)}</a>`}</nav>`
     + `<h1 class="issue-title"${lang(text)}>${escape(text)}</h1><div class="chips">${statusChip(issue.status)}${priorityChip(issue.priority)}<span class="chip o">${escape(issue.type)}</span><span class="chip o mono">${escape(id)}</span></div>`

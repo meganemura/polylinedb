@@ -1,5 +1,5 @@
 /** Lane rows and the inline forms they carry. Each form posts to a /ui write route with the field versions it observed. */
-import { ownerWaitLabels, readyLabel, type ActiveClaimIssue, type BlockedIssue, type ClaimDisplay, type Issue, type StartedIssue, type WatchedLease } from '../../records/index.ts';
+import { ownerWaitLabels, readyLabel, type ActiveClaimIssue, type BlockedIssue, type ClaimDisplay, type Issue, type OpenAsk, type StartedIssue, type WatchedLease } from '../../records/index.ts';
 import { canDispatch, canWrite, clockTime, disclose, duration, escape, fullTime, icon, idLink, issueHref, lang, liveForm, mono,
   person, priorityChip, secondsOf, shortProject, statusChip, timeTag, title, workflowChips, type Lane, type Viewer } from './html.ts';
 import type { QueueItem, YouItem } from './today.ts';
@@ -28,9 +28,34 @@ export function doneForm(issue: Issue, back: string, big = false, note = ''): st
     + `<button class="btn${size} ghost" name="outcome" value="handback">Hand back to agents</button></div>`);
 }
 
+/**
+ * The answer to one ask. Each option is its own button, the recommended one filled; an ask without options takes typed text.
+ * The ask leaves open once, so the store refuses a second, different answer whatever this page saw.
+ */
+export function answerForm(issueId: string, ask: OpenAsk, back: string, big = false): string {
+  const size = big ? '' : ' sm';
+  const field = `an-${issueId}-${ask.n}${big ? '-main' : ''}`;
+  const choices = ask.options === null
+    ? `<div class="field"><label for="${field}-a">Your answer</label><textarea id="${field}-a" name="answer" rows="3" required></textarea></div><button class="btn${size}">Answer</button>`
+    : `<div class="btn-row col">${ask.options.map(option => `<button class="btn${size}${option === ask.recommended ? '' : ' ghost'}" name="answer" value="${escape(option)}">`
+      + `${escape(option)}${option === ask.recommended ? ' (recommended)' : ''}</button>`).join('')}</div>`;
+  return liveForm(`/ui/i/${issueId}/item`, { return: back, n: ask.n, to: 'answered' },
+    // The issue page prints the ask above its form, so only the lane row quotes it here.
+    (big ? '' : `<p class="quote"${lang(ask.text)}>${escape(ask.text)}</p>`)
+    + `<div class="field"><label for="${field}">Note (optional)</label><textarea id="${field}" name="note" rows="2" placeholder="Optional. Why, or a condition."></textarea></div>${choices}`);
+}
+
+/** Waiving a check: a person decides the condition does not have to hold for this issue to close, and says why. */
+export function waiveForm(issueId: string, n: number, back: string): string {
+  const field = `wv-${issueId}-${n}`;
+  return liveForm(`/ui/i/${issueId}/item`, { return: back, n, to: 'waived' },
+    `<div class="field"><label for="${field}">Why it does not need to hold</label><textarea id="${field}" name="note" rows="2" required></textarea></div>`
+    + '<button class="btn sm ghost" data-confirm="Tap again to waive">Waive</button>');
+}
+
 /** Whether the ready worklist would offer the issue to an agent now. It informs only; the dispatcher decides. */
-export function dispatchLine(issue: Issue, activeBlockers: number, holder: string | null): string {
-  const ownerWait = ownerWaitLabels.find(label => issue.labels.includes(label));
+export function dispatchLine(issue: Issue, activeBlockers: number, holder: string | null, openAsks = 0): string {
+  const ownerWait = openAsks > 0 ? `${openAsks} open ${openAsks === 1 ? 'ask' : 'asks'}` : ownerWaitLabels.find(label => issue.labels.includes(label));
   const ready = issue.labels.includes(readyLabel);
   const locked = issue.labels.includes('main-lock');
   const parts = [
@@ -97,14 +122,27 @@ function row(issue: Issue, lane: Lane | null, meta: string, actions = '', extra 
     + `<a class="title"${lang(text)} href="${escape(issueHref(issue.id))}">${escape(text)}</a>${extra}${actions === '' ? '' : `<div class="acts">${actions}</div>`}</li>`;
 }
 
+const youChips = { answer: 'Answer', decide: 'Decide', do: 'Do' } as const;
+
+/** The You row's own form: the first open ask, a decision, or an action. Further asks wait on the issue page, where every one shows. */
+function youAction(item: YouItem, viewer: Viewer, back: string): string {
+  if (item.kind === 'answer') {
+    const first = item.asks[0];
+    if (first === undefined) return `<a class="btn sm" href="${escape(issueHref(item.issue.id))}#items">${icon('check', true)}Answer</a>`;
+    const more = item.asks.length > 1 ? `<p class="hint">${item.asks.length - 1} more on <a href="${escape(issueHref(item.issue.id))}#items">the issue page</a>.</p>` : '';
+    return disclose('Answer', 'check', answerForm(item.issue.id, first, back) + more);
+  }
+  return item.kind === 'decide' ? disclose('Decide', 'check', decideForm(item.issue, back, viewer)) : disclose('Mark done', 'check', doneForm(item.issue, back));
+}
+
 export function youRow(item: YouItem, viewer: Viewer, back = '/ui'): string {
-  const decide = item.kind === 'decide';
   const waited = item.waitedSeconds === null ? '' : `<span>waiting ${duration(item.waitedSeconds)}</span>`;
-  const meta = `<span class="chip c l-you">${decide ? 'Decide' : 'Do'}</span>${mono(item.issue.id)}${priorityChip(item.issue.priority)}${waited}`;
+  const meta = `<span class="chip c l-you">${youChips[item.kind]}</span>${mono(item.issue.id)}${priorityChip(item.issue.priority)}${waited}`;
   const after = item.after.length === 0 ? '' : `<p class="sub-line">${icon('link', true)} Starts after ${item.after.map(idLink).join(', ')} ${item.after.length === 1 ? 'is' : 'are'} done.</p>`;
   const blocks = item.blocks.length === 0 ? '' : `<p class="sub-line">${item.blocks.map(idLink).join(', ')} ${item.blocks.length === 1 ? 'waits' : 'wait'} for it.</p>`;
-  const actions = !canWrite(viewer) ? '' : decide ? disclose('Decide', 'check', decideForm(item.issue, back, viewer)) : disclose('Mark done', 'check', doneForm(item.issue, back));
-  return row(item.issue, 'you', meta, actions, after + blocks);
+  const asked = item.asks[0] === undefined || canWrite(viewer) ? '' : `<p class="sub-line"${lang(item.asks[0].text)}>${escape(item.asks[0].text)}</p>`;
+  const actions = canWrite(viewer) ? youAction(item, viewer, back) : '';
+  return row(item.issue, 'you', meta, actions, asked + after + blocks);
 }
 
 export function claimRow(claim: ActiveClaimIssue, viewer: Viewer, back: string, comment = true): string {

@@ -4,11 +4,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { issueRow, storedCommentRow } from '../src/records/persistence/persistence.ts';
 import { issueSortKey } from '../src/records/persistence/persistence.ts';
 import { fields, SCHEMA_SQL, SCHEMA_VERSION } from '../src/records/persistence/persistence.ts';
-import { memoryRow, memorySortKey } from '../src/records/persistence/persistence.ts';
+import { itemRow, memoryRow, memorySortKey, storedItemColumns } from '../src/records/persistence/persistence.ts';
 import { canonicalSnapshot, parseSnapshot } from '../src/records/persistence/persistence.ts';
 import type { Snapshot } from '../src/records/persistence/persistence.ts';
 
-export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'memory_store_identity', 'project_memory_revisions'] as const;
+export const tables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'issue_items', 'memory_store_identity', 'project_memory_revisions'] as const;
 export type Table = typeof tables[number];
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;
@@ -23,7 +23,7 @@ const primaryKey: Record<Table, string> = {
   dependencies: 'dependent_id', dependency_revisions: 'dependent_id', dependency_requests: 'request_id',
   issue_claims: 'issue_id', claim_requests: 'request_id', memory_store_identity: 'singleton', project_memory_revisions: 'project',
   land_order: 'later_id', land_order_revisions: 'later_id', land_order_requests: 'request_id',
-  issue_resources: 'issue_id', resource_revisions: 'issue_id', resource_requests: 'request_id', stars: 'comment_id',
+  issue_resources: 'issue_id', resource_revisions: 'issue_id', resource_requests: 'request_id', stars: 'comment_id', issue_items: 'request_id',
 };
 // An edge table has no single-column key, so its rows are keyed and ordered by both endpoints.
 const edgeColumns: Partial<Record<Table, readonly [string, string]>> = { dependencies: ['dependent_id', 'blocker_id'], land_order: ['later_id', 'earlier_id'] };
@@ -67,7 +67,7 @@ function canonicalColumns(): Record<Table, string[]> {
       issue_claims: columnsFor(database, 'issue_claims'), claim_requests: columnsFor(database, 'claim_requests'),
       land_order: columnsFor(database, 'land_order'), land_order_revisions: columnsFor(database, 'land_order_revisions'), land_order_requests: columnsFor(database, 'land_order_requests'),
       issue_resources: columnsFor(database, 'issue_resources'), resource_revisions: columnsFor(database, 'resource_revisions'), resource_requests: columnsFor(database, 'resource_requests'),
-      stars: columnsFor(database, 'stars'),
+      stars: columnsFor(database, 'stars'), issue_items: columnsFor(database, 'issue_items'),
       memory_store_identity: columnsFor(database, 'memory_store_identity'), project_memory_revisions: columnsFor(database, 'project_memory_revisions'),
     };
   } finally { database.close(); }
@@ -120,7 +120,7 @@ function parseRows(value: unknown): Rows {
     issue_claims: parseCollection(input.issue_claims, 'issue_claims'), claim_requests: parseCollection(input.claim_requests, 'claim_requests'),
     land_order: parseCollection(input.land_order, 'land_order'), land_order_revisions: parseCollection(input.land_order_revisions, 'land_order_revisions'), land_order_requests: parseCollection(input.land_order_requests, 'land_order_requests'),
     issue_resources: parseCollection(input.issue_resources, 'issue_resources'), resource_revisions: parseCollection(input.resource_revisions, 'resource_revisions'), resource_requests: parseCollection(input.resource_requests, 'resource_requests'),
-    stars: parseCollection(input.stars, 'stars'),
+    stars: parseCollection(input.stars, 'stars'), issue_items: parseCollection(input.issue_items, 'issue_items'),
     memory_store_identity: parseCollection(input.memory_store_identity, 'memory_store_identity'), project_memory_revisions: parseCollection(input.project_memory_revisions, 'project_memory_revisions'),
   };
 }
@@ -171,7 +171,7 @@ function rowsFromSnapshot(snapshot: Snapshot, metadata: Pick<Rows, 'memory_store
     issue_claims: snapshot.issue_claims.map(row => ({ ...row })), claim_requests: snapshot.claim_requests.map(row => ({ ...row })),
     land_order: snapshot.land_order.map(row => ({ ...row })), land_order_revisions: snapshot.land_order_revisions.map(row => ({ ...row })), land_order_requests: snapshot.land_order_requests.map(row => ({ ...row })),
     issue_resources: snapshot.issue_resources.map(row => ({ ...row })), resource_revisions: snapshot.resource_revisions.map(row => ({ ...row })), resource_requests: snapshot.resource_requests.map(row => ({ ...row })),
-    stars: snapshot.stars.map(row => ({ ...row })), ...metadata,
+    stars: snapshot.stars.map(row => ({ ...row })), issue_items: snapshot.issue_items.map(storedItemColumns), ...metadata,
   };
 }
 
@@ -215,7 +215,7 @@ function snapshotFromRows(rows: Rows): Snapshot {
   for (const row of rows.memories) if (!projects.has(textField(row, 'project'))) fail('Memory project has no captured revision');
   const snapshot = parseSnapshot({
     format: 'polylinedb.snapshot',
-    version: 9,
+    version: 10,
     issues: rows.issues.map(issueRow),
     comments: rows.comments.map(storedCommentRow),
     counters: rows.counters,
@@ -228,6 +228,7 @@ function snapshotFromRows(rows: Rows): Snapshot {
     land_order: rows.land_order, land_order_revisions: rows.land_order_revisions, land_order_requests: rows.land_order_requests,
     issue_resources: rows.issue_resources, resource_revisions: rows.resource_revisions, resource_requests: rows.resource_requests,
     stars: rows.stars,
+    issue_items: rows.issue_items.map(row => ({ ...itemRow(row), request_id: textField(row, 'request_id') })),
   });
   assertCanonicalRows(rows, rowsFromSnapshot(snapshot, { memory_store_identity: rows.memory_store_identity, project_memory_revisions: rows.project_memory_revisions }));
   return snapshot;
@@ -407,7 +408,7 @@ function counts(rows: Rows): Record<Table, number> {
     issue_claims: rows.issue_claims.length, claim_requests: rows.claim_requests.length,
     land_order: rows.land_order.length, land_order_revisions: rows.land_order_revisions.length, land_order_requests: rows.land_order_requests.length,
     issue_resources: rows.issue_resources.length, resource_revisions: rows.resource_revisions.length, resource_requests: rows.resource_requests.length,
-    stars: rows.stars.length,
+    stars: rows.stars.length, issue_items: rows.issue_items.length,
     memory_store_identity: rows.memory_store_identity.length, project_memory_revisions: rows.project_memory_revisions.length,
   };
 }
@@ -436,7 +437,7 @@ export function additiveMerge(input: { source: unknown; destination: unknown }):
     issue_claims: [...source.issue_claims, ...destination.issue_claims], claim_requests: [...source.claim_requests, ...destination.claim_requests],
     land_order: [...source.land_order, ...destination.land_order], land_order_revisions: [...source.land_order_revisions, ...destination.land_order_revisions], land_order_requests: [...source.land_order_requests, ...destination.land_order_requests],
     issue_resources: [...source.issue_resources, ...destination.issue_resources], resource_revisions: [...source.resource_revisions, ...destination.resource_revisions], resource_requests: [...source.resource_requests, ...destination.resource_requests],
-    stars: [...source.stars, ...destination.stars],
+    stars: [...source.stars, ...destination.stars], issue_items: [...source.issue_items, ...destination.issue_items],
     memory_store_identity: destination.memory_store_identity,
     project_memory_revisions: [...memoryRevisions].map(([project, revision]) => ({ project, revision })),
   };

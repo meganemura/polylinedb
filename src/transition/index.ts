@@ -17,3 +17,5 @@ export { decideReply, decideStarring, starRowChanges } from './posts.ts';
 export type { ObservedReply, ReplyRejection, ReplyDecision, ObservedStarring, Starring, StarOutcome, StarRejection, StarDecision } from './posts.ts';
 export { resourceMarks, resourceState, resourceIsLive, nextResourceMarks, decideResourceAddition, decideResourceUpdate } from './resources.ts';
 export type { ResourceMark, ResourceState, ResourceTimes, ObservedResource, ResourceEdit, ResourceRejection, ResourceDecision } from './resources.ts';
+export { itemKinds, itemStates, itemRules, kindsHolding, resolvedStatesOf, decideItemMove, closeHoldingItems } from './items.ts';
+export type { ItemKind, ItemState, ResolvedState, ObservedItem, ItemMove, MoveSurface, ItemMoveRejection, ItemMoveDecision } from './items.ts';

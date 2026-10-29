@@ -4,7 +4,7 @@ import { executeOperation, parseOperation } from '../../src/records/index.ts';
 import { PolylinedbError } from '../../src/records/store/errors.ts';
 import type { Actor } from '../../src/records/index.ts';
 import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
-import { legacyComment } from './legacy-schema.ts';
+import { legacyComment, legacyPriority } from './legacy-schema.ts';
 
 type Refusal = { code: string; status: number; details: unknown };
 type Row = Record<string, unknown>;
@@ -102,7 +102,7 @@ export async function populateSchema9(db: SqlExecutor): Promise<{ comment_id: st
   const id = (first.issue as { id: string }).id;
   await run({ op: 'create', prefix: 'up', request_id: crypto.randomUUID(), tool: 'test', project: 'upgrade', body: 'Second issue' });
   const comment_id = await legacyComment(db, { issue_id: id, body: 'kept note', actor: 'alice' });
-  await run({ op: 'update', id, changes: [{ field: 'priority', value: 1, expected: 1 }] });
+  await legacyPriority(db, { id, priority: 1, actor: 'alice' });
   return { comment_id, id };
 }
 
@@ -115,7 +115,7 @@ export async function checkSchema9Upgrade(db: SqlExecutor, populated: { comment_
   const { run, sql, latest } = helpers(db);
   assert.equal(before.length, 4);
   assert.deepEqual(await readEvents(db), before, 'the rebuild keeps every event with its seq');
-  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 11 }]);
+  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 12 }]);
   assert.deepEqual(await sql('SELECT version, updated_at, updated_by FROM comments'), [{ version: 1, updated_at: null, updated_by: null }]);
   const last = await latest();
   assert.equal(last, Number(before.at(-1)?.seq));

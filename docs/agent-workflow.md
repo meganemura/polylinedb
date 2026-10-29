@@ -16,8 +16,18 @@ A successful `claim_acquire` returns `open_blockers`, the ids of active blockers
 An empty list means there are none.
 Acquire does not fail because of those blockers.
 If `open_blockers` is non-empty and the claim was meant to start work, release immediately and pick another issue from the ready worklist.
+It also returns `open_asks`, the asks on the issue that wait for a person's answer.
 An agent actor claims only issues labeled `ready`, and the store checks that label in the same transaction as the acquisition.
-An agent update, close, reopen, comment, or prerequisite edit succeeds only while the agent holds an active claim on the issue, checked in the same transaction as the write.
+An agent update, close, reopen, comment, item write, or prerequisite edit succeeds only while the agent holds an active claim on the issue, checked in the same transaction as the write.
+
+An agent that needs a person's decision adds an ask with `item_add` and keeps its claim.
+The ask takes the issue off the ready worklist and lists it in owner waits and the `/ui` You lane.
+The agent reports `blocked` with `claim_report` and waits for the `answered` event from the `wait_from` position that `item_add` returned.
+A person answers on the `/ui` page or through a human actor that did not ask; an agent cannot answer.
+An acceptance condition is a check, which the agent meets with an evidence line.
+`close` and `claim_handoff` refuse with `items_open` while an ask is open or a check is unmet.
+[Coordinate issue ownership](claims.md#ask-a-person-and-check-the-result) has the rules and their limits.
+An agent asks instead of adding `owner-decision` or `owner-action`. Those labels still mark an issue that waits on the owner, for an issue that is itself the owner's work and for issues labeled before asks existed.
 Local connections set the agent kind and actor per host, as [local agent actors](agent-actors.md) describes.
 Cloud connections derive a human actor from authentication until per-agent tokens exist, so the agent gates do not apply there yet.
 

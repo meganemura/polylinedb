@@ -44,7 +44,7 @@ test('posts carry a handle, via and a reply on the same issue, stars are idempot
   await runPostsFlow(store(t).db);
 });
 
-test('a populated schema 10 store upgrades to schema 11: comments keep no voice and no stars, events keep their seq, and posts follow', async t => {
+test('a populated schema 10 store upgrades to schema 12: comments keep no voice and no stars, events keep their seq, and posts follow', async t => {
   const directory = join(root(t), 'populated'); mkdirSync(directory, { mode: 0o700 });
   const path = join(directory, 'polylinedb.sqlite');
   const legacy = new DatabaseSync(path); legacy.exec(SCHEMA_V10_SQL);
@@ -52,7 +52,7 @@ test('a populated schema 10 store upgrades to schema 11: comments keep no voice 
   try { populated = await populateSchema10(executor(legacy)); before = await readEvents(executor(legacy)); } finally { legacy.close(); }
   chmodSync(path, 0o600);
   assert.throws(() => openStore({ directory }), { code: 'unsupported_schema' }, 'a schema 10 store waits for an explicit upgrade');
-  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 11]);
+  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 12]);
   const upgraded = new DatabaseSync(path); const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(upgraded.prepare(schema).all(), reference.prepare(schema).all()); } finally { upgraded.close(); reference.close(); }
@@ -74,7 +74,7 @@ test('a snapshot keeps every post, reply and star through export and import, and
   await run({ op: 'star', id, comment_id: reply.comment.id, handle: 'coordinator' });
 
   const exported = source.exportSnapshot();
-  assert.equal(exported.version, 9);
+  assert.equal(exported.version, 10);
   assert.equal(exported.stars.length, 3);
   assert.deepEqual(exported.comments.map(comment => comment.reply_to === null ? 0 : comment.reply_to === post.comment.id ? 1 : 2), [0, 1, 2], 'a reply follows its target');
   const wire = JSON.parse(JSON.stringify(exported));
@@ -91,11 +91,11 @@ test('a snapshot keeps every post, reply and star through export and import, and
   assert.deepEqual(Object.fromEntries(voices), { 'Root post': ['builder', 2, 2], 'First reply': ['tester', 1, 1], 'Second reply': [null, 0, 0] });
 
   // A snapshot written by schema 10 has no voice and no stars; it converts with nulls and imports.
-  const { stars: _stars, ...rest } = exported;
+  const { stars: _stars, issue_items: _items, ...rest } = exported;
   const old = { ...rest, version: 8, comments: exported.comments.map(({ handle: _h, via: _v, reply_to: _r, ...comment }) => comment) };
   assert.throws(() => parseSnapshot(old), { code: 'invalid_snapshot' });
   const converted = convertSnapshotV8(JSON.parse(JSON.stringify(old)));
-  assert.deepEqual([converted.version, converted.stars], [9, []]);
+  assert.deepEqual([converted.version, converted.stars, converted.issue_items], [10, [], []]);
   const restored = store(t);
   assert.equal(restored.importSnapshot(converted).result, 'imported');
   const plain = await executeOperation(restored.db, parseOperation({ op: 'show', id }), 'alice'); assert.ok('comments' in plain);

@@ -39,7 +39,7 @@ try {
     assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, version);
     assert.equal((await database.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name = 'memory_store_identity'").first())?.n, version >= 4 ? 1 : 0);
     await database.batch(schemaUpgradeStatements(version).map(sql => database.prepare(sql)));
-    assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, 11);
+    assert.equal((await database.prepare('SELECT version FROM schema_version').first())?.version, 12);
     assert.deepEqual((await database.prepare('SELECT * FROM requests').all()).results, originalRequests);
     assert.deepEqual((await database.prepare('SELECT * FROM dependency_revisions').all()).results, [{ dependent_id: issue.issue.id, revision: 1 }, { dependent_id: closed.issue.id, revision: 1 }]);
     assert.deepEqual((await database.prepare('SELECT status, closed_at, closed_by FROM issues WHERE id = ?').bind(closed.issue.id).first()), { status: 'closed', closed_at: null, closed_by: null });

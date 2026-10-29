@@ -1,6 +1,6 @@
 # Coordinate issue ownership
 
-This guide describes the current source with schema 11 and snapshot 9.
+This guide describes the current source with schema 12 and snapshot 10.
 Version 0.6.0 uses schema 10 and snapshot 8.
 Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6.
 Versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5.
@@ -34,6 +34,9 @@ A deferred blocker is included.
 Acquire does not fail because active blockers remain, so a lock issue stays acquirable.
 A replay of the same request reads `open_blockers` again, because the stored receipt does not keep the observation.
 When the list is non-empty and the claim was meant to start work, release the claim immediately and pick another issue from the ready worklist.
+Acquire also returns `open_asks`, the [asks](#ask-a-person-and-check-the-result) on the issue that wait for an answer, each with `n`, `text`, `options`, and `recommended`, in the order they were asked.
+Like `open_blockers`, it is an observation that does not refuse the acquisition, and a replay reads it again.
+A non-empty list means a person still has to answer before the work it asks about can go on.
 Acquire also returns `previous_lease`. It is the lease that expired without a release just before this acquisition, with its actor, session, label, generation, and deadline, or `null` after a release, a first acquisition, or a lease from another store incarnation.
 The value comes from the immutable receipt history, so a replay returns the same `previous_lease`.
 A non-null `previous_lease` means the previous holder may still be running. Read the issue comments and any pushed `work/<issue id>` branch before starting.
@@ -188,7 +191,7 @@ Report `blocked` or `error` as soon as you stop, and `done` just before a handof
 `claim_handoff` ends a lane's work on an issue in one write.
 Under the caller's proof and the current claim revision, it adds a `tip: <sha>` comment and an optional summary comment, sets status `open`, removes `ready`, adds `main-wait`, keeps the other labels, and releases the claim.
 It reads the issue first and commits only while the status and label versions it read still hold; when only those moved, it reads again and retries twice at most.
-It refuses a closed issue with `conflict`, and a proof that no longer holds with `claim_conflict`, and writes nothing in either case.
+It refuses a closed issue with `conflict`, a proof that no longer holds with `claim_conflict`, and an issue with an open ask or an unmet check with [`items_open`](#close-and-handoff-wait-for-the-items), and writes nothing in any of these cases.
 The release receipt is the idempotency record: it stores the handoff request as its payload, and the comment IDs come from the request UUID.
 A retry with the same request UUID and arguments returns the same receipt and comments and writes nothing. Different arguments, or a `claim_release` with that UUID, return `claim_request_conflict`.
 The last statement of the batch checks that both comments and the queue labels are present, so a write that a trigger or constraint drops aborts the whole batch.
@@ -211,6 +214,75 @@ A missing old receipt with an old incarnation cannot acquire in the restored sto
 Observe the current incarnation and choose a new request UUID for a deliberate new acquisition.
 An arbitrary raw copy with an unchanged incarnation requires explicit offline rotation before use.
 See [D1 restoration](d1-migration.md) and [ownership design](adr/0009-issue-ownership.md).
+
+## Ask a person and check the result
+
+An issue can carry items. An item is an ask or a check, numbered `n` from 1 on its issue in the order it was added.
+Items are never deleted, and each one leaves `open` once.
+
+An ask is a question for a person.
+It has its text, optional `options` (2 to 8 distinct answers), and an optional `recommended` option.
+It ends `answered`, with the answer and an optional note, or `withdrawn`, with a reason.
+An answer to an ask with options must be one of them; an ask without options takes free text.
+A check is an acceptance condition that has to hold before the issue closes.
+It ends `met`, with a short evidence line, or `waived`, with a reason.
+
+```sh
+pd item ask pd-12 'Store dates as bare dates or timestamps?' --option 'bare date' --option timestamp --recommended 'bare date'
+pd item check pd-12 'npm test passes on Node 24'
+pd item answer pd-12 1 'bare date' --note 'keep it simple'
+pd item meet pd-12 2 'npm test: 662 pass, 0 fail'
+pd item waive pd-12 2 'covered by CI on this branch'
+pd item withdraw pd-12 1 'the spec now says bare dates'
+```
+
+MCP has two tools. `item_add` takes `id`, `kind` (`ask` or `check`), `text`, optional `options` and `recommended`, and a `request_id`.
+`item_resolve` takes `id`, `n`, `to` (`answered`, `withdrawn`, `met`, or `waived`), `answer` for an answer, and `note`.
+`show` returns the issue's `items`. Both writes return `{ id, item, items }`, and `item_add` also returns `wait_from`.
+
+### Who may end an item
+
+| Move | Who | Note |
+| --- | --- | --- |
+| Add an ask or a check | Anyone who may write the issue. An agent needs its own active claim. | The issue must not be closed. |
+| Answer an ask | A human actor that did not ask it, or a person on the `/ui` issue page | Optional. |
+| Withdraw an ask | The actor that asked it, or a human | Required. An agent needs its claim. |
+| Meet a check | Anyone who may write the issue. An agent needs its own active claim. | Required: the evidence. |
+| Waive a check | A human actor | Required: the reason. |
+
+A refused move is `item_actor_refused` (403) and writes nothing.
+Repeating the move that ended an item, with the same answer or note, returns the item unchanged. A different move or answer after it is `item_conflict` (409), with the item as it stands in `details.item`.
+
+The store checks the actor kind it is given, and that kind is only as honest as its source.
+On a local store the kind is self-declared by `--actor-kind` or `POLYLINEDB_ACTOR_KIND`, so a process that declares itself human can answer an ask that another actor raised.
+On the cloud store the kind comes from the roster role, and an agent host that signs in through OAuth as the owner acts as the owner's human actor.
+That is why the asking actor cannot answer its own ask through MCP, HTTP, or the CLI: every host that shares the owner's sign-in shares the actor that asked.
+The `/ui` issue page and the You lane answer as the signed-in person even when that person's actor asked, because the page is the one write path such a host does not reach through its tools.
+Anything that holds the owner's browser session or a token for the owner can still answer as the owner. The store cannot tell that apart from the owner.
+
+### Wait for the answer
+
+An open ask takes the issue off the ready worklist for every actor and lists it in [owner waits](prerequisites.md#owner-waits), in the `/ui` You lane, and on the Attention list.
+The asking agent keeps its claim, says it is blocked with `claim_report`, and waits for the answer in the change feed:
+
+```sh
+pd claim report --claim-proof "$PROOF" --kind blocked --text 'waiting on ask 1'
+pd wait --since WAIT_FROM_SINCE --issue pd-12 --kind answered
+```
+
+`item_add` returns `wait_from: { incarnation, since }`, the feed position just after the ask, so the wait cannot miss an answer that lands first.
+The ask records `asked` and the answer records `answered`, so a wait filtered to `answered` never wakes on its own question.
+When the last open ask leaves an open issue that has no active blocker, the store records `became_ready` after the answer.
+Other item moves record `updated` with `fields: ["items"]`.
+Keep the lease alive while waiting with `claim keepalive`, or with `claim_renew` between waits.
+After the wake, read the answer with `show`.
+
+### Close and handoff wait for the items
+
+`close` and `claim_handoff` refuse with `items_open` (409) while an ask is open or a check is unmet, and write nothing.
+The message names every such item with the command that ends it, and `details` carries `{ id, open_items: [{ n, kind, text }] }`.
+`close --force --reason TEXT` bypasses the items the way it bypasses prerequisites, and saves the reason as a comment.
+`claim_handoff` has no force: meet or waive each check, and wait for each ask to be answered or withdraw it, before the handoff.
 
 ## Verify a resource deletion
 
@@ -257,10 +329,11 @@ They reject `--actor-kind` and ignore `POLYLINEDB_ACTOR_KIND`.
 An agent claims only an issue with the `ready` label.
 A different issue returns `not_ready`.
 An agent reads the ready worklist only through the `ready` label, so `pd ready` shows an agent only labeled issues.
-The ready worklist leaves out owner waits (`owner-decision`, `owner-action`) for every actor; see [owner waits](prerequisites.md#owner-waits). The claim gate itself checks only the `ready` label.
+The ready worklist leaves out owner waits (an open ask, `owner-decision`, `owner-action`) for every actor; see [owner waits](prerequisites.md#owner-waits). The claim gate itself checks only the `ready` label.
+An agent that needs a person's answer adds an ask instead of an owner label: the ask holds the question and its options, and the answer reaches the agent through the change feed.
 
 An agent needs its own active claim before it changes an issue.
-The rule covers `update`, `close`, `reopen`, `comment`, `comment_edit`, and prerequisite edits where the issue is the dependent.
+The rule covers `update`, `close`, `reopen`, `comment`, `comment_edit`, `item_add`, `item_resolve`, and prerequisite edits where the issue is the dependent.
 Without that claim, the write fails with `claim_required` and changes nothing.
 When the agent's own lease has expired, that error says `The agent's own claim expired`, and `details.claim` reports `state`, `generation`, and `expires_at` next to `id`.
 The store checks the claim and the `ready` label inside the same transaction as the write, so a release, an expiry, or a label removal just before the write cannot let it land.

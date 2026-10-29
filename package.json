@@ -26,7 +26,7 @@
     "check:sql": "node scripts/solarsql.ts --check",
     "check:architecture": "node scripts/check-architecture.ts",
     "check:ui-latency": "node scripts/ui-latency-budget.ts",
-    "test:properties": "node scripts/test-node-runtime.mjs && node --import ./scripts/test-node-runtime.mjs --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts test/claims.test.ts test/transition-differential.test.ts test/spec-properties.test.ts test/port-protocol.test.ts test/comment-edit.test.ts test/posts.test.ts",
+    "test:properties": "node scripts/test-node-runtime.mjs && node --import ./scripts/test-node-runtime.mjs --test --test-name-pattern='^property:' test/issues.test.ts test/snapshot.test.ts test/claims.test.ts test/transition-differential.test.ts test/spec-properties.test.ts test/port-protocol.test.ts test/comment-edit.test.ts test/posts.test.ts test/items.test.ts",
     "test:mutation": "stryker run"
   },
   "devDependencies": {

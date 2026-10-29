@@ -62,7 +62,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | Operation | Arguments besides `op` | Result |
 | --- | --- | --- |
 | `create` | Required `tool`, `project`, `body`, `prefix`, `request_id`; optional mutable fields and `parent` | `{ "issue": ... }` |
-| `show` | `id`; optional `with_land_order: true` | `{ "issue": ..., "comments": [...] }`; with `with_land_order`, also `"land_order": ...` |
+| `show` | `id`; optional `with_land_order: true` | `{ "issue": ..., "comments": [...], "items": [...] }`; with `with_land_order`, also `"land_order": ...` |
 | `list` | Optional filters; optional `with_land_order: true` | `{ "issues": [...], "next_cursor": ... }`; with `with_land_order`, also `"land_order": [...]`, one entry per issue in the same order |
 | `search` | `query`, optional filters, optional `with_matches: true` | Same as list; with `with_matches`, also `"matches": [...]` |
 | `comment` | `id`, `body`; optional `handle`, `via`, `reply_to` | `{ "comment": ... }` |
@@ -71,7 +71,9 @@ An agent's name is not the affected tool merely because that agent created the i
 | `post` | `project`, `body`, `handle`; optional `via`, `reply_to` | `{ "comment": ... }` |
 | `posts` | optional `project`, `handle`, `min_stars`, `since`, `after`, `limit` | `{ "posts": [...], "next_cursor": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
-| `close` | `id`, `expected` status version; optional `resources_reason` | `{ "issue": ... }` |
+| `close` | `id`, `expected` status version; optional `resources_reason` | `{ "issue": ... }`; `items_open` while an ask is open or a check is unmet, unless `force` |
+| `item_add` | `id`, `kind` (`ask` or `check`), `text` (at most 4096 UTF-8 bytes), `request_id`; optional `options` (2 to 8 distinct, each at most 200 UTF-8 bytes) and `recommended` for an ask | `{ "id": ..., "item": ..., "items": [...], "wait_from": { "incarnation": ..., "since": ... } }` |
+| `item_resolve` | `id`, `n`, `to` (`answered`, `withdrawn`, `met`, or `waived`); `answer` with `answered`; `note` (required except with `answered`) | `{ "id": ..., "item": ..., "items": [...] }` |
 | `reopen` | `id`, `expected` status version | `{ "issue": ... }` |
 | `actor` | None | `{ "actor": ... }` |
 | `dependency_list` | `dependent_id`; optional `after`, `limit` | `{ "dependent_id": ..., "revision": ..., "blockers": [...], "next_cursor": ... }` |
@@ -86,7 +88,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `dependency_owner_waits` | Optional `tool`, `project`, `after`, `limit` | `{ "waits": [{ "issue": ..., "dependents": [...], "dependents_next": ... }], "next_cursor": ... }` |
 | `claim_show` | `issue_id` | `{ "claim": ... }` |
 | `claim_list` | Optional `tool`, `project`, `after`, `limit` | `{ "claims": [...], "next_cursor": ... }` |
-| `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ..., "open_blockers": [...] }` |
+| `claim_acquire` | `issue_id`, observed `incarnation`, `session_id`, `request_id`; optional `ttl`, nullable `agent_label` | `{ "claim_receipt": ..., "open_blockers": [...], "open_asks": [...] }` |
 | `claim_renew` | `claim_proof`, `expected_revision`, `request_id`; optional `ttl` | `{ "claim_receipt": ... }` |
 | `claim_report` | `claim_proof`, `kind` (`working`, `blocked`, `error`, or `done`), `text` (at most 200 UTF-8 bytes), `request_id` | `{ "claim_receipt": ... }` with outcome `renewed` and the unchanged `expires_at` |
 | `claim_handoff` | `claim_proof`, `expected_revision`, `request_id`, `tip` (7 to 40 lowercase hex digits); optional `summary` (at most 65536 UTF-8 bytes) | `{ "claim_receipt": ..., "handoff": { "issue": ..., "comments": [...] }, "land_order_warnings": [{ "id": ..., "status": ... }] }` |
@@ -228,7 +230,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `incarnation` | The store incarnation, the same value as `claim.store_incarnation` |
 | `issue_id` | The changed issue; for a prerequisite edit, the dependent; for a land-order edit, the later issue; for a star, the issue of the comment |
 | `kind` | One of the kinds in the next table |
-| `fields` | For `updated` and `status_changed`, the written field names in field order; `["resources"]` for a resource entry change; otherwise `[]` |
+| `fields` | For `updated` and `status_changed`, the written field names in field order; `["resources"]` for a resource entry change; `["items"]` for a check added, or an item that leaves `open` other than by an answer; otherwise `[]` |
 | `occurred_at` | Database time of the write, in integer Unix seconds |
 | `actor` | The actor of the write |
 | `relation` | Present only on `dependency_added` and `dependency_removed` for a land-order edit, with the value `lands_after`; a prerequisite edit has no `relation` |
@@ -236,7 +238,9 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | Kind | Recorded when |
 | --- | --- |
 | `created` | `create` inserts an issue |
-| `updated` | `update` writes fields other than `status`, or `resource_add` or `resource_update` commits an entry change |
+| `updated` | `update` writes fields other than `status`, `resource_add` or `resource_update` commits an entry change, `item_add` adds a check, or `item_resolve` withdraws an ask, meets a check, or waives one |
+| `asked` | `item_add` adds an ask; `fields` is `[]` |
+| `answered` | `item_resolve` answers an ask; `fields` is `[]` |
 | `status_changed` | `update`, `close`, or `reopen` writes `status`; `fields` includes `status` |
 | `commented` | `comment` appends a comment, or a forced status change appends its reason |
 | `comment_edited` | `comment_edit` replaces the body of a comment; `fields` is `[]` |
@@ -246,7 +250,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `claim_released` | `claim_release` or `claim_handoff` commits a release receipt |
 | `dependency_added` | `dependency_add` or `land_order_add` inserts an edge |
 | `dependency_removed` | `dependency_remove` or `land_order_remove` deletes an edge |
-| `became_ready` | A blocker closes, or an active blocker is removed, and the dependent is `open` with no active blocker left |
+| `became_ready` | A blocker closes, or an active blocker is removed, and the dependent is `open` with no active blocker left; or the last open ask of an `open` issue with no active blocker is answered or withdrawn, recorded after that event |
 
 A written field counts even when its value stays the same, because its version advances.
 One write can record several events. They take consecutive numbers in this order: the change itself, then `became_ready` for each released dependent in issue order, then the reason comment of a forced change.
@@ -263,6 +267,7 @@ These writes record no event:
 - `claim_report`. `claim_show` reports the newest line as `claim.run.last`.
 - A prerequisite or land-order edit with the outcome `already_present` or `already_absent`.
 - A `star` with the outcome `already_present`, and an `unstar` with the outcome `already_absent`.
+- An `item_resolve` that repeats the move that ended the item, and an `item_add` replay.
 - Memory operations.
 - A lease that passes its deadline. `claim_show` and `claim_list` report it as `expired`.
 - Snapshot import, the D1 restore and merge operators, and schema upgrades.
@@ -617,6 +622,7 @@ These fields are optional so that the client works with Workers on both sides of
 
 - `run` in a claim inspection from `claim_show`, `show`, and `claim_list`. A Worker that predates claim reports omits it, and the inspection then has no `run`. The client rejects a `run` without a lease, an unknown `state` or `kind`, and a `text` longer than 200 UTF-8 bytes.
 - `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
+- `items` in `show`, and `open_asks` in `claim_acquire`. A Worker that predates asks and checks omits them, and the result then has no such key. When the Worker sends them, every item must have a known `kind` and `state`, a positive `n`, and the fields its state needs, and every open ask must be an ask that is still open.
 - `open_blockers` in `claim_acquire`. When the Worker sends it, it must be an array of issue IDs in issue order that does not contain the claimed issue, and the client includes that array. When the Worker omits it, the result has no `open_blockers` key.
 - `matches` in `search`. A Worker that predates `with_matches` answers the request with `invalid_input`, and only the error message names the field. The client then sends the search once more without `with_matches` and returns that page without `matches`. If that request fails, the search fails with its error. A successful response to a request with `with_matches` must still contain `matches`.
 - `land_order` in `show` and `list`. A Worker that predates `with_land_order` answers `invalid_input`, and only the error message names the field. The client then sends the read once more without it and returns the result without `land_order`. A successful response to a request with `with_land_order` from a Worker that knows it must contain `land_order`.
@@ -635,6 +641,21 @@ A `comment` result that carries `handle`, `via`, and `reply_to` must echo the re
 A `star` result must have the outcome `added` or `already_present`, and an `unstar` result `removed` or `already_absent`. The star must name the requested comment and handle, and `already_absent` must carry `null`.
 A `posts` page must hold at most `limit` posts, each with a handle and in order, match the requested `handle`, `min_stars`, and `since`, and give the last post ID as `next_cursor` only on a full page.
 The `reply_target_not_found` details must echo the issue ID and `reply_to`, and the `star_owner_required` details must echo both IDs and the requested handle.
+
+### Asks and checks
+
+The client sends the request header `polylinedb-issue-fields: closure, items`. The `items` token says that the client decodes asks and checks.
+For a request without that token, the Worker answers in the shape a released client knows:
+
+- `show` has no `items`, and `claim_acquire` has no `open_asks`, so the body keeps the keys a released client knows.
+- `items_open` keeps its code, status, and message, and has no details, because a released client rejects details on a code it does not know. The message names every open item and its next command.
+- `dependency_owner_waits` returns only the issues that carry an owner label, because a released client requires one on each entry. An issue that waits only on an open ask is left out of that page.
+
+MCP results always carry `items`, `open_asks`, and the `items_open` details.
+A Worker that predates asks and checks answers `item_add`, `item_resolve`, and a `changes` or `wait` filter on `asked` or `answered` with `invalid_input`. The client reports that the Worker needs an update and does not retry.
+An `item_add` or `item_resolve` result must echo the issue ID and carry the item in `items`. An `item_resolve` result must name the requested `n` and state, and an `answered` item must carry the requested answer.
+The `items_open` details must echo the issue ID and list each open item with `n`, `kind`, and `text`. The `item_not_found`, `item_actor_refused`, and `item_conflict` details must echo the issue ID and `n`, and the `item_conflict` details carry the item as it stands.
+`item_request_conflict` means an `item_add` replay with the same `request_id` named a different issue, actor, or item. It has no details.
 
 ## Local repository defaults
 
@@ -682,21 +703,22 @@ Schema 8 records who closed an issue and when, and portable snapshot 6 carries `
 Schema 9 adds land order, and portable snapshot 7 carries `land_order`, `land_order_revisions`, `land_order_requests`, `issue_resources`, `resource_revisions`, and `resource_requests`.
 Schema 10 adds comment edits, and portable snapshot 8 carries `version`, `updated_at`, and `updated_by` on every comment.
 Schema 11 adds posts and stars, and portable snapshot 9 carries `handle`, `via`, and `reply_to` on every comment, and a `stars` collection. A reply follows its target in the comment order.
+Schema 12 adds asks and checks, and portable snapshot 10 carries an `issue_items` collection, ordered by issue and then `n`, with each item's `request_id`.
 Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, 8, 9, or 10 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, 8, 9, 10, or 11 store after making a private backup.
 An upgrade from schema 2 through 6 starts with an empty change feed.
 Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
 An upgrade adds no land-order edges and no resource entries.
 An upgrade from schema 2 through 9 gives each existing comment version 1 with a null `updated_at` and `updated_by`.
-Every upgrade leaves `handle`, `via`, and `reply_to` null on existing comments and adds no stars. The upgrades from schema 9 and 10 keep every change event with its `seq`, so a cursor that a reader holds stays valid.
-After the upgrade, an installed CLI that predates schema 11 refuses the store, because it requires its own schema version.
+Every upgrade leaves `handle`, `via`, and `reply_to` null on existing comments and adds no stars. Every upgrade adds no asks or checks. The upgrades from schema 9, 10, and 11 keep every change event with its `seq`, so a cursor that a reader holds stays valid.
+After the upgrade, an installed CLI that predates schema 12 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3, v4, v5, v6, v7, or v8 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, or `--from 8` instead.
+For a v3, v4, v5, v6, v7, v8, or v9 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, or `--from 9` instead.
 The conversion from v7 gives each comment version 1 with a null `updated_at` and `updated_by`.
-The conversion from v8 gives each comment null `handle`, `via`, and `reply_to`, and an empty `stars` collection. Import accepts an older snapshot only after conversion.
+The conversion from v8 gives each comment null `handle`, `via`, and `reply_to`, and an empty `stars` collection. The conversion from v9 adds an empty `issue_items` collection. Import accepts an older snapshot only after conversion.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.

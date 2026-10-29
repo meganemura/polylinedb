@@ -1,5 +1,5 @@
 // Formats issue reads for display; it does not select modes or access storage.
-import type { Comment, Field, Issue, LandOrder, MemoryFreshness, OperationResult } from './records/index.ts';
+import type { Comment, Field, Issue, Item, LandOrder, MemoryFreshness, OperationResult } from './records/index.ts';
 
 type IssueDetails = Extract<OperationResult, { issue: Issue; comments: Comment[] }>;
 type IssuePage = Extract<OperationResult, { issues: Issue[]; next_cursor: string | null }>;
@@ -138,6 +138,19 @@ function renderIssuePage(title: string, result: IssuePage, color: boolean): stri
   return lines.join('\n');
 }
 
+// An issue with no asks or checks prints no section, so the details read as before.
+function itemLines(items: readonly Item[], color: boolean): string[] {
+  if (items.length === 0) return [];
+  return [heading('Asks and checks', color) + ' (' + items.filter(item => item.state === 'open').length + ' open)', ...items.flatMap(item => [
+    '  ' + item.kind + ' ' + item.n + ' · ' + item.state + ' · by ' + visibleText(item.created_by, false)
+      + (item.resolved_by === null ? '' : ' · ' + item.state + ' by ' + visibleText(item.resolved_by, false)),
+    indentedLines(item.text, 4),
+    ...(item.options === null ? [] : ['    options: ' + item.options.map(option => visibleText(option, false) + (option === item.recommended ? ' (recommended)' : '')).join(', ')]),
+    ...(item.answer === null ? [] : ['    answer: ' + visibleText(item.answer, false)]),
+    ...(item.note === null ? [] : [indentedLines('note: ' + item.note, 4)]),
+  ])];
+}
+
 function renderIssueDetails(result: IssueDetails, color: boolean): string {
   const issue = result.issue;
   const lines = [
@@ -162,6 +175,7 @@ function renderIssueDetails(result: IssueDetails, color: boolean): string {
       ? ['Closed ' + visibleText(issue.closed_at, false) + ' by ' + visibleText(issue.closed_by, false)] : []),
     heading('Body', color),
     indentedLines(issue.body, 2),
+    ...itemLines(result.items ?? [], color),
     heading('Comments', color) + ' (' + result.comments.length + ')',
   ];
   for (const comment of result.comments) {

@@ -12,6 +12,7 @@ import { agentHoldsClaim, asActor, heldClaimObservation, rejectAgentWrite } from
 import { issueClaimGuard } from '../claims/claims-sql.ts';
 import { recordingChanges } from '../store/changes-sql.ts';
 import { activeBlockerExists } from '../store/active-blocker.ts';
+import { openItemExists, refuseOpenItems } from '../store/issue-items.ts';
 import { liveResourceSummary, shownLiveResources } from '../resources/resources-sql.ts';
 import type { ClaimProof } from '../claims/claims-sql.ts';
 import { enumeration, handleSchema, id, integer, invalid, issueRow, labels, name, object, parseHandle, parseVia, shownCommentRow, starrerNames, storedCommentRow, text, validated } from '../store/issue-record.ts';
@@ -186,7 +187,8 @@ function notFound(issueId: string): never {
 const observation = (issueId: string): SqlStatement => ({ sql: `SELECT issues.*,
   ${activeBlockerExists('issues.id')} AS has_active_blockers,
   EXISTS(SELECT 1 FROM issues AS child WHERE child.parent_id = issues.id) AS has_children,
-  ${liveResourceExists('issues.id')} AS has_live_resources
+  ${liveResourceExists('issues.id')} AS has_live_resources,
+  ${openItemExists('issues.id', 'close')} AS has_open_items
   FROM issues WHERE id = ?`, params: [issueId] });
 // An epic answers only for its own entries; a child keeps its own close guard.
 const liveResourceExists = (issue: string) => `EXISTS(SELECT 1 FROM issue_resources WHERE issue_resources.issue_id = ${issue} AND issue_resources.verified_deleted_at IS NULL)`;
@@ -215,6 +217,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   if (guardedStatus && !override.force) conditions.push(`NOT ${activeBlockerExists('issues.id')}`);
   const closing = statusChange?.value === 'closed';
   if (closing && override.resources_reason === undefined) conditions.push(`NOT ${liveResourceExists('issues.id')}`);
+  if (closing && !override.force) conditions.push(`NOT ${openItemExists('issues.id', 'close')}`);
   for (const change of changes) {
     assignments.push(`${fieldRegistry[change.field].column} = ?`, `${change.field}_v = ${change.field}_v + 1`);
     params.push(change.field === 'labels' ? JSON.stringify(change.value) : change.value);
@@ -239,7 +242,7 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
   const ownershipRow = rowsAt(result, 2 + reasons.length)[0];
   if (!ownershipRow || typeof ownershipRow.store_incarnation !== 'string' || typeof ownershipRow.observed_at !== 'number') throw new PolylinedbError('storage_error', 'Database omitted the claim observation', 503);
   rejectAgentWrite(caller, 'issue_write', issueId, issue.labels, ownershipRow);
-  const decision = decideIssueUpdate({ id: issueId, status: issue.status, type: issue.type, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1, has_live_resources: observed.has_live_resources === 1,
+  const decision = decideIssueUpdate({ id: issueId, status: issue.status, type: issue.type, versions: issue.versions, has_active_blockers: observed.has_active_blockers === 1, has_children: observed.has_children === 1, has_live_resources: observed.has_live_resources === 1, has_open_items: observed.has_open_items === 1,
     claim: ownershipRow.generation === null ? null : claimRow(ownershipRow), store_incarnation: ownershipRow.store_incarnation },
     { changes, force: override.force === true, resources_acknowledged: override.resources_reason !== undefined, ...(proof === undefined ? {} : { claim_proof: proof }) }, actor, ownershipRow.observed_at);
   if (decision.accepted) throw new PolylinedbError('storage_error', 'The database rejected an update without a matching condition', 503);
@@ -255,6 +258,10 @@ async function update(db: SqlExecutor, issueId: string, changes: readonly Change
       throw new PolylinedbError('claim_required', 'A current ownership proof is required for this update', 409, { issue, claim });
     }
     case 'dependency_blocked': throw new PolylinedbError('dependency_blocked', 'The issue has active prerequisites', 409, { issue });
+    case 'items_open': {
+      await refuseOpenItems(db, issueId);
+      throw new PolylinedbError('items_open', 'The issue held open items when the close was decided; read the issue and close again', 409, { id: issueId, open_items: [] });
+    }
     case 'resources_remaining': {
       // No details: released clients decode an error code they do not know only when it carries none.
       const live = rowsAt(result, 3 + reasons.length);

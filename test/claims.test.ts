@@ -12,7 +12,7 @@ import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation, PolylinedbError } from '../src/records/index.ts';
 import type { ClaimReceipt } from '../src/records/index.ts';
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL, SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
 import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence/persistence.ts';
 import { downgradeToSchema6 } from './fixtures/legacy-schema.ts';
 const request = () => crypto.randomUUID();
@@ -50,7 +50,7 @@ test('claim commands preserve history and require ownership on all requested sta
   const release = { op: 'claim_release', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request() };
   await run(release); await assert.rejects(run({ op: 'reopen', id: issue.id, expected: 2 }), { code: 'claim_required' });
   const shown = await run({ op: 'claim_show', issue_id: issue.id }); assert.ok('claim' in shown); assert.equal(shown.claim.state, 'released'); assert.equal(shown.claim.lease?.agent_label, 'Codex');
-  assert.deepEqual(await run(owner.command), { claim_receipt: owner.receipt, open_blockers: [], previous_lease: null });
+  assert.deepEqual(await run(owner.command), { claim_receipt: owner.receipt, open_blockers: [], open_asks: [], previous_lease: null });
   const next = await acquire(run, issue.id); assert.equal(next.receipt.generation, 2); assert.equal(next.receipt.revision, 3); assert.equal(next.receipt.agent_label, null);
   await run({ op: 'reopen', id: issue.id, expected: 2, claim_proof: proof(next.receipt) });
   await assert.rejects(run({ op: 'update', id: issue.id, changes: [{ field: 'body', value: 'bad', expected: 2 }], claim_proof: proof(owner.receipt) }), { code: 'claim_required' });
@@ -338,16 +338,16 @@ test('claim replay recognizes only complete provider duplicate markers', async t
   const marker = 'UNIQUE constraint failed: claim_requests.request_id';
   for (const message of [marker, `D1_ERROR: ${marker}: SQLITE_CONSTRAINT`, `${marker}: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)`]) {
     const failing = { ...db, async batch() { throw new Error('outer', { cause: new Error(message) }); } };
-    assert.deepEqual(await executeOperation(failing, parseOperation(owner.command), 'test:owner'), { claim_receipt: owner.receipt, open_blockers: [], previous_lease: null });
+    assert.deepEqual(await executeOperation(failing, parseOperation(owner.command), 'test:owner'), { claim_receipt: owner.receipt, open_blockers: [], open_asks: [], previous_lease: null });
   }
   for (const message of [`prefix ${marker}`, `${marker} trailing`, 'claim_receipt_immutable', 'CHECK constraint failed: version > 0']) {
     const error = new Error(message); const failing = { ...db, async batch() { throw error; } };
     await assert.rejects(executeOperation(failing, parseOperation(owner.command), 'test:owner'), value => value === error);
   }
 });
-test('canonical schemas 2 through 10 upgrade without rewriting old records or identity', t => {
+test('canonical schemas 2 through 11 upgrade without rewriting old records or identity', t => {
   const root = mkdtempSync(join(tmpdir(), 'pd-claims-upgrade-')); t.after(() => rmSync(root, { recursive: true, force: true }));
-  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL];
+  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL];
   for (const [index, ddl] of sources.entries()) {
     const directory = join(root, `v${index + 2}`); mkdirSync(directory, { mode: 0o700 }); const path = join(directory, 'polylinedb.sqlite');
     const legacy = new DatabaseSync(path); legacy.exec(ddl);
@@ -356,7 +356,7 @@ test('canonical schemas 2 through 10 upgrade without rewriting old records or id
     const tables = legacy.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name<>'schema_version' ORDER BY name").all();
     const before = tables.map(row => { assert.equal(typeof row.name, 'string'); if (typeof row.name !== 'string') throw new Error('Invalid table'); return [row.name, legacy.prepare(`SELECT * FROM ${row.name}`).all()]; });
     legacy.close(); chmodSync(path, 0o600);
-    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 11);
+    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 12);
     const current = new DatabaseSync(path); const canonical = new DatabaseSync(':memory:'); canonical.exec(SCHEMA_SQL);
     try {
       for (const [table, records] of before) {
@@ -383,7 +383,7 @@ test('property: successful claims retain requested TTL and replay after a genera
       assert.equal(first.receipt.expires_at - first.receipt.changed_at, ttl);
       const renewed = await run({ op: 'claim_renew', claim_proof: proof(first.receipt), expected_revision: 1, request_id: request(), ttl: renewedTTL }); assert.ok('claim_receipt' in renewed);
       assert.equal(renewed.claim_receipt.expires_at - renewed.claim_receipt.changed_at, renewedTTL); assert.equal(renewed.claim_receipt.revision, 2); assert.equal(renewed.claim_receipt.generation, 1);
-      assert.deepEqual(await run(first.command), { claim_receipt: first.receipt, open_blockers: [], previous_lease: null });
+      assert.deepEqual(await run(first.command), { claim_receipt: first.receipt, open_blockers: [], open_asks: [], previous_lease: null });
     } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
   }, { testCases: 30 });
   assert.ok(drawn.has(30) && drawn.has(3600), 'the generated TTLs include the minimum and the maximum');
@@ -394,13 +394,13 @@ test('snapshot5 preserves claim history while restore rotates authority only onc
   await source.run({ op: 'claim_renew', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request(), ttl: 3600 });
   await source.run({ op: 'claim_release', claim_proof: proof(owner.receipt), expected_revision: 2, request_id: request() });
   const active = await acquire(source.run, 'pd-1');
-  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.version, 9); assert.equal(snapshot.issue_claims.length, 1); assert.equal(snapshot.claim_requests.length, 4);
+  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.version, 10); assert.equal(snapshot.issue_claims.length, 1); assert.equal(snapshot.claim_requests.length, 4);
   const bytes = snapshot.claim_requests.map(row => row.payload);
   destination.store.importSnapshot(snapshot); assert.equal(canonicalSnapshot(destination.store.exportSnapshot()), canonicalSnapshot(snapshot));
   assert.deepEqual(destination.store.exportSnapshot().claim_requests.map(row => row.payload), bytes);
   const imported = await destination.run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in imported); assert.equal(imported.claim.state, 'invalidated'); assert.notEqual(imported.claim.store_incarnation, owner.receipt.incarnation);
   await assert.rejects(destination.run({ op: 'close', id: 'pd-1', expected: 1, claim_proof: proof(active.receipt) }), { code: 'claim_required' });
-  assert.deepEqual(await destination.run(owner.command), { claim_receipt: owner.receipt, open_blockers: [], previous_lease: null });
+  assert.deepEqual(await destination.run(owner.command), { claim_receipt: owner.receipt, open_blockers: [], open_asks: [], previous_lease: null });
   assert.equal(destination.store.importSnapshot(snapshot).result, 'already_present');
   const resumed = await destination.run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in resumed); assert.equal(resumed.claim.store_incarnation, imported.claim.store_incarnation);
   const current = await acquire(destination.run, 'pd-1'); assert.equal(current.receipt.generation, 3); assert.equal(current.receipt.revision, 5);
@@ -420,10 +420,10 @@ test('snapshot claim closure rejects dangling and future receipts across all inc
 });
 test('snapshot4 conversion is explicit and preserves original creation payload bytes', async t => {
   const source = fixture(t); await create(source.run);
-  const { issue_claims: _, claim_requests: __, land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, stars: _stars, ...old } = source.store.exportSnapshot();
+  const { issue_claims: _, claim_requests: __, land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, stars: _stars, issue_items: _items, ...old } = source.store.exportSnapshot();
   const legacy = { ...old, version: 4, issues: old.issues.map(({ closed_at: _at, closed_by: _by, ...issue }) => issue) };
   assert.throws(() => parseSnapshot(legacy), { code: 'invalid_snapshot' });
-  const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 9); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);
+  const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 10); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);
 });
 test('historical schema5 export retains graph records and canonical retirement guards without writes', t => {
   const root = mkdtempSync(join(tmpdir(), 'pd-history5-')); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -437,7 +437,7 @@ test('historical schema5 export retains graph records and canonical retirement g
     database.exec(`CREATE TRIGGER "polylinedb_retired_${row.name}_${operation.toLowerCase()}" BEFORE ${operation} ON "${row.name}" BEGIN SELECT RAISE(ABORT, 'This local database is retired. Use cloud connection archive.'); END`);
   }
   const before = database.prepare('SELECT * FROM memory_store_identity').get(); database.close(); chmodSync(path, 0o600);
-  const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 9); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
+  const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 10); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
   const after = new DatabaseSync(path, { readOnly: true }); try { assert.deepEqual(after.prepare('SELECT * FROM memory_store_identity').get(), before); assert.equal(after.prepare('SELECT version FROM schema_version').get()?.version, 5); } finally { after.close(); }
   assert.throws(() => upgradeStore({ directory, cwd: join(root, 'work') }), { code: 'store_retired' });
 });

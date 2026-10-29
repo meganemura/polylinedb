@@ -66,6 +66,11 @@ async function makeSource(directory: string, prefix = 'src', includeLiveMemory =
       { sql: "INSERT INTO comments(id,issue_id,body,created_at,created_by,handle,via,reply_to) SELECT ?,issue_id,?,created_at,?,'builder','claude-code opus-5.5 cloud',id FROM comments WHERE issue_id = ?", params: [reply, `${prefix} reply`, `${prefix}-replier`, epic.id] },
       { sql: "INSERT INTO stars(comment_id,starrer,handle,actor,created_at) VALUES (?,'tester','tester',?,'2026-01-01T00:00:00.000Z')", params: [reply, `${prefix}-starrer`] },
     ]);
+    // Items are resolved, so the destination can still close its issue; the merge carries both kinds and both end states.
+    await executeOperation(fixture.store.db, parseOperation({ op: 'item_add', id: epic.id, kind: 'ask', text: `${prefix} which way?`, options: ['left', 'right'], recommended: 'left', request_id: randomUUID() }), `${prefix}-author`);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'item_resolve', id: epic.id, n: 1, to: 'answered', answer: 'right' }), `${prefix}-owner`);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'item_add', id: epic.id, kind: 'check', text: `${prefix} tests pass`, request_id: randomUUID() }), `${prefix}-author`);
+    await executeOperation(fixture.store.db, parseOperation({ op: 'item_resolve', id: epic.id, n: 2, to: 'met', note: 'all green' }), `${prefix}-author`);
     const claim = await executeOperation(fixture.store.db, parseOperation({ op: 'claim_show', issue_id: epic.id }), `${prefix}-author`);
     assert.ok('claim' in claim);
     await executeOperation(fixture.store.db, parseOperation({ op: 'claim_acquire', issue_id: epic.id, incarnation: claim.claim.store_incarnation, session_id: randomUUID(), request_id: randomUUID(), agent_label: 'Codex' }), `${prefix}-author`);
@@ -158,6 +163,8 @@ test('additive merge keeps both canonical stores, versions, audit rows, and dele
     const reply = actual.comments.find(comment => comment.body === 'src reply');
     assert.deepEqual([reply?.handle, reply?.via, reply?.reply_to], ['builder', 'claude-code opus-5.5 cloud', actual.comments.find(comment => comment.body === 'src comment')?.id]);
     assert.deepEqual(actual.stars.map(star => [star.comment_id, star.starrer, star.actor]), [[reply?.id, 'tester', 'src-starrer']]);
+    assert.deepEqual(actual.issue_items.map(item => [item.issue_id, item.n, item.kind, item.state, item.answer ?? item.note, item.resolved_by]),
+      [['src-1', 1, 'ask', 'answered', 'right', 'src-owner'], ['src-1', 2, 'check', 'met', 'all green', 'src-author']]);
     assert.deepEqual(actual.memories.map(memory => memory.id), ['dst-m1']);
     assert.ok(actual.memory_requests.some(request => request.memory_id === 'src-m1'));
     assert.ok(actual.memory_requests.some(request => request.memory_id === 'dst-m1'));

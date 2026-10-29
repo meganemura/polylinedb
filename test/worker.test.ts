@@ -122,7 +122,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_report', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'post', 'posts', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'star', 'unstar', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_report', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'item_add', 'item_resolve', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'post', 'posts', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'star', 'unstar', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -145,6 +145,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['dependency_owner_waits', true, false, true, false],
       ['dependency_remove', false, true, true, false],
       ['dependency_worklist', true, false, true, false],
+      ['item_add', false, false, true, false], ['item_resolve', false, false, true, false],
       ['land_order_add', false, false, true, false],
       ['land_order_list', true, false, true, false],
       ['land_order_remove', false, true, true, false],
@@ -458,6 +459,8 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     await repeat('resource_add', { issue_id: blocker.id, kind: 'worker', name: 'preview-api', expected_revision: 1, request_id: crypto.randomUUID() });
     await read('resource_list', { issue_id: blocker.id }); await read('resource_live', {});
     await repeat('resource_update', { issue_id: blocker.id, seq: 1, external_id: 'preview-api-1', mark: 'created', expected_revision: 2, request_id: crypto.randomUUID() });
+    await repeat('item_add', { id: issue.id, kind: 'check', text: 'empty input parses', request_id: crypto.randomUUID() });
+    await repeat('item_resolve', { id: issue.id, n: 1, to: 'met', note: 'parsed in the test run' });
     await repeat('close', { id: issue.id, expected: 1 });
     await repeat('reopen', { id: issue.id, expected: 2 });
     await append('comment', { id: issue.id, body: 'confirmed' });
@@ -657,7 +660,9 @@ test('claim_acquire returns open blockers on HTTP and MCP and still acquires', a
     assert.deepEqual(http.open_blockers, [open]);
     const mcp = (await (await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'claim_acquire', arguments: args } })).json()).result;
     assert.equal(mcp.isError, false);
-    assert.deepEqual(mcp.structuredContent, http);
+    // A client that does not ask for items gets the released shape; MCP always carries the open asks.
+    assert.equal(Object.hasOwn(http, 'open_asks'), false);
+    assert.deepEqual(mcp.structuredContent, { ...http, open_asks: [] });
     const clearArgs = { issue_id: clear, incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() };
     const clearHttp = await (await post('/v1/operations', { op: 'claim_acquire', ...clearArgs })).json();
     assert.equal(clearHttp.claim_receipt.outcome, 'acquired');
@@ -1061,8 +1066,8 @@ test('ui: composeLanes drops You items from Ready, Expired, and Stale, and count
   const stale = (id: string, labels: string[] = []) => ({ issue: issue(id, labels, 'in_progress'), claim: { state: 'released' as const, actor: 'a', agentLabel: null, expiresAt: 10, releasedAt: 5 } });
   const owner = issue('t-1', ['owner-action']);
   const lanes = composeLanes({
-    attention: { issues: [{ issue: owner, labels: owner.labels, waitingSeconds: 60 }, { issue: issue('t-9', ['owner-decision'], 'closed'), labels: ['owner-decision'], waitingSeconds: 1 }] } as never,
-    claims: [], leases: [], blocked: { rows: [], total: 0 }, queue: [], locks: [], since: [],
+    attention: { issues: [{ issue: owner, labels: owner.labels, openAsks: 0, waitingSeconds: 60 }, { issue: issue('t-9', ['owner-decision'], 'closed'), labels: ['owner-decision'], openAsks: 0, waitingSeconds: 1 }] } as never,
+    asks: new Map(), claims: [], leases: [], blocked: { rows: [], total: 0 }, queue: [], locks: [], since: [],
     started: { rows: [expired('t-1', ['owner-action']), expired('t-2'), stale('t-3'), stale('t-4', ['main-lock']), stale('t-1')], total: 120, expired: 2 },
     ready: [issue('t-1', ['ready', 'owner-action']), issue('t-5', ['ready'])],
   });
@@ -1112,6 +1117,56 @@ test('ui: decide approves, declines, or defers, saves the note after the change,
     const bad = await postUi(env, `/ui/i/${approve}/decide`, token, [['outcome', 'maybe']], { json: true });
     assert.equal(bad.status, 400);
     assert.equal(sqlite.prepare('SELECT count(*) AS count FROM comments').get()?.count, 2);
+  } finally { sqlite.close(); }
+});
+
+test('ui: the owner answers an ask in the You lane and waives a check on the issue page, once each', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  try {
+    const id = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Pick a date format', labels: ['ready'] });
+    // The owner's own actor asks, as a cloud agent signed in as the owner would; only the page may answer for that actor.
+    await operation(env, token, { op: 'item_add', id, kind: 'ask', text: 'Bare dates or timestamps?', options: ['bare date', 'timestamp'], recommended: 'bare date', request_id: crypto.randomUUID() });
+    await operation(env, token, { op: 'item_add', id, kind: 'check', text: 'npm test passes', request_id: crypto.randomUUID() });
+    const refusedHere = await handleRequest(new Request('https://issues.example/v1/operations', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-access-jwt-assertion': token },
+      body: JSON.stringify({ op: 'item_resolve', id, n: 1, to: 'answered', answer: 'bare date' }) }), env, authenticate);
+    assert.equal(refusedHere.status, 403);
+    assert.equal((await refusedHere.json()).error.code, 'item_actor_refused');
+
+    const today = await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text();
+    assertPageScripts(today);
+    const you = panel(today, 'You');
+    assert.ok(you.includes('>Answer</span>'), 'the row is an answer item');
+    assert.ok(you.includes(`action="/ui/i/${id}/item"`));
+    assert.ok(you.includes('name="answer" value="bare date">bare date (recommended)</button>'));
+    assert.ok(you.includes('class="btn sm ghost" name="answer" value="timestamp">timestamp</button>'));
+    assert.ok(textOf(today).includes(`Start with ${id}, a question at P2`), textOf(today));
+    const page = await (await viewIssue(env, id, { 'cf-access-jwt-assertion': token })).text();
+    assertPageScripts(page);
+    assert.ok(page.includes('id="items"'));
+    assert.ok(page.includes('href="#items"'), 'the action bar leads to the answer');
+    assert.ok(textOf(page).includes('1 open ask'), 'the agent line says why it will not start');
+
+    const answer = (value: string) => [['return', '/ui'], ['n', 1], ['to', 'answered'], ['note', ''], ['answer', value]] as const;
+    const answered = await postUi(env, `/ui/i/${id}/item`, token, answer('bare date'));
+    assert.equal(answered.status, 303);
+    assert.equal(answered.headers.get('location'), `/ui?done=answered:${id}`);
+    const items = () => sqlite.prepare('SELECT state, answer, note, resolved_by FROM issue_items WHERE issue_id = ? ORDER BY n').all(id).map(row => ({ ...row }));
+    assert.deepEqual(items()[0], { state: 'answered', answer: 'bare date', note: null, resolved_by: 'access:owner' });
+    assert.equal((await postUi(env, `/ui/i/${id}/item`, token, answer('bare date'))).status, 303, 'the same answer again changes nothing');
+    const second = await postUi(env, `/ui/i/${id}/item`, token, answer('timestamp'), { json: true });
+    assert.equal(second.status, 422);
+    assert.deepEqual(await second.json(), { ok: false, message: 'It was already answered: “bare date”. An item leaves open once. Nothing changed.' });
+    assert.equal(panel(await (await viewUi(env, { 'cf-access-jwt-assertion': token })).text(), 'You').includes(id), false, 'an answered ask leaves You');
+
+    const waive = (note: string) => [['return', `/ui/i/${id}`], ['n', 2], ['to', 'waived'], ['note', note]] as const;
+    const empty = await postUi(env, `/ui/i/${id}/item`, token, waive(''), { json: true });
+    assert.equal(empty.status, 400);
+    const waived = await postUi(env, `/ui/i/${id}/item`, token, waive('CI covers it'));
+    assert.equal(waived.headers.get('location'), `/ui/i/${id}?done=waived:${id}`);
+    assert.deepEqual(items().map(item => item.state), ['answered', 'waived']);
+    const missing = await postUi(env, `/ui/i/${id}/item`, token, [['n', 9], ['to', 'waived'], ['note', 'x']], { json: true });
+    assert.deepEqual([missing.status, (await missing.json()).message], [404, 'That ask or check is not on this issue. Nothing changed.']);
   } finally { sqlite.close(); }
 });
 

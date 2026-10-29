@@ -11,6 +11,7 @@ const uses = {
   claim_renew: ['claim_proof', 'expected_revision'], claim_report: ['claim_proof', 'kind', 'text'], claim_release: ['claim_proof', 'expected_revision'], claim_handoff: ['claim_proof', 'expected_revision', 'request_id', 'tip', 'summary'],
   update: ['claim_proof'], close: ['claim_proof'], comment: ['id', 'body', 'handle', 'via', 'reply_to'], comment_edit: ['id', 'comment_id', 'body', 'expected'], dependency_add: [], dependency_remove: [],
   star: ['id', 'comment_id', 'handle'], unstar: [], posts: ['project', 'handle', 'min_stars'],
+  item_add: ['id', 'kind', 'text', 'options', 'recommended', 'request_id'], item_resolve: ['id', 'n', 'to', 'note'], wait: ['since', 'issue_ids', 'kinds'],
 } as const;
 
 test('every operation the skill names is an advertised MCP tool with the arguments the skill uses', () => {

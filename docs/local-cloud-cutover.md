@@ -1,6 +1,6 @@
 # Move a shared local store to the cloud
 
-These instructions describe schema 11.
+These instructions describe schema 12.
 Version 0.6.0 uses schema 10 and snapshot 8.
 Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6.
 Versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
@@ -25,7 +25,7 @@ The merge records no [change feed](operations.md#change-feed) events, so a feed 
 
 Use the supported Node version, an installed `pd`, and an authenticated `cf` profile.
 Run the operator from a source checkout of polylinedb.
-The Worker and both stores must already use canonical schema 11. The operator compares both stores with that schema and refuses a different one. Upgrade both stores before you run it.
+The Worker and both stores must already use canonical schema 12. The operator compares both stores with that schema and refuses a different one. Upgrade both stores before you run it.
 The additive operator refuses additional application tables, including an existing `polylinedb_snapshot_claim` restoration table.
 Use the separate restoration procedure or review that provenance before preparing a different operator.
 The [restored D1 addition proposal](adr/0012-restored-d1-addition.md) defines a possible single addition with the original input and unchanged destination rows.

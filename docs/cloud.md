@@ -659,7 +659,7 @@ One function composes the lanes from one parallel wave of reads.
 No model runs at request time.
 The footer says so: "Composed by rule from the store at HH:MM JST. Reload for a new one."
 
-- **You** lists open, not deferred issues labeled `owner-decision` or `owner-action`. Decisions come first, then priority, then the longest wait. A deferred owner item leaves You until it is reopened.
+- **You** lists open, not deferred issues with an open [ask](claims.md#ask-a-person-and-check-the-result) or labeled `owner-decision` or `owner-action`. Questions come first, then decisions, then actions; within each, priority, then the longest wait. A question row answers the issue's first open ask in place, with one button per option and the recommended one filled; the issue page shows the rest. A deferred owner item leaves You until it is reopened.
 - **Agents** lists active claims, then ready issues. A ready issue that a claim holds, or that is on You, is not repeated there.
 - **Landing** lists open issues labeled `main-wait` in land order.
 - **Stuck** lists expired claims, live claims whose holder went quiet or reported an error (see [report what you are doing](claims.md#report-what-you-are-doing)), and issues behind an active blocker. An expired claim whose last report was an error stays on Stuck whatever the issue status, until the issue is closed or claimed again. An item on You does not repeat as an expired claim, but it does show as blocked.
@@ -688,6 +688,7 @@ Each form carries the field versions it saw, as `v.status`, `v.labels`, `v.prior
 | --- | --- | --- |
 | `/ui/i/<id>/decide` | `outcome` (`approve`, `decline`, `defer`), `note`, `dispatch=1` | approve: remove `owner-decision`, add `ready`; decline: `closed`; defer: `deferred`. Then the note as a comment "Approved. NOTE". |
 | `/ui/i/<id>/done` | `outcome` (`done`, `defer`, `handback`), `note` | done: `closed`; defer: `deferred`; handback: remove `owner-action`, add `ready`. Then the note. |
+| `/ui/i/<id>/item` | `n`, `to` (`answered`, `waived`), `answer`, `note` | `item_resolve` from the page, which answers as the signed-in person even when that actor asked. The item's own state is its version: it leaves `open` once, the same answer again changes nothing, and a different one is refused with the answer that stands. A waiver needs `note`. |
 | `/ui/i/<id>/dispatch` | `notes` | The Dispatch press described below. |
 | `/ui/i/<id>/comment` | `body` | `comment`. |
 | `/ui/i/<id>/comment-edit` | `comment`, `body`, `v.comment` | `comment_edit`. Only the author's own comments show the form. |

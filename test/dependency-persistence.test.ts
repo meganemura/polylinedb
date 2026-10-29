@@ -25,7 +25,7 @@ test('schema 2/3/4/5/6/7/8/9/10 upgrades preserve canonical DDL and creation rec
     const first = await executeOperation(withoutChangeWriter(executor(db)), request, 'old:author');
     chmodSync(path, 0o600); const requests = db.prepare('SELECT * FROM requests').all(); const oldSnapshot = exportHistoricalSnapshot({ directory });
     db.close(); chmodSync(path, 0o600);
-    assert.equal(upgradeStore({ directory }).version, 11); assert.equal(upgradeStore({ directory }).result, 'already_current');
+    assert.equal(upgradeStore({ directory }).version, 12); assert.equal(upgradeStore({ directory }).result, 'already_current');
     const upgraded = new DatabaseSync(path); const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_SQL);
     const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
     assert.deepEqual(upgraded.prepare(sql).all(), reference.prepare(sql).all()); assert.deepEqual(upgraded.prepare('SELECT * FROM requests').all(), requests);
@@ -41,7 +41,7 @@ test('canonical retired schema 4 rejects upgrade without writes and exports thro
   for (const table of tables) for (const op of ['INSERT','UPDATE','DELETE']) db.exec(`CREATE TRIGGER "polylinedb_retired_${table}_${op.toLowerCase()}" BEFORE ${op} ON "${table}" BEGIN SELECT RAISE(ABORT, 'This local database is retired. Use cloud connection archive.'); END`);
   const before = db.prepare('SELECT * FROM sqlite_master ORDER BY name').all(); db.close(); chmodSync(path, 0o600);
   assert.throws(() => upgradeStore({ directory }), { code: 'store_retired' });
-  const recovered = exportHistoricalSnapshot({ directory }); assert.equal(recovered.version, 9); assert.equal(recovered.dependency_revisions[0]?.revision, 1);
+  const recovered = exportHistoricalSnapshot({ directory }); assert.equal(recovered.version, 10); assert.equal(recovered.dependency_revisions[0]?.revision, 1);
   const after = new DatabaseSync(path, { readOnly: true }); assert.deepEqual(after.prepare('SELECT * FROM sqlite_master ORDER BY name').all(), before); assert.equal(after.prepare('SELECT version FROM schema_version').get()?.version, 4); after.close();
 });
 test('graph roundtrip preserves removed-edge receipts, validates graph rows and resumes trigger baselines', async t => {
@@ -57,7 +57,7 @@ test('graph roundtrip preserves removed-edge receipts, validates graph rows and 
   try { assert.equal(restored.importSnapshot(snapshot).dependency_requests, 4); assert.equal(restored.importSnapshot(snapshot).result, 'already_present'); assert.equal(canonicalSnapshot(restored.exportSnapshot()), canonical); assert.deepEqual(await executeOperation(restored.db, parseOperation(add), 'test'), original); } finally { restored.close(); }
   assert.throws(() => parseSnapshot({ ...snapshot, dependencies: [...snapshot.dependencies, { dependent_id: 'pd-2', blocker_id: 'pd-1' }] }), { code: 'invalid_snapshot' });
   assert.throws(() => parseSnapshot({ ...snapshot, dependency_requests: [...snapshot.dependency_requests, snapshot.dependency_requests[0]] }), { code: 'invalid_snapshot' });
-  const { dependencies: _, dependency_revisions: __, dependency_requests: ___, issue_claims: _claims, claim_requests: _claimRequests, land_order: _edges, land_order_revisions: _landRevisions, land_order_requests: _landRequests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, stars: _stars, ...old3 } = snapshot;
+  const { dependencies: _, dependency_revisions: __, dependency_requests: ___, issue_claims: _claims, claim_requests: _claimRequests, land_order: _edges, land_order_revisions: _landRevisions, land_order_requests: _landRequests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, stars: _stars, issue_items: _items, ...old3 } = snapshot;
   const issues = old3.issues.map(({ closed_at: _at, closed_by: _by, ...issue }) => issue);
   const converted3 = convertSnapshotV3({ ...old3, version: 3, issues }); assert.deepEqual(converted3.dependency_revisions.map(row => row.revision), Array(12).fill(1));
   const { memories: ____, memory_counters: _____, memory_requests: ______, ...old2 } = old3;

@@ -12,7 +12,7 @@ export type FieldChange =
 export type IssueUpdate = { changes: readonly FieldChange[]; force: boolean; resources_acknowledged: boolean; claim_proof?: ClaimProof };
 export type ObservedIssue = {
   id: string; status: Status; type: IssueType; versions: Record<Field, number>;
-  has_active_blockers: boolean; has_children: boolean; has_live_resources: boolean;
+  has_active_blockers: boolean; has_children: boolean; has_live_resources: boolean; has_open_items: boolean;
   claim: ObservedClaim | null; store_incarnation: string;
 };
 export type FieldConflict = { field: Field; expected: number; actual: number };
@@ -20,6 +20,7 @@ export type UpdateRejection =
   | { code: 'conflict'; fields: FieldConflict[] }
   | { code: 'claim_required' }
   | { code: 'dependency_blocked' }
+  | { code: 'items_open' }
   | { code: 'resources_remaining' }
   | { code: 'version_exhausted'; field: Field }
   | { code: 'epic_has_children' };
@@ -35,8 +36,9 @@ export function decideIssueUpdate(issue: ObservedIssue, update: IssueUpdate, act
   if (!ownershipAllowed(issue, update, actor, now)) return { accepted: false, rejection: { code: 'claim_required' } };
   const guarded = update.changes.some(change => change.field === 'status' && guardedStatuses.includes(change.value));
   if (guarded && !update.force && issue.has_active_blockers) return { accepted: false, rejection: { code: 'dependency_blocked' } };
-  // force answers for prerequisites only; live resources need their own reason.
   const closing = update.changes.some(change => change.field === 'status' && change.value === 'closed');
+  // force with its reason answers for open asks and unmet checks as it does for prerequisites; live resources need their own reason.
+  if (closing && !update.force && issue.has_open_items) return { accepted: false, rejection: { code: 'items_open' } };
   if (closing && !update.resources_acknowledged && issue.has_live_resources) return { accepted: false, rejection: { code: 'resources_remaining' } };
   const exhausted = update.changes.find(change => issue.versions[change.field] >= MAX_COUNTER);
   if (exhausted) return { accepted: false, rejection: { code: 'version_exhausted', field: exhausted.field } };

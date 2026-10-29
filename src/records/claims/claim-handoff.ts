@@ -10,6 +10,7 @@ import type { ClaimProof } from './claims-sql.ts';
 import type { Comment, Issue } from '../store/issue-record.ts';
 import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
 import { decideReplay, readyLabel } from '../../transition/index.ts';
+import { openItemExists } from '../store/issue-items.ts';
 
 export const mainWaitLabel = 'main-wait';
 export type ClaimHandoff = { op: 'claim_handoff'; claim_proof: ClaimProof; expected_revision: number; request_id: string; tip: string; summary?: string };
@@ -77,7 +78,9 @@ export async function attemptHandoff(db: SqlExecutor, operation: ClaimHandoff, a
   const labelsJson = JSON.stringify(labels);
   const statusMoves = current.status !== 'open' ? 1 : 0;
   const labelsMove = JSON.stringify(current.labels) !== labelsJson ? 1 : 0;
-  const gate: SqlStatement = { sql: "EXISTS(SELECT 1 FROM issues WHERE id = ? AND status <> 'closed' AND status_v = ? AND labels_v = ? AND status_v < 9007199254740991 AND labels_v < 9007199254740991)",
+  // A handoff says the work is done, so the asks and checks that hold close hold it too.
+  const gate: SqlStatement = { sql: `EXISTS(SELECT 1 FROM issues WHERE id = ? AND status <> 'closed' AND status_v = ? AND labels_v = ? AND status_v < 9007199254740991 AND labels_v < 9007199254740991
+    AND NOT ${openItemExists('issues.id', 'close')})`,
     params: [issueId, current.versions.status, current.versions.labels] };
   const release = { op: 'claim_release' as const, claim_proof: operation.claim_proof, expected_revision: operation.expected_revision, request_id: operation.request_id };
   const claimStatements = claimMutationStatements(release, actor, gate, payload);

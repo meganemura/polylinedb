@@ -3,7 +3,7 @@
  * form observed, and answers a 303 to a /ui path, JSON for the fixed script, or a full page: 409 with a diff when a version is stale.
  * The update goes first and the note second, so a note never claims a change that did not happen. Origin checks belong to the entry module.
  */
-import { executeOperation, parseIssueId, parseOperation, projectSummaries, PolylinedbError, type ClaimInspection, type Issue, type Status } from '../../records/index.ts';
+import { executeOperation, parseIssueId, parseOperation, projectSummaries, PolylinedbError, type ClaimInspection, type Issue, type ItemResolve, type Status } from '../../records/index.ts';
 import type { SqlExecutor } from '../../records/persistence/persistence.ts';
 import type { DispatchOutcome } from '../dispatch.ts';
 import { escape, fullTime, hidden, icon, idLink, joined, person, secondsOf, shortTitle, statusWord, type Viewer } from './html.ts';
@@ -12,7 +12,7 @@ import { issuePage, messagePage, newPage, newProject, tabCounts, type FreshProje
 import { readIssueView } from './reads.ts';
 import { composeLanes, readBadgeLanes } from './today.ts';
 
-export const issueActions = ['decide', 'done', 'dispatch', 'comment', 'comment-edit', 'star', 'status', 'priority', 'type', 'labels', 'body',
+export const issueActions = ['decide', 'done', 'item', 'dispatch', 'comment', 'comment-edit', 'star', 'status', 'priority', 'type', 'labels', 'body',
   'blockers/add', 'blockers/remove', 'land-order'] as const;
 export type IssueAction = typeof issueActions[number];
 export type WriteRoute = { kind: 'issue'; id: string; action: IssueAction } | { kind: 'new' } | { kind: 'landed' };
@@ -234,6 +234,32 @@ async function doneAction(ctx: WriteContext, id: string, form: URLSearchParams):
   const done: DoneKind = outcome === 'done' ? 'done' : outcome === 'defer' ? 'deferred' : 'handedback';
   const partial = await noteAfter(ctx, id, note, doneKinds[done](id));
   if (partial !== null) return { kind: 'partial', id, message: partial, note };
+  return { kind: 'done', done, id, message: doneKinds[done](id) };
+}
+
+/**
+ * Answers an ask or waives a check from the page. The item's own state is its version: the store moves an item out of open once,
+ * so a repeat of the same answer saves nothing new and a different answer after it is refused with the answer that stands.
+ * This is the one write that passes the page surface, which lets a person answer an ask their own actor raised from an agent host.
+ */
+async function resolveItem(ctx: WriteContext, id: string, form: URLSearchParams): Promise<Done> {
+  const to = one(form, 'to');
+  if (to !== 'answered' && to !== 'waived') throw new Refusal(400, 'The form names neither an answer nor a waiver. Reload the page and try again.');
+  const nText = one(form, 'n');
+  if (nText === null || !/^[1-9][0-9]{0,15}$/.test(nText) || !Number.isSafeInteger(Number(nText))) throw new Refusal(400, 'The form names no item. Reload the page and try again.');
+  const note = (one(form, 'note') ?? '').trim();
+  const answer = to === 'answered' ? required(form, 'answer', 'The answer').trim() : undefined;
+  if (to === 'waived' && note === '') throw new Refusal(400, 'A waiver needs a reason. Nothing changed.');
+  const operation: ItemResolve = { op: 'item_resolve', id, n: Number(nText), to, surface: 'page', ...(answer === undefined ? {} : { answer }), ...(note === '' ? {} : { note }) };
+  try {
+    await executeOperation(ctx.db, operation, ctx.viewer.actor);
+  } catch (error) {
+    if (!(error instanceof PolylinedbError) || error.code !== 'item_conflict') throw error;
+    const now = (error.details as { item?: { state?: string; answer?: string | null; note?: string | null } } | undefined)?.item;
+    const stands = now?.state === 'answered' ? `It was already answered: “${shortTitle(now.answer ?? '', 60)}”.` : now?.state === undefined ? 'It already left open.' : `It is already ${now.state}.`;
+    throw new Refusal(409, `${stands} An item leaves open once. Nothing changed.`);
+  }
+  const done: DoneKind = to === 'answered' ? 'answered' : 'waived';
   return { kind: 'done', done, id, message: doneKinds[done](id) };
 }
 
@@ -486,6 +512,8 @@ function failureSentence(error: PolylinedbError): string {
     case 'star_owner_required': return 'Only the one who gave a star can remove it. Nothing changed.';
     case 'dependency_blocked': return 'The issue has active blockers, so it cannot start. Nothing changed.';
     case 'epic_has_children': return 'An epic with children stays an epic. Nothing changed.';
+    case 'item_not_found': return 'That ask or check is not on this issue. Nothing changed.';
+    case 'items_open': return 'Open asks or unmet checks hold this issue. Answer, meet, or waive them first, or close it with force from the CLI. Nothing changed.';
     default: return `${error.message}. Nothing changed.`.replace('.. ', '. ');
   }
 }
@@ -538,7 +566,7 @@ export async function uiWrite(route: WriteRoute, form: URLSearchParams | 'invali
     }
     const id = route.id;
     const handlers: Record<Exclude<IssueAction, 'dispatch'>, () => Promise<Done>> = {
-      decide: () => decide(ctx, id, form), done: () => doneAction(ctx, id, form), comment: () => addComment(ctx, id, form), 'comment-edit': () => editComment(ctx, id, form),
+      decide: () => decide(ctx, id, form), done: () => doneAction(ctx, id, form), item: () => resolveItem(ctx, id, form), comment: () => addComment(ctx, id, form), 'comment-edit': () => editComment(ctx, id, form),
       star: () => starComment(ctx, id, form),
       status: () => setField(ctx, id, form, 'status'), priority: () => setField(ctx, id, form, 'priority'), type: () => setField(ctx, id, form, 'type'),
       labels: () => setLabels(ctx, id, form), body: () => setField(ctx, id, form, 'body'),

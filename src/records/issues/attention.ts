@@ -1,6 +1,7 @@
 /**
  * The Attention rule and the one read that applies it.
- * An issue needs someone when its status is in `attentionRule.statuses` and it carries a label in `attentionRule.labels`.
+ * An issue needs someone when its status is in `attentionRule.statuses` and it carries a label in `attentionRule.labels` or has an open ask.
+ * An open ask waits on the owner the way an owner label does, without a label.
  * /ui home and /ui/inbox read Attention only through `attentionIssues`, and the pd-17 and pd-139.3 views should too.
  *
  *   const attention = await attentionIssues(db);
@@ -34,7 +35,10 @@ export type OpenIssue = Issue & { readonly status: 'open' };
 
 export type AttentionIssue = {
   readonly issue: Issue;
-  readonly labels: readonly [AttentionLabel, ...AttentionLabel[]];
+  /** Empty only when the issue is here for its open asks alone. */
+  readonly labels: readonly AttentionLabel[];
+  /** Open asks on the issue. */
+  readonly openAsks: number;
   /** Whole seconds since `issue.created_at` by the store clock, never negative. Null when the store cannot parse `created_at`. */
   readonly waitingSeconds: number | null;
 };
@@ -82,15 +86,16 @@ export async function attentionIssues(db: SqlExecutor): Promise<Attention> {
 /** The read boundary. Everything after it trusts the types. */
 function attentionRow(row: Record<string, unknown>): AttentionIssue {
   const issue = issueRow(row);
-  const matched = attentionRule.labels.map(entry => entry.label).filter(label => issue.labels.includes(label));
-  const [first, ...rest] = matched;
-  if (first === undefined) throw new PolylinedbError('invalid_store', 'Stored attention issue has no attention label', 500);
+  const labels = attentionRule.labels.map(entry => entry.label).filter(label => issue.labels.includes(label));
+  const openAsks = row.open_asks;
+  if (typeof openAsks !== 'number' || !Number.isSafeInteger(openAsks) || openAsks < 0) throw new PolylinedbError('invalid_store', 'Stored open ask count is invalid', 500);
+  if (labels.length === 0 && openAsks === 0) throw new PolylinedbError('invalid_store', 'Stored attention issue has no attention label and no open ask', 500);
   const age = row.age_seconds;
   if (age !== null && (typeof age !== 'number' || !Number.isSafeInteger(age))) {
     throw new PolylinedbError('invalid_store', 'Stored issue age is invalid', 500);
   }
   // A created_at slightly ahead of the store clock is zero, not a negative wait.
-  return { issue, labels: [first, ...rest], waitingSeconds: age === null ? null : Math.max(0, age) };
+  return { issue, labels, openAsks, waitingSeconds: age === null ? null : Math.max(0, age) };
 }
 
 function waitsOn(label: AttentionLabel): 'owner' | 'main' {

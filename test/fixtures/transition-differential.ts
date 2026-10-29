@@ -21,7 +21,7 @@ type ProofKind = typeof proofs[number];
 
 const coverage = ['accepted', 'conflict', 'claim_required', 'dependency_blocked', 'resources_remaining', 'version_exhausted', 'epic_has_children', 'claim_conflict', 'not_found', 'dependency_conflict', 'dependency_version_exhausted', 'invalid_input'];
 const seen = new Set<string>();
-const boundaries = ['empty_blockers', 'empty_labels', 'clock_at_deadline', 'only_verified_resources'];
+const boundaries = ['empty_blockers', 'empty_labels', 'clock_at_deadline', 'only_verified_resources', 'open_item', 'resolved_item'];
 const reached = new Set<string>();
 
 function oneOf<T extends string>(values: readonly T[], value: unknown): T {
@@ -107,7 +107,7 @@ export function differentialCases(db: SqlExecutor, label: string) {
       const parsed = parseOperation(command);
       assert.ok(parsed.op === 'update');
       const claim = await observedClaim(issue.id); const store = await incarnation(); const clock = await now(); observeClock(claim, clock);
-      const decision = decideIssueUpdate({ id: issue.id, status: oneOf(statuses, row.status), type: oneOf(issueTypes, row.type), versions, has_active_blockers: row.blocked === 1, has_children: row.parent === 1, has_live_resources: false, claim, store_incarnation: store },
+      const decision = decideIssueUpdate({ id: issue.id, status: oneOf(statuses, row.status), type: oneOf(issueTypes, row.type), versions, has_active_blockers: row.blocked === 1, has_children: row.parent === 1, has_live_resources: false, has_open_items: false, claim, store_incarnation: store },
         { changes: parsed.changes, force, resources_acknowledged: false, ...(proof ? { claim_proof: proof } : {}) }, actor, clock);
       assert.equal(await outcome(() => actorRun(command, actor)), decision.accepted ? 'accepted' : decision.rejection.code, JSON.stringify({ command, decision }));
     },
@@ -132,12 +132,19 @@ export function differentialCases(db: SqlExecutor, label: string) {
           state === 'verified_deleted' ? 't3' : null, state === 'verified_deleted' ? owner : null, state === 'verified_deleted' ? 'listed' : null);
       }
       if (entries.length > 0 && entries.every(state => state === 'verified_deleted')) reached.add('only_verified_resources');
+      const heldBy = tc.draw(gs.sampledFrom(['none', 'open', 'resolved'] as const));
+      if (heldBy !== 'none') {
+        await sql(`INSERT INTO issue_items(issue_id,n,kind,text,state,note,request_id,created_at,created_by,resolved_at,resolved_by)
+          VALUES(?,1,'check','tests pass',?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?)`, issue.id, heldBy === 'open' ? 'open' : 'met', heldBy === 'open' ? null : 'npm test passed',
+          crypto.randomUUID(), owner, heldBy === 'open' ? null : 't4', heldBy === 'open' ? null : owner);
+        reached.add(heldBy === 'open' ? 'open_item' : 'resolved_item');
+      }
       const force = tc.draw(gs.booleans()); const acknowledged = tc.draw(gs.booleans());
       const expected = 1 + (tc.draw(gs.integers({ minValue: 0, maxValue: 5 })) === 0 ? 1 : 0);
       const command = { op: 'close', id: issue.id, expected, ...(force ? { force: true, reason: 'differential' } : {}), ...(acknowledged ? { resources_reason: 'left running' } : {}) };
       const versions = { tool: 1, project: 1, body: 1, status: 1, type: 1, priority: 1, labels: 1 };
       const decision = decideIssueUpdate({ id: issue.id, status: issue.status, type, versions, has_active_blockers: blocked, has_children: false,
-        has_live_resources: entries.some(state => state !== 'verified_deleted'), claim: null, store_incarnation: await incarnation() },
+        has_live_resources: entries.some(state => state !== 'verified_deleted'), has_open_items: heldBy === 'open', claim: null, store_incarnation: await incarnation() },
         { changes: [{ field: 'status', expected, value: 'closed' }], force, resources_acknowledged: acknowledged }, owner, await now());
       assert.equal(await outcome(() => actorRun(command)), decision.accepted ? 'accepted' : decision.rejection.code, JSON.stringify({ command, decision }));
       if (decision.accepted) {

@@ -19,7 +19,7 @@ export type Store = ReturnType<typeof openStore>;
 /** The release 0.1.0 operator's restore of one snapshot 3 input into schema 3, from record-release-0.1.0-restore.ts. */
 export const legacyRestore: { schema_sql: string; input: unknown; sha256: string; writes: Statement[] } = JSON.parse(readFileSync(new URL('release-0.1.0-restore.json', import.meta.url), 'utf8'));
 
-/** Without posts, the store holds only what a release before posts could write, so a snapshot 8 or 7 input can describe it. */
+/** Without posts, the store holds only what a release before posts and items could write, so a snapshot 9, 8, or 7 input can describe it. */
 export async function populate(store: Store, prefix: string, posts = true): Promise<void> {
   const run = (operation: unknown, actor = `${prefix}-author`) => executeOperation(store.db, parseOperation(operation), actor);
   const created = await run({ op: 'create', prefix, request_id: randomUUID(), tool: 'fixture', project: 'synthetic', body: `${prefix} epic 日本語`, type: 'epic' });
@@ -37,6 +37,12 @@ export async function populate(store: Store, prefix: string, posts = true): Prom
     { sql: "INSERT INTO comments(id,issue_id,body,created_at,created_by,handle,via,reply_to) SELECT ?,issue_id,?,created_at,?,'builder','claude-code opus-5.5 cloud',id FROM comments WHERE issue_id = ?", params: [`00000000${randomUUID().slice(8)}`, `${prefix} reply`, `${prefix}-replier`, epic] },
     { sql: "INSERT INTO stars(comment_id,starrer,handle,actor,created_at) SELECT id,'tester','tester',?,'2026-01-01T00:00:00.000Z' FROM comments WHERE issue_id = ? AND reply_to IS NOT NULL", params: [`${prefix}-starrer`, epic] },
   ]);
+  // One answered ask and one open check, so a restore carries both item kinds and an open state.
+  if (posts) {
+    await run({ op: 'item_add', id: epic, kind: 'ask', text: `${prefix} which way?`, options: ['left', 'right'], recommended: 'left', request_id: randomUUID() });
+    await run({ op: 'item_resolve', id: epic, n: 1, to: 'answered', answer: 'left', note: 'keep it' }, `${prefix}-owner`);
+    await run({ op: 'item_add', id: epic, kind: 'check', text: `${prefix} tests pass`, request_id: randomUUID() });
+  }
   const scope = await run({ op: 'claim_show', issue_id: epic });
   assert.ok('claim' in scope);
   const session = randomUUID();

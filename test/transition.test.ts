@@ -12,7 +12,7 @@ const lease = (overrides: Partial<ObservedClaim> = {}): ObservedClaim => ({
 });
 const versions = { tool: 1, project: 1, body: 3, status: 4, type: 1, priority: 1, labels: 1 };
 const issue = (overrides: Partial<ObservedIssue> = {}): ObservedIssue => ({
-  id: 'pd-1', status: 'open', type: 'task', versions, has_active_blockers: false, has_children: false, has_live_resources: false, claim: null, store_incarnation: store, ...overrides,
+  id: 'pd-1', status: 'open', type: 'task', versions, has_active_blockers: false, has_children: false, has_live_resources: false, has_open_items: false, claim: null, store_incarnation: store, ...overrides,
 });
 const close = { field: 'status', expected: 4, value: 'closed' } as const;
 

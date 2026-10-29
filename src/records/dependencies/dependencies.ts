@@ -16,7 +16,8 @@ type WorkFilters = Omit<Extract<IssueOperation, { op: 'list' }>, 'op' | 'status'
 export type DependencyMutation = { op: 'dependency_add' | 'dependency_remove'; dependent_id: string; blocker_id: string; expected_revision: number; request_id: string };
 export type DependencyOperation = DependencyMutation | { op: 'dependency_list'; dependent_id: string; after?: string; limit: number }
   | ({ op: 'dependency_worklist'; state: 'ready' | 'blocked' } & WorkFilters)
-  | { op: 'dependency_owner_waits'; tool?: string; project?: string; after?: string; limit: number };
+  /** labels_only is set by the Worker for a released client whose decoder requires an owner label on every wait; no input sets it. */
+  | { op: 'dependency_owner_waits'; tool?: string; project?: string; after?: string; limit: number; labels_only?: true };
 export type DependencyOutcome = 'added' | 'already_present' | 'removed' | 'already_absent';
 export type DependencyReceipt = { dependent_id: string; blocker_id: string; revision: number; outcome: DependencyOutcome };
 export type DependencyRequest = { request_id: string; actor: string; payload: string; dependent_id: string; blocker_id: string; result_revision: number; outcome: DependencyOutcome; created_at: string };
@@ -102,7 +103,7 @@ export async function executeDependencyOperation(db: SqlExecutor, operation: Dep
     return { issues, next_cursor: all.length > operation.limit ? issues.at(-1)?.id ?? null : null };
   }
   if (operation.op === 'dependency_owner_waits') {
-    const rows = (await db.reads.all(issueQueries.ownerWaits, { tool: operation.tool ?? null, project: operation.project ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 })).map(issueRow);
+    const rows = (await db.reads.all(issueQueries.ownerWaits, { asks: operation.labels_only ? 0 : 1, tool: operation.tool ?? null, project: operation.project ?? null, after: operation.after === undefined ? '' : issueSortKey(operation.after), limit: operation.limit + 1 })).map(issueRow);
     const issues = rows.slice(0, operation.limit);
     const waits: OwnerWait[] = [];
     for (const issue of issues) {

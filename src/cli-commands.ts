@@ -16,7 +16,7 @@ import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } fr
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from "./workspace/index.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8 } from './records/persistence/persistence.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, convertSnapshotV9 } from './records/persistence/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 import { help } from './cli-help.ts';
@@ -43,6 +43,8 @@ const commandFlags: Record<string, readonly string[]> = {
   claim_keepalive: ['claim-proof', 'ttl', 'max-duration', 'pid', 'kill-on-loss'],
   claim_renew: ['claim-proof', 'expected-revision', 'ttl', 'request-id'], claim_report: ['claim-proof', 'kind', 'text', 'request-id'], claim_release: ['claim-proof', 'expected-revision', 'request-id'],
   claim_handoff: ['claim-proof', 'expected-revision', 'tip', 'summary', 'summary-file', 'request-id'],
+  item_ask: ['option', 'recommended', 'request-id'], item_check: ['request-id'],
+  item_answer: ['note'], item_meet: [], item_waive: [], item_withdraw: [],
   changes: ['since', 'incarnation', 'project', 'issue', 'kind', 'limit'],
   'owner-waits': ['tool', 'project', 'after', 'limit'],
   wait: ['since', 'incarnation', 'project', 'issue', 'kind', 'timeout'],
@@ -63,6 +65,9 @@ const commandFlags: Record<string, readonly string[]> = {
   search: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit'],
 };
 for (const command of ['create', 'show', 'list', 'search', 'comment', 'comment_edit', 'update', 'close', 'reopen']) commandFlags[command] = [...(commandFlags[command] ?? []), 'observed-memory-revision'];
+// Each item verb names what the caller does; the first two add an item, the rest move one from open to the state named here.
+const itemAdds: Record<string, 'ask' | 'check'> = { item_ask: 'ask', item_check: 'check' };
+const itemMoves: Record<string, 'answered' | 'met' | 'waived' | 'withdrawn'> = { item_answer: 'answered', item_meet: 'met', item_waive: 'waived', item_withdraw: 'withdrawn' };
 type PrefixSource = 'flag' | 'repository' | 'builtin';
 type PrefixOrigin = { prefix: string; prefix_source: PrefixSource };
 function plainRecord(value: unknown): Record<string, unknown> | undefined {
@@ -171,12 +176,12 @@ async function main(argv: readonly string[]): Promise<void> {
     const value = ['clear-labels', 'stealth', 'with-revision', 'force', 'historical', 'kill-on-loss', 'with-land-order'].includes(name) ? 'true' : args[++index];
     if (value === undefined || value === '--' || (value.startsWith('--') && value !== '--help')) invalid(`Missing value for ${arg}`);
     const previous = flags.get(name) ?? [];
-    if (previous.length && name !== 'label' && name !== 'expect' && name !== 'issue' && name !== 'kind') invalid(`Duplicate flag ${arg}`);
+    if (previous.length && name !== 'label' && name !== 'expect' && name !== 'issue' && name !== 'kind' && name !== 'option') invalid(`Duplicate flag ${arg}`);
     flags.set(name, [...previous, value]);
   }
   const [first, ...rest] = positionals;
   // An issue ID never reads "edit", so `comment edit` cannot shadow `comment ID`.
-  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency' || first === 'claim' || first === 'land-order' || first === 'resource'
+  const nested = first === 'memory' || first === 'snapshot' || first === 'agent' || first === 'dependency' || first === 'claim' || first === 'land-order' || first === 'resource' || first === 'item'
     || (first === 'comment' && rest[0] === 'edit');
   const command = nested ? `${first === 'land-order' ? 'land_order' : first}_${rest[0] ?? ''}` : first;
   const operands = nested ? rest.slice(1) : rest;
@@ -188,7 +193,8 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   const needsOperand = ['show', 'search', 'comment', 'update', 'close', 'reopen', 'memory_show', 'memory_search', 'memory_update', 'memory_delete', 'agent_install', 'agent_remove', 'agent_context', 'dependency_list', 'land_order_list', 'resource_list', 'resource_add', 'resource_update', 'claim_show', 'claim_acquire'].includes(command);
   const commentOperands = command === 'comment_edit' || command === 'star' || command === 'unstar';
-  if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (commentOperands ? 2 : needsOperand ? 1 : 0)) invalid(`Invalid arguments for ${command}`);
+  const itemOperands = Object.hasOwn(itemAdds, command) ? 2 : Object.hasOwn(itemMoves, command) ? 3 : undefined;
+  if (!['connection', 'auth', 'claim_keepalive'].includes(command) && operands.length !== (itemOperands ?? (commentOperands ? 2 : needsOperand ? 1 : 0))) invalid(`Invalid arguments for ${command}`);
   const one = (name: string) => flags.get(name)?.[0];
   if (command === 'snapshot_convert') {
     if ([...flags.keys()].some(key => !['file', 'output', 'from'].includes(key))) invalid('Snapshot conversion accepts only --file, --output and --from');
@@ -197,9 +203,9 @@ async function main(argv: readonly string[]): Promise<void> {
     let source: unknown;
     try { source = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
     catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
-    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6, '7': convertSnapshotV7, '8': convertSnapshotV8 };
+    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6, '7': convertSnapshotV7, '8': convertSnapshotV8, '9': convertSnapshotV9 };
     const from = one('from') ?? '2';
-    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5, 6, 7 or 8');
+    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5, 6, 7, 8 or 9');
     const converted = converters[from as keyof typeof converters](source);
     const content = canonicalSnapshot(converted) + '\n';
     const output = one('output') ?? '-';
@@ -313,7 +319,8 @@ async function main(argv: readonly string[]): Promise<void> {
     process.stdout.write(JSON.stringify({ ...initialized, ...(config_path ? { config_path } : {}) }) + '\n');
     return;
   }
-  const policyName = command === 'ready' || command === 'blocked' ? 'dependency_worklist' : command === 'owner-waits' ? 'dependency_owner_waits' : command;
+  const policyName = command === 'ready' || command === 'blocked' ? 'dependency_worklist' : command === 'owner-waits' ? 'dependency_owner_waits'
+    : Object.hasOwn(itemAdds, command) ? 'item_add' : Object.hasOwn(itemMoves, command) ? 'item_resolve' : command;
   if (selected.kind === 'local' && (command === 'import' || command === 'upgrade' || command === 'claim_keepalive' || requiresExplicitLocalActor(policyName))
     && one('actor') === undefined && !process.env.POLYLINEDB_ACTOR && !defaults?.actor) invalid('An explicit --actor, POLYLINEDB_ACTOR, or repository actor is required');
   if (command === 'upgrade') {
@@ -471,6 +478,19 @@ async function main(argv: readonly string[]): Promise<void> {
     if (flags.has('kind')) raw.kinds = flags.get('kind');
   }
   if (command === 'ready' || command === 'blocked') { raw.op = 'dependency_worklist'; raw.state = command; }
+  const added = itemAdds[command];
+  if (added !== undefined) {
+    raw.op = 'item_add'; raw.id = expandedId(operands[0] ?? ''); raw.kind = added; raw.text = operands[1];
+    if (flags.has('option')) raw.options = flags.get('option');
+    if (one('recommended') !== undefined) raw.recommended = one('recommended');
+    raw.request_id = one('request-id') ?? randomUUID();
+  }
+  const moved = itemMoves[command];
+  if (moved !== undefined) {
+    raw.op = 'item_resolve'; raw.id = expandedId(operands[0] ?? ''); raw.n = integer(operands[1] ?? ''); raw.to = moved;
+    if (moved === 'answered') { raw.answer = operands[2]; if (one('note') !== undefined) raw.note = one('note'); }
+    else raw.note = operands[2];
+  }
   if (command === 'owner-waits') raw.op = 'dependency_owner_waits';
   if (command === 'dependency_add' || command === 'dependency_remove') {
     const dependent = one('dependent'); const blocker = one('blocker'); const expected = one('expected-revision');

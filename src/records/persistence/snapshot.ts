@@ -17,6 +17,8 @@ import { parseResourceOperation, resourceEntry } from '../resources/resources.ts
 import type { ResourceEntry, ResourceRequest, ResourceRevision } from '../resources/resources.ts';
 import { starRow } from '../posts/posts.ts';
 import type { Star } from '../posts/posts.ts';
+import { itemRow } from '../store/issue-items.ts';
+import type { Item } from '../store/issue-items.ts';
 
 export type Counter = { scope: string; last_number: number };
 export type CreateRequest = { request_id: string; actor: string; payload: string; issue_id: string };
@@ -30,9 +32,12 @@ type SnapshotV7 = Omit<SnapshotV6, 'version'> & { version: 7; land_order: readon
   issue_resources: readonly ResourceEntry[]; resource_revisions: readonly ResourceRevision[]; resource_requests: readonly ResourceRequest[] };
 type EditedComment = Pick<StoredComment, 'id' | 'issue_id' | 'body' | 'created_at' | 'created_by'> & CommentEdits;
 type SnapshotV8 = Omit<SnapshotV7, 'version' | 'comments'> & { version: 8; comments: readonly EditedComment[] };
-export type Snapshot = Omit<SnapshotV8, 'version' | 'comments'> & { version: 9; comments: readonly StoredComment[]; stars: readonly Star[] };
+type SnapshotV9 = Omit<SnapshotV8, 'version' | 'comments'> & { version: 9; comments: readonly StoredComment[]; stars: readonly Star[] };
+/** An item row as stored: the item with its issue and the request ID that added it. */
+export type SnapshotItem = Item & { issue_id: string; request_id: string };
+export type Snapshot = Omit<SnapshotV9, 'version'> & { version: 10; issue_items: readonly SnapshotItem[] };
 export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number;
-  land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; stars: number; sha256: string };
+  land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; stars: number; issue_items: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Expected an object');
@@ -438,7 +443,7 @@ function parseSnapshotV8(input: unknown): SnapshotV8 {
 // Snapshot 8 predates posts, so every comment converts with no handle, no via, and no reply, and no comment has a star.
 export function convertSnapshotV8(input: unknown): Snapshot {
   const old = parseSnapshotV8(input);
-  return parseSnapshot({ ...old, version: 9, comments: old.comments.map(comment => ({ ...comment, handle: null, via: null, reply_to: null })), stars: [] });
+  return convertSnapshotV9({ ...old, version: 9, comments: old.comments.map(comment => ({ ...comment, handle: null, via: null, reply_to: null })), stars: [] });
 }
 /** Gives each comment its distance from the comment that starts its reply chain, refusing a missing target, a target on another issue, and a cycle. */
 function replyDepths(comments: readonly StoredComment[]): Map<string, number> {
@@ -462,7 +467,7 @@ function replyDepths(comments: readonly StoredComment[]): Map<string, number> {
   return depths;
 }
 const starKeys = ['comment_id', 'starrer', 'handle', 'actor', 'created_at'];
-export function parseSnapshot(input: unknown): Snapshot {
+function parseSnapshotV9(input: unknown): SnapshotV9 {
   const source = record(input, [...snapshotV7Keys, 'stars']);
   if (source.version !== 9) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6, 7 and 8 explicitly');
   const { stars: starRows, ...rest } = source;
@@ -491,7 +496,38 @@ export function parseSnapshot(input: unknown): Snapshot {
   // A target sorts before its replies, so every importer can insert comments in snapshot order.
   return { ...old, version: 9, comments: stored.sort((a, b) => (depths.get(a.id) ?? 0) - (depths.get(b.id) ?? 0) || compareId(a, b)), stars };
 }
+// Snapshot 9 predates asks and checks, so no issue has an item.
+export function convertSnapshotV9(input: unknown): Snapshot {
+  return parseSnapshot({ ...parseSnapshotV9(input), version: 10, issue_items: [] });
+}
+const itemKeys = ['issue_id', 'n', 'kind', 'text', 'options', 'recommended', 'state', 'answer', 'note', 'request_id', 'created_at', 'created_by', 'resolved_at', 'resolved_by'];
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, [...snapshotV7Keys, 'stars', 'issue_items']);
+  if (source.version !== 10) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6, 7, 8 and 9 explicitly');
+  const { issue_items: itemRows, ...rest } = source;
+  const old = parseSnapshotV9({ ...rest, version: 9 });
+  if (!Array.isArray(itemRows)) return fail('Snapshot collections must be arrays');
+  const ids = new Set(old.issues.map(issue => issue.id));
+  const issue_items = itemRows.map((value): SnapshotItem => {
+    const row = record(value, itemKeys);
+    timestamp(row.created_at); if (row.resolved_at !== null) timestamp(row.resolved_at);
+    if (row.options !== null && (!Array.isArray(row.options) || row.options.length < 2 || row.options.length > 8 || row.options.some(option => typeof option !== 'string' || option.length === 0))) return fail('Invalid item options');
+    let item: SnapshotItem;
+    try { item = { ...itemRow({ ...row, options_json: row.options === null ? null : JSON.stringify(row.options) }), request_id: parseRequestId(row.request_id) }; }
+    catch { return fail('Invalid item'); }
+    if (!ids.has(item.issue_id)) fail('Item issue does not exist');
+    const resolvedStates = item.kind === 'ask' ? ['answered', 'withdrawn'] : ['met', 'waived'];
+    if ((item.state !== 'open' && !resolvedStates.includes(item.state)) || (item.kind !== 'ask' && item.options !== null) || (item.recommended !== null && !item.options?.includes(item.recommended))
+      || (item.state === 'open') !== (item.resolved_at === null) || (item.resolved_at === null) !== (item.resolved_by === null) || (item.state === 'answered') !== (item.answer !== null)
+      || (item.state === 'open' && item.note !== null) || ((item.state === 'met' || item.state === 'waived' || item.state === 'withdrawn') && item.note === null)) fail('Invalid item state');
+    return item;
+  }).sort((a, b) => compareText(issueSortKey(a.issue_id), issueSortKey(b.issue_id)) || a.n - b.n);
+  if (new Set(issue_items.map(item => JSON.stringify([item.issue_id, item.n]))).size !== issue_items.length) fail('Duplicate item');
+  if (new Set(issue_items.map(item => item.request_id)).size !== issue_items.length) fail('Duplicate item request ID');
+  return { ...old, version: 10, issue_items };
+}
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }
+export function canonicalSnapshotV9(input: unknown): string { return JSON.stringify(parseSnapshotV9(input)); }
 export function canonicalSnapshotV8(input: unknown): string { return JSON.stringify(parseSnapshotV8(input)); }
 export function canonicalSnapshotV7(input: unknown): string { return JSON.stringify(parseSnapshotV7(input)); }
 export function canonicalSnapshotV5(input: unknown): string { return JSON.stringify(parseSnapshotV5(input)); }

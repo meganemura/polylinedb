@@ -2,17 +2,21 @@
  * Composes the four lanes of /ui from store reads: You, Agents, Landing, and Stuck.
  * `readLanes` runs every read in parallel; `composeLanes` is pure and owns the dedupe rules, so one function decides what each lane shows.
  */
-import { activeClaimIssues, activitySince, attentionIssues, blockedIssues, executeOperation, startedWithoutClaim, watchedLeases, PolylinedbError,
-  type ActiveClaimIssue, type ActivityCount, type Actor, type Attention, type BlockedIssue, type Issue, type StartedIssue, type WatchedLease } from '../../records/index.ts';
+import { activeClaimIssues, activitySince, attentionIssues, blockedIssues, executeOperation, openAsksByIssue, startedWithoutClaim, watchedLeases, PolylinedbError,
+  type ActiveClaimIssue, type ActivityCount, type Actor, type Attention, type BlockedIssue, type Issue, type OpenAsk, type StartedIssue, type WatchedLease } from '../../records/index.ts';
 import type { SqlExecutor } from '../../records/persistence/persistence.ts';
 
 export const pageLimit = 50;
 const readLimit = 101;
+/** Open asks the lanes read: enough for every You item a page lists to carry its first ask. */
+const askLimit = 200;
 const lockLabel = 'main-lock';
 const ownerLabels = ['owner-decision', 'owner-action'] as const;
 
 export type LaneReads = {
   attention: Attention;
+  /** Open asks by issue. Empty on the badge reads, which count asks from the attention rows alone. */
+  asks: ReadonlyMap<string, readonly OpenAsk[]>;
   claims: readonly ActiveClaimIssue[];
   leases: readonly WatchedLease[];
   started: { rows: readonly StartedIssue[]; total: number; expired: number };
@@ -23,11 +27,15 @@ export type LaneReads = {
   since: readonly ActivityCount[];
 };
 
-/** An owner item. `after` names the active blockers it starts after; `blocks` names the You items that wait on it. */
-export type YouItem = { issue: Issue; kind: 'decide' | 'do'; waitedSeconds: number | null; after: readonly string[]; blocks: readonly string[] };
+/**
+ * An owner item. `after` names the active blockers it starts after; `blocks` names the You items that wait on it.
+ * An issue with an open ask is an answer item whatever its labels say, because the ask names the exact question; `asks` holds its open asks.
+ */
+export type YouItem = { issue: Issue; kind: 'answer' | 'decide' | 'do'; waitedSeconds: number | null; after: readonly string[]; blocks: readonly string[]; asks: readonly OpenAsk[] };
 export type QueueItem = { issue: Issue; position: number; after: readonly string[]; revision: number };
 export type Lanes = {
   you: readonly YouItem[];
+  answer: number;
   decide: number;
   todo: number;
   /** Deferred owner items: out of sight until reopened. */
@@ -50,12 +58,14 @@ export type Lanes = {
 };
 
 const isLock = (issue: Issue): boolean => issue.labels.includes(lockLabel);
-const isOwnerItem = (issue: Issue): boolean => ownerLabels.some(label => issue.labels.includes(label));
+const isOwnerItem = (row: Attention['issues'][number]): boolean => row.openAsks > 0 || ownerLabels.some(label => row.issue.labels.includes(label));
+const kindOrder = { answer: 0, decide: 1, do: 2 } as const;
 
 /** Every read of the lanes, in one parallel wave. */
 export async function readLanes(db: SqlExecutor, actor: Actor): Promise<LaneReads> {
-  const [attention, claims, leases, started, blocked, ready, queue, locks, since] = await Promise.all([
+  const [attention, asks, claims, leases, started, blocked, ready, queue, locks, since] = await Promise.all([
     attentionIssues(db),
+    openAsksByIssue(db, askLimit),
     activeClaimIssues(db, readLimit),
     watchedLeases(db, readLimit),
     startedWithoutClaim(db, readLimit),
@@ -70,7 +80,7 @@ export async function readLanes(db: SqlExecutor, actor: Actor): Promise<LaneRead
   }
   const orders = queue.land_order;
   return {
-    attention, claims, leases, started, blocked, ready: ready.issues, locks: locks.issues.filter(issue => issue.status !== 'closed'), since,
+    attention, asks, claims, leases, started, blocked, ready: ready.issues, locks: locks.issues.filter(issue => issue.status !== 'closed'), since,
     queue: queue.issues.map((issue, index) => ({ issue, after: orders[index]?.after.map(entry => entry.id) ?? [], revision: orders[index]?.revision ?? 1 })),
   };
 }
@@ -81,22 +91,23 @@ export async function readLanes(db: SqlExecutor, actor: Actor): Promise<LaneRead
  */
 export async function readBadgeLanes(db: SqlExecutor): Promise<LaneReads> {
   const [attention, leases, started, blocked] = await Promise.all([attentionIssues(db), watchedLeases(db, readLimit), startedWithoutClaim(db, readLimit), blockedIssues(db, readLimit)]);
-  return { attention, claims: [], leases, started, blocked, ready: [], queue: [], locks: [], since: [] };
+  return { attention, asks: new Map(), claims: [], leases, started, blocked, ready: [], queue: [], locks: [], since: [] };
 }
 
 /** The dedupe rules: a You item is not also Ready, Expired, or Stale; an expired claim is not also Stale; a lock is never a row. Blocked may repeat a You item. */
 export function composeLanes(reads: LaneReads): Lanes {
-  const owner = reads.attention.issues.filter(row => isOwnerItem(row.issue) && row.issue.status !== 'closed');
+  const owner = reads.attention.issues.filter(row => isOwnerItem(row) && row.issue.status !== 'closed');
   const blockersOf = new Map(reads.blocked.rows.map(row => [row.issue.id, row.blockerIds]));
   const active = owner.filter(row => row.issue.status !== 'deferred');
   const youIds = new Set(active.map(row => row.issue.id));
   const items = active.map((row): YouItem => ({
     issue: row.issue,
-    kind: row.issue.labels.includes('owner-decision') ? 'decide' : 'do',
+    kind: row.openAsks > 0 ? 'answer' : row.issue.labels.includes('owner-decision') ? 'decide' : 'do',
     waitedSeconds: row.waitingSeconds,
+    asks: reads.asks.get(row.issue.id) ?? [],
     after: blockersOf.get(row.issue.id) ?? [],
     blocks: active.filter(other => (blockersOf.get(other.issue.id) ?? []).includes(row.issue.id)).map(other => other.issue.id),
-  })).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'decide' ? -1 : 1)
+  })).sort((a, b) => kindOrder[a.kind] - kindOrder[b.kind]
     || a.issue.priority - b.issue.priority
     || (b.waitedSeconds ?? -1) - (a.waitedSeconds ?? -1)
     || a.issue.id.localeCompare(b.issue.id));
@@ -110,6 +121,7 @@ export function composeLanes(reads: LaneReads): Lanes {
   const stale = notExpired.filter(row => shown(row.issue));
   return {
     you: items,
+    answer: items.filter(item => item.kind === 'answer').length,
     decide: items.filter(item => item.kind === 'decide').length,
     todo: items.filter(item => item.kind === 'do').length,
     parked: owner.length - active.length,

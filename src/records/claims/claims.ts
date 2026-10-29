@@ -12,6 +12,8 @@ import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
 import { activityKinds, claimState, decideReplay, ownsExpiredLease, runState } from '../../transition/index.ts';
 import type { ActivityKind, Actor, ReportedActivity, Run } from '../../transition/index.ts';
 import { agentMayAcquire, asActor, rejectAgentWrite } from './agent-gate.ts';
+import { issueItemsRead, itemRow, openAsksOf, refuseOpenItems } from '../store/issue-items.ts';
+import type { OpenAsk } from '../store/issue-items.ts';
 import type { ClaimState } from '../../transition/index.ts';
 
 export type Claim = ClaimProof & { actor: string; agent_label: string | null; revision: number; acquired_at: number; changed_at: number; expires_at: number; released_at: number | null };
@@ -28,7 +30,7 @@ export function claimDisplay(inspection: ClaimInspection): ClaimDisplay {
 export type { ClaimHandoff };
 export type ClaimOperation = ClaimMutation | ClaimHandoff | { op: 'claim_show'; issue_id: string }
   | { op: 'claim_list'; tool?: string; project?: string; after?: string; limit: number };
-export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claim_receipt: ClaimReceipt; open_blockers: string[]; previous_lease?: Claim | null } | { claim_receipt: ClaimReceipt; previous_lease: Claim | null } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection } | { claim_receipt: ClaimReceipt; handoff: HandoffParts };
+export type ClaimResult = { claim: ClaimInspection } | { claim_receipt: ClaimReceipt } | { claim_receipt: ClaimReceipt; open_blockers: string[]; open_asks?: OpenAsk[]; previous_lease?: Claim | null } | { claim_receipt: ClaimReceipt; previous_lease: Claim | null } | { claims: ClaimInspection[]; next_cursor: string | null } | { released: false; current: ClaimInspection } | { claim_receipt: ClaimReceipt; handoff: HandoffParts };
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const uuidSchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' };
 const incarnationSchema = { type: 'string', pattern: '^[a-f0-9]{32}$' };
@@ -172,7 +174,7 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
   const issue_id = operation.op === 'claim_acquire' ? operation.issue_id : operation.claim_proof.issue_id;
   const gate = operation.op === 'claim_acquire' ? agentMayAcquire(caller, 'issues.labels_json') : undefined;
   const observeBlockers = operation.op === 'claim_acquire';
-  try { results = await recordingChanges(db, actor).batch([...claimMutationStatements(operation, actor, gate), claimObservation(issue_id), ...(observeBlockers ? [openBlockerRead(issue_id)] : [])]); }
+  try { results = await recordingChanges(db, actor).batch([...claimMutationStatements(operation, actor, gate), claimObservation(issue_id), ...(observeBlockers ? [openBlockerRead(issue_id), issueItemsRead(issue_id)] : [])]); }
   catch (error) {
     if (!duplicateReceipt(error)) throw error;
     const row = (await db.reads.all(issueQueries.claimRequest, { request_id: operation.request_id }))[0];
@@ -180,15 +182,17 @@ export async function executeClaimOperation(db: SqlExecutor, operation: ClaimOpe
     if (decideReplay(row, actor, payload) === 'request_conflict') throw new PolylinedbError('claim_request_conflict', 'The request ID belongs to a different actor, session, or payload', 409);
     const claim_receipt = receipt(row);
     if (!observeBlockers) return { claim_receipt };
-    return { claim_receipt, open_blockers: openBlockerIds(await db.reads.all(issueQueries.openBlockers, { issue_id })), previous_lease: await previousLease(db, claim_receipt) };
+    return { claim_receipt, open_blockers: openBlockerIds(await db.reads.all(issueQueries.openBlockers, { issue_id })),
+      open_asks: openAsksOf((await db.reads.all(issueQueries.issueItems, { issue_id })).map(itemRow)), previous_lease: await previousLease(db, claim_receipt) };
   }
-  const row = results.at(observeBlockers ? -3 : -2)?.rows[0];
+  const row = results.at(observeBlockers ? -4 : -2)?.rows[0];
   if (row) {
     const claim_receipt = receipt(row);
     if (!observeBlockers) return { claim_receipt };
-    return { claim_receipt, open_blockers: openBlockerIds(results.at(-1)?.rows ?? []), previous_lease: await previousLease(db, claim_receipt) };
+    return { claim_receipt, open_blockers: openBlockerIds(results.at(-2)?.rows ?? []),
+      open_asks: openAsksOf((results.at(-1)?.rows ?? []).map(itemRow)), previous_lease: await previousLease(db, claim_receipt) };
   }
-  const observed = results.at(observeBlockers ? -2 : -1)?.rows[0];
+  const observed = results.at(observeBlockers ? -3 : -1)?.rows[0];
   if (!observed) throw new PolylinedbError('not_found', 'Issue was not found', 404, { id: issue_id });
   if (operation.op === 'claim_acquire') rejectAgentWrite(caller, 'claim_acquire', issue_id, JSON.parse(String(observed.labels_json)), observed);
   if (operation.op === 'claim_release' && operation.expired_noop === true) {
@@ -211,6 +215,7 @@ async function handoff(db: SqlExecutor, operation: ClaimHandoff, actor: string):
       && lease.session_id === proof.session_id && lease.generation === proof.generation && lease.revision === operation.expected_revision;
     if (!owned) throw new PolylinedbError('claim_conflict', 'Read the current claim before deciding on a new mutation', 409, { current });
     if (result.issue.status === 'closed') throw new PolylinedbError('conflict', 'A closed issue cannot be handed off to the landing queue', 409, { issue: result.issue });
+    await refuseOpenItems(db, issue_id);
     if (attempt >= 2) throw new PolylinedbError('conflict', 'The issue kept changing during the handoff; read it and try again', 409, { issue: result.issue });
   }
 }

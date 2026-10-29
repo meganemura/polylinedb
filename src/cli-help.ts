@@ -28,9 +28,9 @@ Commands:
   agent install HOST            Install a user-scope lifecycle hook.
   agent remove HOST             Remove the owned lifecycle hook.
   agent context HOST            Read hook input and return host context JSON.
-  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6, 7, 8, 9 or 10 store to schema 11.
-  snapshot convert --from 2|3|4|5|6|7|8 --file PATH|- [--output PATH|-]
-                                Convert an older snapshot to v9 without touching a store.
+  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6, 7, 8, 9, 10 or 11 store to schema 12.
+  snapshot convert --from 2|3|4|5|6|7|8|9 --file PATH|- [--output PATH|-]
+                                Convert an older snapshot to v10 without touching a store.
   export [--file PATH|-] [--historical]
                                 Export a local snapshot. Historical export recovers old retired stores read-only.
   import --file PATH|-           Restore into an empty store; exact reruns do nothing.
@@ -65,6 +65,7 @@ Commands:
   close ID --expected VERSION [--force --reason TEXT] [--resources-reason TEXT]
         [--claim-proof JSON]
                                 Live external resources refuse the close; the error lists them.
+                                Open asks and unmet checks refuse it too; --force --reason bypasses them.
   reopen ID --expected VERSION [--claim-proof JSON]
   claim show ID                 Inspect ownership and the current store incarnation.
   claim list [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
@@ -84,6 +85,17 @@ Commands:
   claim keepalive --claim-proof JSON [--ttl 30..3600] [--max-duration 1..28800]
         [--kill-on-loss] (--pid PID | -- COMMAND [ARGS...])
                                 Renew a lease until COMMAND or PID exits; refuses main-lock issues.
+  item ask ID QUESTION [--option ANSWER ...] [--recommended ANSWER] [--request-id UUID]
+                                Ask a person. While the ask is open the issue is off ready,
+                                listed in owner-waits, and cannot close or be handed off.
+                                Wait with: wait --since WAIT_FROM --issue ID --kind answered.
+  item check ID CONDITION [--request-id UUID]
+                                Add an acceptance check; it holds close and handoff until met or waived.
+  item answer ID N ANSWER [--note TEXT]
+                                Answer ask N once. A human only, and not the actor that asked it.
+  item meet ID N EVIDENCE       Meet check N with a short evidence line.
+  item waive ID N REASON        Waive check N. A human only.
+  item withdraw ID N REASON     Withdraw ask N. The actor that asked, or a human.
   dependency list ID [--after ID] [--limit 1..100]
   dependency add --dependent ID --blocker ID --expected-revision N [--request-id UUID]
   dependency remove --dependent ID --blocker ID --expected-revision N [--request-id UUID]
@@ -107,10 +119,11 @@ Commands:
                                 Return when a matching event exists after SEQ.
                                 On timeout, return no events and the current cursor.
                                 This command only reads.
-  ready [FILTERS]                Open issues with resolved prerequisites.
+  ready [FILTERS]                Open issues with resolved prerequisites and no open ask.
   blocked [FILTERS]              Unfinished issues with active blockers.
   owner-waits [--tool NAME] [--project NAME] [--after ID] [--limit 1..100]
-                                Unfinished issues labeled owner-decision or owner-action, with their direct dependents.
+                                Unfinished issues with an open ask or labeled owner-decision or owner-action,
+                                with their direct dependents.
   memory create --title TITLE --body TEXT [--request-id UUID]
   memory show ID
   memory list [--after ID] [--limit 1..100]
@@ -141,7 +154,7 @@ Update, close and reopen accept --claim-proof JSON. A supplied proof always asse
 --claim-proof accepts a claim receipt as well as the four-field proof. The CLI reads issue_id, incarnation, session_id, and generation.
 Claimed issues require an unexpired proof for every requested status change, including unchanged status values.
 in_progress requires a held claim proof unless the issue is an epic. Create refuses in_progress for other types.
-Force overrides prerequisites only. Closed issues remain claimable. Acquisition does not change status.
+Force overrides prerequisites and open asks and checks only. Closed issues remain claimable. Acquisition does not change status.
 Claim acquisition requires --session-id or POLYLINEDB_SESSION_ID. Keep one UUID per caller session.
 Claims require the observed store incarnation. Claim timestamps use database Unix seconds, not agent liveness.
 TTL defaults to 300 seconds. Agent labels are nullable acquisition metadata, bounded at 64 UTF-8 bytes.

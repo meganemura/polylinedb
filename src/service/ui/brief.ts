@@ -17,12 +17,13 @@ function youLine(lanes: Lanes, viewer: Viewer): Line {
     const text = viewer.role === 'human' ? 'Clear for now. Write a new issue, or dispatch a ready one.' : `Nothing waits on ${whose(viewer)}.`;
     return { lane: 'you', icon: 'you', name: 'You', text: quiet(text), action: canWrite(viewer) ? linkButton('New issue', '/ui/new') : linkButton('Projects', '/ui/projects') };
   }
-  const decide = lead.kind === 'decide';
+  const what = { answer: 'a question', decide: 'a decision', do: 'an action' }[lead.kind];
   const waited = lead.waitedSeconds === null ? '' : ` It has waited ${duration(lead.waitedSeconds)}.`;
   const blocks = lead.blocks.length === 0 ? '' : ` ${lead.blocks.map(idLink).join(', ')} ${lead.blocks.length === 1 ? 'waits' : 'wait'} for it.`;
   const opener = viewer.role === 'human' ? 'Start with' : 'The first is';
-  const text = `${opener} ${idLink(lead.issue.id)}, ${decide ? 'a decision' : 'an action'} at P${lead.issue.priority}: ${escape(sentence(shortTitle(lead.issue.body)))}${waited}${blocks}`;
-  return { lane: 'you', icon: 'you', name: 'You', text, action: linkButton(decide ? 'Decide' : 'Open', `/ui/i/${lead.issue.id}#${decide ? 'decide' : 'done'}`) };
+  const text = `${opener} ${idLink(lead.issue.id)}, ${what} at P${lead.issue.priority}: ${escape(sentence(shortTitle(lead.issue.body)))}${waited}${blocks}`;
+  const [label, anchor] = { answer: ['Answer', 'items'], decide: ['Decide', 'decide'], do: ['Open', 'done'] }[lead.kind];
+  return { lane: 'you', icon: 'you', name: 'You', text, action: linkButton(label, `/ui/i/${lead.issue.id}#${anchor}`) };
 }
 
 function agentsLine(lanes: Lanes, viewer: Viewer): Line {
@@ -75,7 +76,7 @@ export function hero(lanes: Lanes, viewer: Viewer): string {
   const count = lanes.you.length;
   const heading = count === 0 ? `Nothing waits on ${whose(viewer)}.`
     : `${numberWord(count)} ${plural(count, 'thing waits', 'things wait')} on ${whose(viewer)}.`;
-  const parts = [...(lanes.decide > 0 ? [`${lanes.decide} to decide`] : []), ...(lanes.todo > 0 ? [`${lanes.todo} to do`] : [])];
+  const parts = [...(lanes.answer > 0 ? [`${lanes.answer} to answer`] : []), ...(lanes.decide > 0 ? [`${lanes.decide} to decide`] : []), ...(lanes.todo > 0 ? [`${lanes.todo} to do`] : [])];
   const oldest = Math.max(-1, ...lanes.you.map(item => item.waitedSeconds ?? -1));
   const sub = count === 0 ? '' : `<p class="sub">${parts.join(', ')}${oldest < 0 ? '' : `; the oldest has waited ${duration(oldest)}`}.</p>`;
   const lines = [youLine(lanes, viewer), agentsLine(lanes, viewer), landingLine(lanes), stuckLine(lanes, viewer)]
@@ -113,6 +114,8 @@ export const doneKinds = {
   declined: (id: string) => `Decision recorded on ${id}. Declined and closed.`,
   deferred: (id: string) => `${id} is deferred. It leaves You until it is reopened.`,
   done: (id: string) => `${id} is marked done and closed.`,
+  answered: (id: string) => `Answer recorded on ${id}. The agent that asked sees it in the change feed.`,
+  waived: (id: string) => `Check waived on ${id}. The reason is on the item.`,
   handedback: (id: string) => `${id} is back with the agents, labeled ready.`,
   dispatched: (id: string) => `Dispatch sent for ${id}.`,
   opened: (id: string) => `${id} is open again.`,

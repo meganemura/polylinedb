@@ -452,7 +452,7 @@ test('a client that asks for the closure decodes closed_at and closed_by, and th
     const shown = await decode({ op: 'show', id }, spy);
     assert.ok('issue' in shown);
     assert.deepEqual([shown.issue.closed_at, shown.issue.closed_by], [closed.issue.closed_at, 'access:owner']);
-    assert.deepEqual(sent, ['closure', 'closure', 'closure']);
+    assert.deepEqual(sent, ['closure, items', 'closure, items', 'closure, items']);
 
     const conflict = await transport('https://issues.example/v1/operations', { headers: { 'polylinedb-issue-fields': 'closure' },
       body: JSON.stringify({ op: 'update', id, changes: [{ field: 'body', expected: 9, value: 'Stale' }] }) });
@@ -895,5 +895,56 @@ test('an older Worker that rejects posts, stars, a post field, or a star kind fa
     await assert.rejects(decode(feed, older), { code: 'invalid_input', message: 'The cloud Worker does not record starred or unstarred events. Deploy a newer Worker to filter by them.' });
     assert.deepEqual(sent, [star, { op: 'posts', project: 'compat', min_stars: 0, limit: 50 }, voiced, { ...feed, limit: 50 }]);
     assert.deepEqual(((await wire({ op: 'show', id })).body.comments as { body: string }[]).map(comment => comment.body), ['Kept']);
+  } finally { sqlite.close(); }
+});
+
+test('asks and checks: the current client decodes items, open asks, and items_open details, and a released client keeps its shapes', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Asks' })).body.issue as { id: string }).id;
+    const ask = { op: 'item_add', id, kind: 'ask', text: 'Which?', options: ['left', 'right'], recommended: 'left', request_id: crypto.randomUUID() };
+    const added = await decode(ask, transport);
+    assert.ok('item' in added && 'wait_from' in added);
+    assert.deepEqual([added.item.n, added.item.state, added.item.recommended, added.items.length], [1, 'open', 'left', 1]);
+    await decode({ op: 'item_add', id, kind: 'check', text: 'tests pass', request_id: crypto.randomUUID() }, transport);
+
+    const shown = await decode({ op: 'show', id }, transport);
+    assert.ok('items' in shown && shown.items !== undefined);
+    assert.deepEqual(shown.items.map(item => [item.n, item.kind, item.state]), [[1, 'ask', 'open'], [2, 'check', 'open']]);
+    assert.equal(Object.hasOwn((await wire({ op: 'show', id })).body, 'items'), false, 'a released client gets the released show keys');
+    const olderWorker = await decode({ op: 'show', id }, answer((await wire({ op: 'show', id })).body));
+    assert.equal(Object.hasOwn(olderWorker, 'items'), false);
+
+    // The owner's actor asked, so it answers only on the page; the client names that limit.
+    await assert.rejects(decode({ op: 'item_resolve', id, n: 1, to: 'answered', answer: 'left' }, transport), { code: 'item_actor_refused', status: 403, details: { id, n: 1 } });
+    const close = { op: 'close', id, expected: 1 };
+    await assert.rejects(decode(close, transport), { code: 'items_open', status: 409,
+      details: { id, open_items: [{ n: 1, kind: 'ask', text: 'Which?' }, { n: 2, kind: 'check', text: 'tests pass' }] } });
+    const released = await wire(close);
+    assert.equal(released.status, 409);
+    assert.deepEqual(Object.keys(released.body.error as object).sort(), ['code', 'message']);
+    assert.match((released.body.error as { message: string }).message, /check #2 "tests pass": meet it with evidence/);
+
+    const waits = await decode({ op: 'dependency_owner_waits', project: 'compat' }, transport);
+    assert.ok('waits' in waits);
+    assert.deepEqual(waits.waits.map(wait => wait.issue.id), [id]);
+    assert.deepEqual((await wire({ op: 'dependency_owner_waits', project: 'compat' })).body.waits, [], 'a released decoder needs an owner label on every wait');
+
+    const incarnation = ((await wire({ op: 'claim_show', issue_id: id })).body.claim as { store_incarnation: string }).store_incarnation;
+    const acquire = { op: 'claim_acquire', issue_id: id, incarnation, session_id: crypto.randomUUID(), request_id: crypto.randomUUID() };
+    const acquired = await decode(acquire, transport);
+    assert.ok('open_asks' in acquired);
+    assert.deepEqual(acquired.open_asks, [{ n: 1, text: 'Which?', options: ['left', 'right'], recommended: 'left' }]);
+    const plain = (await wire(acquire)).body;
+    assert.equal(Object.hasOwn(plain, 'open_asks'), false);
+    await assert.rejects(decode(acquire, answer({ ...plain, open_asks: [{ n: 0, text: 'Which?', options: null, recommended: null }] })), { code: 'cloud_invalid_response' });
+
+    const met = await decode({ op: 'item_resolve', id, n: 2, to: 'met', note: 'green' }, transport);
+    assert.ok('item' in met);
+    await assert.rejects(decode({ op: 'item_resolve', id, n: 2, to: 'met', note: 'green' }, answer({ ...met, item: { ...met.item, n: 1 } })), { code: 'cloud_invalid_response' });
+    for (const operation of [ask, { op: 'item_resolve', id, n: 1, to: 'withdrawn', note: 'gone' }]) {
+      await assert.rejects(decode(operation, answer({ error: { code: 'invalid_input', message: 'op must be one of create, show, list' } }, 400)),
+        { code: 'invalid_input', message: 'The cloud Worker does not support asks and checks. Deploy a newer Worker to use them.' });
+    }
   } finally { sqlite.close(); }
 });

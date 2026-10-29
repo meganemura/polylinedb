@@ -44,14 +44,14 @@ async function schema9Store(base: string, name: string, populate?: (db: SqlExecu
   const legacy = new DatabaseSync(path); legacy.exec(SCHEMA_V9_SQL);
   try { await populate?.(executor(legacy)); } finally { legacy.close(); }
   chmodSync(path, 0o600);
-  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 11]);
+  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 12]);
   const upgraded = new DatabaseSync(path); const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(upgraded.prepare(schema).all(), reference.prepare(schema).all()); } finally { upgraded.close(); reference.close(); }
   return { directory };
 }
 
-test('a populated schema 9 store upgrades to schema 11 with every event at its seq, and later writes continue the feed', async t => {
+test('a populated schema 9 store upgrades to schema 12 with every event at its seq, and later writes continue the feed', async t => {
   let populated: Awaited<ReturnType<typeof populateSchema9>> | undefined; let before: Awaited<ReturnType<typeof readEvents>> = [];
   const { directory } = await schema9Store(root(t), 'populated', async db => { populated = await populateSchema9(db); before = await readEvents(db); });
   const store = openStore({ directory }); t.after(() => store.close());
@@ -71,10 +71,10 @@ test('snapshot 7 converts to snapshot 9 with each comment at version 1 and no ed
   const created = await executeOperation(store.db, parseOperation({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'convert', body: 'Convert' }), 'alice');
   assert.ok('issue' in created);
   await executeOperation(store.db, parseOperation({ op: 'comment', id: created.issue.id, body: 'kept' }), 'alice');
-  const { stars: _stars, ...current } = store.exportSnapshot();
+  const { stars: _stars, issue_items: _items, ...current } = store.exportSnapshot();
   const v7 = { ...current, version: 7, comments: current.comments.map(({ version: _v, updated_at: _a, updated_by: _b, handle: _h, via: _via, reply_to: _r, ...comment }) => comment) };
   const converted = convertSnapshotV7(v7);
-  assert.equal(converted.version, 9);
+  assert.equal(converted.version, 10);
   assert.equal(canonicalSnapshot(converted), canonicalSnapshot(store.exportSnapshot()));
   assert.throws(() => parseSnapshot(v7), { code: 'invalid_snapshot' });
   assert.throws(() => convertSnapshotV7({ ...v7, comments: current.comments }), { code: 'invalid_snapshot' });

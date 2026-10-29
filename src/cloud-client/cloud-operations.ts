@@ -14,7 +14,8 @@ import { fields } from '../records/persistence/persistence.ts';
 import { parseIssueId, parseRequestId } from '../records/index.ts';
 import { statuses } from '../records/persistence/persistence.ts';
 import { claimRow, resourceRow } from '../records/persistence/persistence.ts';
-import { activityKinds, parseIncarnation, ownerWaitDependentLimit, ownerWaitLabels, runStates, waitPageLimit } from '../records/index.ts';
+import { activityKinds, itemKinds, itemStates, parseIncarnation, ownerWaitDependentLimit, runStates, waitPageLimit } from '../records/index.ts';
+import type { Item, OpenAsk } from '../records/index.ts';
 import type { Claim, ClaimInspection, ReportedActivity, Run, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning, Resource, ResourceList } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
@@ -97,6 +98,39 @@ function reportedActivity(value: unknown): ReportedActivity {
   return { kind, text: row.text, at: count(row.at, 0) };
 }
 const count = (value: unknown, minimum: number): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum ? value : invalid();
+const itemText = (value: unknown): string => typeof value === 'string' && value.length > 0 && new TextEncoder().encode(value).length <= 4096 ? value : invalid();
+const optionalItemText = (value: unknown): string | null => value === null ? null : itemText(value);
+function itemOptions(value: unknown): string[] | null {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length < 2 || value.length > 8) return invalid();
+  return value.map(itemText);
+}
+function item(value: unknown): Item {
+  const row = known(value, ['n', 'kind', 'text', 'options', 'recommended', 'state', 'answer', 'note', 'created_at', 'created_by', 'resolved_at', 'resolved_by']);
+  const kind = itemKinds.find(kind => kind === row.kind) ?? invalid();
+  const state = itemStates.find(state => state === row.state) ?? invalid();
+  const options = itemOptions(row.options); const recommended = optionalItemText(row.recommended);
+  const resolved_at = optionalItemText(row.resolved_at); const resolved_by = optionalItemText(row.resolved_by); const answer = optionalItemText(row.answer);
+  if ((kind !== 'ask' && options !== null) || (recommended !== null && !options?.includes(recommended)) || (state === 'open') !== (resolved_at === null)
+    || (resolved_at === null) !== (resolved_by === null) || (state === 'answered') !== (answer !== null)) return invalid();
+  return { n: count(row.n, 1), kind, text: itemText(row.text), options, recommended, state, answer, note: optionalItemText(row.note),
+    created_at: itemText(row.created_at), created_by: itemText(row.created_by), resolved_at, resolved_by };
+}
+function items(value: unknown): Item[] {
+  if (!Array.isArray(value)) return invalid();
+  const parsed = value.map(item);
+  if (parsed.some((current, index) => index > 0 && current.n <= (parsed[index - 1]?.n ?? 0))) return invalid();
+  return parsed;
+}
+function openAsks(value: unknown): OpenAsk[] {
+  if (!Array.isArray(value)) return invalid();
+  return value.map(entry => {
+    const row = known(entry, ['n', 'text', 'options', 'recommended']);
+    const options = itemOptions(row.options); const recommended = optionalItemText(row.recommended);
+    if (recommended !== null && !options?.includes(recommended)) return invalid();
+    return { n: count(row.n, 1), text: itemText(row.text), options, recommended };
+  });
+}
 // A later Worker may record a kind or name a field that this client does not know, so both are checked only as names.
 const changeName = (value: unknown): string => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : invalid();
 function changeEvent(value: unknown, incarnation: string): ChangeEvent {
@@ -210,7 +244,9 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
           return { released: false, current };
         }
       }
-      const response = known(value, ['claim_receipt'], operation.op === 'claim_acquire' ? ['open_blockers', 'previous_lease'] : []);
+      const response = known(value, ['claim_receipt'], operation.op === 'claim_acquire' ? ['open_blockers', 'previous_lease', 'open_asks'] : []);
+      // A Worker from before asks sends no open_asks, and the result then has none.
+      const asks = operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_asks') ? { open_asks: openAsks(response.open_asks) } : {};
       const blockers = operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') ? openBlockers(response.open_blockers, operation.issue_id) : undefined;
       if (operation.op === 'claim_acquire' && Object.hasOwn(response, 'open_blockers') && blockers === undefined) return invalid();
       const row = known(response.claim_receipt, [...claimKeys, 'outcome']);
@@ -226,11 +262,11 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       if (expected === 'released' && parsed.released_at !== null) return { claim_receipt: { ...parsed, outcome: expected, released_at: parsed.released_at } };
       if (expected !== 'released' && parsed.released_at === null) {
         const claim_receipt = { ...parsed, outcome: expected, released_at: null } as const;
-        if (operation.op !== 'claim_acquire' || !Object.hasOwn(response, 'previous_lease')) return blockers === undefined ? { claim_receipt } : { claim_receipt, open_blockers: blockers };
+        if (operation.op !== 'claim_acquire' || !Object.hasOwn(response, 'previous_lease')) return blockers === undefined ? { claim_receipt } : { claim_receipt, open_blockers: blockers, ...asks };
         const previous_lease = response.previous_lease === null ? null : claim(response.previous_lease);
         if (previous_lease !== null && (previous_lease.issue_id !== parsed.issue_id || previous_lease.incarnation !== parsed.incarnation
           || previous_lease.released_at !== null || previous_lease.generation >= parsed.generation)) return invalid();
-        return blockers === undefined ? { claim_receipt, previous_lease } : { claim_receipt, open_blockers: blockers, previous_lease };
+        return blockers === undefined ? { claim_receipt, previous_lease } : { claim_receipt, open_blockers: blockers, ...asks, previous_lease };
       }
       return invalid();
     }
@@ -287,7 +323,7 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         const wait = known(entry, ['issue', 'dependents', 'dependents_next']);
         const current = issue(wait.issue); const sort = issueSortKey(current.id);
         if (sort <= previous || current.status === 'closed' || (operation.tool !== undefined && current.tool !== operation.tool) || (operation.project !== undefined && current.project !== operation.project)
-          || !ownerWaitLabels.some(label => current.labels.includes(label)) || !Array.isArray(wait.dependents) || wait.dependents.length > ownerWaitDependentLimit) return invalid();
+          || !Array.isArray(wait.dependents) || wait.dependents.length > ownerWaitDependentLimit) return invalid();
         previous = sort;
         let last = '';
         const dependents = wait.dependents.map(value => {
@@ -354,11 +390,12 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
     }
     case 'show': {
       const withLandOrder = operation.with_land_order === true;
-      const row = known(value, withLandOrder ? ['issue', 'comments', 'claim', 'land_order'] : ['issue', 'comments', 'claim']);
+      // A Worker from before asks sends no items, and the result then has none.
+      const row = known(value, withLandOrder ? ['issue', 'comments', 'claim', 'land_order'] : ['issue', 'comments', 'claim'], ['items']);
       if (!Array.isArray(row.comments)) return invalid();
       const shown = issue(row.issue); const current = claimInspection(row.claim);
       if (current.issue_id !== shown.id || shown.id !== operation.id) return invalid();
-      const output = { issue: shown, comments: row.comments.map(comment), claim: current };
+      const output = { issue: shown, comments: row.comments.map(comment), claim: current, ...(Object.hasOwn(row, 'items') ? { items: items(row.items) } : {}) };
       return withLandOrder ? { ...output, land_order: landOrder(row.land_order, shown.id) } : output;
     }
     case 'list': case 'search': case 'dependency_worklist': {
@@ -476,6 +513,19 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
       const next_cursor = row.next_cursor === null ? null : parseIssueId(row.next_cursor);
       if (next_cursor !== null && (entries.length !== operation.limit || next_cursor !== entries.at(-1)?.issue.id)) return invalid();
       return { entries, next_cursor };
+    }
+    case 'item_add': case 'item_resolve': {
+      const row = known(value, ['id', 'item', 'items'], operation.op === 'item_add' ? ['wait_from'] : []);
+      const current = item(row.item); const all = items(row.items);
+      if (row.id !== operation.id || !all.some(entry => JSON.stringify(entry) === JSON.stringify(current))) return invalid();
+      if (operation.op === 'item_resolve') {
+        const answered = operation.to !== 'answered' || current.answer === operation.answer;
+        return current.n === operation.n && current.state === operation.to && answered ? { id: operation.id, item: current, items: all } : invalid();
+      }
+      if (current.kind !== operation.kind || current.text !== operation.text) return invalid();
+      if (!Object.hasOwn(row, 'wait_from')) return invalid();
+      const position = known(row.wait_from, ['incarnation', 'since']);
+      return { id: operation.id, item: current, items: all, wait_from: { incarnation: parseIncarnation(position.incarnation), since: count(position.since, 0) } };
     }
     case 'create': case 'update': case 'close': case 'reopen': return { issue: issue(known(value, ['issue']).issue) };
     default: { const exhaustive: never = operation; return exhaustive; }
@@ -622,6 +672,23 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       return { id: parseIssueId(known(value, ['id']).id) };
     }
     case 'epic_has_children': return { issue: issue(known(value, ['issue']).issue) };
+    case 'items_open': {
+      const row = known(value, ['id', 'open_items']);
+      const target = operation.op === 'claim_handoff' ? operation.claim_proof.issue_id : operation.op === 'close' || operation.op === 'update' ? operation.id : invalid();
+      if (row.id !== target || !Array.isArray(row.open_items)) return invalid();
+      return { id: target, open_items: row.open_items.map(entry => {
+        const open = known(entry, ['n', 'kind', 'text']);
+        return { n: count(open.n, 1), kind: itemKinds.find(kind => kind === open.kind) ?? invalid(), text: itemText(open.text) };
+      }) };
+    }
+    case 'item_not_found': case 'item_actor_refused': case 'item_conflict': {
+      if (operation.op !== 'item_resolve') return invalid();
+      const row = known(value, ['id', 'n'], code === 'item_conflict' ? ['item'] : []);
+      if (row.id !== operation.id || row.n !== operation.n) return invalid();
+      if (code !== 'item_conflict') return { id: operation.id, n: operation.n };
+      const current = item(row.item);
+      return current.n === operation.n ? { id: operation.id, n: operation.n, item: current } : invalid();
+    }
     case 'version_exhausted': {
       const row = known(value, ['issue', 'field']);
       if (!fields.some(field => field === row.field)) return invalid();
@@ -688,7 +755,7 @@ export async function executeCloudOperation(input: {
   try {
     response = await (input.fetch ?? globalThis.fetch)(new URL('/v1/operations', origin), {
       method: 'POST', redirect: 'error', signal: controller.signal,
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json', 'polylinedb-issue-fields': 'closure' },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json', 'polylinedb-issue-fields': 'closure, items' },
       body: JSON.stringify(input.operation),
     });
     if (response.status === 401) throw new PolylinedbError('auth_required', 'Run auth login for this cloud connection.', 401);
@@ -697,15 +764,18 @@ export async function executeCloudOperation(input: {
       let readOnly = false;
       let notAuthor: unknown;
       let notOwner: unknown;
+      let itemRefused: unknown;
       try {
         const error = known(known(await readResponse(response, controller.signal), ['error']).error, ['code', 'message', 'details']);
         readOnly = error.code === 'read_only_actor' && known(error.details, ['op']).op === input.operation.op;
         if (error.code === 'comment_author_required') notAuthor = errorDetails(input.operation, error.code, error.details);
         if (error.code === 'star_owner_required') notOwner = errorDetails(input.operation, error.code, error.details);
+        if (error.code === 'item_actor_refused') itemRefused = errorDetails(input.operation, error.code, error.details);
       } catch { controller.signal.throwIfAborted(); }
       if (readOnly) throw new PolylinedbError('read_only_actor', 'This cloud actor can only read.', 403, { op: input.operation.op });
       if (notAuthor !== undefined) throw new PolylinedbError('comment_author_required', 'Only the author of a comment can edit it.', 403, notAuthor);
       if (notOwner !== undefined) throw new PolylinedbError('star_owner_required', 'Only the actor that gave a star can remove it.', 403, notOwner);
+      if (itemRefused !== undefined) throw new PolylinedbError('item_actor_refused', 'This actor cannot make that move on the item. An agent cannot answer an ask or waive a check, and the actor that asked answers its own ask only on the /ui page.', 403, itemRefused);
       throw new PolylinedbError('denied', 'Cloud access was denied.', 403);
     }
     let value: unknown;
@@ -761,6 +831,13 @@ export async function executeCloudOperation(input: {
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'post' && /^op must be one of /.test(error.message) && !/\bpost\b/.test(error.message)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support posting to a timeline. Deploy a newer Worker to use it.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'item_add' || input.operation.op === 'item_resolve') && /^op must be one of /.test(error.message) && !error.message.includes(input.operation.op)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support asks and checks. Deploy a newer Worker to use them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'changes' || input.operation.op === 'wait') && input.operation.kinds?.some(kind => kind === 'asked' || kind === 'answered')
+        && /^kinds/.test(error.message) && !error.message.includes('answered')) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not record asked or answered events. Deploy a newer Worker to filter by them.', 400);
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'claim_report' && error.message === 'Unknown claim operation') {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support claim reports. Deploy a newer Worker to use them.', 400);

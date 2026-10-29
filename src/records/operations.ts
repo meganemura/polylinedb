@@ -21,11 +21,15 @@ import { executeResourceOperation, parseResourceOperation, resourceSchemas } fro
 import type { ResourceOperation, ResourceResult } from './resources/resources.ts';
 import { executePostOperation, parsePostOperation, postSchemas } from './posts/posts.ts';
 import type { PostOperation, PostResult } from './posts/posts.ts';
-export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation | ChangesOperation | WaitOperation | LandOrderOperation | ResourceOperation | PostOperation;
-/** show and list add land_order only on request; list aligns it with issues. */
-export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness; land_order?: LandOrder | LandOrder[] }) | MemoryResult | DependencyResult | ClaimResult | (Extract<ClaimResult, { handoff: unknown }> & { land_order_warnings?: LandOrderWarning[] }) | ChangesResult | LandOrderResult | ResourceResult | PostResult;
+import { executeItemOperation, itemSchemas, parseItemOperation } from './items/items.ts';
+import type { ItemOperation, ItemResult } from './items/items.ts';
+import { readIssueItems } from './store/issue-items.ts';
+import type { Item } from './store/issue-items.ts';
+export type Operation = (Exclude<IssueOperation, { op: 'actor' }> & { observed_memory_revision?: MemoryRevision }) | Extract<IssueOperation, { op: 'actor' }> | MemoryOperation | DependencyOperation | ClaimOperation | ChangesOperation | WaitOperation | LandOrderOperation | ResourceOperation | PostOperation | ItemOperation;
+/** show and list add land_order only on request; list aligns it with issues. show always adds the issue's items. */
+export type OperationResult = (IssueResult & { memory_freshness?: MemoryFreshness; land_order?: LandOrder | LandOrder[]; items?: Item[] }) | MemoryResult | DependencyResult | ClaimResult | (Extract<ClaimResult, { handoff: unknown }> & { land_order_warnings?: LandOrderWarning[] }) | ChangesResult | LandOrderResult | ResourceResult | PostResult | ItemResult;
 const observedSchema = { type: 'string', maxLength: 4100, description: 'Opaque token from memory_context with with_revision. The advisory covers that project, including on unfiltered list/search.' };
-export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas, ...changesSchemas, ...landOrderSchemas, ...resourceSchemas, ...postSchemas,
+export const operationSchemas = { ...issueSchemas, ...memorySchemas, ...dependencySchemas, ...claimSchemas, ...changesSchemas, ...landOrderSchemas, ...resourceSchemas, ...postSchemas, ...itemSchemas,
   ...Object.fromEntries(Object.entries(issueSchemas).filter(([key]) => key !== 'actor').map(([key, value]) => [key, { ...value, properties: { ...value.properties, observed_memory_revision: observedSchema } }])) };
 export function parseOperation(value: unknown): Operation {
   if (value && typeof value === 'object' && 'op' in value && (value.op === 'changes' || value.op === 'wait')) return value.op === 'wait' ? parseWaitOperation(value) : parseChangesOperation(value);
@@ -34,6 +38,7 @@ export function parseOperation(value: unknown): Operation {
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('land_order_')) return parseLandOrderOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('resource_')) return parseResourceOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('memory_')) return parseMemoryOperation(value);
+  if (value && typeof value === 'object' && 'op' in value && (value.op === 'item_add' || value.op === 'item_resolve')) return parseItemOperation(value);
   if (value && typeof value === 'object' && 'op' in value && (value.op === 'star' || value.op === 'unstar' || value.op === 'post' || value.op === 'posts')) return parsePostOperation(value);
   if (value && typeof value === 'object' && !Array.isArray(value) && 'observed_memory_revision' in value) {
     if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return parseIssue(value);
@@ -75,12 +80,14 @@ async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, sto
       return executeResourceOperation(db, operation, actor);
     case 'star': case 'unstar': case 'post': case 'posts':
       return executePostOperation(db, operation, actor);
+    case 'item_add': case 'item_resolve':
+      return executeItemOperation(db, operation, actor);
     case 'memory_create': case 'memory_show': case 'memory_list': case 'memory_search': case 'memory_update': case 'memory_delete': case 'memory_context':
       return executeMemoryOperation(db, operation, actor.id, store);
     default: {
       if (operation.op === 'actor') return executeIssue(db, operation, actor);
       const { observed_memory_revision, ...issueOperation } = operation;
-      const output = await withLandOrder(db, issueOperation, await executeIssue(db, issueOperation, actor));
+      const output = await withItems(await withLandOrder(db, issueOperation, await executeIssue(db, issueOperation, actor)), db);
       if (observed_memory_revision === undefined) return output;
       let project = observedMemoryProject(observed_memory_revision);
       try {
@@ -108,4 +115,10 @@ async function withLandOrder(db: SqlExecutor, operation: IssueOperation, output:
   if (!('issues' in output)) return output;
   const orders = await readLandOrders(db, output.issues.map(issue => issue.id));
   return { ...output, land_order: output.issues.map(issue => orders.get(issue.id) ?? { issue_id: issue.id, revision: 1, after: [], before: [] }) };
+}
+
+// show carries every ask and check of the issue, so one read tells a lane what holds the issue.
+async function withItems<T extends IssueResult>(output: T, db: SqlExecutor): Promise<T & { items?: Item[] }> {
+  if (!('comments' in output)) return output;
+  return { ...output, items: (await readIssueItems(db, [output.issue.id])).get(output.issue.id) ?? [] };
 }
