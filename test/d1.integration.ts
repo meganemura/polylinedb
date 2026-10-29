@@ -141,5 +141,13 @@ try {
   trips.length = 0; failNextBatch = true;
   assert.deepEqual(await readTogether(), apart);
   assert.deepEqual(trips.slice(0, 4), ['batch 3', 'all', 'all', 'all'], 'a failed shared trip answers each read on its own');
+  trips.length = 0;
+  const [shownBeside, stale] = await Promise.allSettled([
+    executeOperation(tripping, parseOperation({ op: 'show', id }), 'test:d1'),
+    executeOperation(tripping, parseOperation({ op: 'update', id, changes: [{ field: 'body', expected: 1, value: 'stale' }] }), 'test:d1'),
+  ]);
+  assert.equal(shownBeside.status, 'fulfilled', 'a read sharing a call with a failing write still answers');
+  assert(stale.status === 'rejected'); assert.equal(stale.reason.code, 'conflict');
+  assert.deepEqual(await run({ op: 'show', id }), apart[0], 'the failed write committed nothing');
   process.stdout.write('PASS: local workerd D1 persistence, shared read trips and their fallback, CAS, rollback, comments, show claim inspection, the list claimed filter over every claim state, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
 } finally { await runtime.dispose(); }

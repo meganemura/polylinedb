@@ -228,5 +228,5 @@ The deployed Worker with Cloudflare D1, measured from a desktop browser before r
 
 The Worker time follows the number of D1 calls, not the rows read: each statement read under 3 ms on node:sqlite with 1,000 issues.
 The pages already started their reads together, so the gap suggests that D1 serves the calls of one request one after another, each with its own round trip; this was inferred from the counts and not traced per call.
-The Worker now sends reads that start before the next macrotask as one D1 batch, so Today, Agents, Stuck, and Landing make 2 calls and Projects and Activity make 1.
+The Worker now sends the statements and batches that start before the next macrotask as one D1 batch, so each of these pages makes 1 call and an issue page makes 2.
 Activity reads the change log, which is large in a long-lived store, so its time depends on that read too.
