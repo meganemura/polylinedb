@@ -813,6 +813,33 @@ test('posts and stars decode, each rejection names its comment, and damaged or m
   } finally { sqlite.close(); }
 });
 
+test('the cloud client posts to a project timeline and checks the written post and each refusal against what it sent', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Timeline source' });
+    const post = { op: 'post', project: 'compat', body: 'A lesson', handle: 'builder', via: 'claude-code opus cloud' };
+    const writtenBody = (await wire(post)).body;
+    const written = await decode(post, answer(writtenBody));
+    assert.ok('comment' in written);
+    assert.deepEqual([written.comment.body, written.comment.handle, written.comment.via, written.comment.reply_to], ['A lesson', 'builder', 'claude-code opus cloud', null]);
+    const current = writtenBody.comment as Record<string, unknown>;
+    for (const damaged of [{ comment: { ...current, handle: 'tester' } }, { comment: { ...current, via: null } }, { comment: { ...current, body: 'Other' } }, { comment: { ...current, reply_to: crypto.randomUUID() } }]) {
+      await assert.rejects(decode(post, answer(damaged)), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+    const reply = { op: 'post', project: 'compat', body: 'Agreed', handle: 'tester', reply_to: written.comment.id };
+    const replied = await decode(reply, transport);
+    assert.ok('comment' in replied);
+    assert.deepEqual([replied.comment.issue_id, replied.comment.reply_to], [written.comment.issue_id, written.comment.id]);
+    const nowhere = { op: 'post', project: 'compat', body: 'To nothing', handle: 'tester', reply_to: crypto.randomUUID() };
+    assert.deepEqual(await outcome(decode(nowhere, transport)), { error: { code: 'reply_target_not_found', status: 404, details: { id: written.comment.issue_id, reply_to: nowhere.reply_to } } });
+    const quiet = { op: 'post', project: 'quiet', body: 'No issue here', handle: 'builder' };
+    assert.deepEqual(await outcome(decode(quiet, transport)), { error: { code: 'not_found', status: 404, details: { project: 'quiet' } } });
+    await assert.rejects(decode(quiet, answer({ error: { code: 'not_found', message: 'Missing', details: { project: 'compat' } } }, 404)), { code: 'cloud_invalid_response' });
+    const older: typeof fetch = async () => Response.json({ error: { code: 'invalid_input', message: 'op must be one of create, show, list, search, comment, comment_edit, update, close, reopen, actor' } }, { status: 400 });
+    await assert.rejects(decode(post, older), { code: 'invalid_input', message: 'The cloud Worker does not support posting to a timeline. Deploy a newer Worker to use it.' });
+  } finally { sqlite.close(); }
+});
+
 test('an older Worker that rejects posts, stars, a post field, or a star kind fails with a clear message and no retry', async () => {
   const { sqlite, transport, wire } = await worker();
   try {

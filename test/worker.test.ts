@@ -122,7 +122,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
     const listed = await request('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     const tools = (await listed.json()).result.tools;
     const names = tools.map((tool: { name: string }) => tool.name).sort();
-    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'posts', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'star', 'unstar', 'update', 'wait']);
+    assert.deepEqual(names, ['actor', 'changes', 'claim_acquire', 'claim_handoff', 'claim_list', 'claim_release', 'claim_renew', 'claim_show', 'close', 'comment', 'comment_edit', 'create', 'dependency_add', 'dependency_list', 'dependency_owner_waits', 'dependency_remove', 'dependency_worklist', 'land_order_add', 'land_order_list', 'land_order_remove', 'list', 'memory_context', 'memory_create', 'memory_delete', 'memory_list', 'memory_search', 'memory_show', 'memory_update', 'post', 'posts', 'reopen', 'resource_add', 'resource_list', 'resource_live', 'resource_update', 'search', 'server_info', 'show', 'star', 'unstar', 'update', 'wait']);
     const annotationRows = tools.map((tool: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } }) =>
       [tool.name, tool.annotations.readOnlyHint, tool.annotations.destructiveHint, tool.annotations.idempotentHint, tool.annotations.openWorldHint]);
     annotationRows.sort((left: (string | boolean)[], right: (string | boolean)[]) => String(left[0]).localeCompare(String(right[0])));
@@ -155,6 +155,7 @@ test('HTTP and MCP share mutations, conflicts, comments, and authenticated actor
       ['memory_search', true, false, true, false],
       ['memory_show', true, false, true, false],
       ['memory_update', false, true, true, false],
+      ['post', false, false, false, false],
       ['posts', true, false, true, false],
       ['reopen', false, true, true, false],
       ['resource_add', false, false, true, false],
@@ -462,6 +463,7 @@ test('each advertised MCP hint matches the store effect of a real tool call', as
     const noted = (await read('show', { id: issue.id })).comments[0];
     await repeat('comment_edit', { id: issue.id, comment_id: noted.id, body: 'reproduced', expected: noted.version });
     await repeat('star', { id: issue.id, comment_id: noted.id, handle: 'tester' });
+    await append('post', { project: 'parser', body: 'A lesson with no issue', handle: 'builder' });
     await read('posts', { project: 'parser' });
     await repeat('unstar', { id: issue.id, comment_id: noted.id, handle: 'tester' });
     const memory = (await repeat('memory_create', { project: 'parser', prefix: 'pd', request_id: crypto.randomUUID(), title: 'Parser constraint', body: 'Keep empty input valid.' })).memory;

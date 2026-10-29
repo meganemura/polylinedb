@@ -69,7 +69,7 @@ test('the skill says that in_progress needs the claim proof and that a plain han
 });
 
 test('the skill asks for one post per finished issue, under the claim, and a star when a lesson helped', () => {
-  assert.ok(skill.includes('Post it with `comment` while you still hold the claim, before `claim_handoff` or `close`.'));
+  assert.ok(skill.includes("A post needs no issue and no claim: `post` with the `project` writes it to that project's timeline."));
   assert.ok(skill.includes('Never put a secret, a credential, a private path, or text from a private source into a post. When there is no lesson, post nothing.'));
   assert.ok(skill.includes('When a post helped you, `star` it with your handle.'));
 });

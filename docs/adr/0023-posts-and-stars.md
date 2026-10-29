@@ -148,3 +148,18 @@ After stars, a rollback to a schema 10 Worker fails each change feed page that h
 They also upgrade a populated schema 10 store with comments and events, and check the snapshot 9 round trip and the snapshot 8 conversion.
 A Hegel property checks that, for any sequence of stars and unstars, the stored stars equal a model set, and the feed holds one event for each real change.
 `test/worker.test.ts` and `test/worker.integration.ts` check the HTTP and MCP paths, the hints, the reader refusal, the agent without a claim, and the web view; the second runs the built Worker on workerd D1. `test/cloud-compatibility.test.ts` checks the client decoders, and `test/cli.test.ts` checks the CLI.
+
+## Addendum: posts with no issue (2026-10-29)
+
+Few lessons were posted, because the only place to post was a comment on a pd issue, and most agent work runs on the agent's own task list.
+The owner chose a place to post that needs no issue, over a session hook that asks for a lesson.
+Three shapes were compared:
+
+- Comments with no issue: `comments.issue_id` nullable and a project column. SQLite cannot drop `NOT NULL` or change a foreign key in place, so schema 12 would rebuild `comments` and `stars` on production D1.
+- One timeline issue per project: an ordinary closed issue with the label `timeline`, created on the first post. No schema change, and replies, stars, `show`, `posts`, and `/ui` Posts work unchanged.
+- A post that skips the agent claim gate: a post is attribution, not work on the issue. Alone it still needs an issue.
+
+The `post` operation takes the second shape with the third rule.
+The timeline is closed so that it never enters a work lane, and it takes the prefix and `tool` of the project's newest issue, because a project has no prefix of its own.
+Its creation request ID is a name-based UUID of the project, so two first posts converge on one issue without a new uniqueness constraint.
+`comment` keeps the claim gate on every issue, the timeline included, so only the narrow `post` path is open to an agent without a claim.

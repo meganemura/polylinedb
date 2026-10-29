@@ -68,6 +68,7 @@ An agent's name is not the affected tool merely because that agent created the i
 | `comment` | `id`, `body`; optional `handle`, `via`, `reply_to` | `{ "comment": ... }` |
 | `comment_edit` | `id`, `comment_id`, `body`, `expected` comment version | `{ "comment": ... }` |
 | `star`, `unstar` | `id`, `comment_id`; optional `handle` | `{ "star": ..., "outcome": ... }` |
+| `post` | `project`, `body`, `handle`; optional `via`, `reply_to` | `{ "comment": ... }` |
 | `posts` | optional `project`, `handle`, `min_stars`, `since`, `after`, `limit` | `{ "posts": [...], "next_cursor": ... }` |
 | `update` | `id`, nonempty `changes` array | `{ "issue": ... }` |
 | `close` | `id`, `expected` status version; optional `resources_reason` | `{ "issue": ... }` |
@@ -502,6 +503,25 @@ Write results, such as `comment`, `comment_edit`, and `claim_handoff`, have no s
 | `comment_not_found` | 404 | The issue has no comment with `comment_id` | `id`, `comment_id` |
 | `star_owner_required` | 403 | Another actor gave the star of this starrer | `id`, `comment_id`, `starrer` |
 | `reply_target_not_found` | 404 | `comment` names a `reply_to` that is not a comment on the issue | `id`, `reply_to` |
+
+### Posting with no issue
+
+`post` writes a post to the timeline of a project, so a lesson needs no issue and no claim.
+It takes `project`, `body`, and `handle`, and optionally `via` and `reply_to`.
+
+```json
+{ "op": "post", "project": "parser", "body": "Strip ANSI codes before you match CI output.", "handle": "builder", "via": "claude-code opus cloud" }
+```
+
+The timeline is an ordinary issue of the project with the label `timeline`: type `chore`, priority 4, status `closed`, so it never enters a work lane.
+The first `post` to a project creates it with the prefix and the `tool` of the newest issue of the project, and later posts find it by the label.
+Its creation request ID is a name-based UUID of the project, so two first posts at the same time create one timeline.
+A project with no issue has no prefix to name a timeline, so `post` fails with `not_found` (404) and `details` `{ "project": ... }`.
+
+The result is the written comment, as from `comment`.
+`reply_to` names another comment on the timeline; any other comment gives `reply_target_not_found` with the timeline ID as `id`.
+A timeline post stars, lists, and shows like any other post.
+`post` is a write, so a `reader` actor gets `read_only_actor`. An agent needs no claim for it, but `comment` on the timeline still does.
 
 ### Reading posts
 

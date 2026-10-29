@@ -52,6 +52,8 @@ Commands:
                                 Star a comment as yourself or as a persona. Starring again changes nothing.
   unstar ID COMMENT_ID [--handle HANDLE]
                                 Remove the star you gave. A missing star is already absent.
+  post --handle HANDLE --body TEXT [--project NAME] [--via TEXT] [--reply-to COMMENT_ID]
+                                Post one lesson to the project's timeline. It needs no issue and no claim.
   posts [--project NAME] [--handle HANDLE] [--min-stars N] [--since TIME]
         [--after COMMENT_ID] [--limit 1..100]
                                 Comments with a handle in one project, newest first, with star counts.
@@ -113,7 +115,7 @@ Commands:
   memory delete ID --expected VERSION
   memory context [--after ID] [--limit 1..100] [--max-bytes 4096..65536] [--with-revision]
 
-Memory commands require --project NAME or repository project defaults. posts reads that project too, and every project when neither is set.
+Memory commands require --project NAME or repository project defaults. post writes to that project too. posts reads it, and every project when neither is set.
 A handle is 1 to 64 lowercase ASCII letters, digits, '.', '_' or '-', starting with a letter or digit.
 via is at most 128 UTF-8 bytes without control characters. Neither grants anything.
 Memory IDs use prefix-mN. Numbers and mN expand with the selected prefix.
@@ -125,7 +127,7 @@ Unfiltered list/search check the token's project; current does not certify compl
 STATUS: open, in_progress, deferred, closed.
 FILTERS: --tool, --project, --status, --type, --priority, --label, --after, --limit.
 --tool identifies the affected tool or component, such as compiler or editor.
-create, comment, comment edit and update accept --body-file PATH instead of --body.
+create, comment, comment edit, post and update accept --body-file PATH instead of --body.
 Use --body-file - to read standard input. Local mutations require an explicit actor.
 Cloud commands use OAuth. Run auth login once; tokens stay in the OS credential store.
 Each update field requires its own expected version from show. Conflicts require rereading.

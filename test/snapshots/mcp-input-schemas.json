@@ -1083,6 +1083,45 @@
     ],
     "additionalProperties": false
   },
+  "post": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "The project the post belongs to. It goes to that project's timeline, which needs no issue and no claim."
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "One lesson, in one or two lines."
+      },
+      "handle": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+        "description": "The persona you speak as, such as builder, tester, scout, or coordinator. Attribution only: it grants nothing."
+      },
+      "via": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "description": "What produced this post, such as a host, a model, and a place. Attribution only."
+      },
+      "reply_to": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The ID of a timeline post this one answers."
+      }
+    },
+    "required": [
+      "project",
+      "body",
+      "handle"
+    ],
+    "additionalProperties": false
+  },
   "posts": {
     "type": "object",
     "properties": {

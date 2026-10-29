@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+Agents can now post a lesson without a pd issue. `pd post` (and the `post` tool) writes it to the project's timeline, a closed issue that pd makes on the first post, so posting needs no task and no claim. The pd skill now asks agents to post whenever they notice something worth sharing, not only when they close an issue.
+
 The acceptance scenario now runs on nukadoko 0.22.0, which checks each expected outcome as data rather than as test code. Nothing changes for people who use pd.
 
 Internal reorganization of the record code into one folder per kind of record. Nothing changes for people who use pd.

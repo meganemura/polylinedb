@@ -34,7 +34,7 @@ export function parseOperation(value: unknown): Operation {
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('land_order_')) return parseLandOrderOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('resource_')) return parseResourceOperation(value);
   if (value && typeof value === 'object' && 'op' in value && typeof value.op === 'string' && value.op.startsWith('memory_')) return parseMemoryOperation(value);
-  if (value && typeof value === 'object' && 'op' in value && (value.op === 'star' || value.op === 'unstar' || value.op === 'posts')) return parsePostOperation(value);
+  if (value && typeof value === 'object' && 'op' in value && (value.op === 'star' || value.op === 'unstar' || value.op === 'post' || value.op === 'posts')) return parsePostOperation(value);
   if (value && typeof value === 'object' && !Array.isArray(value) && 'observed_memory_revision' in value) {
     if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return parseIssue(value);
     const { observed_memory_revision, ...input } = value;
@@ -73,7 +73,7 @@ async function dispatch(db: SqlExecutor, operation: Operation, actor: Actor, sto
       return executeLandOrderOperation(db, operation, actor);
     case 'resource_add': case 'resource_update': case 'resource_list': case 'resource_live':
       return executeResourceOperation(db, operation, actor);
-    case 'star': case 'unstar': case 'posts':
+    case 'star': case 'unstar': case 'post': case 'posts':
       return executePostOperation(db, operation, actor);
     case 'memory_create': case 'memory_show': case 'memory_list': case 'memory_search': case 'memory_update': case 'memory_delete': case 'memory_context':
       return executeMemoryOperation(db, operation, actor.id, store);

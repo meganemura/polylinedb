@@ -1,8 +1,9 @@
 // Owns stars and the posts read. A post is a comment with a handle; comments themselves stay in issues.ts and the DDL in posts-sql.ts.
 import { parseIssueId, parseRequestId } from '../store/issue-id.ts';
 import { PolylinedbError, requireFields } from '../store/errors.ts';
-import { handleSchema, parseHandle, shownCommentRow, starrerNames } from '../store/issue-record.ts';
-import type { ShownComment } from '../store/issue-record.ts';
+import { handleSchema, parseHandle, parseVia, shownCommentRow, starrerNames } from '../store/issue-record.ts';
+import type { ShownComment, StoredComment } from '../store/issue-record.ts';
+import { executeOperation as executeIssue, writeComment } from '../issues/issues.ts';
 import type { SqlExecutor } from '../store/sql.ts';
 import { issueQueries } from '../store/issue-queries.ts';
 import { recordingChanges } from '../store/changes-sql.ts';
@@ -15,10 +16,11 @@ import type { Actor } from '../../transition/index.ts';
 export type Star = { comment_id: string; starrer: string; handle: string | null; actor: string; created_at: string };
 type Starring = { id: string; comment_id: string; handle?: string };
 export type PostOperation = ({ op: 'star' } & Starring) | ({ op: 'unstar' } & Starring)
+  | { op: 'post'; project: string; body: string; handle: string; via?: string; reply_to?: string }
   | { op: 'posts'; project?: string; handle?: string; min_stars: number; since?: string; after?: string; limit: number };
 export type StarReceipt = { star: Star; outcome: 'added' | 'already_present' | 'removed' } | { star: null; outcome: 'already_absent' };
 export type PostPage = { posts: ShownComment[]; next_cursor: string | null };
-export type PostResult = StarReceipt | PostPage;
+export type PostResult = StarReceipt | PostPage | { comment: StoredComment };
 
 const invalidStore = (): never => { throw new PolylinedbError('invalid_store', 'Stored star is invalid', 500); };
 const invalid = (message: string): never => { throw new PolylinedbError('invalid_input', message); };
@@ -40,12 +42,18 @@ export function starRow(row: Record<string, unknown>): Star {
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
 const commentIdSchema = { type: 'string', format: 'uuid', description: 'The comment ID that show or posts returns.' };
 const objectSchema = (properties: Record<string, unknown>, required: readonly string[]) => ({ type: 'object', properties, required, additionalProperties: false });
+const projectSchema = { type: 'string', minLength: 1, maxLength: 256 };
 export const postSchemas = {
+  post: objectSchema({ project: { ...projectSchema, description: "The project the post belongs to. It goes to that project's timeline, which needs no issue and no claim." },
+    body: { type: 'string', minLength: 1, maxLength: 65536, description: 'One lesson, in one or two lines.' },
+    handle: { ...handleSchema, description: 'The persona you speak as, such as builder, tester, scout, or coordinator. Attribution only: it grants nothing.' },
+    via: { type: 'string', minLength: 1, maxLength: 128, description: 'What produced this post, such as a host, a model, and a place. Attribution only.' },
+    reply_to: { type: 'string', format: 'uuid', description: 'The ID of a timeline post this one answers.' } }, ['project', 'body', 'handle']),
   star: objectSchema({ id: idSchema, comment_id: commentIdSchema,
     handle: { ...handleSchema, description: 'Star as this persona instead of as your actor, such as tester. One persona or one actor stars a post once. It grants nothing.' } }, ['id', 'comment_id']),
   unstar: objectSchema({ id: idSchema, comment_id: commentIdSchema,
     handle: { ...handleSchema, description: 'Remove the star you gave as this persona; without it, the star you gave as your actor.' } }, ['id', 'comment_id']),
-  posts: objectSchema({ project: { type: 'string', minLength: 1, maxLength: 256, description: 'Keep only the posts on issues of this project. Without it, every project.' },
+  posts: objectSchema({ project: { ...projectSchema, description: 'Keep only the posts on issues of this project. Without it, every project.' },
     handle: { ...handleSchema, description: 'Keep only the posts of this persona.' },
     min_stars: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0, description: 'Keep only posts with at least this many stars.' },
     since: { type: 'string', description: 'Keep only posts created at or after this time: an ISO 8601 instant with a time zone, or a date YYYY-MM-DD read as midnight UTC.' },
@@ -82,10 +90,16 @@ export function parseSince(value: unknown): string {
 export function parsePostOperation(value: unknown): PostOperation {
   const input = plain(value);
   const op = input.op;
-  if (op !== 'star' && op !== 'unstar' && op !== 'posts') return invalid('Unknown post operation');
+  if (op !== 'star' && op !== 'unstar' && op !== 'post' && op !== 'posts') return invalid('Unknown post operation');
   const schema = postSchemas[op];
   requireFields(input, ['op', ...Object.keys(schema.properties)], ['op', ...schema.required]);
   const handle = input.handle === undefined ? {} : { handle: parseHandle(input.handle) };
+  if (op === 'post') {
+    if (typeof input.body !== 'string' || input.body.length === 0 || utf8(input.body) > 65536) return invalid('body must be 1 through 65536 UTF-8 bytes');
+    return { op, project: name(input.project, 'project'), body: input.body, handle: parseHandle(input.handle),
+      ...(input.via === undefined ? {} : { via: parseVia(input.via) }),
+      ...(input.reply_to === undefined ? {} : { reply_to: validated(() => parseRequestId(input.reply_to, 'reply_to')) }) };
+  }
   if (op === 'posts') return { op, ...(input.project === undefined ? {} : { project: name(input.project, 'project') }), ...handle,
     min_stars: input.min_stars === undefined ? 0 : count(input.min_stars, 'min_stars', 0, Number.MAX_SAFE_INTEGER),
     ...(input.since === undefined ? {} : { since: parseSince(input.since) }),
@@ -162,7 +176,45 @@ export async function postProjects(db: SqlExecutor, issueIds: readonly string[])
   return new Map(rows.map(row => [parseIssueId(row.id), name(row.project, 'project')]));
 }
 
+export const timelineLabel = 'timeline';
+// The request ID is a name-based UUID of the project, so the first posts of two callers create the same timeline issue at most once.
+async function timelineRequestId(project: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`polylinedb timeline\n${project}`)));
+  digest[6] = ((digest[6] ?? 0) & 0x0f) | 0x80;
+  digest[8] = ((digest[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(digest.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// A project's timeline is an ordinary issue with the timeline label, created closed so it never enters a work lane.
+// It takes the prefix and tool of the project's newest issue, so a project with no issue yet has nowhere to post.
+async function timelineIssue(db: SqlExecutor, project: string, caller: Actor): Promise<string> {
+  const found = async () => { const row = (await db.reads.all(issueQueries.timelineIssue, { project }))[0]; return row === undefined ? null : parseIssueId(row.id); };
+  const existing = await found();
+  if (existing !== null) return existing;
+  const source = (await db.reads.all(issueQueries.projectNewestIssue, { project }))[0];
+  if (source === undefined) throw new PolylinedbError('not_found', 'The project has no issue yet, so it has no timeline to post to', 404, { project });
+  const prefix = parseIssueId(source.id).split('-')[0] ?? invalidStore();
+  try {
+    const created = await executeIssue(db, { op: 'create', prefix, request_id: await timelineRequestId(project), tool: name(source.tool, 'tool'), project,
+      body: `Timeline\n\nPosts on ${project} that belong to no single issue. The post operation writes here; keep it closed.`,
+      status: 'closed', type: 'chore', priority: 4, labels: [timelineLabel] }, caller);
+    if ('issue' in created) return created.issue.id;
+  } catch (error) {
+    // Another caller created it first under the same request ID, so read the issue it made.
+    if (!(error instanceof PolylinedbError && error.code === 'request_conflict')) throw error;
+  }
+  return await found() ?? invalidStore();
+}
+
+async function post(db: SqlExecutor, operation: Extract<PostOperation, { op: 'post' }>, caller: Actor): Promise<{ comment: StoredComment }> {
+  const id = await timelineIssue(db, operation.project, caller);
+  const { op: _, project: __, ...voice } = operation;
+  return writeComment(db, { op: 'comment', id, ...voice }, caller, false);
+}
+
 export async function executePostOperation(db: SqlExecutor, operation: PostOperation, by: string | Actor): Promise<PostResult> {
   if (operation.op === 'posts') return posts(db, operation);
+  if (operation.op === 'post') return post(db, operation, asActor(by));
   return star(db, operation, asActor(by));
 }

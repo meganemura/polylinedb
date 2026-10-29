@@ -23,6 +23,7 @@ const operationPolicy = {
   comment_edit: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   star: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   unstar: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  post: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: false } },
   posts: { access: 'read', mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true } },
   update: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   close: { access: 'write', mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },

@@ -15,7 +15,7 @@ import { activeBlockerExists } from '../store/active-blocker.ts';
 import { liveResourceSummary, shownLiveResources } from '../resources/resources-sql.ts';
 import type { ClaimProof } from '../claims/claims-sql.ts';
 import { enumeration, handleSchema, id, integer, invalid, issueRow, labels, name, object, parseHandle, parseVia, shownCommentRow, starrerNames, storedCommentRow, text, validated } from '../store/issue-record.ts';
-import type { Comment, Field, Issue, IssueType, Status, Values } from '../store/issue-record.ts';
+import type { Comment, Field, Issue, IssueType, Status, StoredComment, Values } from '../store/issue-record.ts';
 import type { SqlExecutor, SqlStatement } from '../store/sql.ts';
 
 export type Change = { [K in Field]: { field: K; value: Values[K]; expected: number } }[Field];
@@ -297,25 +297,27 @@ async function editComment(db: SqlExecutor, operation: Extract<Operation, { op: 
 
 // The guard keeps a reply on the issue of its target in the same INSERT, so the reply trigger only backs up writes that skip operations.
 // A refusal names a missing issue first, then a missing reply target, then the agent claim gate, as decideReply orders them.
-async function writeComment(db: SqlExecutor, operation: Extract<Operation, { op: 'comment' }>, caller: Actor): Promise<OperationResult> {
+// A post to a timeline passes claimed: false: it is attribution, not work on the issue, so no claim gates it.
+export async function writeComment(db: SqlExecutor, operation: Extract<Operation, { op: 'comment' }>, caller: Actor, claimed = true): Promise<{ comment: StoredComment }> {
   const actor = caller.id;
-  const gate = agentHoldsClaim(operation.id, caller);
+  const gated = claimed && caller.kind === 'agent';
+  const gate = agentHoldsClaim(operation.id, gated ? caller : { ...caller, kind: 'human' });
   const replyTo = operation.reply_to ?? null;
-  const observe = caller.kind === 'agent' || replyTo !== null;
+  const observe = gated || replyTo !== null;
   const result = await recordingChanges(db, actor).batch([{ sql: `INSERT INTO comments(id, issue_id, body, created_at, created_by, handle, via, reply_to)
     SELECT ?, id, ?, ?, ?, ?, ?, ? FROM issues WHERE id = ? AND ${gate.sql}
     AND (? IS NULL OR EXISTS(SELECT 1 FROM comments AS target WHERE target.id = ? AND target.issue_id = issues.id)) RETURNING *`,
   params: [crypto.randomUUID(), operation.body, new Date().toISOString(), actor, operation.handle ?? null, operation.via ?? null, replyTo,
     operation.id, ...gate.params, replyTo, replyTo] },
   ...(observe ? [observation(operation.id), { sql: 'SELECT 1 AS found FROM comments WHERE id = ? AND issue_id = ?', params: [replyTo, operation.id] }] : []),
-  ...(caller.kind === 'agent' ? [heldClaimObservation(operation.id)] : [])]);
+  ...(gated ? [heldClaimObservation(operation.id)] : [])]);
   const row = rowsAt(result, 0)[0];
   if (row) return { comment: storedCommentRow(row) };
   const observed = observe ? rowsAt(result, 1)[0] : undefined;
   const reply = decideReply({ issue: observed !== undefined, replyTarget: replyTo === null ? null : rowsAt(result, 2).length > 0 });
   if (!reply.accepted && reply.code === 'not_found') return notFound(operation.id);
   if (!reply.accepted) throw new PolylinedbError('reply_target_not_found', 'The reply target is not a comment on this issue', 404, { id: operation.id, reply_to: replyTo });
-  if (observed) rejectAgentWrite(caller, 'issue_write', operation.id, issueRow(observed).labels, rowsAt(result, 3)[0]);
+  if (observed && gated) rejectAgentWrite(caller, 'issue_write', operation.id, issueRow(observed).labels, rowsAt(result, 3)[0]);
   throw new PolylinedbError('storage_error', 'The database rejected a comment without a matching condition', 503);
 }
 

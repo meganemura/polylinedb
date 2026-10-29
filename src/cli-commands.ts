@@ -56,7 +56,7 @@ const commandFlags: Record<string, readonly string[]> = {
   init: ['stealth', 'tool', 'project'], context: [], export: ['file', 'historical'], import: ['file'], actor: [], show: ['with-land-order'],
   create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
   comment: ['body', 'body-file', 'handle', 'via', 'reply-to'], comment_edit: ['body', 'body-file', 'expected'],
-  star: ['handle'], unstar: ['handle'], posts: ['project', 'handle', 'min-stars', 'since', 'after', 'limit'],
+  star: ['handle'], unstar: ['handle'], post: ['project', 'body', 'body-file', 'handle', 'via', 'reply-to'], posts: ['project', 'handle', 'min-stars', 'since', 'after', 'limit'],
   update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'resources-reason', 'claim-proof'],
   close: ['expected', 'force', 'reason', 'resources-reason', 'claim-proof'], reopen: ['expected', 'claim-proof'],
   list: ['tool', 'project', 'status', 'type', 'priority', 'label', 'after', 'limit', 'claimed', 'with-land-order'],
@@ -517,7 +517,7 @@ async function main(argv: readonly string[]): Promise<void> {
     // A posts cursor is a comment ID, which never expands with the prefix.
     if (value !== undefined) raw[name] = command === 'posts' ? value : expandedId(value, name === 'parent');
   }
-  if (command === 'posts' && raw.project === undefined && project !== undefined) raw.project = project;
+  if ((command === 'post' || command === 'posts') && raw.project === undefined && project !== undefined) raw.project = project;
   if (command === 'create') {
     raw.prefix = prefix;
     raw.request_id = parseArgument(parseRequestId, one('request-id') ?? randomUUID());

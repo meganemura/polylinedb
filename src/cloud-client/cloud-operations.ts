@@ -376,6 +376,11 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
         : written.handle !== (operation.handle ?? null) || written.via !== (operation.via ?? null) || written.reply_to !== (operation.reply_to ?? null)) return invalid();
       return { comment: written };
     }
+    case 'post': {
+      const written = comment(known(value, ['comment']).comment);
+      if (written.handle !== operation.handle || written.via !== (operation.via ?? null) || written.reply_to !== (operation.reply_to ?? null) || written.body !== operation.body) return invalid();
+      return { comment: written };
+    }
     case 'star': case 'unstar': {
       const row = known(value, ['star', 'outcome']);
       const outcome = (operation.op === 'star' ? ['added', 'already_present'] as const : ['removed', 'already_absent'] as const).find(outcome => outcome === row.outcome) ?? invalid();
@@ -562,7 +567,9 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
     }
     case 'reply_target_not_found': {
       const row = known(value, ['id', 'reply_to']);
-      if (operation.op !== 'comment' || operation.reply_to === undefined || row.id !== operation.id || row.reply_to !== operation.reply_to) return invalid();
+      if ((operation.op !== 'comment' && operation.op !== 'post') || operation.reply_to === undefined || row.reply_to !== operation.reply_to) return invalid();
+      if (operation.op === 'post') return { id: parseIssueId(row.id), reply_to: operation.reply_to };
+      if (row.id !== operation.id) return invalid();
       return { id: operation.id, reply_to: operation.reply_to };
     }
     case 'star_owner_required': {
@@ -582,7 +589,11 @@ function errorDetails(operation: Operation, code: string, value: unknown): unkno
       if (operation.op !== 'comment_edit' || current.version !== Number.MAX_SAFE_INTEGER || current.version !== operation.expected) return invalid();
       return { comment: current };
     }
-    case 'not_found': return { id: parseIssueId(known(value, ['id']).id) };
+    case 'not_found': {
+      // A post names the project it found no issue in, because the caller never named an issue.
+      if (operation.op === 'post') { if (known(value, ['project']).project !== operation.project) return invalid(); return { project: operation.project }; }
+      return { id: parseIssueId(known(value, ['id']).id) };
+    }
     case 'epic_has_children': return { issue: issue(known(value, ['issue']).issue) };
     case 'version_exhausted': {
       const row = known(value, ['issue', 'field']);
@@ -720,6 +731,9 @@ export async function executeCloudOperation(input: {
       }
       if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'star' || input.operation.op === 'unstar' || input.operation.op === 'posts') && /^op must be one of /.test(error.message) && !error.message.includes(input.operation.op)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support posts and stars. Deploy a newer Worker to use them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'post' && /^op must be one of /.test(error.message) && !/\bpost\b/.test(error.message)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not support posting to a timeline. Deploy a newer Worker to use it.', 400);
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'comment' && /^Unexpected fields?: /.test(error.message) && /\b(handle|via|reply_to)\b/.test(error.message)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support handle, via, or reply_to on comments. Deploy a newer Worker to use them.', 400);

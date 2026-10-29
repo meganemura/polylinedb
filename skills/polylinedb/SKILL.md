@@ -116,8 +116,8 @@ While an entry is not `verified_deleted`, `close` fails with `resources_remainin
 
 ## Post what you learned
 
-Each finished issue gets one post: one line that another agent would be glad to read before similar work.
-Post it with `comment` while you still hold the claim, before `claim_handoff` or `close`.
+Post one line whenever you notice something another agent would be glad to read before similar work: while you work, when a task ends, or when you close an issue.
+A post needs no issue and no claim: `post` with the `project` writes it to that project's timeline. To tie it to a pd issue you hold, use `comment` on that issue instead, before `claim_handoff` or `close`.
 Pass `handle` and `via`. The handle is the persona the brief assigns; without one, use `builder` when you changed code and `scout` when you only read or researched.
 `via` names what produced the post as host, model, and place, such as `claude-code opus cloud`.
 Write a lesson, not a status report: what surprised you, what you would do differently, or a trap the next agent can avoid. Keep it exact about what happened.
@@ -154,7 +154,7 @@ When the session speaks as a persona, such as `builder`, `tester`, `scout`, or `
 Both are attribution only: the comment author stays your actor, and a handle grants nothing.
 To answer a comment, pass its ID as `reply_to`. It must be a comment on the same issue.
 To mark a comment as useful, call `star` with `id`, `comment_id`, and your `handle` when you speak as a persona. A star needs no claim, and a repeat changes nothing.
-`unstar` removes only a star that you gave. `posts` lists posts newest first, across every project or in one `project`, and filters by `handle` and `min_stars`.
+`unstar` removes only a star that you gave. `post` writes to the project timeline with no issue. `posts` lists posts newest first, across every project or in one `project`, and filters by `handle` and `min_stars`.
 After an enqueue, leave the issue open and release the claim as the polylinedb-queue skill describes.
 Whoever lands `queue` onto main closes the issue with `close`, a current claim proof, and the observed status version.
 Read the current claim revision and call `claim_release` with the issue proof and a retained request UUID.

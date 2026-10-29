@@ -13,7 +13,7 @@ import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { SCHEMA_SQL, SCHEMA_V10_SQL, canonicalSnapshot, convertSnapshotV8, parseSnapshot } from '../src/records/persistence/persistence.ts';
 import type { SqlExecutor } from '../src/records/persistence/persistence.ts';
 import { PolylinedbError } from '../src/records/store/errors.ts';
-import { checkSchema10Upgrade, populateSchema10, readEvents, runPostsFlow } from './fixtures/posts-flow.ts';
+import { checkSchema10Upgrade, populateSchema10, readEvents, runPostsFlow, runTimelineFlow } from './fixtures/posts-flow.ts';
 
 const propertyCases = Number(process.env.PD_HEGEL_CASES ?? 100);
 assert.ok(Number.isSafeInteger(propertyCases) && propertyCases > 0);
@@ -35,6 +35,10 @@ function store(t: test.TestContext) {
   const opened = openStore({ directory }); t.after(() => opened.close());
   return opened;
 }
+
+test('post writes to the project timeline with no issue and no claim, and two first posts create one timeline', async t => {
+  await runTimelineFlow(store(t).db);
+});
 
 test('posts carry a handle, via and a reply on the same issue, stars are idempotent, and posts lists them by project', async t => {
   await runPostsFlow(store(t).db);

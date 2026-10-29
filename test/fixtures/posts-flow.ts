@@ -197,3 +197,48 @@ export async function checkSchema10Upgrade(db: SqlExecutor, populated: { comment
   ]);
   assert.deepEqual(((await run({ op: 'posts', project: 'posts' })).posts as Row[]).map(entry => entry.id), [reply.id]);
 }
+
+// A post needs no issue: it goes to the project's timeline, one closed issue created on the first post with a request ID named by the project.
+export async function runTimelineFlow(db: SqlExecutor): Promise<void> {
+  const { run, sql, latest, refusal, events } = helpers(db);
+  const timelines = async (project: string) => (await sql("SELECT issues.id FROM issues, json_each(issues.labels_json) WHERE issues.project = ? AND json_each.value = 'timeline'", project)).map(row => row.id);
+
+  const empty = await latest();
+  assert.deepEqual(await refusal(run({ op: 'post', project: 'quiet', body: 'Nowhere to go', handle: 'builder' }, agent)),
+    { code: 'not_found', status: 404, details: { project: 'quiet' } }, 'a project with no issue has no prefix to name a timeline');
+  assert.equal(await latest(), empty);
+
+  const work = ((await run({ op: 'create', prefix: 'tl', request_id: crypto.randomUUID(), tool: 'timeline-tool', project: 'loud', body: 'Some work' })).issue as Row & { id: string }).id;
+  const before = await latest();
+  const first = (await run({ op: 'post', project: 'loud', body: 'Strip ANSI before reading CI output', handle: 'builder', via }, agent)).comment as Row & { id: string; issue_id: string };
+  const timeline = (await run({ op: 'show', id: first.issue_id })).issue as Row;
+  assert.deepEqual({ ...timeline, id: typeof timeline.id, versions: undefined, created_at: undefined, updated_at: undefined, closed_at: typeof timeline.closed_at }, {
+    id: 'string', tool: 'timeline-tool', project: 'loud', body: 'Timeline\n\nPosts on loud that belong to no single issue. The post operation writes here; keep it closed.',
+    status: 'closed', type: 'chore', priority: 4, labels: ['timeline'], versions: undefined, created_at: undefined, created_by: agent.id,
+    updated_at: undefined, updated_by: agent.id, closed_at: 'string', closed_by: agent.id }, 'an agent posts with no claim, and the timeline takes the prefix and tool of the project');
+  assert.match(String(timeline.id), /^tl-\d+$/);
+  assert.notEqual(timeline.id, work);
+  assert.deepEqual([first.handle, first.via, first.reply_to, first.created_by], ['builder', via, null, agent.id]);
+  assert.deepEqual(await events(before), [{ issue_id: timeline.id, kind: 'created', actor: agent.id }, { issue_id: timeline.id, kind: 'commented', actor: agent.id }]);
+
+  const reply = (await run({ op: 'post', project: 'loud', body: 'Same here w', handle: 'tester', reply_to: first.id }, 'bob')).comment as Row;
+  assert.deepEqual([reply.issue_id, reply.reply_to, reply.via], [timeline.id, first.id, null], 'a later post finds the timeline whoever writes it');
+  assert.deepEqual(await timelines('loud'), [timeline.id]);
+  const onWork = (await run({ op: 'comment', id: work, body: 'On the work issue' })).comment as Row & { id: string };
+  assert.deepEqual(await refusal(run({ op: 'post', project: 'loud', body: 'Across', handle: 'tester', reply_to: onWork.id })),
+    { code: 'reply_target_not_found', status: 404, details: { id: timeline.id, reply_to: onWork.id } });
+  assert.deepEqual(await refusal(run({ op: 'comment', id: String(timeline.id), body: 'Plain comment', handle: 'builder' }, agent)),
+    { code: 'claim_required', status: 409, details: { id: timeline.id } }, 'a comment keeps the claim gate; only post skips it');
+  assert.deepEqual(((await run({ op: 'posts', project: 'loud' })).posts as Row[]).map(entry => entry.id), [reply.id, first.id]);
+  const star = await run({ op: 'star', id: String(timeline.id), comment_id: first.id });
+  assert.equal(star.outcome, 'added', 'a timeline post stars like any post');
+
+  // Two first posts at once create one timeline: the second create meets the first one's request ID and reads the issue it made.
+  await run({ op: 'create', prefix: 'tl', request_id: crypto.randomUUID(), tool: 'timeline-tool', project: 'race', body: 'Race work' });
+  const raced = await Promise.all(['carol', 'dave', 'erin'].map(actor => run({ op: 'post', project: 'race', body: `From ${actor}`, handle: 'scout' }, actor)));
+  const raceTimelines = await timelines('race');
+  assert.equal(raceTimelines.length, 1);
+  assert.deepEqual(raced.map(result => (result.comment as Row).issue_id), [raceTimelines[0], raceTimelines[0], raceTimelines[0]]);
+
+  assert.deepEqual(await refusal(run({ op: 'post', project: 'loud', body: 'No voice' })), { code: 'invalid_input', status: 400, details: undefined }, 'a post needs a handle');
+}

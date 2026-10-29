@@ -405,6 +405,13 @@ try {
   assert.equal(jwksRequests.length, egressBefore);
   assert.deepEqual(await database.prepare('SELECT status, body, tool_v, project_v, body_v, status_v, type_v, priority_v, labels_v FROM issues WHERE id = ?').bind(id).first(), beforeDispatch);
   assert.deepEqual(jwksRequests, [`${issuer}/cdn-cgi/access/certs`]);
+  // Claude, an agent with no claim anywhere, posts to the gated project's timeline, which the first post creates closed.
+  const lesson = record((await as(claude, { op: 'post', project: 'gated', body: 'A lesson with no issue', handle: 'scout', via: 'claude-code cloud' })).comment);
+  assert.deepEqual([lesson.created_by, lesson.handle, lesson.via], ['service:claude-token', 'scout', 'claude-code cloud']);
+  assert.deepEqual(await database.prepare('SELECT status, type, labels_json, project FROM issues WHERE id = ?').bind(lesson.issue_id).first(),
+    { status: 'closed', type: 'chore', labels_json: '["timeline"]', project: 'gated' });
+  assert.equal(record((await as(codex, { op: 'post', project: 'gated', body: 'Same timeline', handle: 'builder' })).comment).issue_id, lesson.issue_id);
+  assert.equal(record((await as(viewer, { op: 'post', project: 'gated', body: 'Read only', handle: 'builder' }, 403)).error).code, 'read_only_actor');
   process.stdout.write(JSON.stringify({ result: 'pass', runtime: 'local workerd', artifact: bundleUrl.pathname,
     sha256: createHash('sha256').update(bundle).digest('hex'), checks: [
       'real JWT verification', 'missing and invalid credentials rejected', 'HTTP create', 'MCP initialize and show',
@@ -414,7 +421,7 @@ try {
       'memory MCP creation and context', 'memory HTTP update', 'memory scope and stale deletion', 'memory deleted-create replay',
       'MCP and HTTP prerequisite mutations and worklists', 'immutable graph retry and same-batch conflict', 'blocked close and attributed force comment',
       'claim tool schemas and metadata', 'claim HTTP/MCP history and replay', 'claim status and force fencing',
-      'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'author-only comment edit with a conflict and a comment_edited event', 'a post with a persona, a same-issue reply rule, and claimless idempotent stars with one event per change', 'read-only /ui page',
+      'read-only roster actor', 'per-token agent actors behind the ready and claim gates', 'author-only comment edit with a conflict and a comment_edited event', 'a post with a persona, a same-issue reply rule, and claimless idempotent stars with one event per change', 'a claimless post to a project timeline', 'read-only /ui page',
       'projects by latest update', '/ui Server-Timing', '/ui ETag revalidation behind Access',
       'Waiting on you lists an owner-action issue with a store-clock age',
       '/ui speculation rules prefetch behind a CSP hash', '/ui cross-document view transition',
