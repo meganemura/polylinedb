@@ -135,11 +135,13 @@ try {
     executeOperation(tripping, parseOperation({ op: 'list', limit: 2 }), 'test:d1'),
     executeOperation(tripping, parseOperation({ op: 'search', query: 'D1', limit: 2 }), 'test:d1'),
   ]);
+  // A claim inspection carries the store clock in seconds, which may tick between the two reads.
+  const settled = (value: unknown) => JSON.parse(JSON.stringify(value), (key, field) => key === 'observed_at' ? undefined : field);
   const apart = [await run({ op: 'show', id }), await run({ op: 'list', limit: 2 }), await run({ op: 'search', query: 'D1', limit: 2 })];
-  assert.deepEqual(await readTogether(), apart);
+  assert.deepEqual(settled(await readTogether()), settled(apart));
   assert.equal(trips[0], 'batch 3', `reads started together share one D1 trip: ${trips.join(', ')}`);
   trips.length = 0; failNextBatch = true;
-  assert.deepEqual(await readTogether(), apart);
+  assert.deepEqual(settled(await readTogether()), settled(apart));
   assert.deepEqual(trips.slice(0, 4), ['batch 3', 'all', 'all', 'all'], 'a failed shared trip answers each read on its own');
   trips.length = 0;
   const [shownBeside, stale] = await Promise.allSettled([
@@ -148,6 +150,6 @@ try {
   ]);
   assert.equal(shownBeside.status, 'fulfilled', 'a read sharing a call with a failing write still answers');
   assert(stale.status === 'rejected'); assert.equal(stale.reason.code, 'conflict');
-  assert.deepEqual(await run({ op: 'show', id }), apart[0], 'the failed write committed nothing');
+  assert.deepEqual(settled(await run({ op: 'show', id })), settled(apart[0]), 'the failed write committed nothing');
   process.stdout.write('PASS: local workerd D1 persistence, shared read trips and their fallback, CAS, rollback, comments, show claim inspection, the list claimed filter over every claim state, close/reopen closure records, parallel allocation, request replay/conflicts, child numbering, 99→100, natural pagination, and counter exhaustion\n');
 } finally { await runtime.dispose(); }
