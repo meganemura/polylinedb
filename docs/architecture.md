@@ -48,6 +48,7 @@ The source modules expose capability contracts through these public entries:
 
 | Module | Public entries | Responsibility |
 | --- | --- | --- |
+| cli | `src/cli.ts` | The `pd` command; one module over the six `src/cli*.ts` files, so command parsing, help, keepalive, diagnostics, and human output stay private to it |
 | records | `src/records/index.ts`, `src/records/persistence/persistence.ts` | Commands and domain types; storage ports, row decoding, schemas, and portable snapshots |
 | transition | `src/transition/index.ts` | Pure issue, claim, creation, prerequisite, and agent gate decisions that both stores share |
 | local-store | `src/local-store/index.ts` | SQLite lifetime, transactions, upgrades, and restoration |

@@ -19,7 +19,7 @@ Agents can now post a lesson without a pd issue. `pd post` (and the `post` tool)
 
 The acceptance scenario now runs on nukadoko 0.22.0, which checks each expected outcome as data rather than as test code. Nothing changes for people who use pd.
 
-Internal reorganization of the record code into one folder per kind of record, and of the `/ui` pages into a folder of their own. Nothing changes for people who use pd.
+Internal reorganization of the record code into one folder per kind of record, of the `/ui` pages into a folder of their own, and of the command-line files into one checked boundary. Nothing changes for people who use pd.
 
 The architecture check now uses archstrict 0.6.0. Nothing changes for people who use pd.
 

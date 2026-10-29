@@ -16,12 +16,7 @@ export default {
     "nukadoko.config.ts",
   ],
   declaredModules: [
-    { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
-    { name: "cli-commands.ts", glob: "src/cli-commands.ts", surface: "cli-commands.ts" },
-    { name: "cli-human.ts", glob: "src/cli-human.ts", surface: "cli-human.ts" },
-    { name: "cli-diagnostics.ts", glob: "src/cli-diagnostics.ts", surface: "cli-diagnostics.ts" },
-    { name: "cli-help.ts", glob: "src/cli-help.ts", surface: "cli-help.ts" },
-    { name: "cli-keepalive.ts", glob: "src/cli-keepalive.ts", surface: "cli-keepalive.ts" },
+    { name: "cli", glob: ["src/cli.ts", "src/cli-commands.ts", "src/cli-human.ts", "src/cli-diagnostics.ts", "src/cli-help.ts", "src/cli-keepalive.ts"], surface: "cli.ts" },
     { name: "cloud-client", glob: "src/cloud-client/**", surface: "index.ts" },
     { name: "cloudflare.config.ts", glob: "cloudflare.config.ts", surface: "cloudflare.config.ts" },
     { name: "scripts", glob: "scripts/**" },
