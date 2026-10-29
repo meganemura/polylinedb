@@ -581,7 +581,9 @@ test('an older Worker that rejects with_land_order answers show and list through
       };
       const answered = await decode({ ...plain, with_land_order: true }, older);
       assert.equal('land_order' in answered, false);
-      assert.deepEqual(answered, await decode(plain, transport));
+      // observed_at is in seconds, so the two reads can fall on either side of a second boundary.
+      const unobserved = (value: unknown) => JSON.parse(JSON.stringify(value), (key, field) => key === 'observed_at' ? 0 : field);
+      assert.deepEqual(unobserved(answered), unobserved(await decode(plain, transport)));
       assert.deepEqual(sent, [{ ...JSON.parse(JSON.stringify(parseOperation(plain))), with_land_order: true }, JSON.parse(JSON.stringify(parseOperation(plain)))]);
     }
   } finally { sqlite.close(); }
