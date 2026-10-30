@@ -19,14 +19,14 @@ export type Store = ReturnType<typeof openStore>;
 /** The release 0.1.0 operator's restore of one snapshot 3 input into schema 3, from record-release-0.1.0-restore.ts. */
 export const legacyRestore: { schema_sql: string; input: unknown; sha256: string; writes: Statement[] } = JSON.parse(readFileSync(new URL('release-0.1.0-restore.json', import.meta.url), 'utf8'));
 
-/** Without posts, the store holds only what a release before posts and items could write, so a snapshot 9, 8, or 7 input can describe it. */
+/** Without posts, the store holds only what a release before posts, items, and discovery links could write, so a snapshot 10, 9, 8, or 7 input can describe it. */
 export async function populate(store: Store, prefix: string, posts = true): Promise<void> {
   const run = (operation: unknown, actor = `${prefix}-author`) => executeOperation(store.db, parseOperation(operation), actor);
   const created = await run({ op: 'create', prefix, request_id: randomUUID(), tool: 'fixture', project: 'synthetic', body: `${prefix} epic 日本語`, type: 'epic' });
   assert.ok('issue' in created);
   const epic = created.issue.id;
   await run({ op: 'update', id: epic, changes: [{ field: 'body', value: `${prefix} revised`, expected: 1 }] }, `${prefix}-editor`);
-  await run({ op: 'create', prefix, parent: epic, request_id: randomUUID(), tool: 'fixture', project: 'synthetic', body: `${prefix} child` });
+  await run({ op: 'create', prefix, parent: epic, request_id: randomUUID(), tool: 'fixture', project: 'synthetic', body: `${prefix} child`, ...(posts ? { discovered_from: epic } : {}) });
   await run({ op: 'dependency_add', dependent_id: `${epic}.1`, blocker_id: epic, expected_revision: 1, request_id: randomUUID() });
   await run({ op: 'land_order_add', later_id: `${epic}.1`, earlier_id: epic, expected_revision: 1, request_id: randomUUID() });
   await run({ op: 'resource_add', issue_id: `${epic}.1`, kind: 'worker', name: `${prefix}-api`, expected_revision: 1, request_id: randomUUID() });

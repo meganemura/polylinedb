@@ -13,6 +13,7 @@ export const d1Files = [
   'test/comment-edit-d1.integration.ts',
   'test/posts-d1.integration.ts',
   'test/items-d1.integration.ts',
+  'test/discovery-d1.integration.ts',
   'test/d1-relay.integration.ts',
   'test/gate-races-d1.integration.ts',
   'test/memory-freshness-d1.integration.ts',

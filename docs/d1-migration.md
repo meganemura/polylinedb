@@ -1,13 +1,13 @@
 # Restore a local snapshot into D1
 
-These instructions describe schema 13 and snapshot 10.
+These instructions describe schema 13 and snapshot 11.
 Version 0.6.0 uses schema 10 and snapshot 8. No release used schema 9 and snapshot 7, but a Worker built from main before comment edits did. Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6, versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
 
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
 The additive operator requires disjoint keys and counter namespaces.
 
-The repository operator command restores snapshot v10 into a new D1 database.
-It preserves issues and their close records, comments with their edit versions, handles, `via`, and replies, stars, asks and checks, memories, prerequisites, land order, external resources, claims, counters, request receipts, versions, and audit fields.
+The repository operator command restores snapshot v11 into a new D1 database.
+It preserves issues and their close records, comments with their edit versions, handles, `via`, and replies, stars, asks and checks, where each issue was found, memories, prerequisites, land order, external resources, claims, counters, request receipts, versions, and audit fields.
 Ordinary `pd` commands can select SQLite or the authenticated cloud API. Snapshot maintenance remains an operator task.
 
 ## Prepare the transfer
@@ -69,7 +69,8 @@ The excerpt replaces each run of 20 or more identifier characters with `[redacte
 
 The new Worker needs schema 13. The CLI's `upgrade` command applies only to local SQLite.
 A schema 13 Worker on a schema 12 database fails every `changes` and `wait` read and the activity page of the web view, because they read the `report_kind` and `report_text` columns of `change_events`.
-A schema 12 Worker keeps working against a schema 13 database. It records no `claim_reported` event for a report.
+A schema 13 Worker on a schema 12 database also fails every `show` and every issue page of the web view, and every `create` with `discovered_from`, because they read or write the `issue_discoveries` table.
+A schema 12 Worker keeps working against a schema 13 database. It records no `claim_reported` event for a report, refuses `discovered_from` on `create`, and shows no discovery links.
 A schema 12 Worker on a schema 11 database fails every `show`, every issue page and lane of the web view, every `close`, `claim_acquire`, `claim_handoff`, ready worklist and owner-waits read, and every `item_add` and `item_resolve`, because they read the `issue_items` table.
 A schema 11 Worker keeps working against a schema 12 database. It does not see asks or checks, so it offers an issue with an open ask on the ready worklist and closes or hands off an issue whose items are open.
 A schema 11 Worker on a schema 10 database fails every `show`, every issue page of the web view, and every `comment`, `star`, `unstar`, and `posts`, because they name the comment `handle`, `via`, and `reply_to` columns or the `stars` table.
@@ -88,8 +89,8 @@ Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
 Run `pd snapshot convert --from 2 --file OLD --output NEW` for a v2 snapshot.
-For a v3, v4, v5, v6, v7, v8, or v9 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, or `--from 9` instead.
-Then use the new v10 digest and the normal restore procedure.
+For a v3, v4, v5, v6, v7, v8, v9, or v10 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, `--from 9`, or `--from 10` instead.
+Then use the new v11 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
 For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, `--upgrade-from 6`, `--upgrade-from 7`, `--upgrade-from 8`, `--upgrade-from 9`, `--upgrade-from 10`, `--upgrade-from 11`, or `--upgrade-from 12`.
@@ -196,11 +197,12 @@ See [the asks and checks decision](adr/0024-asks-and-checks.md#rollout).
 
 ### Rollback cost of the schema 13 upgrade
 
-The schema 12 to 13 upgrade rebuilds `change_events` with two nullable columns and adds one trigger, so the database itself needs no rollback to run a schema 12 Worker.
+The schema 12 to 13 upgrade rebuilds `change_events` with two nullable columns, adds one trigger, and adds the `issue_discoveries` table, so the database itself needs no rollback to run a schema 12 Worker.
 Rolling back the Worker has these costs:
 
 - A schema 12 Worker refuses a `claim_reported` event that it reads, because that kind is not in its list. Every `changes` and `wait` page that holds such an event then fails. The events leave the feed after retention removes them, or after a restore rotates the incarnation.
 - The report trigger still records `claim_reported` for each `blocked` or `error` report that a schema 12 Worker writes, so those pages keep failing while holders report. Roll back only when no holder reports, or restore.
+- A schema 12 Worker does not read `issue_discoveries`, so the links written before the rollback stay in the table but leave `show` and the issue page until a schema 13 Worker returns. It writes none.
 - Restoring a schema 12 backup after schema 13 writes loses every write made since the backup. Follow the raw database rollback below.
 
 The application does not perform this remote upgrade automatically. This procedure requires separate operator approval and live verification.
@@ -227,7 +229,7 @@ Snapshot validation rejects dangling claim receipts and receipt counters above t
 
 A retired historical local store rejects `pd upgrade` and retains its write guards.
 Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, or 12.
-That export converts the content to snapshot 10 with no asks or checks, with empty land order and resources before schema 9, with null close records before schema 8, with each comment at version 1 and no editor before schema 10, and with no handle, `via`, reply, or star before schema 11. Schema 6, 7, and 8 claim records remain intact; earlier schemas receive empty claim collections.
+That export converts the content to snapshot 11 with no discovery links, with no asks or checks before schema 12, with empty land order and resources before schema 9, with null close records before schema 8, with each comment at version 1 and no editor before schema 10, and with no handle, `via`, reply, or star before schema 11. Schema 6, 7, and 8 claim records remain intact; earlier schemas receive empty claim collections.
 Schema 5 through 8 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
 It preserves creation payload strings and source attribution. Transfer it into a separately initialized destination.
 

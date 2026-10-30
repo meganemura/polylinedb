@@ -457,7 +457,7 @@ test('a client that asks for the closure decodes closed_at and closed_by, and th
     const shown = await decode({ op: 'show', id }, spy);
     assert.ok('issue' in shown);
     assert.deepEqual([shown.issue.closed_at, shown.issue.closed_by], [closed.issue.closed_at, 'access:owner']);
-    assert.deepEqual(sent, ['closure, items', 'closure, items', 'closure, items']);
+    assert.deepEqual(sent, ['closure, items, discovered', 'closure, items, discovered', 'closure, items, discovered']);
 
     const conflict = await transport('https://issues.example/v1/operations', { headers: { 'polylinedb-issue-fields': 'closure' },
       body: JSON.stringify({ op: 'update', id, changes: [{ field: 'body', expected: 9, value: 'Stale' }] }) });
@@ -980,5 +980,40 @@ test('asks and checks: the current client decodes items, open asks, and items_op
       await assert.rejects(decode(operation, answer({ error: { code: 'invalid_input', message: 'op must be one of create, show, list' } }, 400)),
         { code: 'invalid_input', message: 'The cloud Worker does not support asks and checks. Deploy a newer Worker to use them.' });
     }
+  } finally { sqlite.close(); }
+});
+
+test('a cloud show decodes where an issue was found, released clients keep the released show, and an older Worker that rejects discovered_from fails with no retry', async () => {
+  const { sqlite, transport, wire } = await worker();
+  try {
+    const create = (body: string, extra: Record<string, unknown> = {}) => ({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body, ...extra });
+    const source = (await decode(create('Migrate the parser'), transport) as { issue: { id: string } }).issue.id;
+    const found = (await decode(create('The lexer drops a newline', { discovered_from: source }), transport) as { issue: { id: string } }).issue.id;
+    const linked = await decode({ op: 'show', id: found }, transport);
+    const sourceShown = await decode({ op: 'show', id: source }, transport);
+    assert.ok('discovered' in linked && 'discovered' in sourceShown);
+    assert.deepEqual([linked.discovered_from, linked.discovered, sourceShown.discovered_from, sourceShown.discovered], [source, [], null, [found]]);
+
+    // A client without the discovered token gets the released show, which a released decoder accepts.
+    for (const id of [source, found]) {
+      const released = (await wire({ op: 'show', id })).body;
+      assert.equal(Object.hasOwn(released, 'discovered_from') || Object.hasOwn(released, 'discovered'), false);
+      const decoded = await decode({ op: 'show', id }, answer(released));
+      assert.equal('discovered' in decoded, false, 'an older Worker that sends no links decodes with none');
+    }
+
+    const full = (await transport('https://issues.example/v1/operations', { headers: { 'polylinedb-issue-fields': 'closure, items, discovered' }, body: JSON.stringify({ op: 'show', id: source }) }).then(response => response.json())) as Record<string, unknown>;
+    assert.deepEqual([full.discovered_from, full.discovered], [null, [found]]);
+    const { discovered: _, ...halfShown } = full;
+    for (const damaged of [halfShown, { ...full, discovered: [source] }, { ...full, discovered_from: source }, { ...full, discovered: [found, found] }, { ...full, discovered: 'pd-2' }, { ...full, discovered_from: 'nope' }]) {
+      await assert.rejects(decode({ op: 'show', id: source }, answer(damaged)), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+
+    let sent = 0;
+    const older: typeof fetch = async () => { sent += 1; return Response.json({ error: { code: 'invalid_input', message: 'Unexpected field: discovered_from' } }, { status: 400 }); };
+    await assert.rejects(decode(create('Found mid-work', { discovered_from: source }), older),
+      { code: 'invalid_input', message: 'The cloud Worker does not record where an issue was found. Deploy a newer Worker to use discovered_from.' });
+    assert.equal(sent, 1);
+    assert.equal(sqlite.prepare('SELECT count(*) AS n FROM issues').get()?.n, 2);
   } finally { sqlite.close(); }
 });

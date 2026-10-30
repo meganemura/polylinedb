@@ -589,6 +589,11 @@
         "type": "string",
         "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$"
       },
+      "discovered_from": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\\.[1-9][0-9]*){0,7}$",
+        "description": "The issue you were working on when you found this one. It must exist. It only records where the issue came from: it never blocks ready, close, or claims, and it cannot change later."
+      },
       "prefix": {
         "type": "string",
         "pattern": "^[a-z][a-z0-9]{0,15}$"

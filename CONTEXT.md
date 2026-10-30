@@ -28,3 +28,8 @@ _Avoid_: Calling `main-wait` an owner wait; it means the work waits in the land 
 **Blocked issue**:
 An unfinished issue with at least one active blocker.
 Being blocked is separate from the issue's stored status.
+
+**Discovery link**:
+The record that an issue was found while working on another issue, named by `discovered_from` on the found issue.
+It is history, not a dependency: it never makes either issue blocked or not ready.
+_Avoid_: Using a discovery link to mean that the found issue must finish first; add a dependency for that.

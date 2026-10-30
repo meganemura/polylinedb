@@ -42,6 +42,7 @@ export async function readIssueView(db: SqlExecutor, id: string, actor: Actor): 
       landOrder: { revision: landOrder.revision, after: landOrder.after, before: landOrder.before },
       parent, children: children.slice(0, shownChildren), moreChildren: children.length > shownChildren,
       items: shown.items ?? [],
+      discoveredFrom: shown.discovered_from ?? null, discovered: shown.discovered ?? [],
       incarnation: shown.claim.store_incarnation,
     };
   } catch (error) {

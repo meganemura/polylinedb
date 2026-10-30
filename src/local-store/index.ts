@@ -8,7 +8,7 @@ import { commentRow, issueRow, starRow, storedCommentRow } from "../records/pers
 import { PolylinedbError } from "../records/index.ts";
 import type { SqlExecutor, SqlStatement } from "../records/persistence/persistence.ts";
 import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL, SCHEMA_V12_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence/persistence.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, convertSnapshotV9, itemRow, storedItemColumns } from "../records/persistence/persistence.ts";
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, convertSnapshotV9, convertSnapshotV10, discoveryRow, itemRow, storedItemColumns } from "../records/persistence/persistence.ts";
 import { claimRow, claimRequestRow } from '../records/persistence/persistence.ts';
 import type { Snapshot, SnapshotImport } from "../records/persistence/persistence.ts";
 import { issueSortKey } from "../records/persistence/persistence.ts";
@@ -81,7 +81,7 @@ function schemaVersion(database: DatabaseSync): 'empty' | 'current' {
   if (rows.length !== 1 || rows[0]?.version !== SCHEMA_VERSION) {
     throw new PolylinedbError('unsupported_schema', 'Database schema version is unsupported', 409, { supported: SCHEMA_VERSION, actual: rows.map((row) => row.version) });
   }
-  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'change_events', 'change_writer', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'issue_items'].some(name => !tables.some(table => table.name === name))) {
+  if (['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests', 'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests', 'change_events', 'change_writer', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'issue_items', 'issue_discoveries'].some(name => !tables.some(table => table.name === name))) {
     throw new PolylinedbError('invalid_store', 'Database schema is incomplete', 500);
   }
   return 'current';
@@ -102,7 +102,7 @@ function connect(path: string): DatabaseSync {
 
 const retiredTables = ['issues', 'comments', 'counters', 'requests', 'memories', 'memory_counters', 'memory_requests',
   'memory_store_identity', 'project_memory_revisions', 'dependencies', 'dependency_revisions', 'dependency_requests', 'issue_claims', 'claim_requests',
-  'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'issue_items'] as const;
+  'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'issue_items', 'issue_discoveries'] as const;
 const retiredOperations = ['INSERT', 'UPDATE', 'DELETE'] as const;
 function retiredConnection(database: DatabaseSync, error: unknown): string | undefined {
   if (!database.isTransaction || !(error instanceof Error) || !('code' in error) || error.code !== 'ERR_SQLITE_ERROR' ||
@@ -115,7 +115,7 @@ function retiredConnection(database: DatabaseSync, error: unknown): string | und
     rows = database.prepare("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name GLOB 'polylinedb_retired_*'").all();
   } catch { return undefined; }
   const version = database.prepare('SELECT version FROM schema_version').get()?.version;
-  const tables = version === 2 ? retiredTables.slice(0, 4) : version === 3 ? retiredTables.slice(0, 7) : version === 4 ? retiredTables.slice(0, 9) : version === 5 ? retiredTables.slice(0, 12) : version === 6 || version === 7 || version === 8 ? retiredTables.slice(0, 14) : version === 9 || version === 10 ? retiredTables.slice(0, 20) : version === 11 ? retiredTables.slice(0, 21) : retiredTables;
+  const tables = version === 2 ? retiredTables.slice(0, 4) : version === 3 ? retiredTables.slice(0, 7) : version === 4 ? retiredTables.slice(0, 9) : version === 5 ? retiredTables.slice(0, 12) : version === 6 || version === 7 || version === 8 ? retiredTables.slice(0, 14) : version === 9 || version === 10 ? retiredTables.slice(0, 20) : version === 11 ? retiredTables.slice(0, 21) : version === 12 ? retiredTables.slice(0, 22) : retiredTables;
   if (rows.length !== tables.length * retiredOperations.length) return undefined;
   const actual = new Map<string, { table: string; sql: string }>();
   for (const row of rows) {
@@ -236,7 +236,7 @@ function openApproved(location: StoreLocation): LocalStore {
     },
   };
   const readSnapshot = (): Snapshot => parseSnapshot({
-    format: 'polylinedb.snapshot', version: 10,
+    format: 'polylinedb.snapshot', version: 11,
     issues: database.prepare('SELECT * FROM issues').all().map(row => {
       const issue = issueRow(row);
       const split = issue.id.lastIndexOf('.');
@@ -267,6 +267,7 @@ function openApproved(location: StoreLocation): LocalStore {
     resource_requests: database.prepare('SELECT * FROM resource_requests').all(),
     stars: database.prepare('SELECT * FROM stars').all().map(starRow),
     issue_items: database.prepare('SELECT * FROM issue_items').all().map(row => ({ ...itemRow(row), request_id: String(row.request_id) })),
+    issue_discoveries: database.prepare('SELECT issue_id, discovered_from FROM issue_discoveries').all().map(discoveryRow),
   });
   return {
     db,
@@ -285,7 +286,7 @@ function openApproved(location: StoreLocation): LocalStore {
       const canonical = canonicalSnapshot(snapshot);
       const summary = { issues: snapshot.issues.length, comments: snapshot.comments.length, memories: snapshot.memories.length, dependencies: snapshot.dependencies.length, dependency_revisions: snapshot.dependency_revisions.length, dependency_requests: snapshot.dependency_requests.length, issue_claims: snapshot.issue_claims.length, claim_requests: snapshot.claim_requests.length,
         land_order: snapshot.land_order.length, land_order_requests: snapshot.land_order_requests.length,
-        issue_resources: snapshot.issue_resources.length, resource_requests: snapshot.resource_requests.length, stars: snapshot.stars.length, issue_items: snapshot.issue_items.length, sha256: createHash('sha256').update(canonical).digest('hex') };
+        issue_resources: snapshot.issue_resources.length, resource_requests: snapshot.resource_requests.length, stars: snapshot.stars.length, issue_items: snapshot.issue_items.length, issue_discoveries: snapshot.issue_discoveries.length, sha256: createHash('sha256').update(canonical).digest('hex') };
       database.exec('BEGIN IMMEDIATE');
       try {
         const existing = readSnapshot();
@@ -293,7 +294,7 @@ function openApproved(location: StoreLocation): LocalStore {
           database.exec('COMMIT');
           return { result: 'already_present', ...summary };
         }
-        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length || existing.dependencies.length || existing.dependency_revisions.length || existing.dependency_requests.length || existing.issue_claims.length || existing.claim_requests.length || existing.land_order.length || existing.land_order_revisions.length || existing.land_order_requests.length || existing.issue_resources.length || existing.resource_revisions.length || existing.resource_requests.length || existing.stars.length || existing.issue_items.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
+        if (existing.issues.length || existing.comments.length || existing.counters.length || existing.requests.length || existing.memories.length || existing.memory_counters.length || existing.memory_requests.length || existing.dependencies.length || existing.dependency_revisions.length || existing.dependency_requests.length || existing.issue_claims.length || existing.claim_requests.length || existing.land_order.length || existing.land_order_revisions.length || existing.land_order_requests.length || existing.issue_resources.length || existing.resource_revisions.length || existing.resource_requests.length || existing.stars.length || existing.issue_items.length || existing.issue_discoveries.length) throw new PolylinedbError('destination_not_empty', 'Snapshot import requires an empty store or identical contents', 409);
         database.exec(ROTATE_MEMORY_IDENTITY_SQL);
         const columns = ['id', 'parent_id', 'sort_key', ...fields.map(field => field === 'labels' ? 'labels_json' : field), ...fields.map(field => `${field}_v`), 'created_at', 'created_by', 'updated_at', 'updated_by', 'closed_at', 'closed_by'];
         const insertIssue = database.prepare(`INSERT INTO issues (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
@@ -321,7 +322,7 @@ function openApproved(location: StoreLocation): LocalStore {
         for (const row of snapshot.dependency_revisions) updateRevision.run(row.revision, row.dependent_id);
         const insertDependencyRequest = database.prepare('INSERT INTO dependency_requests(request_id,actor,payload,dependent_id,blocker_id,result_revision,outcome,created_at) VALUES (?,?,?,?,?,?,?,?)');
         for (const row of snapshot.dependency_requests) insertDependencyRequest.run(row.request_id, row.actor, row.payload, row.dependent_id, row.blocker_id, row.result_revision, row.outcome, row.created_at);
-        for (const table of ['issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars'] as const) for (const row of snapshot[table]) {
+        for (const table of ['issue_claims', 'claim_requests', 'land_order', 'land_order_revisions', 'land_order_requests', 'issue_resources', 'resource_revisions', 'resource_requests', 'stars', 'issue_discoveries'] as const) for (const row of snapshot[table]) {
           const columns = Object.keys(row); const values = Object.values(row);
           database.prepare(`INSERT INTO ${table}(${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...values);
         }
@@ -384,8 +385,8 @@ function exportHistorical(location: StoreLocation): Snapshot {
       : version === 10 ? convertSnapshotV8({ ...issues, version: 8, ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources() })
       : version === 11 ? convertSnapshotV9({ ...issues, version: 9, comments: all('SELECT * FROM comments').map(storedCommentRow), ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources(),
         stars: all('SELECT * FROM stars').map(starRow) })
-      // Schema 13 changed only the change feed, which no snapshot carries, so a schema 12 store already holds snapshot 10.
-      : parseSnapshot({ ...issues, version: 10, comments: all('SELECT * FROM comments').map(storedCommentRow), ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources(),
+      // A schema 12 store holds snapshot 10: schema 13 changed the change feed, which no snapshot carries, and added discovery links, which convert as none.
+      : convertSnapshotV10({ ...issues, version: 10, comments: all('SELECT * FROM comments').map(storedCommentRow), ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources(),
         stars: all('SELECT * FROM stars').map(starRow), issue_items: all('SELECT * FROM issue_items').map(row => ({ ...itemRow(row), request_id: String(row.request_id) })) });
     database.exec('COMMIT'); return complete;
   } finally { reference.close(); database.close(); }

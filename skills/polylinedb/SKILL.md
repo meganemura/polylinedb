@@ -102,6 +102,12 @@ If the timeout elapses first, the result has no events and the current cursor. C
 `wait` is a read. It does not claim an issue and it does not change one.
 Do not sleep in a loop and poll `show`, `list`, or the ready worklist.
 
+## File what you find
+
+When you find a problem outside the issue you hold, file it with `create` and pass that issue as `discovered_from` rather than naming it only in the body.
+The link never blocks either issue and cannot change later. `show` returns it as `discovered_from` on the new issue and lists the new issue in `discovered` on yours, so a person sees what your work surfaced.
+Mention the new issue in your handoff comment if it changes what your work did.
+
 ## Ask a person and check the result
 
 When the work needs a person's decision, add an ask instead of guessing: `item_add` with `id`, `kind: "ask"`, the question as `text`, 2 to 8 `options` when the answers are known, the one you would choose as `recommended`, and a new `request_id`.

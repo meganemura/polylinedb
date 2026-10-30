@@ -74,7 +74,7 @@ test('a snapshot keeps every post, reply and star through export and import, and
   await run({ op: 'star', id, comment_id: reply.comment.id, handle: 'coordinator' });
 
   const exported = source.exportSnapshot();
-  assert.equal(exported.version, 10);
+  assert.equal(exported.version, 11);
   assert.equal(exported.stars.length, 3);
   assert.deepEqual(exported.comments.map(comment => comment.reply_to === null ? 0 : comment.reply_to === post.comment.id ? 1 : 2), [0, 1, 2], 'a reply follows its target');
   const wire = JSON.parse(JSON.stringify(exported));
@@ -91,11 +91,11 @@ test('a snapshot keeps every post, reply and star through export and import, and
   assert.deepEqual(Object.fromEntries(voices), { 'Root post': ['builder', 2, 2], 'First reply': ['tester', 1, 1], 'Second reply': [null, 0, 0] });
 
   // A snapshot written by schema 10 has no voice and no stars; it converts with nulls and imports.
-  const { stars: _stars, issue_items: _items, ...rest } = exported;
+  const { stars: _stars, issue_items: _items, issue_discoveries: _discoveries, ...rest } = exported;
   const old = { ...rest, version: 8, comments: exported.comments.map(({ handle: _h, via: _v, reply_to: _r, ...comment }) => comment) };
   assert.throws(() => parseSnapshot(old), { code: 'invalid_snapshot' });
   const converted = convertSnapshotV8(JSON.parse(JSON.stringify(old)));
-  assert.deepEqual([converted.version, converted.stars, converted.issue_items], [10, [], []]);
+  assert.deepEqual([converted.version, converted.stars, converted.issue_items], [11, [], []]);
   const restored = store(t);
   assert.equal(restored.importSnapshot(converted).result, 'imported');
   const plain = await executeOperation(restored.db, parseOperation({ op: 'show', id }), 'alice'); assert.ok('comments' in plain);

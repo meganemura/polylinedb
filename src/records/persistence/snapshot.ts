@@ -19,6 +19,8 @@ import { starRow } from '../posts/posts.ts';
 import type { Star } from '../posts/posts.ts';
 import { itemRow } from '../store/issue-items.ts';
 import type { Item } from '../store/issue-items.ts';
+import { discoveryRow } from '../store/issue-discoveries.ts';
+import type { IssueDiscovery } from '../store/issue-discoveries.ts';
 
 export type Counter = { scope: string; last_number: number };
 export type CreateRequest = { request_id: string; actor: string; payload: string; issue_id: string };
@@ -35,9 +37,10 @@ type SnapshotV8 = Omit<SnapshotV7, 'version' | 'comments'> & { version: 8; comme
 type SnapshotV9 = Omit<SnapshotV8, 'version' | 'comments'> & { version: 9; comments: readonly StoredComment[]; stars: readonly Star[] };
 /** An item row as stored: the item with its issue and the request ID that added it. */
 export type SnapshotItem = Item & { issue_id: string; request_id: string };
-export type Snapshot = Omit<SnapshotV9, 'version'> & { version: 10; issue_items: readonly SnapshotItem[] };
+type SnapshotV10 = Omit<SnapshotV9, 'version'> & { version: 10; issue_items: readonly SnapshotItem[] };
+export type Snapshot = Omit<SnapshotV10, 'version'> & { version: 11; issue_discoveries: readonly IssueDiscovery[] };
 export type SnapshotImport = { result: 'imported' | 'already_present'; issues: number; comments: number; memories: number; dependencies: number; dependency_revisions: number; dependency_requests: number; issue_claims: number; claim_requests: number;
-  land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; stars: number; issue_items: number; sha256: string };
+  land_order: number; land_order_requests: number; issue_resources: number; resource_requests: number; stars: number; issue_items: number; issue_discoveries: number; sha256: string };
 const fail = (message: string): never => { throw new PolylinedbError('invalid_snapshot', message, 400); };
 function record(value: unknown, expected: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Expected an object');
@@ -498,12 +501,12 @@ function parseSnapshotV9(input: unknown): SnapshotV9 {
 }
 // Snapshot 9 predates asks and checks, so no issue has an item.
 export function convertSnapshotV9(input: unknown): Snapshot {
-  return parseSnapshot({ ...parseSnapshotV9(input), version: 10, issue_items: [] });
+  return convertSnapshotV10({ ...parseSnapshotV9(input), version: 10, issue_items: [] });
 }
 const itemKeys = ['issue_id', 'n', 'kind', 'text', 'options', 'recommended', 'state', 'answer', 'note', 'request_id', 'created_at', 'created_by', 'resolved_at', 'resolved_by'];
-export function parseSnapshot(input: unknown): Snapshot {
+function parseSnapshotV10(input: unknown): SnapshotV10 {
   const source = record(input, [...snapshotV7Keys, 'stars', 'issue_items']);
-  if (source.version !== 10) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6, 7, 8 and 9 explicitly');
+  if (source.version !== 10) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6, 7, 8, 9 and 10 explicitly');
   const { issue_items: itemRows, ...rest } = source;
   const old = parseSnapshotV9({ ...rest, version: 9 });
   if (!Array.isArray(itemRows)) return fail('Snapshot collections must be arrays');
@@ -526,7 +529,35 @@ export function parseSnapshot(input: unknown): Snapshot {
   if (new Set(issue_items.map(item => item.request_id)).size !== issue_items.length) fail('Duplicate item request ID');
   return { ...old, version: 10, issue_items };
 }
+// Snapshot 10 predates discovery links, so no issue records where it was found.
+export function convertSnapshotV10(input: unknown): Snapshot {
+  return parseSnapshot({ ...parseSnapshotV10(input), version: 11, issue_discoveries: [] });
+}
+export function parseSnapshot(input: unknown): Snapshot {
+  const source = record(input, [...snapshotV7Keys, 'stars', 'issue_items', 'issue_discoveries']);
+  if (source.version !== 11) return fail('Unsupported snapshot version; convert versions 2, 3, 4, 5, 6, 7, 8, 9 and 10 explicitly');
+  const { issue_discoveries: discoveryRows, ...rest } = source;
+  const old = parseSnapshotV10({ ...rest, version: 10 });
+  if (!Array.isArray(discoveryRows)) return fail('Snapshot collections must be arrays');
+  const ids = new Set(old.issues.map(issue => issue.id));
+  const issue_discoveries = discoveryRows.map((value): IssueDiscovery => {
+    let link: IssueDiscovery;
+    try { link = discoveryRow(record(value, ['issue_id', 'discovered_from'])); } catch { return fail('Invalid discovery'); }
+    if (!ids.has(link.issue_id) || !ids.has(link.discovered_from)) fail('Discovery issue does not exist');
+    if (link.issue_id === link.discovered_from) fail('An issue cannot be found while working on itself');
+    return link;
+  }).sort((a, b) => compareText(issueSortKey(a.issue_id), issueSortKey(b.issue_id)));
+  if (new Set(issue_discoveries.map(link => link.issue_id)).size !== issue_discoveries.length) fail('Duplicate discovery');
+  // The create request that filed an issue holds the same link, so a replay after import still compares the original payload.
+  const sources = new Map(issue_discoveries.map(link => [link.issue_id, link.discovered_from]));
+  for (const request of old.requests) {
+    const named = parseOperation(JSON.parse(request.payload));
+    if (named.op === 'create' && (named.discovered_from ?? null) !== (sources.get(request.issue_id) ?? null)) fail('Discovery differs from its create request');
+  }
+  return { ...old, version: 11, issue_discoveries };
+}
 export function canonicalSnapshot(snapshot: Snapshot): string { return JSON.stringify(parseSnapshot(snapshot)); }
+export function canonicalSnapshotV10(input: unknown): string { return JSON.stringify(parseSnapshotV10(input)); }
 export function canonicalSnapshotV9(input: unknown): string { return JSON.stringify(parseSnapshotV9(input)); }
 export function canonicalSnapshotV8(input: unknown): string { return JSON.stringify(parseSnapshotV8(input)); }
 export function canonicalSnapshotV7(input: unknown): string { return JSON.stringify(parseSnapshotV7(input)); }

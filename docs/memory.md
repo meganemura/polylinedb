@@ -117,7 +117,7 @@ See [host lifecycle hooks](host-hooks.md) for event support, limitations, and re
 
 Schema 5 is the first schema that stores memory content, versions, attribution, issued counters, creation receipts, and operational memory revisions.
 Snapshot 4 is the first portable snapshot that keeps those content fields and the prerequisite aggregates. It leaves out operational memory revisions and store identity.
-The current CLI uses schema 13 and writes snapshot 10.
+The current CLI uses schema 13 and writes snapshot 11.
 Stop writers and keep a private backup before you upgrade a local store.
 Use the previous CLI to export a schema 2 store before you replace that CLI, or copy the stopped SQLite database.
 Then run `pd --actor IDENTITY upgrade` on the selected local connection.
@@ -125,17 +125,17 @@ The command checks a canonical schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 or 12 store
 A store that is already schema 13 returns `already_current`. Reads refuse an old schema until you upgrade it.
 Repository configuration keeps its existing versions.
 
-Convert an old snapshot before you import it. The conversion writes snapshot 10. `pd init` creates a schema 13 store, and `pd import` accepts snapshot 10 only.
+Convert an old snapshot before you import it. The conversion writes snapshot 11. `pd init` creates a schema 13 store, and `pd import` accepts snapshot 11 only.
 
 ```sh
-pd snapshot convert --from 2 --file snapshot-v2.json --output snapshot-v10.json
+pd snapshot convert --from 2 --file snapshot-v2.json --output snapshot-v11.json
 pd --data-dir /absolute/private/store --actor local:owner init
-pd --data-dir /absolute/private/store --actor local:owner import --file snapshot-v10.json
+pd --data-dir /absolute/private/store --actor local:owner import --file snapshot-v11.json
 ```
 
-The conversion checks the source version and writes snapshot 10. It does not open a database.
-For a snapshot 3, 4, 5, 6, 7, 8, or 9 file, pass `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, or `--from 9`.
-The snapshot 10 digest differs from older digests. Use the converted digest when a D1 transfer asks for one.
+The conversion checks the source version and writes snapshot 11. It does not open a database.
+For a snapshot 3, 4, 5, 6, 7, 8, 9, or 10 file, pass `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, `--from 9`, or `--from 10`.
+The snapshot 11 digest differs from older digests. Use the converted digest when a D1 transfer asks for one.
 Output files are private, and the command refuses to overwrite an existing file.
 The [D1 transfer procedure](d1-migration.md) covers a cloud store. [Operations](operations.md) lists what each upgrade keeps.
 

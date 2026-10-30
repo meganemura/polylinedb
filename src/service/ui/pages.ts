@@ -338,6 +338,8 @@ export type IssueView = {
   parent: IssueLink | null; children: readonly IssueLink[]; moreChildren: boolean;
   /** Asks and checks, in the order they were added. */
   items: readonly Item[];
+  /** The issue this one was found while working on, and the issues found while working on this one. */
+  discoveredFrom: string | null; discovered: readonly string[];
 };
 
 const itemStateWords = { open: 'open', answered: 'answered', withdrawn: 'withdrawn', met: 'met', waived: 'waived' } as const;
@@ -416,6 +418,11 @@ export function issuePage(view: IssueView, viewer: Viewer, counts: TabCounts, to
     cards.push(`<section class="card" id="family"><h2>Family</h2>${view.parent === null ? '' : `<p class="lbl">Parent</p><ul class="mini">${link(view.parent)}</ul>`}`
       + (view.children.length === 0 ? '' : `<p class="lbl">Children</p><ul class="mini">${view.children.map(link).join('')}</ul>`)
       + (view.moreChildren ? `<p class="hint">The first ${view.children.length} children are shown.</p>` : '') + '</section>');
+  }
+
+  if (view.discoveredFrom !== null || view.discovered.length > 0) {
+    cards.push(`<section class="card" id="found"><h2>Found</h2>${view.discoveredFrom === null ? '' : `<p>Found while working on ${idLink(view.discoveredFrom)}.</p>`}`
+      + (view.discovered.length === 0 ? '' : `<p>Found here: ${view.discovered.map(idLink).join(', ')}.</p>`) + '</section>');
   }
 
   const comments = view.comments.map(comment => {

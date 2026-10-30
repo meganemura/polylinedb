@@ -53,9 +53,9 @@ test('a resource snapshot round-trips, a snapshot 6 converts with no resources, 
     await assert.rejects(executeOperation(target.db, parseOperation({ op: 'close', id: 'pd-1', expected: 1 }), 'test:owner'), { code: 'resources_remaining' });
   } finally { target.close(); }
 
-  const { issue_resources: _entries, resource_revisions: _revisions, resource_requests: _requests, land_order: _edges, land_order_revisions: _orders, land_order_requests: _orderRequests, stars: _stars, issue_items: _items, ...rest } = snapshot;
+  const { issue_resources: _entries, resource_revisions: _revisions, resource_requests: _requests, land_order: _edges, land_order_revisions: _orders, land_order_requests: _orderRequests, stars: _stars, issue_items: _items, issue_discoveries: _discoveries, ...rest } = snapshot;
   const converted = convertSnapshotV6({ ...rest, version: 6 });
-  assert.deepEqual([converted.version, converted.issue_resources, converted.resource_revisions, converted.resource_requests], [10, [], [], []]);
+  assert.deepEqual([converted.version, converted.issue_resources, converted.resource_revisions, converted.resource_requests], [11, [], [], []]);
 
   const refused = (change: Record<string, unknown>) => assert.throws(() => parseSnapshot({ ...snapshot, ...change }), { code: 'invalid_snapshot' }, JSON.stringify(change));
   refused({ issue_resources: [{ ...entry, issue_id: 'pd-9' }] });

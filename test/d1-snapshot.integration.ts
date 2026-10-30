@@ -35,7 +35,7 @@ try {
     return result.results;
   };
   const reset = async () => {
-    for (const table of ['issue_items', 'stars', 'change_events', 'change_writer', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'land_order_requests', 'land_order', 'land_order_revisions', 'resource_requests', 'issue_resources', 'resource_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
+    for (const table of ['issue_discoveries', 'issue_items', 'stars', 'change_events', 'change_writer', 'claim_requests', 'issue_claims', 'dependency_requests', 'dependencies', 'dependency_revisions', 'land_order_requests', 'land_order', 'land_order_revisions', 'resource_requests', 'issue_resources', 'resource_revisions', 'memory_requests', 'memory_counters', 'memories', 'project_memory_revisions', 'memory_store_identity', 'comments', 'requests', 'counters', 'issues', 'schema_version', 'polylinedb_snapshot_claim']) await query({ sql: `DROP TABLE IF EXISTS ${table}`, params: [] });
     await database.batch(SCHEMA_STATEMENTS.map(sql => database.prepare(sql)));
   };
   await reset();
@@ -49,7 +49,7 @@ try {
   const dependencyReceipt = await run(dependencyRequest);
   await run({ ...dependencyRequest, op: 'dependency_remove', expected_revision: 2, request_id: randomUUID() });
   await run({ ...dependencyRequest, expected_revision: 3, request_id: randomUUID() });
-  for (let index = 0; index < 2; index++) await run({ op: 'create', prefix: 'pd', request_id: randomUUID(), tool: 'compiler', project: 'p', body: `Lease history ${index}` });
+  for (let index = 0; index < 2; index++) await run({ op: 'create', prefix: 'pd', request_id: randomUUID(), tool: 'compiler', project: 'p', body: `Lease history ${index}`, ...(index === 1 ? { discovered_from: 'pd-1' } : {}) });
   const originalScope = await run({ op: 'claim_show', issue_id: 'pd-1' }); assert.ok('claim' in originalScope);
   const claimCommand = { op: 'claim_acquire', issue_id: 'pd-1', incarnation: originalScope.claim.store_incarnation, session_id: randomUUID(), request_id: randomUUID(), agent_label: 'Codex' };
   const claimReceipt = await run(claimCommand); assert.ok('claim_receipt' in claimReceipt);
@@ -70,6 +70,7 @@ try {
   await run({ ...memoryRequest, request_id: randomUUID() });
   await run({ op: 'memory_update', project: 'p', id: 'pd-m2', title: 'Verified fact', body: 'Preserve attribution', expected: 1 });
   const snapshot = source.exportSnapshot();
+  assert.deepEqual(snapshot.issue_discoveries, [{ issue_id: 'pd-3', discovered_from: 'pd-1' }]);
   const canonical = canonicalSnapshot(snapshot);
   const sha256 = createHash('sha256').update(canonical).digest('hex');
   const migration = snapshotMigration(query, snapshot, sha256);

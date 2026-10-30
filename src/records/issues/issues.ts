@@ -13,6 +13,8 @@ import { issueClaimGuard } from '../claims/claims-sql.ts';
 import { recordingChanges } from '../store/changes-sql.ts';
 import { activeBlockerExists } from '../store/active-blocker.ts';
 import { openItemExists, refuseOpenItems } from '../store/issue-items.ts';
+import { readDiscovery } from '../store/issue-discoveries.ts';
+import type { Discovery } from '../store/issue-discoveries.ts';
 import { liveResourceSummary, shownLiveResources } from '../resources/resources-sql.ts';
 import type { ClaimProof } from '../claims/claims-sql.ts';
 import { enumeration, handleSchema, id, integer, invalid, issueRow, labels, name, object, parseHandle, parseVia, shownCommentRow, starrerNames, storedCommentRow, text, validated } from '../store/issue-record.ts';
@@ -26,7 +28,7 @@ type Filters = { tool?: string; project?: string; status?: Status; type?: IssueT
 type Voice = { handle: string; via: string; reply_to: string };
 type StatusOverride = ({ force?: never; reason?: never } | { force: true; reason: string }) & { resources_reason?: string };
 export type Operation =
-  | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values)
+  | ({ op: 'create'; prefix: string; request_id: string; parent?: string } & Values & { discovered_from?: string })
   | { op: 'show'; id: string; with_land_order?: true }
   | ({ op: 'list'; claimed?: boolean; with_land_order?: true } & Filters)
   | ({ op: 'search'; query: string; with_matches?: true } & Filters)
@@ -37,7 +39,8 @@ export type Operation =
   | { op: 'reopen'; id: string; expected: number; claim_proof?: ClaimProof }
   | { op: 'actor' };
 export type SearchMatch = { issue_id: string; excerpt: string } & ({ location: 'body' } | { location: 'comment'; comment_id: string });
-export type OperationResult = { issue: Issue } | { issue: Issue; comments: Comment[]; claim: ClaimInspection }
+/** show reads the discovery links; an older Worker sends none, so a cloud result may lack them. */
+export type OperationResult = { issue: Issue } | ({ issue: Issue; comments: Comment[]; claim: ClaimInspection } & Partial<Discovery>)
   | { issues: Issue[]; next_cursor: string | null } | { issues: Issue[]; next_cursor: string | null; matches: SearchMatch[] }
   | { comment: Comment } | { actor: string };
 
@@ -69,7 +72,8 @@ const filterSchemas = { tool: nameSchema, project: nameSchema, status: fieldRegi
   type: fieldRegistry.type.schema, priority: fieldRegistry.priority.schema, label: nameSchema,
   after: idSchema, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } };
 export const operationSchemas = {
-  create: objectSchema({ ...valueSchemas, parent: idSchema, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid', description: 'Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry.' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
+  create: objectSchema({ ...valueSchemas, parent: idSchema,
+    discovered_from: { ...idSchema, description: 'The issue you were working on when you found this one. It must exist. It only records where the issue came from: it never blocks ready, close, or claims, and it cannot change later.' }, prefix: { type: 'string', pattern: '^[a-z][a-z0-9]{0,15}$' }, request_id: { type: 'string', format: 'uuid', description: 'Generate one lowercase UUID per logical creation. Retain it and reuse it unchanged on an explicit retry.' } }, ['tool', 'project', 'body', 'prefix', 'request_id']),
   show: objectSchema({ id: idSchema, with_land_order: withLandOrderSchema }, ['id']),
   list: objectSchema({ ...filterSchemas, claimed: { type: 'boolean', description: 'true keeps issues with an active claim; false keeps issues whose claim is never_claimed, released, expired, or invalidated.' }, with_land_order: withLandOrderSchema }),
   search: objectSchema({ ...filterSchemas, query: bodySchema, with_matches: { const: true, description: 'Also return where each issue matched, with a short excerpt.' } }, ['query']),
@@ -155,11 +159,13 @@ export function parseOperation(value: unknown): Operation {
       const prefix = validated(parsePrefix, input.prefix);
       const request_id = validated(parseRequestId, input.request_id);
       if (parent && !parent.startsWith(`${prefix}-`)) invalid('Parent and child must have the same prefix');
+      // discovered_from comes last and only when present, so the stored payload of a create without it keeps its released form.
       return { op, prefix, request_id, ...(parent === undefined ? {} : { parent }), tool: name(input.tool, 'tool'), project: name(input.project, 'project'),
         body: text(input.body, 'body'), status: input.status === undefined ? 'open' : fieldRegistry.status.parse(input.status),
         type: input.type === undefined ? 'task' : fieldRegistry.type.parse(input.type),
         priority: input.priority === undefined ? 2 : fieldRegistry.priority.parse(input.priority),
-        labels: input.labels === undefined ? [] : labels(input.labels) };
+        labels: input.labels === undefined ? [] : labels(input.labels),
+        ...(input.discovered_from === undefined ? {} : { discovered_from: id(input.discovered_from, 'discovered_from') }) };
     }
     case 'update': {
       if (!Array.isArray(input.changes)) return expectedType('changes', 'array');
@@ -341,8 +347,13 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
       const sortBase = operation.parent ? `${issueSortKey(operation.parent)}.` : `${operation.prefix}-`;
       const payload = JSON.stringify(parseOperation(operation));
       const now = new Date().toISOString();
-      const eligible = `NOT EXISTS(SELECT 1 FROM requests WHERE request_id = ?)${operation.parent ? " AND EXISTS(SELECT 1 FROM issues WHERE id = ? AND type = 'epic')" : ''}`;
-      const gate = operation.parent ? [operation.request_id, operation.parent] : [operation.request_id];
+      const eligible = `NOT EXISTS(SELECT 1 FROM requests WHERE request_id = ?)${operation.parent ? " AND EXISTS(SELECT 1 FROM issues WHERE id = ? AND type = 'epic')" : ''}`
+        + (operation.discovered_from ? ' AND EXISTS(SELECT 1 FROM issues WHERE id = ?)' : '');
+      const gate = [operation.request_id, ...(operation.parent ? [operation.parent] : []), ...(operation.discovered_from ? [operation.discovered_from] : [])];
+      // The link follows the request row, which only a first, eligible creation inserts.
+      const discovery: SqlStatement[] = operation.discovered_from ? [{ sql: `INSERT INTO issue_discoveries(issue_id, discovered_from)
+          SELECT issue_id, ? FROM requests WHERE request_id = ? AND changes() = 1`, params: [operation.discovered_from, operation.request_id] }] : [];
+      const read = 3 + discovery.length;
       const closure = operation.status === 'closed' ? { columns: ', closed_at, closed_by', values: ', ?, ?', params: [now, actor] } : { columns: '', values: '', params: [] };
       const result = await recordingChanges(db, actor).batch([
         { sql: `INSERT INTO counters(scope, last_number) SELECT ?, 1 WHERE ${eligible}
@@ -354,36 +365,40 @@ export async function executeOperation(db: SqlExecutor, operation: Operation, by
         { sql: `INSERT INTO requests(request_id, actor, payload, issue_id)
           SELECT ?, ?, ?, ? || last_number FROM counters WHERE scope = ? AND ${eligible}`,
           params: [operation.request_id, actor, payload, base, scope, ...gate] },
+        ...discovery,
         { sql: 'SELECT * FROM requests WHERE request_id = ?', params: [operation.request_id] },
         { sql: 'SELECT issues.* FROM issues JOIN requests ON requests.issue_id = issues.id WHERE requests.request_id = ?', params: [operation.request_id] },
         ...(operation.parent ? [observation(operation.parent)] : []),
+        ...(operation.discovered_from ? [{ sql: 'SELECT id FROM issues WHERE id = ?', params: [operation.discovered_from] }] : []),
       ]).catch((error: unknown) => {
         if (error instanceof Error && error.message.includes('counter_not_exhausted')) throw new PolylinedbError('counter_exhausted', 'The issue counter has reached its limit', 409);
         throw error;
       });
-      const request = rowsAt(result, 3)[0];
+      const request = rowsAt(result, read)[0];
       if (request && decideReplay(request, actor, payload) === 'request_conflict') throw new PolylinedbError('request_conflict', 'The request ID belongs to a different actor or payload', 409);
-      const row = rowsAt(result, 4)[0];
+      const row = rowsAt(result, read + 1)[0];
       if (row) return { issue: issueRow(row) };
       if (operation.parent !== undefined) {
-        const parentRow = rowsAt(result, 5)[0];
+        const parentRow = rowsAt(result, read + 2)[0];
         const creation = decideCreation(operation.parent, parentRow ? { type: issueRow(parentRow).type } : null);
         if (!creation.accepted && creation.reason === 'parent_not_found') return notFound(operation.parent);
         if (!creation.accepted) throw new PolylinedbError('invalid_input', 'The parent must be an epic', 400);
       }
+      if (operation.discovered_from !== undefined && rowsAt(result, read + 2 + (operation.parent ? 1 : 0)).length === 0) return notFound(operation.discovered_from);
       throw new PolylinedbError('storage_error', 'The database rejected a creation without a matching condition', 503);
     }
     case 'show': {
       const rows = await db.reads.all(issueQueries.show, { id: operation.id });
       const [row] = rows;
       if (!row) return notFound(operation.id);
+      const [claim, discovery] = await Promise.all([inspectClaim(db, operation.id), readDiscovery(db, operation.id)]);
       return { issue: issueRow(row), comments: rows.filter(row => row.comment_id !== null).map(row => shownCommentRow({
         id: row.comment_id, issue_id: row.id, body: row.comment_body,
         created_at: row.comment_created_at, created_by: row.comment_created_by,
         version: row.comment_version, updated_at: row.comment_updated_at, updated_by: row.comment_updated_by,
         handle: row.comment_handle, via: row.comment_via, reply_to: row.comment_reply_to,
         stars: row.comment_stars, starrers: starrerNames(row.comment_starrers_json),
-      })), claim: await inspectClaim(db, operation.id) };
+      })), claim, ...discovery };
     }
     case 'comment_edit': return editComment(db, operation, caller);
     case 'comment': return writeComment(db, operation, caller);

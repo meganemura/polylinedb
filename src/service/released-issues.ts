@@ -3,6 +3,7 @@
 // A client that sends `polylinedb-issue-fields: closure` decodes the closure, so its bodies keep both keys.
 // A client that sends `items` decodes asks and checks. For any other client the body keeps the released shape: show loses `items`,
 // claim_acquire loses `open_asks`, and items_open loses its details, because released clients reject details on an error code they do not know.
+// A client that sends `discovered` decodes where an issue was found; for any other client show loses `discovered_from` and `discovered`.
 const closureKeys = ['closed_at', 'closed_by'];
 const isIssue = (value: object) => Object.hasOwn(value, 'versions') && closureKeys.some(key => Object.hasOwn(value, key));
 
@@ -28,12 +29,19 @@ function withoutItems(value: unknown): unknown {
   return { ...value, error: rest };
 }
 
+function withoutDiscovery(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || !('comments' in value) || !('discovered' in value)) return value;
+  const { discovered_from: _, discovered: __, ...rest } = value as Record<string, unknown>;
+  return rest;
+}
+
 const requestedFields = (request: Request) => (request.headers.get(issueFieldsHeader) ?? '').split(',').map(token => token.trim().toLowerCase());
 
 export function issueFieldsFor(request: Request): (value: unknown) => unknown {
   const requested = requestedFields(request);
   const closure = requested.includes('closure') ? (value: unknown) => value : withoutClosure;
-  return requested.includes('items') ? closure : value => withoutItems(closure(value));
+  const items = requested.includes('items') ? closure : (value: unknown) => withoutItems(closure(value));
+  return requested.includes('discovered') ? items : value => withoutDiscovery(items(value));
 }
 
 // A released client's owner-wait decoder requires an owner label on every wait, so it reads the waits that labels make.

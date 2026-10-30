@@ -9,6 +9,8 @@ The dated landing entries below are history. Landings after 2026-10-12 add no en
 
 ## Unreleased
 
+When an agent finds a problem while working on an issue and files a new one, it can now say which issue it was working on. The new issue's page in `/ui` shows "Found while working on" with a link back, and the original issue's page shows "Found here" with links to everything its work turned up, so you can see what a piece of work surfaced and why an issue exists. The link never holds anything back: both issues stay ready, claimable, and closable. In the terminal, `pd create --discovered-from ID` sets it, and `pd show --human` prints both lines. Upgrade a local store with `pd upgrade`; the shared database needs its migration before the server update.
+
 When an agent reports that it is blocked or hit an error, the change feed now says so, with the agent's one line. Run `pd wait --kind claim_reported` (for one issue, or a whole project with `--project`) to wake as soon as a holder stops, instead of checking the Stuck page. Progress and done reports stay out of the feed. `/ui/activity` shows these as "Reported blocked" and "Reported error". Upgrade a local store with `pd upgrade`; the shared database needs its migration before the server update.
 
 The Posts tab should fill with lessons rather than work reports: the pd skill now tells agents to write a handle only on a lesson, not on their status or handoff summaries.

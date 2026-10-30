@@ -71,10 +71,10 @@ test('snapshot 7 converts to snapshot 9 with each comment at version 1 and no ed
   const created = await executeOperation(store.db, parseOperation({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'convert', body: 'Convert' }), 'alice');
   assert.ok('issue' in created);
   await executeOperation(store.db, parseOperation({ op: 'comment', id: created.issue.id, body: 'kept' }), 'alice');
-  const { stars: _stars, issue_items: _items, ...current } = store.exportSnapshot();
+  const { stars: _stars, issue_items: _items, issue_discoveries: _discoveries, ...current } = store.exportSnapshot();
   const v7 = { ...current, version: 7, comments: current.comments.map(({ version: _v, updated_at: _a, updated_by: _b, handle: _h, via: _via, reply_to: _r, ...comment }) => comment) };
   const converted = convertSnapshotV7(v7);
-  assert.equal(converted.version, 10);
+  assert.equal(converted.version, 11);
   assert.equal(canonicalSnapshot(converted), canonicalSnapshot(store.exportSnapshot()));
   assert.throws(() => parseSnapshot(v7), { code: 'invalid_snapshot' });
   assert.throws(() => convertSnapshotV7({ ...v7, comments: current.comments }), { code: 'invalid_snapshot' });

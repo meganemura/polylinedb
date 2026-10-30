@@ -42,11 +42,11 @@ const feedTriggers = (statements: readonly string[]) => {
   return statements.filter((sql, index) => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql) && !statements.slice(index + 1).some(later => name(later) === name(sql)));
 };
 
-// Schema 13 rebuilt change_events for claim reports, so the downgrade drops the report trigger and every report event, then runs the schema 12 rebuild and recreates the schema 12 triggers that name the table.
+// Schema 13 added discovery links and rebuilt change_events for claim reports, so the downgrade drops the links, the report trigger, and every report event, then runs the schema 12 rebuild and recreates the schema 12 triggers that name the table.
 export function downgradeToSchema12(database: DatabaseSync): void {
   const triggers = feedTriggers(SCHEMA_V12_STATEMENTS);
   if (triggers.length === 0) throw new Error('Schema 12 has no change feed triggers');
-  database.exec("BEGIN; DROP TRIGGER claim_requests_change_report; DELETE FROM change_events WHERE kind = 'claim_reported'");
+  database.exec("BEGIN; DROP TABLE issue_discoveries; DROP TRIGGER claim_requests_change_report; DELETE FROM change_events WHERE kind = 'claim_reported'");
   for (const sql of triggers) database.exec(`DROP TRIGGER ${/^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? ''}`);
   for (const sql of ITEM_KIND_REBUILD_STATEMENTS) database.exec(sql);
   for (const sql of triggers) database.exec(sql);

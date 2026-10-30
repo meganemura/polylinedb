@@ -168,6 +168,8 @@ function renderIssueDetails(result: IssueDetails, color: boolean): string {
       : issue.labels.map(label => visibleText(label, false)).join(', ')),
     'Versions ' + VERSION_FIELDS.map(field => field + '=' + issue.versions[field]).join(' '),
     'Claim ' + result.claim.state + ' · store incarnation ' + result.claim.store_incarnation,
+    ...(typeof result.discovered_from === 'string' ? ['Found while working on ' + visibleText(result.discovered_from, false)] : []),
+    ...(result.discovered !== undefined && result.discovered.length > 0 ? ['Found here ' + result.discovered.map(id => visibleText(id, false)).join(', ')] : []),
     ...('land_order' in result && result.land_order !== undefined && !Array.isArray(result.land_order) ? [landsAfter(result.land_order)] : []),
     'Created ' + visibleText(issue.created_at, false) + ' by ' + visibleText(issue.created_by, false),
     'Updated ' + visibleText(issue.updated_at, false) + ' by ' + visibleText(issue.updated_by, false),

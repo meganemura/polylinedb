@@ -394,7 +394,7 @@ test('snapshot5 preserves claim history while restore rotates authority only onc
   await source.run({ op: 'claim_renew', claim_proof: proof(owner.receipt), expected_revision: 1, request_id: request(), ttl: 3600 });
   await source.run({ op: 'claim_release', claim_proof: proof(owner.receipt), expected_revision: 2, request_id: request() });
   const active = await acquire(source.run, 'pd-1');
-  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.version, 10); assert.equal(snapshot.issue_claims.length, 1); assert.equal(snapshot.claim_requests.length, 4);
+  const snapshot = source.store.exportSnapshot(); assert.equal(snapshot.version, 11); assert.equal(snapshot.issue_claims.length, 1); assert.equal(snapshot.claim_requests.length, 4);
   const bytes = snapshot.claim_requests.map(row => row.payload);
   destination.store.importSnapshot(snapshot); assert.equal(canonicalSnapshot(destination.store.exportSnapshot()), canonicalSnapshot(snapshot));
   assert.deepEqual(destination.store.exportSnapshot().claim_requests.map(row => row.payload), bytes);
@@ -420,10 +420,10 @@ test('snapshot claim closure rejects dangling and future receipts across all inc
 });
 test('snapshot4 conversion is explicit and preserves original creation payload bytes', async t => {
   const source = fixture(t); await create(source.run);
-  const { issue_claims: _, claim_requests: __, land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, stars: _stars, issue_items: _items, ...old } = source.store.exportSnapshot();
+  const { issue_claims: _, claim_requests: __, land_order: _edges, land_order_revisions: _revisions, land_order_requests: _requests, issue_resources: _entries, resource_revisions: _resourceRevisions, resource_requests: _resourceRequests, stars: _stars, issue_items: _items, issue_discoveries: _discoveries, ...old } = source.store.exportSnapshot();
   const legacy = { ...old, version: 4, issues: old.issues.map(({ closed_at: _at, closed_by: _by, ...issue }) => issue) };
   assert.throws(() => parseSnapshot(legacy), { code: 'invalid_snapshot' });
-  const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 10); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);
+  const converted = convertSnapshotV4(legacy); assert.equal(converted.version, 11); assert.deepEqual(converted.issue_claims, []); assert.deepEqual(converted.claim_requests, []); assert.deepEqual(converted.requests, legacy.requests);
 });
 test('historical schema5 export retains graph records and canonical retirement guards without writes', t => {
   const root = mkdtempSync(join(tmpdir(), 'pd-history5-')); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -437,7 +437,7 @@ test('historical schema5 export retains graph records and canonical retirement g
     database.exec(`CREATE TRIGGER "polylinedb_retired_${row.name}_${operation.toLowerCase()}" BEFORE ${operation} ON "${row.name}" BEGIN SELECT RAISE(ABORT, 'This local database is retired. Use cloud connection archive.'); END`);
   }
   const before = database.prepare('SELECT * FROM memory_store_identity').get(); database.close(); chmodSync(path, 0o600);
-  const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 10); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
+  const snapshot = exportHistoricalSnapshot({ directory, cwd: join(root, 'work') }); assert.equal(snapshot.version, 11); assert.deepEqual(snapshot.dependencies, [{ dependent_id: 'pd-1', blocker_id: 'pd-2' }]); assert.deepEqual(snapshot.issue_claims, []);
   const after = new DatabaseSync(path, { readOnly: true }); try { assert.deepEqual(after.prepare('SELECT * FROM memory_store_identity').get(), before); assert.equal(after.prepare('SELECT version FROM schema_version').get()?.version, 5); } finally { after.close(); }
   assert.throws(() => upgradeStore({ directory, cwd: join(root, 'work') }), { code: 'store_retired' });
 });

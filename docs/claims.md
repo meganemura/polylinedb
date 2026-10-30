@@ -1,6 +1,6 @@
 # Coordinate issue ownership
 
-This guide describes the current source with schema 13 and snapshot 10.
+This guide describes the current source with schema 13 and snapshot 11.
 Version 0.6.0 uses schema 10 and snapshot 8.
 Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6.
 Versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5.

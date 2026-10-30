@@ -4,6 +4,7 @@
 // A list rejected for `claimed` is not retried, because a page without that filter would answer a different question.
 // A comment rejected for its handle, via, or reply_to is not retried either, because without them an older Worker would post without the attribution or the reply.
 // A close or update rejected for `resources_reason` is not retried either, because without it an older Worker would close with no recorded reason.
+// A create rejected for `discovered_from` is not retried either, because without it an older Worker would file the issue with no record of where it was found.
 import { PolylinedbError, type Comment, type Issue, type SearchMatch, type ShownComment, type Star } from '../records/index.ts';
 import { issueRow, commentRow, shownCommentRow, starRow, issueSortKey } from '../records/persistence/persistence.ts';
 import type { Operation, OperationResult } from '../records/index.ts';
@@ -134,6 +135,13 @@ function openAsks(value: unknown): OpenAsk[] {
     if (recommended !== null && !options?.includes(recommended)) return invalid();
     return { n: count(row.n, 1), text: itemText(row.text), options, recommended };
   });
+}
+function discovery(from: unknown, found: unknown, shown: string): { discovered_from: string | null; discovered: string[] } {
+  const discovered_from = from === null ? null : parseIssueId(from);
+  if (!Array.isArray(found) || discovered_from === shown) return invalid();
+  const discovered = found.map(value => parseIssueId(value));
+  if (discovered.some((id, index) => id === shown || (index > 0 && issueSortKey(id) <= issueSortKey(discovered[index - 1] ?? '')))) return invalid();
+  return { discovered_from, discovered };
 }
 // A later Worker may record a kind or name a field that this client does not know, so both are checked only as names.
 const changeName = (value: unknown): string => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : invalid();
@@ -396,12 +404,14 @@ function basicResult(operation: Operation, value: unknown): OperationResult {
     }
     case 'show': {
       const withLandOrder = operation.with_land_order === true;
-      // A Worker from before asks sends no items, and the result then has none.
-      const row = known(value, withLandOrder ? ['issue', 'comments', 'claim', 'land_order'] : ['issue', 'comments', 'claim'], ['items']);
+      // A Worker from before asks sends no items, and one from before discovery links sends neither link; the result then has none.
+      const row = known(value, withLandOrder ? ['issue', 'comments', 'claim', 'land_order'] : ['issue', 'comments', 'claim'], ['items', 'discovered_from', 'discovered']);
       if (!Array.isArray(row.comments)) return invalid();
       const shown = issue(row.issue); const current = claimInspection(row.claim);
       if (current.issue_id !== shown.id || shown.id !== operation.id) return invalid();
-      const output = { issue: shown, comments: row.comments.map(comment), claim: current, ...(Object.hasOwn(row, 'items') ? { items: items(row.items) } : {}) };
+      if (Object.hasOwn(row, 'discovered_from') !== Object.hasOwn(row, 'discovered')) return invalid();
+      const output = { issue: shown, comments: row.comments.map(comment), claim: current, ...(Object.hasOwn(row, 'items') ? { items: items(row.items) } : {}),
+        ...(Object.hasOwn(row, 'discovered') ? discovery(row.discovered_from, row.discovered, shown.id) : {}) };
       return withLandOrder ? { ...output, land_order: landOrder(row.land_order, shown.id) } : output;
     }
     case 'list': case 'search': case 'dependency_worklist': {
@@ -761,7 +771,7 @@ export async function executeCloudOperation(input: {
   try {
     response = await (input.fetch ?? globalThis.fetch)(new URL('/v1/operations', origin), {
       method: 'POST', redirect: 'error', signal: controller.signal,
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json', 'polylinedb-issue-fields': 'closure, items' },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json', 'polylinedb-issue-fields': 'closure, items, discovered' },
       body: JSON.stringify(input.operation),
     });
     if (response.status === 401) throw new PolylinedbError('auth_required', 'Run auth login for this cloud connection.', 401);
@@ -851,6 +861,9 @@ export async function executeCloudOperation(input: {
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'claim_report' && error.message === 'Unknown claim operation') {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support claim reports. Deploy a newer Worker to use them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'create' && input.operation.discovered_from !== undefined && /^Unexpected fields?: /.test(error.message) && /\bdiscovered_from\b/.test(error.message)) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not record where an issue was found. Deploy a newer Worker to use discovered_from.', 400);
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'comment' && /^Unexpected fields?: /.test(error.message) && /\b(handle|via|reply_to)\b/.test(error.message)) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support handle, via, or reply_to on comments. Deploy a newer Worker to use them.', 400);

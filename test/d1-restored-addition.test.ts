@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { rawToSnapshot, tables } from '../scripts/d1-additive-merge.ts';
 import { snapshotMigration, type Query, type Statement } from '../scripts/d1-snapshot-store.ts';
 import { AdditionRefused, AdditionUnknown, restoredAddition, type Batch } from '../scripts/d1-restored-addition.ts';
-import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV7, canonicalSnapshotV8, canonicalSnapshotV9, convertSnapshotV3 } from '../src/records/persistence/snapshot.ts';
+import { canonicalSnapshot, canonicalSnapshotV3, canonicalSnapshotV7, canonicalSnapshotV8, canonicalSnapshotV9, canonicalSnapshotV10, convertSnapshotV3 } from '../src/records/persistence/snapshot.ts';
 import { SCHEMA_V3_SQL, schemaUpgradeStatements } from '../src/records/persistence/schema.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
 import { openStore } from '../src/local-store/index.ts';
@@ -256,7 +256,7 @@ test('refuses missing, mismatched, edited, unknown, and legacy restore evidence'
   await refused(run({ original: other.path }), /checkpoint digest differs/);
   const legacyInput = join(f.root, 'legacy.json');
   writeFileSync(legacyInput, JSON.stringify({ format: 'polylinedb.snapshot', version: 3, issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [] }));
-  await refused(run({ original: legacyInput }), /requires snapshot format 5, 6, 7, 8, 9 or 10/);
+  await refused(run({ original: legacyInput }), /requires snapshot format 5, 6, 7, 8, 9, 10 or 11/);
   await refused(run({ connection: 'Bad Name' }), /connection name/);
   const self = await localStore(f.root, 'collision', 'dst');
   self.store.close();
@@ -671,7 +671,7 @@ test('a snapshot 7 restore upgraded to schema 13 accepts one addition from its s
   const f = await fixture({ originalBeforePosts: true });
   context.after(f.close);
   // The release before comment edits wrote snapshot 7 and digested it in that form; the schema 10 upgrade then gave each comment version 1 and no editor.
-  const { stars: _stars, issue_items: _items, ...current } = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[] };
+  const { stars: _stars, issue_items: _items, issue_discoveries: _discoveries, ...current } = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[] };
   const v7 = { ...current, version: 7, comments: current.comments.map(({ version: _v, updated_at: _a, updated_by: _b, handle: _h, via: _via, reply_to: _r, ...comment }) => comment) };
   assert.ok(v7.comments.length > 0, 'the original holds a comment');
   const original = join(f.root, 'original-v7.json');
@@ -688,8 +688,8 @@ test('a snapshot 8 restore upgraded to schema 13 accepts one addition from its s
   const f = await fixture({ originalBeforePosts: true });
   context.after(f.close);
   // The release before posts wrote snapshot 8 and digested it in that form; the schema 11 upgrade then gave each comment no handle, no via, no reply, and no star.
-  const { stars, issue_items: items, ...current } = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[]; stars: unknown[] };
-  assert.deepEqual([stars, items], [[], []]);
+  const { stars, issue_items: items, issue_discoveries: discoveries, ...current } = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[]; stars: unknown[] };
+  assert.deepEqual([stars, items, discoveries], [[], [], []]);
   const v8 = { ...current, version: 8, comments: current.comments.map(({ handle: _h, via: _via, reply_to: _r, ...comment }) => comment) };
   assert.ok(v8.comments.length > 0, 'the original holds a comment');
   const original = join(f.root, 'original-v8.json');
@@ -706,14 +706,31 @@ test('a snapshot 9 restore upgraded to schema 13 accepts one addition from its s
   const f = await fixture({ originalBeforePosts: true });
   context.after(f.close);
   // The release before asks and checks wrote snapshot 9 and digested it in that form; the schema 12 upgrade then added no item.
-  const { issue_items: items, ...current } = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[] };
-  assert.deepEqual(items, []);
+  const { issue_items: items, issue_discoveries: discoveries, ...current } = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[] };
+  assert.deepEqual([items, discoveries], [[], []]);
   const v9 = { ...current, version: 9 };
   const original = join(f.root, 'original-v9.json');
   writeFileSync(original, JSON.stringify(v9));
   f.destination.prepare('UPDATE polylinedb_snapshot_claim SET sha256 = ?').run(digest(canonicalSnapshotV9(v9)));
   const edited = join(f.root, 'original-v9-edited.json');
   writeFileSync(edited, JSON.stringify({ ...v9, comments: v9.comments.map(comment => ({ ...comment, body: 'changed' })) }));
+  await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: edited, source: f.source, connection: 'cloud' }), /checkpoint digest differs/);
+  const result = await restoredAddition(f.batch, f.journal(), f.environment).run({ original, source: f.source, connection: 'cloud' });
+  assert.equal(result.outcome, 'routed');
+});
+
+test('a snapshot 10 restore upgraded to schema 13 accepts one addition from its snapshot 10 input', async context => {
+  const f = await fixture({ originalBeforePosts: true });
+  context.after(f.close);
+  // The release before discovery links wrote snapshot 10 and digested it in that form; the schema 13 upgrade then added no link.
+  const { issue_discoveries: discoveries, ...current } = JSON.parse(readFileSync(f.original, 'utf8')) as Record<string, unknown> & { comments: Record<string, unknown>[] };
+  assert.deepEqual(discoveries, []);
+  const v10 = { ...current, version: 10 };
+  const original = join(f.root, 'original-v10.json');
+  writeFileSync(original, JSON.stringify(v10));
+  f.destination.prepare('UPDATE polylinedb_snapshot_claim SET sha256 = ?').run(digest(canonicalSnapshotV10(v10)));
+  const edited = join(f.root, 'original-v10-edited.json');
+  writeFileSync(edited, JSON.stringify({ ...v10, comments: v10.comments.map(comment => ({ ...comment, body: 'changed' })) }));
   await refused(restoredAddition(f.batch, f.journal(), f.environment).run({ original: edited, source: f.source, connection: 'cloud' }), /checkpoint digest differs/);
   const result = await restoredAddition(f.batch, f.journal(), f.environment).run({ original, source: f.source, connection: 'cloud' });
   assert.equal(result.outcome, 'routed');

@@ -27,6 +27,9 @@ A person answers on the `/ui` page or through a human actor that did not ask; an
 An acceptance condition is a check, which the agent meets with an evidence line.
 `close` and `claim_handoff` refuse with `items_open` while an ask is open or a check is unmet.
 [Coordinate issue ownership](claims.md#ask-a-person-and-check-the-result) has the rules and their limits.
+An agent that finds a problem outside the issue it holds files a new issue with `create` and passes the held issue as `discovered_from`.
+The link records where the new issue came from. It never blocks ready, close, or claims, and it cannot change after create.
+`show` returns `discovered_from` on the new issue and `discovered` on the held one, and the `/ui` issue page shows both as links, so a person sees what a piece of work surfaced and a later agent can trace why an issue exists.
 An agent asks instead of adding `owner-decision` or `owner-action`. Those labels still mark an issue that waits on the owner, for an issue that is itself the owner's work and for issues labeled before asks existed.
 Local connections set the agent kind and actor per host, as [local agent actors](agent-actors.md) describes.
 Cloud connections derive a human actor from authentication until per-agent tokens exist, so the agent gates do not apply there yet.

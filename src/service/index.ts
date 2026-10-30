@@ -24,8 +24,8 @@ const mcpSchemas = { ...operationSchemas, search: { ...operationSchemas.search, 
 const protocolVersion = '2025-11-25';
 const requestLimit = 128 * 1024;
 const descriptions: Record<string, string> = {
-  create: 'Create an issue. Supply tool, project, and body. An optional parent must be an epic. Retain the request UUID and payload for retries.',
-  show: 'Read an issue, its field versions, its comments, its claim, and its items (asks and checks) before editing. claim.store_incarnation is the incarnation for claim_acquire. with_land_order: true also returns land_order.',
+  create: 'Create an issue. Supply tool, project, and body. An optional parent must be an epic. When you file a problem you found while working on another issue, pass that issue as discovered_from. Retain the request UUID and payload for retries.',
+  show: 'Read an issue, its field versions, its comments, its claim, and its items (asks and checks) before editing. claim.store_incarnation is the incarnation for claim_acquire. discovered_from names the issue this one was found while working on, and discovered lists the issues found while working on this one. with_land_order: true also returns land_order.',
   list: 'List issues with optional filters and ID pagination. claimed: false keeps issues without an active claim, such as an in_progress issue whose claim was released or expired; claimed: true keeps issues with one. with_land_order: true also returns land_order, one entry per issue in the same order.',
   search: 'Find literal, case-sensitive text in issue bodies and comments. matches names the body or comment IDs of each hit, with a short excerpt.',
   comment: 'Append a comment. Does not change issue field versions. Do not blindly retry after a network failure. A comment with a handle is a post: handle names the persona you speak as, via names what produced this post, and reply_to answers a comment on the same issue. They are attribution only and grant nothing. Leave handle off a status, verification, or handoff comment, because posts lists every comment with a handle as a lesson.',

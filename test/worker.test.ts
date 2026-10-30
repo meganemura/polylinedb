@@ -2173,3 +2173,25 @@ test('ui: the agent feed lists events newest first, a kept link lists only later
     assert.equal((await page('/ui/activity')).includes('method="post"'), false);
   } finally { sqlite.close(); }
 });
+
+test('ui: the issue page says where an issue was found and what was found while working on it, with links', async () => {
+  const { sqlite, env } = fixture();
+  const token = await assertion();
+  const auth = { 'cf-access-jwt-assertion': token };
+  try {
+    const source = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Migrate the parser' });
+    const first = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'The lexer drops a newline', discovered_from: source });
+    const second = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'The parser test is flaky', discovered_from: source });
+    const plain = await createIssue(env, token, { tool: 'compiler', project: 'parser', body: 'Unrelated' });
+    const sourcePage = await (await viewIssue(env, source, auth)).text();
+    assertPageScripts(sourcePage);
+    const found = panel(sourcePage, 'Found');
+    assert.ok(textOf(found).includes(`Found here: ${first}, ${second}.`), textOf(found));
+    assert.ok(found.includes(`<p>Found here: <a class="mono" href="/ui/i/${first}">${first}</a>, <a class="mono" href="/ui/i/${second}">${second}</a>.</p>`), 'each found issue is a paragraph link, which keeps a 44 px tap area');
+    assert.equal(textOf(found).includes('Found while working on'), false);
+    const firstPage = panel(await (await viewIssue(env, first, auth)).text(), 'Found');
+    assert.ok(firstPage.includes(`<p>Found while working on <a class="mono" href="/ui/i/${source}">${source}</a>.</p>`));
+    assert.equal(textOf(firstPage).includes('Found here'), false);
+    assert.equal((await (await viewIssue(env, plain, auth)).text()).includes('id="found"'), false, 'an issue with no links shows no card');
+  } finally { sqlite.close(); }
+});

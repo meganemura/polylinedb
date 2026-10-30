@@ -890,7 +890,7 @@ test('CLI reports retired stores for writes while reads and exports remain avail
     try {
       assert.deepEqual(destinationCli(['import', '--file', '-'], { input: JSON.stringify(snapshot), status: 4 }).error,
         { code: 'store_retired', message });
-      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 10, issue_items: [], stars: [], land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [],
+      assert.deepEqual(destinationCli(['export']), { format: 'polylinedb.snapshot', version: 11, issue_items: [], issue_discoveries: [], stars: [], land_order: [], land_order_revisions: [], land_order_requests: [], issue_resources: [], resource_revisions: [], resource_requests: [], issue_claims: [], claim_requests: [],
         issues: [], comments: [], counters: [], requests: [], memories: [], memory_counters: [], memory_requests: [], dependencies: [], dependency_revisions: [], dependency_requests: [] });
     } finally { destinationRetirement.close(); }
   } finally {
@@ -1149,4 +1149,17 @@ test('CLI posts with a handle and via, replies, stars and unstars, lists posts, 
   assert.ok(human.includes(` · version 1 · as tester · reply to ${post.id}\n`), human);
   const changes = run(['changes', '--since', '0', '--kind', 'starred', '--kind', 'unstarred']);
   assert.deepEqual(changes.changes.map((change: { kind: string }) => change.kind), ['starred', 'starred', 'unstarred']);
+});
+
+test('CLI create --discovered-from records where an issue was found, and show --human prints both directions', t => {
+  const { run } = fixture(t);
+  run(['init'], { actor: false });
+  run(['create', '--tool', 'test', '--project', 'test', '--body', 'Migrate the parser']);
+  const found = run(['create', '--tool', 'test', '--project', 'test', '--body', 'The lexer drops a newline', '--discovered-from', '1']);
+  assert.equal(found.issue.id, 'pd-2');
+  assert.deepEqual([run(['show', 'pd-2']).discovered_from, run(['show', 'pd-1']).discovered], ['pd-1', ['pd-2']]);
+  assert.match(run(['show', 'pd-2', '--human'], { raw: true }), /\nFound while working on pd-1\n/);
+  assert.match(run(['show', 'pd-1', '--human'], { raw: true }), /\nFound here pd-2\n/);
+  assert.doesNotMatch(run(['show', 'pd-2', '--human'], { raw: true }), /Found here/, 'an issue that found nothing prints no line for it');
+  assert.equal(run(['create', '--tool', 'test', '--project', 'test', '--body', 'x', '--discovered-from', 'pd-99'], { status: 3 }).error.code, 'not_found');
 });

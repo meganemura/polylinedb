@@ -662,6 +662,15 @@ An `item_add` or `item_resolve` result must echo the issue ID and carry the item
 The `items_open` details must echo the issue ID and list each open item with `n`, `kind`, and `text`. The `item_not_found`, `item_actor_refused`, and `item_conflict` details must echo the issue ID and `n`, and the `item_conflict` details carry the item as it stands.
 `item_request_conflict` means an `item_add` replay with the same `request_id` named a different issue, actor, or item. It has no details.
 
+### Where an issue was found
+
+The client adds the token `discovered` to that header, so it sends `polylinedb-issue-fields: closure, items, discovered`. The token says that the client decodes the two discovery fields of `show`.
+For a request without that token, `show` has no `discovered_from` and no `discovered`, so a released client keeps the body it knows.
+MCP results always carry both fields.
+A `show` that carries one of the two must carry the other. `discovered_from` is `null` or an issue ID other than the shown issue, and `discovered` lists issue IDs in issue order, without the shown issue.
+A Worker that predates discovery links answers a `create` with `discovered_from` with `invalid_input`. The client reports that the Worker needs an update and does not retry, because without the field an older Worker would file the issue with no record of where it was found.
+Such a Worker sends a `show` without the two fields, and the result then has neither.
+
 ## Local repository defaults
 
 Run `pd init --stealth --prefix NAME --tool NAME --project NAME --actor IDENTITY` inside a Git working tree.
@@ -709,6 +718,7 @@ Schema 9 adds land order, and portable snapshot 7 carries `land_order`, `land_or
 Schema 10 adds comment edits, and portable snapshot 8 carries `version`, `updated_at`, and `updated_by` on every comment.
 Schema 11 adds posts and stars, and portable snapshot 9 carries `handle`, `via`, and `reply_to` on every comment, and a `stars` collection. A reply follows its target in the comment order.
 Schema 12 adds asks and checks, and portable snapshot 10 carries an `issue_items` collection, ordered by issue and then `n`, with each item's `request_id`.
+Schema 13 adds discovery links, and portable snapshot 11 carries an `issue_discoveries` collection of `issue_id` and `discovered_from`, ordered by issue. Each link must agree with the `discovered_from` of the create request that filed the issue.
 Import rotates the store incarnation and records no events, so the feed of the destination starts empty.
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
@@ -718,12 +728,12 @@ An upgrade from schema 2 through 6 starts with an empty change feed.
 Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
 An upgrade adds no land-order edges and no resource entries.
 An upgrade from schema 2 through 9 gives each existing comment version 1 with a null `updated_at` and `updated_by`.
-Every upgrade leaves `handle`, `via`, and `reply_to` null on existing comments and adds no stars. Every upgrade adds no asks or checks. The upgrades from schema 9, 10, 11, and 12 keep every change event with its `seq`, so a cursor that a reader holds stays valid.
+Every upgrade leaves `handle`, `via`, and `reply_to` null on existing comments and adds no stars. Every upgrade adds no asks or checks and no discovery links. The upgrades from schema 9, 10, 11, and 12 keep every change event with its `seq`, so a cursor that a reader holds stays valid.
 After the upgrade, an installed CLI that predates schema 13 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
-For a v3, v4, v5, v6, v7, v8, or v9 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, or `--from 9` instead.
+For a v3, v4, v5, v6, v7, v8, v9, or v10 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, `--from 9`, or `--from 10` instead.
 The conversion from v7 gives each comment version 1 with a null `updated_at` and `updated_by`.
-The conversion from v8 gives each comment null `handle`, `via`, and `reply_to`, and an empty `stars` collection. The conversion from v9 adds an empty `issue_items` collection. Import accepts an older snapshot only after conversion.
+The conversion from v8 gives each comment null `handle`, `via`, and `reply_to`, and an empty `stars` collection. The conversion from v9 adds an empty `issue_items` collection, and the conversion from v10 adds an empty `issue_discoveries` collection. Import accepts an older snapshot only after conversion.
 Use `pd export --historical` for read-only recovery from a canonical historical store, including a retired store.
 See [issue prerequisites](prerequisites.md) for graph commands and ready/blocked worklists.
 See [project memory](memory.md) for memory operations and upgrade details.

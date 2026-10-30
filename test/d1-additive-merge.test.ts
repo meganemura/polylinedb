@@ -21,7 +21,7 @@ function createStore(directory: string, name: string): StoreFile & { store: Retu
   return { databasePath, store, close: () => store.close() };
 }
 
-async function addIssue(store: ReturnType<typeof openStore>, input: { prefix: string; body: string; type?: 'task' | 'epic'; parent?: string }, actor: string) {
+async function addIssue(store: ReturnType<typeof openStore>, input: { prefix: string; body: string; type?: 'task' | 'epic'; parent?: string; discovered_from?: string }, actor: string) {
   const result = await executeOperation(store.db, parseOperation({
     op: 'create',
     prefix: input.prefix,
@@ -31,6 +31,7 @@ async function addIssue(store: ReturnType<typeof openStore>, input: { prefix: st
     body: input.body,
     ...(input.type === undefined ? {} : { type: input.type }),
     ...(input.parent === undefined ? {} : { parent: input.parent }),
+    ...(input.discovered_from === undefined ? {} : { discovered_from: input.discovered_from }),
   }), actor);
   if (!('issue' in result)) throw new Error('Issue creation did not return an issue');
   return result.issue;
@@ -54,7 +55,7 @@ async function makeSource(directory: string, prefix = 'src', includeLiveMemory =
   try {
     const epic = await addIssue(fixture.store, { prefix, body: `${prefix} original`, type: 'epic' }, `${prefix}-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'update', id: epic.id, changes: [{ field: 'body', value: `${prefix} revised`, expected: 1 }] }), `${prefix}-editor`);
-    await addIssue(fixture.store, { prefix, parent: epic.id, body: `${prefix} child` }, `${prefix}-child-author`);
+    await addIssue(fixture.store, { prefix, parent: epic.id, body: `${prefix} child`, discovered_from: epic.id }, `${prefix}-child-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'dependency_add', dependent_id: `${epic.id}.1`, blocker_id: epic.id, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'land_order_add', later_id: `${epic.id}.1`, earlier_id: epic.id, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
     await executeOperation(fixture.store.db, parseOperation({ op: 'resource_add', issue_id: `${epic.id}.1`, kind: 'worker', name: `${prefix}-api`, expected_revision: 1, request_id: randomUUID() }), `${prefix}-author`);
@@ -165,6 +166,7 @@ test('additive merge keeps both canonical stores, versions, audit rows, and dele
     assert.deepEqual(actual.stars.map(star => [star.comment_id, star.starrer, star.actor]), [[reply?.id, 'tester', 'src-starrer']]);
     assert.deepEqual(actual.issue_items.map(item => [item.issue_id, item.n, item.kind, item.state, item.answer ?? item.note, item.resolved_by]),
       [['src-1', 1, 'ask', 'answered', 'right', 'src-owner'], ['src-1', 2, 'check', 'met', 'all green', 'src-author']]);
+    assert.deepEqual(actual.issue_discoveries, [{ issue_id: 'src-1.1', discovered_from: 'src-1' }]);
     assert.deepEqual(actual.memories.map(memory => memory.id), ['dst-m1']);
     assert.ok(actual.memory_requests.some(request => request.memory_id === 'src-m1'));
     assert.ok(actual.memory_requests.some(request => request.memory_id === 'dst-m1'));
@@ -307,7 +309,7 @@ test('retirement blocks every DML operation on an already open SQLite connection
     for (const table of tables) {
       const key = table === 'issues' || table === 'comments' || table === 'memories' ? 'id'
         : table === 'counters' ? 'scope'
-          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : table === 'land_order' || table === 'land_order_revisions' ? 'later_id' : table === 'issue_claims' || table === 'issue_resources' || table === 'resource_revisions' ? 'issue_id' : table === 'memory_store_identity' ? 'singleton' : table === 'project_memory_revisions' ? 'project' : table === 'stars' ? 'starrer' : 'request_id';
+          : table === 'memory_counters' ? 'prefix' : table === 'dependencies' || table === 'dependency_revisions' ? 'dependent_id' : table === 'land_order' || table === 'land_order_revisions' ? 'later_id' : table === 'issue_claims' || table === 'issue_discoveries' || table === 'issue_resources' || table === 'resource_revisions' ? 'issue_id' : table === 'memory_store_identity' ? 'singleton' : table === 'project_memory_revisions' ? 'project' : table === 'stars' ? 'starrer' : 'request_id';
       const quotedTable = `"${table}"`;
       const quotedKey = `"${key}"`;
       assert.throws(() => database.prepare(`INSERT INTO ${quotedTable} SELECT * FROM ${quotedTable} LIMIT 1`).all(), /Use cloud connection archive/, `${table} insert`);

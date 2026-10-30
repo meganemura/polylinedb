@@ -16,7 +16,7 @@ import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } fr
 import { readRepositoryDefaults, writeRepositoryDefaults, repositoryConfigPath, validateRepositoryDefaults, useRepositoryConnection } from "./workspace/index.ts";
 import type { RepositoryConfiguration } from "./workspace/index.ts";
 import { addConnection, defaultConnection, readConnections, requireConnection, selectConnection } from "./workspace/index.ts";
-import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, convertSnapshotV9 } from './records/persistence/persistence.ts';
+import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, convertSnapshotV9, convertSnapshotV10 } from './records/persistence/persistence.ts';
 import { parsePrefix, parseIssueId, parseRequestId } from './records/index.ts';
 import { agentContext, installAgentHost, parseAgentHost, removeAgentHost } from "./host-hooks/index.ts";
 import { help } from './cli-help.ts';
@@ -56,7 +56,7 @@ const commandFlags: Record<string, readonly string[]> = {
   agent_install: [], agent_remove: [], agent_context: [],
   connection: ['url'],
   init: ['stealth', 'tool', 'project'], context: [], export: ['file', 'historical'], import: ['file'], actor: [], show: ['with-land-order'],
-  create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'request-id'],
+  create: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'parent', 'discovered-from', 'request-id'],
   comment: ['body', 'body-file', 'handle', 'via', 'reply-to'], comment_edit: ['body', 'body-file', 'expected'],
   star: ['handle'], unstar: ['handle'], post: ['project', 'body', 'body-file', 'handle', 'via', 'reply-to'], posts: ['project', 'handle', 'min-stars', 'since', 'after', 'limit'],
   update: ['tool', 'project', 'body', 'body-file', 'type', 'status', 'priority', 'label', 'clear-labels', 'expect', 'force', 'reason', 'resources-reason', 'claim-proof'],
@@ -203,9 +203,9 @@ async function main(argv: readonly string[]): Promise<void> {
     let source: unknown;
     try { source = JSON.parse(await readInput(file, 16 * 1024 * 1024)); }
     catch (error) { if (error instanceof SyntaxError) invalid('Snapshot must contain valid JSON'); throw error; }
-    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6, '7': convertSnapshotV7, '8': convertSnapshotV8, '9': convertSnapshotV9 };
+    const converters = { '2': convertSnapshotV2, '3': convertSnapshotV3, '4': convertSnapshotV4, '5': convertSnapshotV5, '6': convertSnapshotV6, '7': convertSnapshotV7, '8': convertSnapshotV8, '9': convertSnapshotV9, '10': convertSnapshotV10 };
     const from = one('from') ?? '2';
-    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5, 6, 7, 8 or 9');
+    if (!Object.hasOwn(converters, from)) invalid('Snapshot --from must be 2, 3, 4, 5, 6, 7, 8, 9 or 10');
     const converted = converters[from as keyof typeof converters](source);
     const content = canonicalSnapshot(converted) + '\n';
     const output = one('output') ?? '-';
@@ -544,6 +544,8 @@ async function main(argv: readonly string[]): Promise<void> {
     raw.request_id = parseArgument(parseRequestId, one('request-id') ?? randomUUID());
     if (raw.tool === undefined && tool !== undefined) raw.tool = tool;
     if (raw.project === undefined && project !== undefined) raw.project = project;
+    const source = one('discovered-from');
+    if (source !== undefined) raw.discovered_from = expandedId(source, false);
   }
   for (const name of ['priority', 'limit', 'expected']) {
     const value = one(name);

@@ -136,7 +136,7 @@ test('snapshot 10 keeps every item through export and import, and a snapshot 9 c
   const source = freshStore(t);
   await runItemsFlow(source.db);
   const exported = source.exportSnapshot();
-  assert.equal(exported.version, 10);
+  assert.equal(exported.version, 11);
   assert.equal(exported.issue_items.length, 5);
   assert.ok(exported.issue_items.every(item => typeof item.request_id === 'string'));
   const destination = freshStore(t);
@@ -161,9 +161,9 @@ test('snapshot 10 keeps every item through export and import, and a snapshot 9 c
   assert.throws(() => parseSnapshot({ ...exported, issue_items: [item, item] }), { code: 'invalid_snapshot' });
   assert.throws(() => parseSnapshot({ ...exported, issue_items: [item, { ...item, n: 99 }] }), { code: 'invalid_snapshot' }, 'a request ID names one item');
 
-  const { issue_items: _items, ...rest } = exported;
+  const { issue_items: _items, issue_discoveries: _discoveries, ...rest } = exported;
   const v9 = { ...rest, version: 9 };
   assert.throws(() => parseSnapshot(v9), { code: 'invalid_snapshot' });
   const converted = convertSnapshotV9(v9);
-  assert.deepEqual([converted.version, converted.issue_items], [10, []]);
+  assert.deepEqual([converted.version, converted.issue_items, converted.issue_discoveries], [11, [], []]);
 });

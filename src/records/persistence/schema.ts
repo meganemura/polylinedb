@@ -2,6 +2,7 @@
 import { CLAIM_STATEMENTS } from '../claims/claims-sql.ts';
 import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_RELATION_STATEMENTS, CHANGE_STATEMENTS, CLAIM_REPORT_CHANGE_STATEMENTS, COMMENT_EDIT_CHANGE_STATEMENTS, ITEM_KIND_REBUILD_STATEMENTS, REPORT_KIND_REBUILD_STATEMENTS, STAR_KIND_REBUILD_STATEMENTS } from '../store/changes-sql.ts';
 import { ITEM_CHANGE_STATEMENTS, ITEM_STATEMENTS } from '../items/items-sql.ts';
+import { DISCOVERY_STATEMENTS } from '../store/issue-discoveries.ts';
 import { LAND_ORDER_STATEMENTS } from '../land-order/land-order-sql.ts';
 import { POST_STATEMENTS, STAR_CHANGE_STATEMENTS } from '../posts/posts-sql.ts';
 import { RESOURCE_STATEMENTS } from '../resources/resources-sql.ts';
@@ -207,12 +208,13 @@ export const SCHEMA_V12_ADDITIONS = [
   ...schemaV11FeedTriggers,
   ...ITEM_CHANGE_STATEMENTS,
 ];
-// Schema 13 records stopped claim reports after the schema 12 objects, in the same order on a fresh store and an upgrade.
+// Schema 13 records stopped claim reports and where an issue was found after the schema 12 objects, in the same order on a fresh store and an upgrade.
 export const SCHEMA_V13_ADDITIONS = [
   ...schemaV12FeedTriggers.map(sql => `DROP TRIGGER ${triggerName(sql)}`),
   ...REPORT_KIND_REBUILD_STATEMENTS,
   ...schemaV12FeedTriggers,
   ...CLAIM_REPORT_CHANGE_STATEMENTS,
+  ...DISCOVERY_STATEMENTS,
 ];
 export function schemaUpgradeStatements(previous: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12): readonly string[] {
   return [
