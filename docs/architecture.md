@@ -58,13 +58,15 @@ The source modules expose capability contracts through these public entries:
 | service | `src/service/index.ts` | HTTP/MCP requests and deployment fetch; private Access verification and D1 adaptation; the `/ui` pages live in `src/service/ui/`, a module of their own whose entry `src/service/ui/index.ts` the Worker entry calls |
 
 Inside records, each record domain is its own directory and its own archstrict module.
-A domain's files are visible to the other records files only, so the rest of pd reads the two public entries above.
+Each domain module declares `visibility: "src/records/**"`, so only records files may import it and the rest of pd reads the two public entries above.
+Inside records, a domain shows its siblings the files named in its `surface`, such as `issues.ts` and `attention.ts`, and any other file in it is private.
+The store stays open to every records file as the shared kernel, and `persistence/schema.ts` reads the `*-sql.ts` files of land-order, posts, and items as a friend to assemble the schema.
 
 | Rank | Directories | Responsibility |
 | --- | --- | --- |
 | store | `src/records/store/` | Issue rows and their decoding, the SQL executor port, issue ids, errors, the read catalog, and the change log SQL |
 | claims | `src/records/claims/` | Claims, the claim guard SQL, the agent write gate, and the handoff |
-| domain | `src/records/issues/`, `resources/`, `dependencies/`, `land-order/`, `posts/`, `memories/`, `changes/` | One record kind each: its operations, its validation, and its SQL |
+| domain | `src/records/issues/`, `resources/`, `dependencies/`, `land-order/`, `posts/`, `items/`, `memories/`, `changes/` | One record kind each: its operations, its validation, and its SQL |
 | persistence | `src/records/persistence/` | The schema, its frozen past versions, and portable snapshots across every domain |
 | operations | `src/records/*.ts` | The operation dispatch and the public entry |
 

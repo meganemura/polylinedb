@@ -83,6 +83,8 @@ const controls: Control[] = [
   { name: 'private issue behavior', path: 'src/cli.ts', statement: "import { parseOperation as proof } from './records/issues/issues.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records/issues') },
   { name: 'private schema history', path: 'src/cli.ts', statement: "import { SCHEMA_VERSION as proof } from './records/persistence/schema.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records/persistence') },
   { name: 'record domains read each other', path: records, statement: "import { claimDisplay as proof } from '../claims/claims.ts'; void proof;" },
+  { name: 'record domain internals stay private', path: records, statement: "import { LAND_ORDER_STATEMENTS as proof } from '../land-order/land-order-sql.ts'; void proof;", rule: 'public-surface-bypass', pointer: modulePointer('records/land-order') },
+  { name: 'schema reads domain SQL', path: 'src/records/persistence/schema.ts', statement: "import { LAND_ORDER_STATEMENTS as proof } from '../land-order/land-order-sql.ts'; void proof;" },
   { name: 'store below claims', path: 'src/records/store/sql.ts', statement: "import { claimDisplay as proof } from '../claims/claims.ts'; void proof;", rule: 'tag-order', pointer: 'edges.order[1].sequence' },
   { name: 'public local store', path: 'src/cli.ts', statement: "import { openStore as proof } from './local-store/index.ts'; void proof;" },
   { name: 'public workspace selection', path: 'src/cli.ts', statement: "import { selectConnection as proof } from './workspace/index.ts'; void proof;" },

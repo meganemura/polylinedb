@@ -29,7 +29,7 @@ The acceptance scenario now runs on nukadoko 0.22.0, which checks each expected 
 
 Internal reorganization of the record code into one folder per kind of record, of the `/ui` pages into a folder of their own, and of the command-line files into one checked boundary. Nothing changes for people who use pd.
 
-The architecture check now uses archstrict 0.6.0. Nothing changes for people who use pd.
+The architecture check now uses archstrict 0.7.0. Nothing changes for people who use pd.
 
 Issue pages, project pages, Search, and the other pages outside the four lanes now load faster, because they no longer read every lane just to show the Today and Stuck badges.
 

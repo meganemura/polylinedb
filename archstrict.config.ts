@@ -1,6 +1,7 @@
 import type { Config } from "./archstrict.types.js";
 
-const recordsOnly = [{ file: "*.ts", from: "src/records/**", because: "Record domains are internal to records; the rest of pd reads records/index.ts and records/persistence." }];
+const recordsOnly = [{ file: "*.ts", from: "src/records/**", because: "The store is the shared kernel of every record domain; the rest of pd reads records/index.ts and records/persistence." }];
+const schemaReadsSql = [{ file: "*-sql.ts", from: "src/records/persistence/schema.ts", because: "The schema assembles each domain's SQL into one migration." }];
 
 // Checks source dependency layers; test fixtures stay outside the architectural module graph.
 export default {
@@ -23,15 +24,15 @@ export default {
     { name: "vite.config.ts", glob: "vite.config.ts", surface: "vite.config.ts" },
     { name: "records", glob: "src/records/*.ts", surface: "index.ts" },
     { name: "records/store", glob: "src/records/store/**", friends: recordsOnly },
-    { name: "records/claims", glob: "src/records/claims/**", friends: recordsOnly },
-    { name: "records/resources", glob: "src/records/resources/**", friends: recordsOnly },
-    { name: "records/issues", glob: "src/records/issues/**", friends: recordsOnly },
-    { name: "records/dependencies", glob: "src/records/dependencies/**", friends: recordsOnly },
-    { name: "records/land-order", glob: "src/records/land-order/**", friends: recordsOnly },
-    { name: "records/posts", glob: "src/records/posts/**", friends: recordsOnly },
-    { name: "records/items", glob: "src/records/items/**", friends: recordsOnly },
-    { name: "records/memories", glob: "src/records/memories/**", friends: recordsOnly },
-    { name: "records/changes", glob: "src/records/changes/**", friends: recordsOnly },
+    { name: "records/claims", glob: "src/records/claims/**", surface: ["claims.ts", "agent-gate.ts", "claims-sql.ts", "claim-handoff.ts"], visibility: "src/records/**" },
+    { name: "records/resources", glob: "src/records/resources/**", surface: ["resources.ts", "resources-sql.ts"], visibility: "src/records/**" },
+    { name: "records/issues", glob: "src/records/issues/**", surface: ["issues.ts", "attention.ts"], visibility: "src/records/**" },
+    { name: "records/dependencies", glob: "src/records/dependencies/**", surface: "dependencies.ts", visibility: "src/records/**" },
+    { name: "records/land-order", glob: "src/records/land-order/**", surface: "land-order.ts", visibility: "src/records/**", friends: schemaReadsSql },
+    { name: "records/posts", glob: "src/records/posts/**", surface: "posts.ts", visibility: "src/records/**", friends: schemaReadsSql },
+    { name: "records/items", glob: "src/records/items/**", surface: "items.ts", visibility: "src/records/**", friends: schemaReadsSql },
+    { name: "records/memories", glob: "src/records/memories/**", surface: "memories.ts", visibility: "src/records/**" },
+    { name: "records/changes", glob: "src/records/changes/**", surface: "changes.ts", visibility: "src/records/**" },
     { name: "records/persistence", glob: "src/records/persistence/**", surface: "persistence.ts" },
     { name: "local-store", glob: "src/local-store/**", surface: "index.ts" },
     { name: "workspace", glob: "src/workspace/**", surface: "index.ts" },

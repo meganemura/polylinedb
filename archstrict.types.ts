@@ -65,6 +65,10 @@ export type Config = {
     // (a project-relative glob) matches, private to everyone else -
     // unlike `surface`, which is public to every importer equally.
     friends?: readonly { file: string; from: string; because: string }[];
+    // Who may import this module: a project-relative glob over the
+    // importing file. A file outside it may not import the module at all,
+    // unless a friends entry names that file.
+    visibility?: string;
   }[];
   // A directory that must hold no code at all (archspec's own
   // "empty component" idea) - a violation is any file matching the glob.
