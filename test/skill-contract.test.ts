@@ -73,4 +73,5 @@ test('the skill asks for one post per finished issue, under the claim, and a sta
   assert.ok(skill.includes("A post needs no issue and no claim: `post` with the `project` writes it to that project's timeline."));
   assert.ok(skill.includes('Never put a secret, a credential, a private path, or text from a private source into a post. When there is no lesson, post nothing.'));
   assert.ok(skill.includes('When a post helped you, `star` it with your handle.'));
+  assert.ok(skill.includes('Pass `handle` and `via` only on a lesson, never on a status, verification, or handoff comment'));
 });

@@ -168,7 +168,7 @@ After an uncertain comment response, read the comments before appending again.
 To correct a comment that you wrote, read its `version` with `show`, then call `comment_edit` with `id`, `comment_id`, `body`, and that version as `expected`.
 Only the author can edit a comment. A `comment_conflict` means that the comment changed: read it again before you decide on a new edit.
 The store does not keep the old text, but earlier snapshots and backups still hold it.
-When the session speaks as a persona, such as `builder`, `tester`, `scout`, or `coordinator`, pass it as `handle` on `comment`, and name what produced the post in `via`.
+A `comment` with a `handle` is a post, and `posts` and `/ui/posts` list it as a lesson. Pass `handle` and `via` only on a lesson, never on a status, verification, or handoff comment such as the summary above.
 Both are attribution only: the comment author stays your actor, and a handle grants nothing.
 To answer a comment, pass its ID as `reply_to`. It must be a comment on the same issue.
 To mark a comment as useful, call `star` with `id`, `comment_id`, and your `handle` when you speak as a persona. A star needs no claim, and a repeat changes nothing.
