@@ -28,7 +28,7 @@ Commands:
   agent install HOST            Install a user-scope lifecycle hook.
   agent remove HOST             Remove the owned lifecycle hook.
   agent context HOST            Read hook input and return host context JSON.
-  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6, 7, 8, 9, 10 or 11 store to schema 12.
+  upgrade                       Explicitly upgrade a local schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 or 12 store to schema 13.
   snapshot convert --from 2|3|4|5|6|7|8|9 --file PATH|- [--output PATH|-]
                                 Convert an older snapshot to v10 without touching a store.
   export [--file PATH|-] [--historical]

@@ -64,7 +64,7 @@ const checkpointLayouts = {
   'four-column': {
     ddl: `CREATE TABLE ${claimTable} (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), sha256 TEXT NOT NULL, original_incarnation TEXT NOT NULL, incarnation TEXT NOT NULL CHECK(length(incarnation)=32 AND incarnation NOT GLOB '*[^a-f0-9]*' AND incarnation<>original_incarnation))`,
     columns: ['singleton', 'sha256', 'original_incarnation', 'incarnation'],
-    // Snapshot 5 restores into schema 6 or 7, snapshot 6 into schema 8, snapshot 7 into schema 9, snapshot 8 into schema 10, snapshot 9 into schema 11, and snapshot 10 into schema 12; the later upgrades leave what the conversions produce.
+    // Snapshot 5 restores into schema 6 or 7, snapshot 6 into schema 8, snapshot 7 into schema 9, snapshot 8 into schema 10, snapshot 9 into schema 11, and snapshot 10 into schema 12 or 13; the later upgrades leave what the conversions produce.
     snapshotVersions: [5, 6, 7, 8, 9, 10],
     original(input) {
       const version = input !== null && typeof input === 'object' && 'version' in input ? input.version : undefined;

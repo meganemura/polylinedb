@@ -3,7 +3,7 @@ import assert, { AssertionError } from 'node:assert/strict';
 import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 import { runChangeFeedFlow } from './change-feed-flow.ts';
 
-export type FeedDefect = 'drop-one-event' | 'event-on-rejected-write';
+export type FeedDefect = 'drop-one-event' | 'event-on-rejected-write' | 'unrecorded-report';
 
 // The create replay is the first mutation that records nothing; the request_conflict create is the second.
 const requestConflictMutation = 2;
@@ -47,9 +47,11 @@ function injectFeedDefect(db: SqlExecutor, defect: FeedDefect): SqlExecutor {
 export const feedDefects: { defect: FeedDefect; failure: RegExp }[] = [
   { defect: 'drop-one-event', failure: /issue_id: 'cf-1'[\s\S]*kind: 'created'/ },
   { defect: 'event-on-rejected-write', failure: /rejected request_conflict recorded no event/ },
+  { defect: 'unrecorded-report', failure: /kind: 'claim_reported'/ },
 ];
 
 export async function failsChangeFeedContract(db: SqlExecutor, defect: FeedDefect, failure: RegExp): Promise<void> {
+  if (defect === 'unrecorded-report') await db.batch([{ sql: 'DROP TRIGGER claim_requests_change_report', params: [] }]);
   await assert.rejects(() => runChangeFeedFlow(injectFeedDefect(db, defect)), (error: unknown) => {
     assert.ok(error instanceof AssertionError, error instanceof Error ? error.message : 'the contract did not fail an assertion');
     assert.match(error.message, failure);

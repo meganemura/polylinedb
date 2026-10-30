@@ -1,6 +1,6 @@
 # Restore a local snapshot into D1
 
-These instructions describe schema 12 and snapshot 10.
+These instructions describe schema 13 and snapshot 10.
 Version 0.6.0 uses schema 10 and snapshot 8. No release used schema 9 and snapshot 7, but a Worker built from main before comment edits did. Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6, versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5, and version 0.2.0 uses schema 5.
 
 To add a local store to an existing cloud store and change repository defaults, use the [shared-store cutover procedure](local-cloud-cutover.md).
@@ -63,10 +63,13 @@ The excerpt replaces each run of 20 or more identifier characters with `[redacte
 <a id="upgrade-an-existing-schema-2-3-4-5-6-7-or-8-deployment"></a>
 <a id="upgrade-an-existing-schema-2-3-4-5-6-7-8-or-9-deployment"></a>
 <a id="upgrade-an-existing-schema-2-3-4-5-6-7-8-9-or-10-deployment"></a>
+<a id="upgrade-an-existing-schema-2-3-4-5-6-7-8-9-10-or-11-deployment"></a>
 
-## Upgrade an existing schema 2, 3, 4, 5, 6, 7, 8, 9, 10 or 11 deployment
+## Upgrade an existing schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 or 12 deployment
 
-The new Worker needs schema 12. The CLI's `upgrade` command applies only to local SQLite.
+The new Worker needs schema 13. The CLI's `upgrade` command applies only to local SQLite.
+A schema 13 Worker on a schema 12 database fails every `changes` and `wait` read and the activity page of the web view, because they read the `report_kind` and `report_text` columns of `change_events`.
+A schema 12 Worker keeps working against a schema 13 database. It records no `claim_reported` event for a report.
 A schema 12 Worker on a schema 11 database fails every `show`, every issue page and lane of the web view, every `close`, `claim_acquire`, `claim_handoff`, ready worklist and owner-waits read, and every `item_add` and `item_resolve`, because they read the `issue_items` table.
 A schema 11 Worker keeps working against a schema 12 database. It does not see asks or checks, so it offers an issue with an open ask on the ready worklist and closes or hands off an issue whose items are open.
 A schema 11 Worker on a schema 10 database fails every `show`, every issue page of the web view, and every `comment`, `star`, `unstar`, and `posts`, because they name the comment `handle`, `via`, and `reply_to` columns or the `stars` table.
@@ -80,7 +83,7 @@ Upgrade the database before deploying the Worker.
 A schema 6 or 7 Worker keeps working against an upgraded database. A schema 6 Worker records no change events, and neither earlier Worker records closures, so its closes leave them null.
 Keep cloud writers stopped during the operator upgrade and preserve a verified backup before changing the database.
 Record the account, database UUID, and Worker binding.
-Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL`, `SCHEMA_V6_SQL`, `SCHEMA_V7_SQL`, `SCHEMA_V8_SQL`, `SCHEMA_V9_SQL`, `SCHEMA_V10_SQL`, or `SCHEMA_V11_SQL` definition before a write.
+Compare the deployed DDL with its `SCHEMA_V2_SQL`, `SCHEMA_V3_SQL`, `SCHEMA_V4_SQL`, or frozen `SCHEMA_V5_SQL`, `SCHEMA_V6_SQL`, `SCHEMA_V7_SQL`, `SCHEMA_V8_SQL`, `SCHEMA_V9_SQL`, `SCHEMA_V10_SQL`, `SCHEMA_V11_SQL`, or `SCHEMA_V12_SQL` definition before a write.
 Preserve and verify all content collections before applying the upgrade.
 
 Prefer restoring a converted snapshot into a new isolated database when a current v2 snapshot is available.
@@ -89,7 +92,7 @@ For a v3, v4, v5, v6, v7, v8, or v9 snapshot, use `--from 3`, `--from 4`, `--fro
 Then use the new v10 digest and the normal restore procedure.
 Verify the restored data before an approved Worker binding change. Keep the old database available for recovery.
 
-For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, `--upgrade-from 6`, `--upgrade-from 7`, `--upgrade-from 8`, `--upgrade-from 9`, `--upgrade-from 10`, or `--upgrade-from 11`.
+For an in-place upgrade, emit the matching migration with `node scripts/schema.ts --upgrade-from 2`, `--upgrade-from 3`, `--upgrade-from 4`, `--upgrade-from 5`, `--upgrade-from 6`, `--upgrade-from 7`, `--upgrade-from 8`, `--upgrade-from 9`, `--upgrade-from 10`, `--upgrade-from 11`, or `--upgrade-from 12`.
 Apply every statement in one approved D1 batch or transaction; do not send these statements through the public Worker API.
 The `schemaUpgradeStatements` export provides complete statements, including trigger bodies, for a D1 batch adapter.
 Do not split migration SQL at semicolons because trigger bodies contain semicolons.
@@ -106,8 +109,9 @@ They then rebuild `change_events` so that its kind check accepts `comment_edited
 They add the trigger that records `comment_edited`.
 Upgrades from versions 2 through 10 add the nullable comment columns `handle`, `via`, and `reply_to`, the `comments_reply_on_issue` trigger that keeps a reply on the issue of its target, the `comments_posts` index, and the empty `stars` table.
 They rebuild `change_events` again, in the same steps, so that its kind check accepts `starred` and `unstarred`. They drop and recreate the thirteen triggers that name `change_events` and add the two star triggers.
-Every supported upgrade adds the empty `issue_items` table for asks and checks.
-It rebuilds `change_events` a third time, in the same steps, so that its kind check accepts `asked` and `answered`. It drops and recreates the fifteen triggers that name `change_events` with their schema 11 text, adds the two item triggers, and sets schema version 12.
+Upgrades from versions 2 through 11 add the empty `issue_items` table for asks and checks.
+They rebuild `change_events` a third time, in the same steps, so that its kind check accepts `asked` and `answered`. They drop and recreate the fifteen triggers that name `change_events` with their schema 11 text and add the two item triggers.
+Every supported upgrade rebuilds `change_events` a fourth time, in the same steps, so that its kind check accepts `claim_reported` and the table gains the nullable `report_kind` and `report_text` columns, which only a `claim_reported` event fills. It drops and recreates the seventeen triggers that name `change_events` with their schema 12 text, adds the `claim_requests_change_report` trigger, and sets schema version 13.
 D1 runs the whole upgrade in one batch, so a failure leaves the earlier database unchanged.
 Check the resulting DDL against the canonical schema emitted by `node scripts/schema.ts`.
 Read back all original records, versions, attribution, counters, and creation requests and compare them with the backup.
@@ -122,9 +126,11 @@ Verify that every issue has null `closed_at` and `closed_by` after an upgrade fr
 Verify that `land_order`, `land_order_revisions`, `land_order_requests`, `issue_resources`, `resource_revisions`, and `resource_requests` are empty after an upgrade from schema 2 through 8, and that every change event from before schema 9 has a null `relation`.
 Verify that every comment has version 1 with null `updated_at` and `updated_by` after an upgrade from schema 2 through 9, and that schema 10 comment versions and editors remain unchanged.
 Verify that every comment has null `handle`, `via`, and `reply_to`, that `stars` is empty, and that every change event, with its `seq`, `relation`, and the other fields, is the same as before the upgrade.
-Verify that `issue_items` is empty after the upgrade, and that every change event, with its `seq`, `relation`, and the other fields, is the same as before the upgrade.
+Verify that `issue_items` is empty after an upgrade from schema 2 through 11, and that schema 12 items remain unchanged.
+Verify that every change event, with its `seq`, `relation`, and the other fields, is the same as before the upgrade, with null `report_kind` and `report_text`.
 After the deploy, in a test project, write one comment with a handle, star it twice, and unstar it, then read `changes` with the `commented`, `starred`, and `unstarred` kinds. The comment, the first star, and the unstar must each add one event with the next `seq`, and the repeated star must add none.
 Then add an ask to a test issue, answer it from its `/ui` issue page, and read `changes` with the `asked`, `answered`, and `became_ready` kinds. The ask and the answer must each add one event with the next `seq`, and the answer must come before `became_ready` when the issue is open and unblocked.
+Then claim a test issue, report `working`, `blocked`, and `error` with `claim_report`, and `wait` with the `claim_reported` kind from the position before the first report. The `blocked` and `error` reports must each add one event that carries their kind and line in `report`, and the `working` report must add none.
 Deploy the new Worker only after those checks pass.
 If the database operation fails or its outcome is unknown, inspect the actual schema before recovery. Do not blindly repeat table creation.
 
@@ -188,6 +194,15 @@ Rolling back the Worker has these costs:
 
 See [the asks and checks decision](adr/0024-asks-and-checks.md#rollout).
 
+### Rollback cost of the schema 13 upgrade
+
+The schema 12 to 13 upgrade rebuilds `change_events` with two nullable columns and adds one trigger, so the database itself needs no rollback to run a schema 12 Worker.
+Rolling back the Worker has these costs:
+
+- A schema 12 Worker refuses a `claim_reported` event that it reads, because that kind is not in its list. Every `changes` and `wait` page that holds such an event then fails. The events leave the feed after retention removes them, or after a restore rotates the incarnation.
+- The report trigger still records `claim_reported` for each `blocked` or `error` report that a schema 12 Worker writes, so those pages keep failing while holders report. Roll back only when no holder reports, or restore.
+- Restoring a schema 12 backup after schema 13 writes loses every write made since the backup. Follow the raw database rollback below.
+
 The application does not perform this remote upgrade automatically. This procedure requires separate operator approval and live verification.
 For a raw database rollback, stop readers and writers, restore, rotate the incarnation, then resume traffic.
 See [the restore contract](adr/0005-memory-freshness.md#raw-database-restore) for the exact SQL and verification.
@@ -211,7 +226,7 @@ Historical request UUIDs still replay their original receipts.
 Snapshot validation rejects dangling claim receipts and receipt counters above their aggregate, across every incarnation.
 
 A retired historical local store rejects `pd upgrade` and retains its write guards.
-Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, 6, 7, 8, 9, 10, or 11.
+Use `pd export --historical --file SNAPSHOT` for read-only recovery from canonical schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, or 12.
 That export converts the content to snapshot 10 with no asks or checks, with empty land order and resources before schema 9, with null close records before schema 8, with each comment at version 1 and no editor before schema 10, and with no handle, `via`, reply, or star before schema 11. Schema 6, 7, and 8 claim records remain intact; earlier schemas receive empty claim collections.
 Schema 5 through 8 graph records remain intact; earlier schemas receive empty prerequisites and baseline revisions.
 It preserves creation payload strings and source attribution. Transfer it into a separately initialized destination.

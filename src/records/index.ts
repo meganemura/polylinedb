@@ -34,6 +34,6 @@ export { blockerIsActive } from './store/active-blocker.ts';
 export type { Claim, ClaimOperation, ClaimReceipt, ClaimRequest, ClaimInspection, ClaimState, ClaimResult } from './claims/claims.ts';
 export type { ClaimHandoff, HandoffParts } from './claims/claim-handoff.ts';
 export type { ClaimProof, ClaimMutation } from './claims/claims-sql.ts';
-export type { ChangesOperation, ChangesResult, ChangeEvent, ChangeKind, WaitOperation } from './changes/changes.ts';
+export type { ChangesOperation, ChangesResult, ChangeEvent, ChangeKind, ChangeReport, WaitOperation } from './changes/changes.ts';
 export { activityAfter, activityNewest, activitySince, waitPageLimit } from './changes/changes.ts';
 export type { ActivityCount, ActivityEvent, ActivityPage } from './changes/changes.ts';

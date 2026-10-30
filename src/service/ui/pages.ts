@@ -80,12 +80,13 @@ const eventWords: Record<string, string> = {
 };
 const eventLanes: Record<string, { lane: string; icon: 'plus' | 'check' | 'agents' | 'comment' | 'edit' | 'link' }> = {
   created: { lane: '', icon: 'plus' }, claim_acquired: { lane: 'agents', icon: 'agents' }, claim_released: { lane: 'agents', icon: 'agents' },
-  commented: { lane: '', icon: 'comment' }, became_ready: { lane: 'agents', icon: 'check' }, dependency_added: { lane: 'stuck', icon: 'link' }, dependency_removed: { lane: '', icon: 'link' },
+  commented: { lane: '', icon: 'comment' }, claim_reported: { lane: 'stuck', icon: 'agents' }, became_ready: { lane: 'agents', icon: 'check' }, dependency_added: { lane: 'stuck', icon: 'link' }, dependency_removed: { lane: '', icon: 'link' },
 };
 
 function activityRow(event: ActivityEvent, viewer: Viewer): string {
   const words = event.relation === 'lands_after' ? (event.kind === 'dependency_added' ? 'Land order added' : 'Land order removed')
-    : event.kind === 'updated' && event.fields.length > 0 ? `Updated ${event.fields.join(', ')}` : eventWords[event.kind] ?? event.kind;
+    : event.kind === 'updated' && event.fields.length > 0 ? `Updated ${event.fields.join(', ')}`
+    : event.report !== undefined ? `Reported ${event.report.kind}` : eventWords[event.kind] ?? event.kind;
   const style = eventLanes[event.kind] ?? { lane: '', icon: 'edit' as const };
   const text = title(event.body);
   return `<li class="row${style.lane === '' ? '' : ` l-${style.lane}`}"><div class="meta"><span class="chip${style.lane === '' ? '' : ' c'}">${icon(style.icon)}${escape(words)}</span>`

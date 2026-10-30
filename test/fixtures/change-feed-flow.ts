@@ -140,6 +140,26 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   await records([['cf-15', 'created']], create('cf', 'waits on progress').run);
   const progress = await claimFor('cf-14');
   await records([['cf-14', 'status_changed', ['status']]], () => run({ op: 'update', id: 'cf-14', changes: [{ field: 'status', value: 'in_progress', expected: 1 }], claim_proof: progress }));
+
+  // Only a report that says the work stopped records an event, and the event carries the report's kind and line.
+  const report = (kind: string, text: string) => ({ op: 'claim_report', claim_proof: progress, kind, text, request_id: crypto.randomUUID() });
+  const reportsFrom = await latest();
+  await silent(() => run(report('working', 'running the suite')));
+  const blocked = report('blocked', 'waiting for the owner to pick a schema');
+  await records([['cf-14', 'claim_reported']], () => run(blocked));
+  await silent(() => run(blocked));
+  await silent(() => run({ ...blocked, text: 'another line' }), 'claim_request_conflict');
+  await silent(() => run(report('error', 'not the holder'), 'bob'), 'claim_conflict');
+  await silent(() => run({ ...report('error', 'a lease that is not held'), claim_proof: { ...progress, session_id: bobSession } }), 'claim_conflict');
+  const errored = report('error', 'wrangler d1 execute fails: no such table');
+  await records([['cf-14', 'claim_reported']], () => run(errored));
+  await silent(() => run(report('done', 'handing off')));
+  const woke = await run({ op: 'wait', since: reportsFrom, incarnation, issue_ids: ['cf-14'], kinds: ['claim_reported'], timeout: 0 });
+  assert.ok('next_since' in woke);
+  assert.deepEqual(woke.changes.map(({ kind, fields, report }) => ({ kind, fields, report })), [
+    { kind: 'claim_reported', fields: [], report: { kind: 'blocked', text: blocked.text } },
+    { kind: 'claim_reported', fields: [], report: { kind: 'error', text: errored.text } },
+  ], 'a waiter on claim_reported wakes with each stopped report');
   await records([['cf-15', 'dependency_added']], () => run(edge('dependency_add', 'cf-15', 'cf-14', 1)));
   await records([['cf-15', 'dependency_removed'], ['cf-15', 'became_ready']], () => run(edge('dependency_remove', 'cf-15', 'cf-14', 2)));
   await records([['cf-16', 'created']], create('cf', 'started while blocked').run);
@@ -178,6 +198,7 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
     [{}, () => true],
     [{ project: 'other' }, change => change.issue_id === 'cf-3' || change.issue_id === 'cf-7'],
     [{ kinds: ['became_ready'] }, change => change.kind === 'became_ready'],
+    [{ kinds: ['claim_reported'] }, change => change.kind === 'claim_reported'],
     [{ issue_ids: ['cf-4', 'cf-1'] }, change => change.issue_id === 'cf-1' || change.issue_id === 'cf-4'],
     [{ project: 'feed', kinds: ['status_changed', 'commented'] }, change => change.issue_id !== 'cf-3' && change.issue_id !== 'cf-7' && (change.kind === 'status_changed' || change.kind === 'commented')],
   ];
@@ -220,4 +241,34 @@ export async function runChangeFeedFlow(db: SqlExecutor): Promise<LoggedChange[]
   const restarted = await read({ since: 0, incarnation: rotated.incarnation });
   assert.deepEqual(restarted.changes.map(({ seq, issue_id, kind }) => ({ seq, issue_id, kind })), [{ seq: 1, issue_id: 'cf-2', kind: 'commented' }]);
   return log;
+}
+
+type ClaimProof = { issue_id: string; incarnation: string; session_id: string; generation: number };
+/** Writes events into a schema 12 store, and a stopped report that schema 12 does not record, so the upgrade has events a reader's cursor already holds. */
+export async function populateSchema12(db: SqlExecutor): Promise<ClaimProof> {
+  const run = (value: unknown) => executeOperation(db, parseOperation(value), 'alice');
+  const created = await run({ op: 'create', prefix: 'up', request_id: crypto.randomUUID(), tool: 'feed', project: 'feed', body: 'before reports' });
+  assert.ok('issue' in created);
+  const incarnation = String((await db.batch([{ sql: 'SELECT incarnation FROM memory_store_identity', params: [] }]))[0]?.rows[0]?.incarnation);
+  const acquired = await run({ op: 'claim_acquire', issue_id: created.issue.id, incarnation, session_id: aliceSession, request_id: crypto.randomUUID() });
+  assert.ok('claim_receipt' in acquired);
+  const claim_proof = { issue_id: created.issue.id, incarnation, session_id: aliceSession, generation: acquired.claim_receipt.generation };
+  await run({ op: 'claim_report', claim_proof, kind: 'error', text: 'before the upgrade', request_id: crypto.randomUUID() });
+  return claim_proof;
+}
+
+/** Checks a store that upgraded from schema 12 after populateSchema12: every event keeps its seq, and a stopped report records claim_reported after them. */
+export async function checkSchema12Upgrade(db: SqlExecutor, claim_proof: ClaimProof, before: Record<string, unknown>[]): Promise<void> {
+  const run = (value: unknown) => executeOperation(db, parseOperation(value), 'alice');
+  const sql = async (statement: string) => ((await db.batch([{ sql: statement, params: [] }]))[0]?.rows ?? []).map(row => ({ ...row }));
+  assert.deepEqual(before.map(row => row.kind), ['created', 'claim_acquired'], 'schema 12 recorded no event for the report');
+  assert.deepEqual(await sql('SELECT seq, issue_id, kind, fields_json, occurred_at, actor, relation FROM change_events ORDER BY seq'), before, 'the rebuild keeps every event with its seq');
+  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 13 }]);
+  await run({ op: 'claim_report', claim_proof, kind: 'blocked', text: 'after the upgrade', request_id: crypto.randomUUID() });
+  const page = await run({ op: 'changes', since: 0 });
+  assert.ok('next_since' in page);
+  assert.deepEqual(page.changes.map(({ seq, kind, report }) => ({ seq, kind, report })), [
+    { seq: 1, kind: 'created', report: undefined }, { seq: 2, kind: 'claim_acquired', report: undefined },
+    { seq: 3, kind: 'claim_reported', report: { kind: 'blocked', text: 'after the upgrade' } },
+  ]);
 }

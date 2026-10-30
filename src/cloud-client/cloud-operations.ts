@@ -16,7 +16,7 @@ import { statuses } from '../records/persistence/persistence.ts';
 import { claimRow, resourceRow } from '../records/persistence/persistence.ts';
 import { activityKinds, itemKinds, itemStates, parseIncarnation, ownerWaitDependentLimit, runStates, waitPageLimit } from '../records/index.ts';
 import type { Item, OpenAsk } from '../records/index.ts';
-import type { Claim, ClaimInspection, ReportedActivity, Run, ChangeEvent, LandOrder, LandOrderNeighbor, LandOrderWarning, Resource, ResourceList } from '../records/index.ts';
+import type { Claim, ClaimInspection, ReportedActivity, Run, ChangeEvent, ChangeReport, LandOrder, LandOrderNeighbor, LandOrderWarning, Resource, ResourceList } from '../records/index.ts';
 
 const responseLimit = 8 * 1024 * 1024;
 const timeoutMs = 30_000;
@@ -93,9 +93,13 @@ function claimRun(value: unknown): Run {
 }
 function reportedActivity(value: unknown): ReportedActivity {
   const row = known(value, ['kind', 'text', 'at']);
+  return { ...changeReport(row), at: count(row.at, 0) };
+}
+function changeReport(value: unknown): ChangeReport {
+  const row = known(value, ['kind', 'text']);
   const kind = activityKinds.find(kind => kind === row.kind);
   if (kind === undefined || typeof row.text !== 'string' || !row.text.trim() || /\p{Cc}/u.test(row.text) || new TextEncoder().encode(row.text).length > 200) return invalid();
-  return { kind, text: row.text, at: count(row.at, 0) };
+  return { kind, text: row.text };
 }
 const count = (value: unknown, minimum: number): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum ? value : invalid();
 const itemText = (value: unknown): string => typeof value === 'string' && value.length > 0 && new TextEncoder().encode(value).length <= 4096 ? value : invalid();
@@ -134,11 +138,13 @@ function openAsks(value: unknown): OpenAsk[] {
 // A later Worker may record a kind or name a field that this client does not know, so both are checked only as names.
 const changeName = (value: unknown): string => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : invalid();
 function changeEvent(value: unknown, incarnation: string): ChangeEvent {
-  const row = known(value, ['seq', 'incarnation', 'issue_id', 'kind', 'fields', 'occurred_at', 'actor'], ['relation']);
+  const row = known(value, ['seq', 'incarnation', 'issue_id', 'kind', 'fields', 'occurred_at', 'actor'], ['relation', 'report']);
   if (row.incarnation !== incarnation || !Array.isArray(row.fields) || row.fields.length > 64
-    || typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)) return invalid();
+    || typeof row.actor !== 'string' || !row.actor.trim() || row.actor.length > 4096 || /\p{Cc}/u.test(row.actor)
+    || (row.kind === 'claim_reported') !== (row.report !== undefined)) return invalid();
   return { seq: count(row.seq, 1), incarnation, issue_id: parseIssueId(row.issue_id), kind: changeName(row.kind), fields: row.fields.map(changeName),
-    ...(row.relation === undefined ? {} : { relation: changeName(row.relation) }), occurred_at: count(row.occurred_at, 0), actor: row.actor };
+    ...(row.relation === undefined ? {} : { relation: changeName(row.relation) }), ...(row.report === undefined ? {} : { report: changeReport(row.report) }),
+    occurred_at: count(row.occurred_at, 0), actor: row.actor };
 }
 function neighbor(value: unknown): LandOrderNeighbor {
   const row = known(value, ['id', 'project', 'status']);
@@ -838,6 +844,10 @@ export async function executeCloudOperation(input: {
       if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'changes' || input.operation.op === 'wait') && input.operation.kinds?.some(kind => kind === 'asked' || kind === 'answered')
         && /^kinds/.test(error.message) && !error.message.includes('answered')) {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not record asked or answered events. Deploy a newer Worker to filter by them.', 400);
+      }
+      if (response.status === 400 && error.code === 'invalid_input' && (input.operation.op === 'changes' || input.operation.op === 'wait') && input.operation.kinds?.includes('claim_reported')
+        && /^kinds/.test(error.message) && !error.message.includes('claim_reported')) {
+        throw new PolylinedbError('invalid_input', 'The cloud Worker does not record claim_reported events. Deploy a newer Worker to filter by them.', 400);
       }
       if (response.status === 400 && error.code === 'invalid_input' && input.operation.op === 'claim_report' && error.message === 'Unknown claim operation') {
         throw new PolylinedbError('invalid_input', 'The cloud Worker does not support claim reports. Deploy a newer Worker to use them.', 400);

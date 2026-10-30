@@ -54,6 +54,8 @@ export function decideClaimMutation(claim: ObservedClaim | null, storeIncarnatio
 // progress without growing the comment thread, and a renewal proves only that the lease is held.
 export const activityKinds = ['working', 'blocked', 'error', 'done'] as const;
 export type ActivityKind = typeof activityKinds[number];
+/** The report kinds that say the work stopped. Only these record claim_reported in the change feed, so a waiter wakes on them and working and done never flood it. */
+export const stoppedActivityKinds = ['blocked', 'error'] as const satisfies readonly ActivityKind[];
 export type ReportedActivity = { kind: ActivityKind; text: string; at: number };
 export const runStates = ['working', 'waiting', 'errored', 'finishing', 'quiet'] as const;
 export type RunState = typeof runStates[number];

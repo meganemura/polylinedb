@@ -90,7 +90,7 @@ const nouns: Record<string, readonly [string, string]> = {
   commented: ['comment', 'comments'], comment_edited: ['comment edit', 'comment edits'], claim_acquired: ['claim', 'claims'],
   claim_released: ['release', 'releases'], dependency_added: ['added blocker or land order', 'added blockers or land orders'],
   dependency_removed: ['removed blocker or land order', 'removed blockers or land orders'], became_ready: ['issue became ready', 'issues became ready'],
-  starred: ['star', 'stars'], unstarred: ['removed star', 'removed stars'],
+  starred: ['star', 'stars'], unstarred: ['removed star', 'removed stars'], claim_reported: ['stopped report', 'stopped reports'],
 };
 
 /** "Since 09:12 yesterday: 14 changes. Claude made 9: 5 updates and 4 comments." */

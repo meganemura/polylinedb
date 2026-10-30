@@ -154,8 +154,8 @@ export async function populateSchema11(db: SqlExecutor): Promise<{ id: string }>
 export async function checkSchema11Upgrade(db: SqlExecutor, populated: { id: string }, before: Row[]): Promise<void> {
   const { run, sql, latest } = helpers(db);
   assert.equal(before.length, 2);
-  assert.deepEqual(await sql('SELECT * FROM change_events ORDER BY seq'), before, 'the rebuild keeps every event with its seq');
-  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 12 }]);
+  assert.deepEqual(await sql('SELECT seq, issue_id, kind, fields_json, occurred_at, actor, relation FROM change_events ORDER BY seq'), before, 'the rebuild keeps every event with its seq');
+  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 13 }]);
   assert.deepEqual(await sql('SELECT * FROM issue_items'), []);
   assert.deepEqual((await run({ op: 'show', id: populated.id })).items, []);
   const last = await latest();

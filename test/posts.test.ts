@@ -44,7 +44,7 @@ test('posts carry a handle, via and a reply on the same issue, stars are idempot
   await runPostsFlow(store(t).db);
 });
 
-test('a populated schema 10 store upgrades to schema 12: comments keep no voice and no stars, events keep their seq, and posts follow', async t => {
+test('a populated schema 10 store upgrades to schema 13: comments keep no voice and no stars, events keep their seq, and posts follow', async t => {
   const directory = join(root(t), 'populated'); mkdirSync(directory, { mode: 0o700 });
   const path = join(directory, 'polylinedb.sqlite');
   const legacy = new DatabaseSync(path); legacy.exec(SCHEMA_V10_SQL);
@@ -52,7 +52,7 @@ test('a populated schema 10 store upgrades to schema 12: comments keep no voice 
   try { populated = await populateSchema10(executor(legacy)); before = await readEvents(executor(legacy)); } finally { legacy.close(); }
   chmodSync(path, 0o600);
   assert.throws(() => openStore({ directory }), { code: 'unsupported_schema' }, 'a schema 10 store waits for an explicit upgrade');
-  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 12]);
+  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 13]);
   const upgraded = new DatabaseSync(path); const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(upgraded.prepare(schema).all(), reference.prepare(schema).all()); } finally { upgraded.close(); reference.close(); }

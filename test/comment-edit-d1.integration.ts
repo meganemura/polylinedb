@@ -27,6 +27,6 @@ try {
 
   const empty = await runtime.getD1Database('EMPTY'); await empty.batch(SCHEMA_V9_STATEMENTS.map(sql => empty.prepare(sql)));
   await empty.batch(schemaUpgradeStatements(9).map(sql => empty.prepare(sql)));
-  assert.equal((await runChangeFeedFlow(d1Executor(empty))).length, 66);
+  assert.equal((await runChangeFeedFlow(d1Executor(empty))).length, 68);
   process.stdout.write('PASS: workerd D1 comment edits accept only the author at the observed version, refuse every other edit without an event, and the schema 9 to 10 rebuild keeps each event at its seq while every trigger records after it\n');
 } finally { await runtime.dispose(); }

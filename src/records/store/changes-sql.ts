@@ -1,13 +1,14 @@
 // Owns the change feed DDL; triggers record an event only while a mutation batch holds the writer row.
 import type { SqlExecutor } from './sql.ts';
-import { fields } from '../../transition/index.ts';
+import { fields, stoppedActivityKinds } from '../../transition/index.ts';
 import { activeBlockerStatusSql } from './active-blocker.ts';
 
 // Schemas 6 through 9 check exactly these kinds, so CHANGE_STATEMENTS keeps them; each later schema that adds a kind rebuilds the table for its own list.
 const schemaV6ChangeKinds = ['created', 'updated', 'status_changed', 'commented', 'claim_acquired', 'claim_released', 'dependency_added', 'dependency_removed', 'became_ready'] as const;
 const schemaV10ChangeKinds = [...schemaV6ChangeKinds, 'comment_edited'] as const;
 const schemaV11ChangeKinds = [...schemaV10ChangeKinds, 'starred', 'unstarred'] as const;
-export const changeKinds = [...schemaV11ChangeKinds, 'asked', 'answered'] as const;
+const schemaV12ChangeKinds = [...schemaV11ChangeKinds, 'asked', 'answered'] as const;
+export const changeKinds = [...schemaV12ChangeKinds, 'claim_reported'] as const;
 export type ChangeKind = typeof changeKinds[number];
 const kindCheck = (kinds: readonly string[]) => `kind TEXT NOT NULL CHECK(kind IN (${kinds.map(kind => `'${kind}'`).join(',')}))`;
 export const CHANGE_RETENTION = 10000;
@@ -77,7 +78,7 @@ export const CHANGE_RELATION_STATEMENTS = [`ALTER TABLE change_events ADD COLUMN
 
 // SQLite cannot change a CHECK in place, so a schema that adds a kind copies the feed into a table that admits it, keeping each seq.
 // A rename to change_events fails while a trigger names that table and it does not exist, so the caller drops and recreates those triggers around it.
-const changeKindRebuild = (table: string, kinds: readonly string[]) => [
+const changeKindRebuild = (table: string, kinds: readonly string[], added: readonly string[] = []) => [
   `CREATE TABLE ${table} (
     seq INTEGER PRIMARY KEY NOT NULL CHECK(seq BETWEEN 1 AND 9007199254740991),
     issue_id TEXT NOT NULL REFERENCES issues(id),
@@ -85,7 +86,7 @@ const changeKindRebuild = (table: string, kinds: readonly string[]) => [
     fields_json TEXT NOT NULL CHECK(json_valid(fields_json) AND json_type(fields_json) = 'array'),
     occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at) = 'integer' AND occurred_at >= 0),
     actor TEXT NOT NULL CHECK(length(actor) > 0),
-    ${relationColumn}
+    ${[relationColumn, ...added].join(',\n    ')}
   )`,
   `INSERT INTO ${table}(seq,issue_id,kind,fields_json,occurred_at,actor,relation) SELECT seq,issue_id,kind,fields_json,occurred_at,actor,relation FROM change_events ORDER BY seq`,
   'DROP TABLE change_events',
@@ -96,7 +97,23 @@ export const CHANGE_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v
 // Schema 11 admits starred and unstarred.
 export const STAR_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v11', schemaV11ChangeKinds);
 // Schema 12 admits asked and answered.
-export const ITEM_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v12', changeKinds);
+export const ITEM_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v12', schemaV12ChangeKinds);
+// Schema 13 admits claim_reported and gives that event the report's kind and line.
+const stoppedKinds = stoppedActivityKinds.map(kind => `'${kind}'`).join(',');
+const reportColumns = [
+  `report_kind TEXT CHECK(report_kind IS NULL OR report_kind IN (${stoppedKinds}))`,
+  'report_text TEXT CHECK(report_text IS NULL OR length(report_text) > 0)',
+  "CONSTRAINT change_report CHECK((kind = 'claim_reported') = (report_kind IS NOT NULL) AND (report_kind IS NULL) = (report_text IS NULL))",
+];
+export const REPORT_KIND_REBUILD_STATEMENTS = changeKindRebuild('change_events_v13', changeKinds, reportColumns);
+
+// A report receipt carries its kind and line only in the payload. A replay or a refused report inserts no receipt, so it records nothing.
+export const CLAIM_REPORT_CHANGE_STATEMENTS = [
+  `CREATE TRIGGER claim_requests_change_report AFTER INSERT ON claim_requests
+    WHEN json_extract(NEW.payload, '$.op') = 'claim_report' AND json_extract(NEW.payload, '$.kind') IN (${stoppedKinds})
+    BEGIN INSERT INTO change_events(issue_id,kind,fields_json,occurred_at,actor,report_kind,report_text)
+      SELECT NEW.issue_id,'claim_reported','[]',unixepoch(),change_writer.actor,json_extract(NEW.payload, '$.kind'),json_extract(NEW.payload, '$.text') FROM change_writer; END`,
+];
 
 // Only a version change is an edit; the comment insert trigger keeps recording commented.
 export const COMMENT_EDIT_CHANGE_STATEMENTS = [

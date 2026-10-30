@@ -12,7 +12,7 @@ import * as gs from '@hegeldev/hegel/generators';
 import { initializeStore, openStore, upgradeStore, exportHistoricalSnapshot } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation, PolylinedbError } from '../src/records/index.ts';
 import type { ClaimReceipt } from '../src/records/index.ts';
-import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL, SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
+import { SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL, SCHEMA_V12_SQL, SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
 import { parseSnapshot, canonicalSnapshot, convertSnapshotV4 } from '../src/records/persistence/persistence.ts';
 import { downgradeToSchema6 } from './fixtures/legacy-schema.ts';
 const request = () => crypto.randomUUID();
@@ -345,9 +345,9 @@ test('claim replay recognizes only complete provider duplicate markers', async t
     await assert.rejects(executeOperation(failing, parseOperation(owner.command), 'test:owner'), value => value === error);
   }
 });
-test('canonical schemas 2 through 11 upgrade without rewriting old records or identity', t => {
+test('canonical schemas 2 through 12 upgrade without rewriting old records or identity', t => {
   const root = mkdtempSync(join(tmpdir(), 'pd-claims-upgrade-')); t.after(() => rmSync(root, { recursive: true, force: true }));
-  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL];
+  const sources = [SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL, SCHEMA_V12_SQL];
   for (const [index, ddl] of sources.entries()) {
     const directory = join(root, `v${index + 2}`); mkdirSync(directory, { mode: 0o700 }); const path = join(directory, 'polylinedb.sqlite');
     const legacy = new DatabaseSync(path); legacy.exec(ddl);
@@ -356,7 +356,7 @@ test('canonical schemas 2 through 11 upgrade without rewriting old records or id
     const tables = legacy.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name<>'schema_version' ORDER BY name").all();
     const before = tables.map(row => { assert.equal(typeof row.name, 'string'); if (typeof row.name !== 'string') throw new Error('Invalid table'); return [row.name, legacy.prepare(`SELECT * FROM ${row.name}`).all()]; });
     legacy.close(); chmodSync(path, 0o600);
-    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 12);
+    assert.equal(upgradeStore({ directory, cwd: join(root, 'work') }).version, 13);
     const current = new DatabaseSync(path); const canonical = new DatabaseSync(':memory:'); canonical.exec(SCHEMA_SQL);
     try {
       for (const [table, records] of before) {

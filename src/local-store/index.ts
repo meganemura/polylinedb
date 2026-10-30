@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { commentRow, issueRow, starRow, storedCommentRow } from "../records/persistence/persistence.ts";
 import { PolylinedbError } from "../records/index.ts";
 import type { SqlExecutor, SqlStatement } from "../records/persistence/persistence.ts";
-import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence/persistence.ts";
+import { fields, SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_V2_SQL, SCHEMA_V3_SQL, SCHEMA_V4_SQL, SCHEMA_V5_SQL, SCHEMA_V6_SQL, SCHEMA_V7_SQL, SCHEMA_V8_SQL, SCHEMA_V9_SQL, SCHEMA_V10_SQL, SCHEMA_V11_SQL, SCHEMA_V12_SQL, schemaUpgradeStatements, ROTATE_MEMORY_IDENTITY_SQL } from "../records/persistence/persistence.ts";
 import { canonicalSnapshot, parseSnapshot, convertSnapshotV2, convertSnapshotV3, convertSnapshotV4, convertSnapshotV5, convertSnapshotV6, convertSnapshotV7, convertSnapshotV8, convertSnapshotV9, itemRow, storedItemColumns } from "../records/persistence/persistence.ts";
 import { claimRow, claimRequestRow } from '../records/persistence/persistence.ts';
 import type { Snapshot, SnapshotImport } from "../records/persistence/persistence.ts";
@@ -148,11 +148,11 @@ function rollbackWrite(database: DatabaseSync, error: unknown): never {
 }
 
 // The exact DDL each older schema version stored, which an upgrade or a historical export requires before it reads.
-const legacySchemas = { 2: SCHEMA_V2_SQL, 3: SCHEMA_V3_SQL, 4: SCHEMA_V4_SQL, 5: SCHEMA_V5_SQL, 6: SCHEMA_V6_SQL, 7: SCHEMA_V7_SQL, 8: SCHEMA_V8_SQL, 9: SCHEMA_V9_SQL, 10: SCHEMA_V10_SQL, 11: SCHEMA_V11_SQL } as const;
+const legacySchemas = { 2: SCHEMA_V2_SQL, 3: SCHEMA_V3_SQL, 4: SCHEMA_V4_SQL, 5: SCHEMA_V5_SQL, 6: SCHEMA_V6_SQL, 7: SCHEMA_V7_SQL, 8: SCHEMA_V8_SQL, 9: SCHEMA_V9_SQL, 10: SCHEMA_V10_SQL, 11: SCHEMA_V11_SQL, 12: SCHEMA_V12_SQL } as const;
 type LegacyVersion = keyof typeof legacySchemas;
 function legacyVersion(rows: readonly Record<string, unknown>[]): LegacyVersion | undefined {
   const version = rows.length === 1 ? rows[0]?.version : undefined;
-  return ([2, 3, 4, 5, 6, 7, 8, 9, 10, 11] as const).find(known => known === version);
+  return ([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const).find(known => known === version);
 }
 
 export function initializeStore(location: StoreLocation): { database_path: string } {
@@ -198,7 +198,7 @@ function upgradeApproved(location: StoreLocation): { result: 'upgraded' | 'alrea
         return { result: 'already_current', version: SCHEMA_VERSION, database_path };
       }
       const previous = legacyVersion(versions);
-      if (previous === undefined) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3, 4, 5, 6, 7, 8, 9, 10 and 11 can be upgraded', 409);
+      if (previous === undefined) throw new PolylinedbError('unsupported_schema', 'Only schemas 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 12 can be upgraded', 409);
       reference.exec(legacySchemas[previous]);
       const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
       if (JSON.stringify(database.prepare(sql).all()) !== JSON.stringify(reference.prepare(sql).all())) throw new PolylinedbError('invalid_store', `Upgrade requires the canonical schema ${previous}`, 409);
@@ -351,7 +351,7 @@ function exportHistorical(location: StoreLocation): Snapshot {
   try {
     database.exec('BEGIN');
     const version = legacyVersion(database.prepare('SELECT version FROM schema_version').all());
-    if (version === undefined) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3, 4, 5, 6, 7, 8, 9, 10 or 11', 409);
+    if (version === undefined) throw new PolylinedbError('unsupported_schema', 'Historical export requires schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 or 12', 409);
     reference.exec(legacySchemas[version]);
     const guards = database.prepare("SELECT name FROM sqlite_master WHERE name GLOB 'polylinedb_retired_*'").all();
     if (guards.length && historicalRetirement(database) === undefined) throw new PolylinedbError('invalid_store', 'Historical retirement guards differ from the canonical guards', 409);
@@ -382,8 +382,11 @@ function exportHistorical(location: StoreLocation): Snapshot {
       : version === 9 ? convertSnapshotV7({ ...issues, version: 7, ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources() })
       // Schema 10 comments carry their edit fields, which commentRow keeps and snapshot 8 expects.
       : version === 10 ? convertSnapshotV8({ ...issues, version: 8, ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources() })
-      : convertSnapshotV9({ ...issues, version: 9, comments: all('SELECT * FROM comments').map(storedCommentRow), ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources(),
-        stars: all('SELECT * FROM stars').map(starRow) });
+      : version === 11 ? convertSnapshotV9({ ...issues, version: 9, comments: all('SELECT * FROM comments').map(storedCommentRow), ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources(),
+        stars: all('SELECT * FROM stars').map(starRow) })
+      // Schema 13 changed only the change feed, which no snapshot carries, so a schema 12 store already holds snapshot 10.
+      : parseSnapshot({ ...issues, version: 10, comments: all('SELECT * FROM comments').map(storedCommentRow), ...memories(), ...dependencies(), ...claims(), ...landOrderAndResources(),
+        stars: all('SELECT * FROM stars').map(starRow), issue_items: all('SELECT * FROM issue_items').map(row => ({ ...itemRow(row), request_id: String(row.request_id) })) });
     database.exec('COMMIT'); return complete;
   } finally { reference.close(); database.close(); }
 }

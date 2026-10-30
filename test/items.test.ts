@@ -46,7 +46,7 @@ test('asks, checks, and the close and handoff gate on local SQLite', async t => 
   await runItemsFlow(freshStore(t).db);
 });
 
-test('a populated schema 11 store upgrades to schema 12: no items, events keep their seq, and asks follow', async t => {
+test('a populated schema 11 store upgrades to schema 13: no items, events keep their seq, and asks follow', async t => {
   const directory = join(root(t), 'populated'); mkdirSync(directory, { mode: 0o700 });
   const path = join(directory, 'polylinedb.sqlite');
   const legacy = new DatabaseSync(path); legacy.exec(SCHEMA_V11_SQL);
@@ -57,7 +57,7 @@ test('a populated schema 11 store upgrades to schema 12: no items, events keep t
   } finally { legacy.close(); }
   chmodSync(path, 0o600);
   assert.throws(() => openStore({ directory }), { code: 'unsupported_schema' }, 'a schema 11 store waits for an explicit upgrade');
-  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 12]);
+  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 13]);
   const upgraded = new DatabaseSync(path); const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(upgraded.prepare(schema).all(), reference.prepare(schema).all()); } finally { upgraded.close(); reference.close(); }

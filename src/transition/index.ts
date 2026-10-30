@@ -1,7 +1,7 @@
 // Exposes the pure issue and claim decisions that local and cloud stores share.
 export { statuses, issueTypes, fields, MAX_COUNTER } from './vocabulary.ts';
 export type { Status, IssueType, Field } from './vocabulary.ts';
-export { claimState, holdsClaim, ownsExpiredLease, decideClaimMutation, activityKinds, runStates, runState } from './claims.ts';
+export { claimState, holdsClaim, ownsExpiredLease, decideClaimMutation, activityKinds, stoppedActivityKinds, runStates, runState } from './claims.ts';
 export type { ClaimProof, ObservedClaim, ClaimState, ClaimCommand, ClaimRejection, ClaimDecision, ActivityKind, ReportedActivity, ReportedLease, Run, RunState } from './claims.ts';
 export { decideIssueUpdate, startedWorkNeedsClaim } from './issue-update.ts';
 export type { FieldChange, IssueUpdate, ObservedIssue, FieldConflict, UpdateRejection, UpdateDecision } from './issue-update.ts';

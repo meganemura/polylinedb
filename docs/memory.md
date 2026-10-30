@@ -117,15 +117,15 @@ See [host lifecycle hooks](host-hooks.md) for event support, limitations, and re
 
 Schema 5 is the first schema that stores memory content, versions, attribution, issued counters, creation receipts, and operational memory revisions.
 Snapshot 4 is the first portable snapshot that keeps those content fields and the prerequisite aggregates. It leaves out operational memory revisions and store identity.
-The current CLI uses schema 12 and writes snapshot 10.
+The current CLI uses schema 13 and writes snapshot 10.
 Stop writers and keep a private backup before you upgrade a local store.
 Use the previous CLI to export a schema 2 store before you replace that CLI, or copy the stopped SQLite database.
 Then run `pd --actor IDENTITY upgrade` on the selected local connection.
-The command checks a canonical schema 2, 3, 4, 5, 6, 7, 8, 9, 10 or 11 store and upgrades it to schema 12 in one transaction.
-A store that is already schema 12 returns `already_current`. Reads refuse an old schema until you upgrade it.
+The command checks a canonical schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 or 12 store and upgrades it to schema 13 in one transaction.
+A store that is already schema 13 returns `already_current`. Reads refuse an old schema until you upgrade it.
 Repository configuration keeps its existing versions.
 
-Convert an old snapshot before you import it. The conversion writes snapshot 10. `pd init` creates a schema 12 store, and `pd import` accepts snapshot 10 only.
+Convert an old snapshot before you import it. The conversion writes snapshot 10. `pd init` creates a schema 13 store, and `pd import` accepts snapshot 10 only.
 
 ```sh
 pd snapshot convert --from 2 --file snapshot-v2.json --output snapshot-v10.json

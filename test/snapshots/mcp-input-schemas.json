@@ -56,11 +56,12 @@
             "starred",
             "unstarred",
             "asked",
-            "answered"
+            "answered",
+            "claim_reported"
           ]
         },
         "minItems": 1,
-        "maxItems": 14,
+        "maxItems": 15,
         "uniqueItems": true
       },
       "limit": {
@@ -1989,11 +1990,12 @@
             "starred",
             "unstarred",
             "asked",
-            "answered"
+            "answered",
+            "claim_reported"
           ]
         },
         "minItems": 1,
-        "maxItems": 14,
+        "maxItems": 15,
         "uniqueItems": true
       },
       "timeout": {

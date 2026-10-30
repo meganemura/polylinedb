@@ -131,7 +131,7 @@ test('a schema 8 store upgrades to the canonical schema 9 DDL and then records l
   const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_V8_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(legacy.prepare(schema).all(), reference.prepare(schema).all()); } finally { legacy.close(); reference.close(); }
-  assert.equal(upgradeStore(location).version, 12);
+  assert.equal(upgradeStore(location).version, 13);
   const upgraded = new DatabaseSync(database_path, { readOnly: true }); const fresh = new DatabaseSync(':memory:'); fresh.exec(SCHEMA_SQL);
   try { assert.deepEqual(upgraded.prepare(schema).all(), fresh.prepare(schema).all()); } finally { upgraded.close(); fresh.close(); }
   const store = openStore(location);

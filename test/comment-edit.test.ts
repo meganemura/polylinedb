@@ -44,14 +44,14 @@ async function schema9Store(base: string, name: string, populate?: (db: SqlExecu
   const legacy = new DatabaseSync(path); legacy.exec(SCHEMA_V9_SQL);
   try { await populate?.(executor(legacy)); } finally { legacy.close(); }
   chmodSync(path, 0o600);
-  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 12]);
+  const outcome = upgradeStore({ directory }); assert.deepEqual([outcome.result, outcome.version], ['upgraded', 13]);
   const upgraded = new DatabaseSync(path); const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_SQL);
   const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   try { assert.deepEqual(upgraded.prepare(schema).all(), reference.prepare(schema).all()); } finally { upgraded.close(); reference.close(); }
   return { directory };
 }
 
-test('a populated schema 9 store upgrades to schema 12 with every event at its seq, and later writes continue the feed', async t => {
+test('a populated schema 9 store upgrades to schema 13 with every event at its seq, and later writes continue the feed', async t => {
   let populated: Awaited<ReturnType<typeof populateSchema9>> | undefined; let before: Awaited<ReturnType<typeof readEvents>> = [];
   const { directory } = await schema9Store(root(t), 'populated', async db => { populated = await populateSchema9(db); before = await readEvents(db); });
   const store = openStore({ directory }); t.after(() => store.close());
@@ -62,7 +62,7 @@ test('a populated schema 9 store upgrades to schema 12 with every event at its s
 test('every change feed trigger records its events on a store that upgraded from schema 9', async t => {
   const { directory } = await schema9Store(root(t), 'empty');
   const store = openStore({ directory }); t.after(() => store.close());
-  assert.equal((await runChangeFeedFlow(store.db)).length, 66);
+  assert.equal((await runChangeFeedFlow(store.db)).length, 68);
 });
 
 test('snapshot 7 converts to snapshot 9 with each comment at version 1 and no editor', async t => {

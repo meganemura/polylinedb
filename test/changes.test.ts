@@ -1,16 +1,17 @@
 // Exercises the change feed on real local stores; test/changes-d1.integration.ts runs the same flow on workerd D1.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
+import { node } from 'solarsql/node';
 import { initializeStore, openStore, upgradeStore } from '../src/local-store/index.ts';
 import { executeOperation, parseOperation } from '../src/records/index.ts';
-import { SCHEMA_SQL } from '../src/records/persistence/persistence.ts';
+import { SCHEMA_SQL, SCHEMA_V12_SQL } from '../src/records/persistence/persistence.ts';
 import type { SqlExecutor } from '../src/records/persistence/persistence.ts';
-import { runChangeFeedFlow } from './fixtures/change-feed-flow.ts';
+import { checkSchema12Upgrade, populateSchema12, runChangeFeedFlow } from './fixtures/change-feed-flow.ts';
 import { downgradeToSchema6, withoutChangeWriter } from './fixtures/legacy-schema.ts';
 
 function location(t: test.TestContext) {
@@ -28,7 +29,7 @@ const created = (project = 'feed') => parseOperation({ op: 'create', prefix: 'cf
 
 test('change feed records the shared flow on a local SQLite store', async t => {
   const store = openStore(location(t).place);
-  try { assert.equal((await runChangeFeedFlow(store.db)).length, 66); }
+  try { assert.equal((await runChangeFeedFlow(store.db)).length, 68); }
   finally { store.close(); }
 });
 
@@ -55,7 +56,7 @@ test('upgrading a schema 6 store adds the canonical change feed DDL, and writes 
   const store = openStore(place);
   try { await executeOperation(store.db, created(), 'alice'); } finally { store.close(); }
   const legacy = new DatabaseSync(database_path); downgradeToSchema6(legacy); legacy.close();
-  assert.deepEqual(upgradeStore(place), { result: 'upgraded', version: 12, database_path });
+  assert.deepEqual(upgradeStore(place), { result: 'upgraded', version: 13, database_path });
   const schema = "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
   const upgraded = new DatabaseSync(database_path, { readOnly: true }); const fresh = new DatabaseSync(':memory:'); fresh.exec(SCHEMA_SQL);
   try { assert.deepEqual(upgraded.prepare(schema).all(), fresh.prepare(schema).all()); } finally { upgraded.close(); fresh.close(); }
@@ -70,6 +71,30 @@ test('upgrading a schema 6 store adds the canonical change feed DDL, and writes 
     await executeOperation(earlierRelease, parseOperation({ op: 'close', id: 'cf-1', expected: 1 }), 'alice');
     assert.equal((await changes(reopened.db)).next_since, 1);
   } finally { reopened.close(); }
+});
+
+test('a populated schema 12 store upgrades to schema 13: every event keeps its seq, and stopped reports follow', async t => {
+  const { place, database_path } = location(t);
+  rmSync(database_path);
+  const legacy = new DatabaseSync(database_path); legacy.exec(SCHEMA_V12_SQL);
+  let claim_proof: Awaited<ReturnType<typeof populateSchema12>>; let before: Record<string, unknown>[];
+  try {
+    const executor: SqlExecutor = { reads: node(legacy), async batch(statements) {
+      legacy.exec('BEGIN IMMEDIATE');
+      try { const results = statements.map(({ sql, params }) => ({ rows: legacy.prepare(sql).all(...params) })); legacy.exec('COMMIT'); return results; }
+      catch (error) { legacy.exec('ROLLBACK'); throw error; }
+    } };
+    claim_proof = await populateSchema12(executor);
+    before = legacy.prepare('SELECT * FROM change_events ORDER BY seq').all().map(row => ({ ...row }));
+  } finally { legacy.close(); }
+  chmodSync(database_path, 0o600);
+  assert.throws(() => openStore(place), { code: 'unsupported_schema' }, 'a schema 12 store waits for an explicit upgrade');
+  assert.deepEqual(upgradeStore(place), { result: 'upgraded', version: 13, database_path });
+  const schema = "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
+  const upgraded = new DatabaseSync(database_path, { readOnly: true }); const fresh = new DatabaseSync(':memory:'); fresh.exec(SCHEMA_SQL);
+  try { assert.deepEqual(upgraded.prepare(schema).all(), fresh.prepare(schema).all()); } finally { upgraded.close(); fresh.close(); }
+  const reopened = openStore(place);
+  try { await checkSchema12Upgrade(reopened.db, claim_proof, before); } finally { reopened.close(); }
 });
 
 test('changes input requires a cursor, a valid incarnation, and known filters', () => {

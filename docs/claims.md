@@ -1,6 +1,6 @@
 # Coordinate issue ownership
 
-This guide describes the current source with schema 12 and snapshot 10.
+This guide describes the current source with schema 13 and snapshot 10.
 Version 0.6.0 uses schema 10 and snapshot 8.
 Versions 0.5.0 through 0.5.2 use schema 8 and snapshot 6.
 Versions 0.3.0 and 0.4.0 use schema 6 and snapshot 5.
@@ -163,7 +163,14 @@ The newest report replaces the one before it, and a report adds no comment.
 A report writes a receipt with outcome `renewed` that increases the revision and keeps `expires_at`. It never extends or shortens the lease, so renew separately.
 A renewal or release that read the revision before a report gets `claim_conflict` and reads again, as keepalive already does.
 A retry with the same request UUID and payload returns the original receipt. A report under an expired, released, or foreign proof returns `claim_conflict` with the current inspection.
-The change feed records no event for a report.
+A `blocked` or `error` report records one `claim_reported` event in the change feed, in the same write as its receipt. The event carries `report`, the report's `kind` and `text`.
+A `working` or `done` report records no event, so progress lines do not flood the feed. A replay and a refused report record nothing.
+A person or a watcher wakes on a holder that stopped with `wait` and `kinds: ["claim_reported"]`, for one issue with `issue_ids` or for a whole project with `project`:
+
+```sh
+pd wait --since "$SEQ" --incarnation "$INCARNATION" --project parser --kind claim_reported --timeout 600
+```
+
 
 `claim show`, `show`, and `claim list` return `run` for every lease: `{ state, quiet_after, last }`.
 `last` is the newest report, `{ kind, text, at }`, or `null`. `at` is the store clock in Unix seconds.

@@ -107,7 +107,7 @@ export async function populateSchema9(db: SqlExecutor): Promise<{ comment_id: st
 }
 
 export async function readEvents(db: SqlExecutor): Promise<Row[]> {
-  return await helpers(db).sql('SELECT * FROM change_events ORDER BY seq');
+  return await helpers(db).sql('SELECT seq, issue_id, kind, fields_json, occurred_at, actor, relation FROM change_events ORDER BY seq');
 }
 
 /** Checks a store that upgraded from schema 9 after populateSchema9: every event keeps its seq, and later writes continue after the last one. */
@@ -115,7 +115,7 @@ export async function checkSchema9Upgrade(db: SqlExecutor, populated: { comment_
   const { run, sql, latest } = helpers(db);
   assert.equal(before.length, 4);
   assert.deepEqual(await readEvents(db), before, 'the rebuild keeps every event with its seq');
-  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 12 }]);
+  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 13 }]);
   assert.deepEqual(await sql('SELECT version, updated_at, updated_by FROM comments'), [{ version: 1, updated_at: null, updated_by: null }]);
   const last = await latest();
   assert.equal(last, Number(before.at(-1)?.seq));

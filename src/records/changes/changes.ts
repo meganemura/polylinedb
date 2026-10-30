@@ -4,6 +4,8 @@ import { parseIssueId } from '../store/issue-id.ts';
 import { issueQueries } from '../store/issue-queries.ts';
 import { parseIncarnation } from '../claims/claims.ts';
 import { changeKinds, changeRelations } from '../store/changes-sql.ts';
+import { stoppedActivityKinds } from '../../transition/index.ts';
+import type { ActivityKind } from '../../transition/index.ts';
 import type { ChangeKind } from '../store/changes-sql.ts';
 import type { SqlExecutor } from '../store/sql.ts';
 
@@ -11,8 +13,9 @@ export type { ChangeKind };
 type FeedFilter = { since: number; incarnation?: string; project?: string; issue_ids?: string[]; kinds?: ChangeKind[] };
 export type ChangesOperation = FeedFilter & { op: 'changes'; limit: number };
 export type WaitOperation = FeedFilter & { op: 'wait'; timeout: number };
-/** relation names a non-prerequisite edge on dependency_added and dependency_removed; a prerequisite edge carries none. */
-export type ChangeEvent = { seq: number; incarnation: string; issue_id: string; kind: string; fields: string[]; relation?: string; occurred_at: number; actor: string };
+/** relation names a non-prerequisite edge on dependency_added and dependency_removed; a prerequisite edge carries none. report carries the kind and line of a claim_reported event. */
+export type ChangeEvent = { seq: number; incarnation: string; issue_id: string; kind: string; fields: string[]; relation?: string; report?: ChangeReport; occurred_at: number; actor: string };
+export type ChangeReport = { kind: ActivityKind; text: string };
 export type ChangesResult = { incarnation: string; changes: ChangeEvent[]; next_since: number };
 
 const idSchema = { type: 'string', pattern: String.raw`^[a-z][a-z0-9]{0,15}-[1-9][0-9]*(\.[1-9][0-9]*){0,7}$` };
@@ -88,6 +91,12 @@ export function parseWaitOperation(value: unknown): WaitOperation {
   return operation;
 }
 
+function storedReport(kind: unknown, text: unknown): ChangeReport {
+  const stopped = stoppedActivityKinds.find(stopped => stopped === kind);
+  if (stopped === undefined || typeof text !== 'string' || !text) throw new Error('report is invalid');
+  return { kind: stopped, text };
+}
+
 function storedEvent(row: Record<string, unknown>, incarnation: string): ChangeEvent {
   try {
     const fields: unknown = typeof row.fields_json === 'string' ? JSON.parse(row.fields_json) : undefined;
@@ -97,7 +106,10 @@ function storedEvent(row: Record<string, unknown>, incarnation: string): ChangeE
     if (typeof row.actor !== 'string' || !row.actor) throw new Error('actor is empty');
     const relation = row.relation === null ? undefined : changeRelations.find(relation => relation === row.relation);
     if (row.relation !== null && relation === undefined) throw new Error('relation is unknown');
-    return { seq: integer(row.seq, 'seq', 1), incarnation, issue_id: parseIssueId(row.issue_id), kind, fields, ...(relation === undefined ? {} : { relation }), occurred_at: integer(row.occurred_at, 'occurred_at', 0), actor: row.actor };
+    const report = row.report_kind === null ? undefined : storedReport(row.report_kind, row.report_text);
+    if ((kind === 'claim_reported') !== (report !== undefined)) throw new Error('report does not match the kind');
+    return { seq: integer(row.seq, 'seq', 1), incarnation, issue_id: parseIssueId(row.issue_id), kind, fields, ...(relation === undefined ? {} : { relation }),
+      ...(report === undefined ? {} : { report }), occurred_at: integer(row.occurred_at, 'occurred_at', 0), actor: row.actor };
   } catch (error) {
     throw new PolylinedbError('invalid_store', `Stored change is invalid: ${error instanceof Error ? error.message : 'invalid row'}`, 500);
   }

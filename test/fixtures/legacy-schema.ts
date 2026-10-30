@@ -1,11 +1,12 @@
-// Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7, 8, 9, 10 or 11 stores made from a current one.
+// Holds records in an older schema: current operations as an earlier release issued them, and schema 6, 7, 8, 9, 10, 11 or 12 stores made from a current one.
 import type { DatabaseSync } from 'node:sqlite';
-import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_STATEMENTS, STAR_KIND_REBUILD_STATEMENTS } from '../../src/records/store/changes-sql.ts';
+import { CHANGE_KIND_REBUILD_STATEMENTS, CHANGE_STATEMENTS, ITEM_KIND_REBUILD_STATEMENTS, STAR_KIND_REBUILD_STATEMENTS } from '../../src/records/store/changes-sql.ts';
 import { SCHEMA_V9_ADDITIONS } from '../../src/records/persistence/schema.ts';
 import { SCHEMA_V8_STATEMENTS } from '../../src/records/persistence/schema-v8.ts';
 import { SCHEMA_V9_STATEMENTS } from '../../src/records/persistence/schema-v9.ts';
 import { SCHEMA_V10_STATEMENTS } from '../../src/records/persistence/schema-v10.ts';
 import { SCHEMA_V11_STATEMENTS } from '../../src/records/persistence/schema-v11.ts';
+import { SCHEMA_V12_STATEMENTS } from '../../src/records/persistence/schema-v12.ts';
 import type { SqlExecutor } from '../../src/records/persistence/persistence.ts';
 
 /** Writes a comment as a release before posts did, so it runs on a schema that lacks the edit or post columns; recorded writes its event as a comment operation would. */
@@ -41,8 +42,20 @@ const feedTriggers = (statements: readonly string[]) => {
   return statements.filter((sql, index) => sql.startsWith('CREATE TRIGGER ') && /\bchange_events\b/.test(sql) && !statements.slice(index + 1).some(later => name(later) === name(sql)));
 };
 
+// Schema 13 rebuilt change_events for claim reports, so the downgrade drops the report trigger and every report event, then runs the schema 12 rebuild and recreates the schema 12 triggers that name the table.
+export function downgradeToSchema12(database: DatabaseSync): void {
+  const triggers = feedTriggers(SCHEMA_V12_STATEMENTS);
+  if (triggers.length === 0) throw new Error('Schema 12 has no change feed triggers');
+  database.exec("BEGIN; DROP TRIGGER claim_requests_change_report; DELETE FROM change_events WHERE kind = 'claim_reported'");
+  for (const sql of triggers) database.exec(`DROP TRIGGER ${/^CREATE TRIGGER (\w+)/.exec(sql)?.[1] ?? ''}`);
+  for (const sql of ITEM_KIND_REBUILD_STATEMENTS) database.exec(sql);
+  for (const sql of triggers) database.exec(sql);
+  database.exec('UPDATE schema_version SET version = 12; COMMIT');
+}
+
 // Schema 12 rebuilt change_events for the item kinds, so the downgrade drops the items and every item event, then runs the schema 11 rebuild and recreates the schema 11 triggers that name the table.
 export function downgradeToSchema11(database: DatabaseSync): void {
+  downgradeToSchema12(database);
   const triggers = feedTriggers(SCHEMA_V11_STATEMENTS);
   if (triggers.length === 0) throw new Error('Schema 11 has no change feed triggers');
   database.exec("BEGIN; DROP TRIGGER issue_items_change_insert; DROP TRIGGER issue_items_change_update; DROP TABLE issue_items; DELETE FROM change_events WHERE kind IN ('asked','answered')");

@@ -25,7 +25,7 @@ test('schema 2/3/4/5/6/7/8/9/10 upgrades preserve canonical DDL and creation rec
     const first = await executeOperation(withoutChangeWriter(executor(db)), request, 'old:author');
     chmodSync(path, 0o600); const requests = db.prepare('SELECT * FROM requests').all(); const oldSnapshot = exportHistoricalSnapshot({ directory });
     db.close(); chmodSync(path, 0o600);
-    assert.equal(upgradeStore({ directory }).version, 12); assert.equal(upgradeStore({ directory }).result, 'already_current');
+    assert.equal(upgradeStore({ directory }).version, 13); assert.equal(upgradeStore({ directory }).result, 'already_current');
     const upgraded = new DatabaseSync(path); const reference = new DatabaseSync(':memory:'); reference.exec(SCHEMA_SQL);
     const sql = "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
     assert.deepEqual(upgraded.prepare(sql).all(), reference.prepare(sql).all()); assert.deepEqual(upgraded.prepare('SELECT * FROM requests').all(), requests);

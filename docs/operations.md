@@ -220,8 +220,9 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 ```json
 { "incarnation": "4be1…", "changes": [
   { "seq": 41, "incarnation": "4be1…", "issue_id": "pd-7", "kind": "updated", "fields": ["body", "priority"], "occurred_at": 1791590400, "actor": "local:codex" },
-  { "seq": 42, "incarnation": "4be1…", "issue_id": "pd-9", "kind": "became_ready", "fields": [], "occurred_at": 1791590400, "actor": "local:codex" }
-], "next_since": 42 }
+  { "seq": 42, "incarnation": "4be1…", "issue_id": "pd-9", "kind": "became_ready", "fields": [], "occurred_at": 1791590400, "actor": "local:codex" },
+  { "seq": 43, "incarnation": "4be1…", "issue_id": "pd-7", "kind": "claim_reported", "fields": [], "report": { "kind": "error", "text": "wrangler d1 execute fails: no such table" }, "occurred_at": 1791590460, "actor": "local:codex" }
+], "next_since": 43 }
 ```
 
 | Field | Meaning |
@@ -234,6 +235,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `occurred_at` | Database time of the write, in integer Unix seconds |
 | `actor` | The actor of the write |
 | `relation` | Present only on `dependency_added` and `dependency_removed` for a land-order edit, with the value `lands_after`; a prerequisite edit has no `relation` |
+| `report` | Present only on `claim_reported`: `{ kind, text }`, the kind (`blocked` or `error`) and the line of the report |
 
 | Kind | Recorded when |
 | --- | --- |
@@ -248,6 +250,7 @@ The [change feed decision](adr/0016-change-feed.md) records the design and its a
 | `unstarred` | `unstar` removes a star; `fields` is `[]` |
 | `claim_acquired` | `claim_acquire` commits a receipt |
 | `claim_released` | `claim_release` or `claim_handoff` commits a release receipt |
+| `claim_reported` | `claim_report` commits a report of kind `blocked` or `error`; `fields` is `[]` and `report` carries the kind and line |
 | `dependency_added` | `dependency_add` or `land_order_add` inserts an edge |
 | `dependency_removed` | `dependency_remove` or `land_order_remove` deletes an edge |
 | `became_ready` | A blocker closes, or an active blocker is removed, and the dependent is `open` with no active blocker left; or the last open ask of an `open` issue with no active blocker is answered or withdrawn, recorded after that event |
@@ -264,7 +267,7 @@ These writes record no event:
 
 - A rejected write, and a replay of an earlier request.
 - `claim_renew`, which extends the deadline for the same holder. `claim_show` reports the current deadline.
-- `claim_report`. `claim_show` reports the newest line as `claim.run.last`.
+- A `claim_report` of kind `working` or `done`. `claim_show` reports the newest line as `claim.run.last`.
 - A prerequisite or land-order edit with the outcome `already_present` or `already_absent`.
 - A `star` with the outcome `already_present`, and an `unstar` with the outcome `already_absent`.
 - An `item_resolve` that repeats the move that ended the item, and an `item_add` replay.
@@ -287,7 +290,7 @@ Filters narrow a page, and every supplied filter must match:
 
 - `project` matches the current project of the issue. Events do not copy issue fields, so an issue that moves to another project matches the new project, earlier events included.
 - `issue_ids` lists 1 through 50 complete issue IDs without repeats.
-- `kinds` lists 1 through 12 kinds without repeats.
+- `kinds` lists 1 through 15 kinds without repeats.
 
 The store keeps the newest 10,000 events.
 Each new event beyond that removes the oldest one.
@@ -620,6 +623,7 @@ Version 0.4.0 accepts unknown response fields. The CLI 0.3.1 and earlier reject 
 
 These fields are optional so that the client works with Workers on both sides of a change:
 
+- `report` on a change event. The client requires it on `claim_reported` and rejects it on any other kind, a `report` with a kind outside `working`, `blocked`, `error`, and `done`, and a `text` that is empty or longer than 200 UTF-8 bytes. A released client ignores it as an unknown field.
 - `run` in a claim inspection from `claim_show`, `show`, and `claim_list`. A Worker that predates claim reports omits it, and the inspection then has no `run`. The client rejects a `run` without a lease, an unknown `state` or `kind`, and a `text` longer than 200 UTF-8 bytes.
 - `claim` in `show`. When a Worker omits it, the client sends one more `claim_show` request and adds that inspection to the result. If that request fails, the show fails with its error.
 - `items` in `show`, and `open_asks` in `claim_acquire`. A Worker that predates asks and checks omits them, and the result then has no such key. When the Worker sends them, every item must have a known `kind` and `state`, a positive `n`, and the fields its state needs, and every open ask must be an ask that is still open.
@@ -634,6 +638,7 @@ These fields are optional so that the client works with Workers on both sides of
 
 A Worker that predates `resources_reason` or the resource operations answers `invalid_input`. The client does not retry without `resources_reason`, because that Worker would close without recording the reason. It reports that the Worker needs an update instead.
 A Worker that predates `claim_report` answers `invalid_input` with `Unknown claim operation`. The client reports that the Worker needs an update and does not retry.
+A Worker that predates `claim_reported` answers a `changes` or `wait` filter on it with `invalid_input`. The client reports that the Worker needs an update and does not retry.
 A Worker that predates `comment_edit` also answers `invalid_input`. The client reports that the Worker needs an update and does not send the edit again.
 For `comment_edit`, the result and the `comment_conflict` and `comment_version_exhausted` details must echo the requested issue ID and comment ID. The result must also carry the requested body and the version after `expected`, and the `comment_not_found` and `comment_author_required` details must echo both IDs.
 A Worker that predates posts answers `star`, `unstar`, and `posts`, a `comment` with `handle`, `via`, or `reply_to`, and a `changes` or `wait` filter on `starred` or `unstarred` with `invalid_input`. The client reports that the Worker needs an update and does not retry, because without those fields a comment would lose its attribution or its reply.
@@ -708,13 +713,13 @@ Import rotates the store incarnation and records no events, so the feed of the d
 Version 0.3.0 uses physical schema 6 and portable snapshot 5.
 Version 0.2.0 uses schema 5 and snapshot 4.
 Repository configuration retains its existing version rules.
-Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, 8, 9, 10, or 11 store after making a private backup.
+Use `pd upgrade` to upgrade a canonical local schema 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, or 12 store after making a private backup.
 An upgrade from schema 2 through 6 starts with an empty change feed.
 Every upgrade leaves `closed_at` and `closed_by` null on existing issues, including closed ones; it does not guess a close time from `updated_at`.
 An upgrade adds no land-order edges and no resource entries.
 An upgrade from schema 2 through 9 gives each existing comment version 1 with a null `updated_at` and `updated_by`.
-Every upgrade leaves `handle`, `via`, and `reply_to` null on existing comments and adds no stars. Every upgrade adds no asks or checks. The upgrades from schema 9, 10, and 11 keep every change event with its `seq`, so a cursor that a reader holds stays valid.
-After the upgrade, an installed CLI that predates schema 12 refuses the store, because it requires its own schema version.
+Every upgrade leaves `handle`, `via`, and `reply_to` null on existing comments and adds no stars. Every upgrade adds no asks or checks. The upgrades from schema 9, 10, 11, and 12 keep every change event with its `seq`, so a cursor that a reader holds stays valid.
+After the upgrade, an installed CLI that predates schema 13 refuses the store, because it requires its own schema version.
 Use `pd snapshot convert --from 2 --file OLD --output NEW` to convert a v2 snapshot before import.
 For a v3, v4, v5, v6, v7, v8, or v9 snapshot, use `--from 3`, `--from 4`, `--from 5`, `--from 6`, `--from 7`, `--from 8`, or `--from 9` instead.
 The conversion from v7 gives each comment version 1 with a null `updated_at` and `updated_by`.

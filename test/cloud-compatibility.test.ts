@@ -432,7 +432,12 @@ test('existing operation responses keep the keys a released client decodes', asy
     const feed = await wire({ op: 'changes', since: 0, limit: 1 });
     assertShape(feed.body, { incarnation: 'string', changes: [{ seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' }], next_since: 'number' });
     const waited = await wire({ op: 'wait', since: 0, timeout: 0 });
-    assertShape(waited.body, { incarnation: 'string', changes: [{ seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' }], next_since: 'number' });
+    const eventShape = { seq: 'number', incarnation: 'string', issue_id: 'string', kind: 'string', fields: ['string'], occurred_at: 'number', actor: 'string' };
+    // A claim_reported event adds report, which a released client ignores as an unknown key.
+    const changes = (waited.body.changes as { kind: string }[]);
+    assertShape({ ...waited.body, changes: changes.filter(change => change.kind !== 'claim_reported') }, { incarnation: 'string', changes: [eventShape], next_since: 'number' });
+    assertShape(changes.filter(change => change.kind === 'claim_reported'), [{ ...eventShape, report: { kind: 'string', text: 'string' } }]);
+    assert.equal(changes.filter(change => change.kind === 'claim_reported').length, 1);
   } finally { sqlite.close(); }
 });
 
@@ -868,6 +873,35 @@ test('an older Worker that does not know claim_report fails with a clear message
   for (const damaged of [{ ...receipt, outcome: 'released', released_at: 20 }, { ...receipt, generation: 2 }, { ...receipt, session_id: crypto.randomUUID() }]) {
     await assert.rejects(decode(report, answer({ claim_receipt: damaged })), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
   }
+});
+
+test('a stopped report reaches a cloud waiter with its line, a damaged report is refused, and an older Worker that rejects claim_reported fails with no retry', async () => {
+  const { sqlite, wire } = await worker();
+  try {
+    const id = ((await wire({ op: 'create', prefix: 'pd', request_id: crypto.randomUUID(), tool: 'test', project: 'compat', body: 'Reports' })).body.issue as { id: string }).id;
+    const incarnation = ((await wire({ op: 'claim_show', issue_id: id })).body.claim as { store_incarnation: string }).store_incarnation;
+    const session_id = crypto.randomUUID();
+    const lease = (await wire({ op: 'claim_acquire', issue_id: id, incarnation, session_id, request_id: crypto.randomUUID() })).body.claim_receipt as { generation: number };
+    const claim_proof = { issue_id: id, incarnation, session_id, generation: lease.generation };
+    for (const [kind, text] of [['working', 'reading'], ['error', 'build fails'], ['done', 'handing off']]) await wire({ op: 'claim_report', claim_proof, kind, text, request_id: crypto.randomUUID() });
+    const feed = (await wire({ op: 'wait', since: 0, timeout: 0, kinds: ['claim_reported'] })).body as { changes: Record<string, unknown>[] };
+    assert.deepEqual(feed.changes.map(({ kind, report }) => ({ kind, report })), [{ kind: 'claim_reported', report: { kind: 'error', text: 'build fails' } }]);
+    const event = feed.changes[0] as Record<string, unknown>;
+    const answer = (changes: unknown[]): typeof fetch => async () => Response.json({ incarnation, changes, next_since: 9 });
+    const wait = { op: 'wait', since: 0, timeout: 0, kinds: ['claim_reported'] };
+    const decoded = await decode(wait, answer([event]));
+    assert.ok('changes' in decoded);
+    assert.deepEqual(decoded.changes[0]?.report, { kind: 'error', text: 'build fails' });
+    const { report: _, ...bare } = event;
+    for (const damaged of [bare, { ...event, report: { kind: 'stalled', text: 'x' } }, { ...event, report: { kind: 'error', text: '' } }, { ...event, report: { kind: 'error', text: 'x'.repeat(201) } }]) {
+      await assert.rejects(decode(wait, answer([damaged])), { code: 'cloud_invalid_response' }, JSON.stringify(damaged));
+    }
+    await assert.rejects(decode({ op: 'changes', since: 0 }, answer([{ ...bare, kind: 'commented', report: event.report }])), { code: 'cloud_invalid_response' }, 'a report rides only on claim_reported');
+    let sent = 0;
+    const older: typeof fetch = async () => { sent += 1; return Response.json({ error: { code: 'invalid_input', message: 'kinds entries must be one of created, updated, status_changed, commented, claim_acquired, claim_released, dependency_added, dependency_removed, became_ready, comment_edited, starred, unstarred, asked, answered' } }, { status: 400 }); };
+    await assert.rejects(decode(wait, older), { code: 'invalid_input', message: 'The cloud Worker does not record claim_reported events. Deploy a newer Worker to filter by them.' });
+    assert.equal(sent, 1);
+  } finally { sqlite.close(); }
 });
 
 test('an older Worker that rejects posts, stars, a post field, or a star kind fails with a clear message and no retry', async () => {

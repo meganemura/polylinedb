@@ -170,7 +170,7 @@ export async function populateSchema10(db: SqlExecutor): Promise<{ comment_id: s
 }
 
 export async function readEvents(db: SqlExecutor): Promise<Row[]> {
-  return await helpers(db).sql('SELECT * FROM change_events ORDER BY seq');
+  return await helpers(db).sql('SELECT seq, issue_id, kind, fields_json, occurred_at, actor, relation FROM change_events ORDER BY seq');
 }
 
 /** Checks a store that upgraded from schema 10 after populateSchema10: the comment has no voice and no stars, events keep their seq, and posts continue after them. */
@@ -178,7 +178,7 @@ export async function checkSchema10Upgrade(db: SqlExecutor, populated: { comment
   const { run, sql, latest } = helpers(db);
   assert.equal(before.length, 3);
   assert.deepEqual(await readEvents(db), before, 'the rebuild keeps every event with its seq');
-  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 12 }]);
+  assert.deepEqual(await sql('SELECT version FROM schema_version'), [{ version: 13 }]);
   assert.deepEqual(await sql('SELECT handle, via, reply_to FROM comments'), [{ handle: null, via: null, reply_to: null }]);
   assert.deepEqual(await sql('SELECT * FROM stars'), []);
   const shown = (await run({ op: 'show', id: populated.id })).comments as Row[];
